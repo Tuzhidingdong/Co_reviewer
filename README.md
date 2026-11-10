@@ -10,7 +10,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Produces a compact Markdown digest and a full machine-readable paragraph/comment inventory; ordinary prose in a Reviewer Comments DOCX is not mistaken for Word-native comments.
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
 - Requires explicit human approval before applying edits; a SHA-256 fingerprint binds approval to the exact reviewer comment, proposed response and document targets.
-- Applies Word-native insertions and deletions while preserving unaffected run formatting and package parts.
+- Applies Word-native insertions and deletions while preserving unaffected run formatting and package parts. Supports explicitly targeted body, header and footer Word XML parts; paragraph indices are local to the selected part.
 - Preserves hyperlink relationships when an edit is wholly contained in a single simple hyperlink; fails closed when a target crosses a hyperlink boundary or unsupported Word structure.
 - Validates the output ZIP package and XML before writing the revised DOCX.
 - Verifies applied insertions/deletions against the actual output files and renders a Response Letter draft without inventing replies.
@@ -48,7 +48,7 @@ See examples/revision_plan.example.json and docs/WORKFLOW.md.
 ## Safe revision engine: supported scope
 
 - A target must occur exactly once in its selected paragraph.
-- Ordinary paragraph and table-cell text can be edited when the target is contained in a contiguous sequence of supported plain-text runs.
+- Ordinary paragraph and table-cell text can be edited when the target is contained in a contiguous sequence of supported plain-text runs. Header/footer edits must identify their exact `word/headerN.xml` or `word/footerN.xml` part and use that part's own paragraph index.
 - Text wholly contained in one simple hyperlink can be edited inside the hyperlink wrapper while preserving its relationship ID.
 - Existing run properties on text before, inside and after the target are retained where supported.
 - Targets crossing hyperlink boundaries, fields, drawings, bookmarks, content controls or other unsupported complex structures are refused rather than guessed.
