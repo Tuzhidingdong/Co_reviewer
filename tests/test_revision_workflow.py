@@ -56,8 +56,8 @@ class RevisionWorkflowTests(unittest.TestCase):
                     "targets": [{
                         "document": "SI", "input_file": str(self.input),
                         "output_file": str(self.root / "si_revised.docx"), "p_idx": 0,
-                        "location": "Section S1", "find": "another old phrase",
-                        "replace": "another revised phrase"
+                        "location": "Section S1", "find": "outdated terminology",
+                        "replace": "updated terminology"
                     }]
                 }
             ]
@@ -75,7 +75,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(args.ids, ["R1-C1", "R2-C1"])
 
     def test_approve_plan_cli_seals_only_selected_items(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         for item in plan["revision_items"]:
             item["status"] = "planned"
@@ -97,7 +97,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(cli.validate_plan(saved), [])
 
     def test_approve_plan_reseals_an_edited_pending_approval(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         first = plan["revision_items"][0]
         first["proposed_response"] = "Updated response shown to and re-approved by the user."
@@ -209,7 +209,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertTrue(any("source_sha256" in error for error in errors))
 
     def test_preflight_cli_records_source_hashes_and_does_not_write_docx_outputs(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         for item in plan["revision_items"]:
             item["status"] = "planned"
@@ -328,7 +328,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_apply_only_approved_items_and_preserve_pending_items(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         reports = cli.apply_plan(plan, "Test Author")
         self.assertEqual(len(reports), 1)
@@ -354,7 +354,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_cli_apply_persists_item_state_and_leaves_other_items_pending(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
         args = Namespace(
@@ -369,7 +369,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertTrue(self.report_path.is_file())
 
     def test_incremental_iterations_preserve_docx_changes_and_apply_report_history(self):
-        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
 
@@ -419,9 +419,9 @@ class RevisionWorkflowTests(unittest.TestCase):
                 node.text or "" for node in paragraph.findall(".//w:ins//w:t", cli.NS)
             )
             self.assertIn("old phrase", deleted)
-            self.assertIn("another old phrase", deleted)
+            self.assertIn("outdated terminology", deleted)
             self.assertIn("revised phrase", inserted)
-            self.assertIn("another revised phrase", inserted)
+            self.assertIn("updated terminology", inserted)
 
     def test_response_docx_contains_verified_and_draft_sections(self):
         plan = self._plan()
