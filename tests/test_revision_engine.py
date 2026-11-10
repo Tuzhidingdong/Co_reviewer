@@ -536,6 +536,20 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertIn("word/header1.xml", names)
         self.assertIn("word/footer1.xml", names)
 
+        inventory = cli.inspect_docx(str(self.input))
+        indexed_parts = {entry["part"] for entry in inventory["paragraphs"]}
+        self.assertTrue({
+            "word/document.xml", "word/header1.xml", "word/footer1.xml"
+        }.issubset(indexed_parts))
+        self.assertTrue(any(
+            entry["part"] == "word/header1.xml" and "ABC-01" in entry["text"]
+            for entry in inventory["paragraphs"]
+        ))
+        self.assertTrue(any(
+            entry["part"] == "word/footer1.xml" and "Internal review copy 01" in entry["text"]
+            for entry in inventory["paragraphs"]
+        ))
+
         plan = {
             "schema_version": "1.0",
             "approved": True,
