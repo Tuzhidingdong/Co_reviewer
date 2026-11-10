@@ -52,6 +52,7 @@ try {
     Invoke-QualityCheck -Name "Check revision status command" -PythonArgs @("scripts/co_reviewer_cli.py", "status", "--help")
     Invoke-QualityCheck -Name "Check approval command" -PythonArgs @("scripts/co_reviewer_cli.py", "approve-plan", "--help")
     Invoke-QualityCheck -Name "Check source preflight command" -PythonArgs @("scripts/co_reviewer_cli.py", "preflight-plan", "--help")
+    Invoke-QualityCheck -Name "Check verified-state confirmation command" -PythonArgs @("scripts/co_reviewer_cli.py", "confirm-verified", "--help")
 
     Write-Host ""
     Write-Host "All automated Co_Reviewer checks passed." -ForegroundColor Green

@@ -38,7 +38,13 @@ The apply command automatically persists successfully applied items as `applied`
 
     python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
 
-After checking the revised Manuscript and SI scientifically and semantically, set only fully reviewed items to `verified`. Render the Response Letter draft in Markdown:
+After checking the revised Manuscript and SI scientifically and semantically, confirm only fully reviewed items with the guarded command (do not edit status fields manually):
+
+    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan.json --apply-report revision_apply_report.json --ids R2-C3 R3-C1 --semantic-review-confirmed
+
+This re-runs exact Track Changes verification, seals the current output DOCX SHA-256 hashes and requires the explicit semantic-review acknowledgement. A later change to a revised DOCX invalidates its verified state.
+
+Render the Response Letter draft in Markdown:
 
     python scripts/co_reviewer_cli.py render-response --plan edits_plan.json --out Response_to_Reviewers.md
 
@@ -93,3 +99,4 @@ Individual commands:
     python -m unittest discover -s tests -v
     python scripts/co_reviewer_cli.py --help
     python scripts/co_reviewer_cli.py approve-plan --help
+    python scripts/co_reviewer_cli.py confirm-verified --help

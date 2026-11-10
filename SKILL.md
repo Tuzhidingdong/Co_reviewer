@@ -71,7 +71,13 @@ Run the mechanical verification command:
 
 This checks the exact Word revision IDs recorded by the apply report and confirms that those specific deletion/insertion elements contain the expected text at the reported location. It does not validate scientific meaning. Then inspect the actual revised documents and check that Reviewer responses, Manuscript and SI agree on claims, values, units, sample names and figure/table numbering.
 
-Only after both mechanical and semantic checks pass, change the corresponding plan item status to verified. Render the Response Letter draft:
+Only after both mechanical and semantic checks pass, record the state through the guarded command (never edit `status` manually):
+
+    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan.json --apply-report revision_apply_report.json --ids R2-C3 R3-C1 --semantic-review-confirmed
+
+The command re-runs exact Track Changes verification against the current output DOCX files, records their SHA-256 hashes, and requires an explicit semantic-review acknowledgement. If a revised DOCX changes later, plan validation and Response Letter rendering reject the stale verified state. This is a workflow-integrity check, not an identity signature or an automated judgment of scientific correctness.
+
+Render the Response Letter draft:
 
     python scripts/co_reviewer_cli.py render-response --plan edits_plan.json --out Response_to_Reviewers.md
 

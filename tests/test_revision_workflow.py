@@ -74,6 +74,60 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertIs(args.func, cli.cmd_approve_plan)
         self.assertEqual(args.ids, ["R1-C1", "R2-C1"])
 
+    def test_confirm_verified_parser_is_registered(self):
+        args = cli.build_parser().parse_args([
+            "confirm-verified", "--plan", str(self.plan_path),
+            "--apply-report", str(self.report_path), "--ids", "R1-C1",
+            "--semantic-review-confirmed"
+        ])
+        self.assertIs(args.func, cli.cmd_confirm_verified)
+        self.assertTrue(args.semantic_review_confirmed)
+
+    def test_manually_setting_verified_without_confirmation_fields_is_rejected(self):
+        plan = self._plan()
+        plan["revision_items"][0]["status"] = "verified"
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(any("verification_fingerprint" in error for error in errors))
+        self.assertTrue(any("verified_output_hashes" in error for error in errors))
+
+    def test_confirm_verified_refuses_incomplete_apply_report(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+        history = json.loads(self.report_path.read_text(encoding="utf-8"))
+        history[0]["results"] = []
+        self.report_path.write_text(json.dumps(history), encoding="utf-8")
+        confirm_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(self.report_path),
+            ids=["R1-C1"], semantic_review_confirmed=True
+        )
+        with self.assertRaisesRegex(ValueError, "verification is incomplete"):
+            cli.cmd_confirm_verified(confirm_args)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+
+    def test_confirmed_verification_is_invalidated_when_output_changes(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(self.plan_path), apply_report=str(self.report_path),
+                ids=["R1-C1"], semantic_review_confirmed=True
+            )), 0)
+        verified_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(verified_plan), [])
+        self.output.write_bytes(self.output.read_bytes() + b"tampered")
+        errors = cli.validate_plan(verified_plan)
+        self.assertTrue(any("revised DOCX changed after verification" in error for error in errors))
+
     def test_approve_plan_cli_seals_only_selected_items(self):
         make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
@@ -460,8 +514,19 @@ class RevisionWorkflowTests(unittest.TestCase):
             self.assertIn("updated terminology", inserted)
 
     def test_response_docx_contains_verified_and_draft_sections(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         plan = self._plan()
-        plan["revision_items"][0]["status"] = "verified"
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(self.plan_path), apply_report=str(self.report_path),
+                ids=["R1-C1"], semantic_review_confirmed=True
+            )), 0)
+        plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
         output = self.root / "Response_to_Reviewers.docx"
         rendered = render_response_docx(
             plan, output, manuscript_title="A sample manuscript", author="Corresponding Author"

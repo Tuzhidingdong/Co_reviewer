@@ -431,6 +431,18 @@ def revision_item_fingerprint(item: dict[str, Any]) -> str:
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+def revision_verification_fingerprint(item: dict[str, Any]) -> str:
+    """Fingerprint the approved scope and exact output versions acknowledged as verified."""
+    payload = {
+        "approval_fingerprint": item.get("approval_fingerprint"),
+        "verified_output_hashes": item.get("verified_output_hashes", []),
+        "semantic_review_confirmed": item.get("semantic_review_confirmed"),
+        "verified_at_utc": item.get("verified_at_utc"),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True) -> list[str]:
     errors = []
     if not isinstance(plan, dict): return ["Plan must be a JSON object."]
@@ -489,6 +501,56 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
             if "part" in t:
                 try: safe_part(str(t["part"]))
                 except ValueError as exc: errors.append(f"{tp}.part: {exc}")
+        if item.get("status") == "verified":
+            if item.get("semantic_review_confirmed") is not True:
+                errors.append(f"{at}.semantic_review_confirmed must be true for verified items.")
+            verified_at = item.get("verified_at_utc")
+            try:
+                parsed_verified_at = datetime.fromisoformat(str(verified_at).replace("Z", "+00:00"))
+                if parsed_verified_at.tzinfo is None:
+                    raise ValueError("timezone is required")
+            except ValueError:
+                errors.append(f"{at}.verified_at_utc must be an ISO-8601 timestamp with timezone.")
+            stored_verification = item.get("verification_fingerprint")
+            expected_verification = revision_verification_fingerprint(item)
+            if not isinstance(stored_verification, str) or stored_verification != expected_verification:
+                errors.append(f"{at}.verification_fingerprint is missing or stale; re-run verification and confirm semantic review.")
+            output_hashes = item.get("verified_output_hashes")
+            if not isinstance(output_hashes, list) or not output_hashes:
+                errors.append(f"{at}.verified_output_hashes must record every revised DOCX output.")
+            else:
+                expected_paths = {
+                    os.path.normcase(str(Path(target["output_file"]).expanduser().resolve()))
+                    for target in targets
+                    if isinstance(target, dict) and isinstance(target.get("output_file"), str) and target.get("output_file")
+                }
+                recorded_paths = set()
+                for hash_index, entry in enumerate(output_hashes):
+                    if not isinstance(entry, dict):
+                        errors.append(f"{at}.verified_output_hashes[{hash_index}] must be an object.")
+                        continue
+                    path_value, digest = entry.get("path"), entry.get("sha256")
+                    if not isinstance(path_value, str) or not path_value.strip():
+                        errors.append(f"{at}.verified_output_hashes[{hash_index}].path is required.")
+                        continue
+                    if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+                        errors.append(f"{at}.verified_output_hashes[{hash_index}].sha256 must be a lowercase SHA-256 hex digest.")
+                        continue
+                    resolved_path = str(Path(path_value).expanduser().resolve())
+                    path_key = os.path.normcase(resolved_path)
+                    if path_key in recorded_paths:
+                        errors.append(f"{at}.verified_output_hashes contains duplicate output paths.")
+                        continue
+                    recorded_paths.add(path_key)
+                    try:
+                        if not Path(resolved_path).is_file():
+                            errors.append(f"{at}.verified_output_hashes references a missing DOCX: {resolved_path}")
+                        elif sha256_file(resolved_path) != digest:
+                            errors.append(f"{at}.verified_output_hashes is stale; revised DOCX changed after verification: {resolved_path}")
+                    except OSError as exc:
+                        errors.append(f"{at}.verified_output_hashes cannot read {resolved_path}: {exc}")
+                if recorded_paths != expected_paths:
+                    errors.append(f"{at}.verified_output_hashes must cover exactly the linked DOCX outputs.")
     return errors
 
 def sha256_file(path: str | Path) -> str:
@@ -1035,6 +1097,93 @@ def cmd_verify(args):
     print("[NEXT] Mechanical verification is not semantic approval; review scientific consistency before marking items verified.")
     return 0 if report["passed"] else 2
 
+def cmd_confirm_verified(args):
+    """Promote selected applied items only after exact DOCX verification and semantic review."""
+    if not getattr(args, "semantic_review_confirmed", False):
+        raise ValueError(
+            "Semantic review acknowledgement is required. Confirm the revised Manuscript/SI claims, "
+            "values, units, sample names and figure/table references before running this command."
+        )
+
+    plan_path = Path(args.plan)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict) or not isinstance(plan.get("revision_items"), list):
+        raise ValueError("Plan must contain a revision_items array.")
+    validate_apply_artifact_paths(plan, plan_path, args.apply_report)
+    errors = validate_plan(plan, require_approval=False)
+    if errors:
+        raise ValueError("Cannot verify an invalid revision plan:\n- " + "\n- ".join(errors))
+    if plan.get("approved") is not True:
+        raise ValueError("Verification requires the human-approved revision plan (approved=true).")
+
+    requested = list(dict.fromkeys(args.ids))
+    if not requested:
+        raise ValueError("Provide at least one revision item ID with --ids.")
+    by_id = {item.get("id"): item for item in plan["revision_items"]}
+    unknown = [item_id for item_id in requested if item_id not in by_id]
+    if unknown:
+        raise ValueError("Unknown revision item ID(s): " + ", ".join(unknown))
+    for item_id in requested:
+        state = by_id[item_id].get("status")
+        if state not in {"applied", "verified"}:
+            raise ValueError(
+                f"{item_id} is {state}; only applied items can be confirmed as verified."
+            )
+
+    apply_reports = json.loads(Path(args.apply_report).read_text(encoding="utf-8"))
+    if not isinstance(apply_reports, list):
+        raise ValueError("Apply report must be a JSON array generated by the apply command.")
+
+    output_paths = {}
+    for item_id in requested:
+        for target in by_id[item_id]["targets"]:
+            resolved = str(Path(target["output_file"]).expanduser().resolve())
+            output_paths[os.path.normcase(resolved)] = resolved
+    hashes_before = {key: sha256_file(path) for key, path in output_paths.items()}
+
+    verification = verify_apply_report(plan, apply_reports)
+    results_by_id = defaultdict(list)
+    for result in verification["results"]:
+        results_by_id[result.get("revision_item_id")].append(result)
+    for item_id in requested:
+        item_results = results_by_id.get(item_id, [])
+        if len(item_results) != len(by_id[item_id]["targets"]):
+            raise ValueError(
+                f"{item_id} verification is incomplete: expected {len(by_id[item_id]['targets'])} target result(s), "
+                f"found {len(item_results)}."
+            )
+        failed = [result for result in item_results if result.get("status") != "verified"]
+        if failed:
+            reasons = "; ".join(result.get("reason", "target verification failed") for result in failed)
+            raise ValueError(f"{item_id} verification is incomplete: {reasons}")
+
+    hashes_after = {key: sha256_file(path) for key, path in output_paths.items()}
+    if hashes_before != hashes_after:
+        raise ValueError("A revised DOCX changed during verification; no item was marked verified. Retry verification.")
+
+    for item_id in requested:
+        item = by_id[item_id]
+        item["verified_output_hashes"] = [
+            {"path": output_paths[key], "sha256": hashes_after[key]}
+            for key in sorted(output_paths)
+            if any(os.path.normcase(str(Path(target["output_file"]).expanduser().resolve())) == key
+                   for target in item["targets"])
+        ]
+        item["semantic_review_confirmed"] = True
+        item["verified_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        item["status"] = "verified"
+        item["verification_fingerprint"] = revision_verification_fingerprint(item)
+
+    errors = validate_plan(plan, require_approval=False)
+    if errors:
+        raise ValueError("Verification confirmation failed validation:\n- " + "\n- ".join(errors))
+    write_json_atomic(plan_path, plan)
+    print(f"[VERIFIED] {len(requested)} revision item(s): {', '.join(requested)}")
+    print("[GUARD] Exact Track Changes were rechecked; current output DOCX hashes are sealed.")
+    print("[HUMAN] Semantic review acknowledgement was recorded; the CLI does not judge scientific correctness.")
+    return 0
+
+
 def cmd_status(args):
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     errors = validate_plan(plan, require_approval=False)
@@ -1121,6 +1270,13 @@ def build_parser():
     rspdocx.add_argument("--manuscript-title", default="")
     rspdocx.add_argument("--author", default="")
     rspdocx.set_defaults(func=cmd_response_docx)
+    cv = sub.add_parser("confirm-verified", help="Confirm selected items after exact DOCX verification and semantic review.")
+    cv.add_argument("--plan", required=True)
+    cv.add_argument("--apply-report", default="revision_apply_report.json")
+    cv.add_argument("--ids", nargs="+", required=True, help="Applied revision item IDs to confirm.")
+    cv.add_argument("--semantic-review-confirmed", action="store_true", required=True,
+                    help="Required acknowledgement that scientific meaning and cross-document consistency were reviewed.")
+    cv.set_defaults(func=cmd_confirm_verified)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)

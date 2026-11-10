@@ -1,7 +1,11 @@
+import contextlib
+import io
+import json
 import sys
 import tempfile
 import unittest
 import zipfile
+from argparse import Namespace
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -120,8 +124,24 @@ class RevisionEngineTests(unittest.TestCase):
         draft = cli.render_response_letter(plan)
         self.assertIn("DRAFT (applied; not yet verified)", draft)
         self.assertIn("Section 3.2", draft)
-        plan["revision_items"][0]["status"] = "verified"
-        final_draft = cli.render_response_letter(plan)
+        plan_path = self.root / "edits_plan.json"
+        report_path = self.root / "apply_report.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        report_path.write_text(json.dumps(reports), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Semantic review acknowledgement is required"):
+            cli.cmd_confirm_verified(Namespace(
+                plan=str(plan_path), apply_report=str(report_path), ids=["R1-C1"],
+                semantic_review_confirmed=False
+            ))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(plan_path), apply_report=str(report_path), ids=["R1-C1"],
+                semantic_review_confirmed=True
+            )), 0)
+        verified_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(verified_plan["revision_items"][0]["status"], "verified")
+        self.assertEqual(cli.validate_plan(verified_plan), [])
+        final_draft = cli.render_response_letter(verified_plan)
         self.assertIn("**Response**", final_draft)
         self.assertNotIn("not yet verified", final_draft)
 

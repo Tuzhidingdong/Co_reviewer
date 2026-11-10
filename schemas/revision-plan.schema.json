@@ -28,6 +28,26 @@
             "pattern": "^[a-f0-9]{64}$",
             "description": "SHA-256 fingerprint of the exact target anchors and source DOCX hashes validated by preflight-plan."
           },
+          "verification_fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 workflow fingerprint of the approved item and exact revised DOCX output hashes confirmed after mechanical and semantic review."
+          },
+          "verified_output_hashes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "semantic_review_confirmed": { "type": "boolean" },
+          "verified_at_utc": { "type": "string", "format": "date-time" },
           "status": { "enum": ["planned", "approved", "applied", "verified", "blocked"] },
           "targets": {
             "type": "array",
@@ -63,6 +83,21 @@
               }
             },
             "then": { "required": ["approval_fingerprint"] }
+          },
+          {
+            "if": {
+              "required": ["status"],
+              "properties": { "status": { "const": "verified" } }
+            },
+            "then": {
+              "required": [
+                "verification_fingerprint",
+                "verified_output_hashes",
+                "semantic_review_confirmed",
+                "verified_at_utc"
+              ],
+              "properties": { "semantic_review_confirmed": { "const": true } }
+            }
           }
         ],
         "additionalProperties": false

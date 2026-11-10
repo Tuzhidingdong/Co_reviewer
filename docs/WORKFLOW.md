@@ -45,7 +45,7 @@ The command validates every planned/approved anchor by preparing the edits in me
 
 After the user approves selected items, run `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. The approval fingerprint covers each selected item's reviewer, original comment, proposed response and complete target list, including the source DOCX hashes recorded by preflight. It detects stale approval scope but is not a cryptographic signature or identity proof. `validate-plan` and `apply` reject an item whose approval fingerprint is missing or stale. Apply also rechecks the exact source DOCX bytes before and after preparing the edits. If a source DOCX changes after preflight/approval, run preflight again, show the refreshed source version to the user and obtain renewed approval. The apply command processes only sealed items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` automatically.
 
-Use `status --plan plan/edits_plan.json` to inspect the current task summary. Record user approval for a selected subset with `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. After mechanical verification and a separate scientific/semantic review, the Supervisor may mark the corresponding items `verified` in the plan.
+Use `status --plan plan/edits_plan.json` to inspect the current task summary. Record user approval for a selected subset with `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. After mechanical verification and a separate scientific/semantic review, the Supervisor must use `confirm-verified`; never edit the `verified` status manually.
 
 ## Completion states
 
@@ -68,7 +68,11 @@ Keep using the same `output/revision_apply_report.json` path for subsequent incr
 
 This verifies the exact Word revision IDs recorded by the apply report and checks that those specific deletion/insertion elements contain the expected text. It does **not** decide whether the new scientific explanation is correct.
 
-Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after mechanical verification and semantic review pass, change the relevant plan item's status to `verified`.
+Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after both reviews pass, record completion with the guarded command below; do not edit item status manually:
+
+    python scripts/co_reviewer_cli.py confirm-verified --plan plan/edits_plan.json --apply-report output/revision_apply_report.json --ids R2-C3 R3-C1 --semantic-review-confirmed
+
+The command re-runs exact Track Changes verification against the current output files, records their SHA-256 hashes and requires an explicit semantic-review acknowledgement. If a revised DOCX changes later, plan validation and Response Letter rendering reject the stale verified state. This workflow-integrity control does not prove user identity and does not judge scientific correctness.
 
 Render the response draft:
 
