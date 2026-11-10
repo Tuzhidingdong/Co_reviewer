@@ -40,14 +40,14 @@ Include the proposed response. Scientific content must be traceable to supplied 
 
 Present the reviewer comment, proposed response, affected files/locations, exact proposed edits, evidence questions and conflicts. Ask the user to approve or revise the plan. Approval may be partial: only selected revision items should be marked approved.
 
-Only after explicit approval, set top-level approved=true and the selected items' status to approved. A planned/unapproved task must never be applied. If the comment, response or targets of an already approved item change, reset that item's status to planned and obtain approval again.
+Only after explicit approval, run `approve-plan --plan edits_plan.json --ids R2-C3 R3-C1` for the selected items. This command records a SHA-256 fingerprint over each approved item's reviewer, original comment, proposed response and complete target list. `validate-plan` and `apply` reject missing or stale fingerprints. Any change to an approved item's comment, response or target invalidates the approval; present the revised item to the user and run `approve-plan` again only after renewed approval. A planned/unapproved task must never be applied.
 
 ### Stage 4 — Apply
 
-Validate:
+After Stage 3 user approval, record the selected approvals, then validate:
 
     python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids R2-C3 R3-C1
-python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
+    python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
 
 Then apply:
 

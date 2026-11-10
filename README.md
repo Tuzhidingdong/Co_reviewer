@@ -27,7 +27,7 @@ Validate the draft plan before approval:
 
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json --allow-unapproved
 
-After the user explicitly approves a subset, record that approval with `approve-plan`. It fingerprints the exact reviewer comment, proposed response and linked document targets; any later change invalidates the approval and requires renewed user approval. Then validate and apply only the sealed items:
+After the user explicitly approves a subset, record that approval with `approve-plan`. It fingerprints the exact reviewer comment, proposed response and linked document targets; any later change invalidates the approval and requires renewed user approval. The fingerprint detects workflow drift; it is not a cryptographic signature or user-identity proof. Then validate and apply only the sealed items:
 
     python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids R2-C3 R3-C1
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json

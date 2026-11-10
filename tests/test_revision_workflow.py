@@ -67,6 +67,13 @@ class RevisionWorkflowTests(unittest.TestCase):
                 item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
         return plan
 
+    def test_approve_plan_parser_is_registered(self):
+        args = cli.build_parser().parse_args([
+            "approve-plan", "--plan", str(self.plan_path), "--ids", "R1-C1", "R2-C1"
+        ])
+        self.assertIs(args.func, cli.cmd_approve_plan)
+        self.assertEqual(args.ids, ["R1-C1", "R2-C1"])
+
     def test_approve_plan_cli_seals_only_selected_items(self):
         plan = self._plan()
         for item in plan["revision_items"]:
