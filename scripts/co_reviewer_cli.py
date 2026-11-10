@@ -224,8 +224,22 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         while pos >= 0:
             matches.append((start, end, runs, text, pos))
             pos = text.find(old, pos + 1)
-    if len(matches) != 1:
-        return False, next_id, "target not found in plain adjacent runs" if not matches else "target is ambiguous: it occurs more than once in paragraph"
+    if not matches:
+        # A target may be wholly contained in one simple hyperlink. Recurse into
+        # that wrapper so the relationship ID and hyperlink attributes survive.
+        hyperlink_matches = [
+            child for child in children
+            if child.tag == qn("hyperlink") and old in visible_text(child)
+        ]
+        if len(hyperlink_matches) == 1:
+            return replace_in_paragraph(
+                hyperlink_matches[0], old, new, author, date, next_id
+            )
+        if len(hyperlink_matches) > 1:
+            return False, next_id, "target is ambiguous across hyperlink containers"
+        return False, next_id, "target not found in a supported plain-text run sequence"
+    if len(matches) > 1:
+        return False, next_id, "target is ambiguous: it occurs more than once in paragraph"
     start, end, runs, joined, match_start = matches[0]
     match_end = match_start + len(old)
     spans, cursor = [], 0
@@ -265,8 +279,9 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
     if insert_run is not None:
         replacements.append(revision_wrapper("ins", next_id, author, date, [insert_run])); next_id += 1
     replacements.extend(suffixes)
-    # Only the selected contiguous run block is replaced. All other paragraph
-    # children (anchors, hyperlinks, drawings, properties, fields) remain intact.
+    # Only the selected contiguous run block is replaced. All other children of
+    # the current container remain intact; hyperlinks are edited inside their
+    # existing wrapper so relationship IDs and link attributes are preserved.
     for node in children[start:end]:
         para.remove(node)
     insertion = min(start, len(list(para)))
@@ -344,7 +359,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             if not ok:
                 raise ValueError(
                     f"Safe edit refused at {part} P[{idx}]: {reason}. "
-                    "Target may cross a hyperlink, field, drawing, bookmark, content control or other complex node."
+                    "Target may cross a hyperlink boundary or involve a field, drawing, bookmark, content control or other unsupported complex node."
                 )
             edit_result = {
                 "part": part, "p_idx": idx, "find": old, "replace": new,

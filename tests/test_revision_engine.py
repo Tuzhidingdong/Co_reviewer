@@ -264,6 +264,64 @@ class RevisionEngineTests(unittest.TestCase):
             }], "Test Author")
         self.assertFalse(self.output.exists())
 
+    def test_text_inside_hyperlink_preserves_relationship_and_track_changes(self):
+        make_docx(self.input, [[("placeholder", False)]])
+        relationship_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+        office_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        with zipfile.ZipFile(self.input, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        body = ET.Element(cli.qn("body"))
+        paragraph = ET.SubElement(body, cli.qn("p"))
+        before = ET.SubElement(paragraph, cli.qn("r"))
+        ET.SubElement(before, cli.qn("t")).text = "Before "
+        hyperlink = ET.SubElement(
+            paragraph, cli.qn("hyperlink"), {f"{{{office_rel_ns}}}id": "rId5"}
+        )
+        linked_run = ET.SubElement(hyperlink, cli.qn("r"))
+        ET.SubElement(linked_run, cli.qn("t")).text = "original link text"
+        after = ET.SubElement(paragraph, cli.qn("r"))
+        ET.SubElement(after, cli.qn("t")).text = " after."
+        root = ET.Element(cli.qn("document"))
+        root.append(body)
+        members["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        relationships = ET.Element(f"{{{relationship_ns}}}Relationships")
+        ET.SubElement(relationships, f"{{{relationship_ns}}}Relationship", {
+            "Id": "rId5",
+            "Type": f"{office_rel_ns}/hyperlink",
+            "Target": "https://example.org/original",
+            "TargetMode": "External"
+        })
+        members["word/_rels/document.xml.rels"] = ET.tostring(
+            relationships, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.input, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+        rels_before = members["word/_rels/document.xml.rels"]
+
+        cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0, "find": "original link text", "replace": "updated link text"
+        }], "Test Author")
+
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:p", cli.NS)
+            hyperlink = paragraph.find("w:hyperlink", cli.NS)
+            self.assertIsNotNone(hyperlink)
+            self.assertEqual(hyperlink.get(f"{{{office_rel_ns}}}id"), "rId5")
+            deleted = "".join(
+                node.text or "" for node in hyperlink.findall(".//w:delText", cli.NS)
+            )
+            inserted = "".join(
+                node.text or "" for node in hyperlink.findall(".//w:ins/w:r/w:t", cli.NS)
+            )
+            self.assertEqual(deleted, "original link text")
+            self.assertEqual(inserted, "updated link text")
+            self.assertEqual(
+                cli.visible_text(paragraph), "Before updated link text after."
+            )
+            self.assertEqual(archive.read("word/_rels/document.xml.rels"), rels_before)
+
     def test_hyperlink_boundary_is_rejected(self):
         root = ET.Element(q("document"))
         body = ET.SubElement(root, q("body"))

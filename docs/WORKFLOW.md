@@ -33,7 +33,7 @@ For a local request, include only affected revision items and targets. Do not re
 
 ## Safe text matching
 
-Use paragraph indices from the latest inventory. A target must be unique within its paragraph. Do not shorten the anchor to a generic phrase. If a replacement crosses a hyperlink, field, drawing, bookmark or content control, the current backend refuses it. Report the limitation; do not disable validation.
+Use paragraph indices from the latest inventory. A target must be unique within its paragraph. Do not shorten the anchor to a generic phrase. A replacement wholly contained within one simple hyperlink is supported and retains the hyperlink wrapper and relationship. A replacement crossing the hyperlink boundary, field, drawing, bookmark or content control is refused. Report the limitation; do not disable validation.
 
 ## Incremental approval and application
 

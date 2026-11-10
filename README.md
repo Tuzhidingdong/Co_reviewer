@@ -11,7 +11,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
 - Requires explicit human approval before applying edits.
 - Applies Word-native insertions and deletions while preserving unaffected run formatting and package parts.
-- Fails closed when a target is ambiguous or crosses unsupported Word structures.
+- Preserves hyperlink relationships when an edit is wholly contained in a single simple hyperlink; fails closed when a target crosses a hyperlink boundary or unsupported Word structure.
 - Validates the output ZIP package and XML before writing the revised DOCX.
 - Verifies applied insertions/deletions against the actual output files and renders a Response Letter draft without inventing replies.
 
@@ -68,7 +68,7 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 ## Current limitations
 
 - DOCX only; legacy DOC and PDF are not editable targets.
-- The current revision backend supports conservative plain-text-run replacements, not arbitrary edits across complex Word structures.
+- The current revision backend supports conservative plain-text-run replacements, table-cell paragraphs and text wholly contained in one simple hyperlink; it does not support arbitrary edits across complex Word structures.
 - `render-response` writes Markdown; `render-response-docx` creates an editable Word draft using the built-in clean layout. Journal-specific templates are not yet applied automatically.
 - Cross-document semantic consistency is reviewed by the Supervisor/author; the CLI verifies exact Word revision IDs and their text, but does not judge scientific meaning.
 - No Word COM backend or graphical interface is included yet.
