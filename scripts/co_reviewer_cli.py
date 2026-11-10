@@ -858,7 +858,7 @@ def cmd_preflight(args):
     print(f"[PREFLIGHT] {report['targets_preflighted']}/{report['targets_total']} target(s) are safe to apply.")
     print(f"[SOURCE] SHA-256 fingerprints recorded for {len(report['source_files'])} source DOCX file(s).")
     if report["approval_scope_changed_items"]:
-        print("[REAPPROVAL] Source versions changed for already-approved item(s): " + ", ".join(report["approval_scope_changed_items"]))
+        print("[REAPPROVAL] Source versions or preflighted target scopes changed for already-approved item(s): " + ", ".join(report["approval_scope_changed_items"]))
     print(f"[OK] report: {report_path}")
     print("[NOTE] Preflight does not edit DOCX files or grant approval.")
     return 0
