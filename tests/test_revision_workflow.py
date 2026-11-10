@@ -118,6 +118,51 @@ class RevisionWorkflowTests(unittest.TestCase):
             cli.apply_plan(plan, "Test Author")
         self.assertFalse(self.output.exists())
 
+    def test_apply_refuses_report_path_that_would_overwrite_docx_output(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.output), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "apply report path conflicts with a referenced DOCX output"):
+            cli.cmd_apply(args)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(json.loads(self.plan_path.read_text(encoding="utf-8"))["revision_items"][0]["status"], "approved")
+
+    def test_apply_refuses_report_path_that_conflicts_with_source_docx(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        original = self.input.read_bytes()
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.input), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "apply report path conflicts with a referenced DOCX input"):
+            cli.cmd_apply(args)
+        self.assertEqual(self.input.read_bytes(), original)
+        self.assertFalse(self.output.exists())
+
+    def test_apply_refuses_plan_and_report_path_collision(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.plan_path), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "revision plan and apply report must use different"):
+            cli.cmd_apply(args)
+        self.assertFalse(self.output.exists())
+
+    def test_approve_plan_validation_error_uses_readable_line_breaks(self):
+        invalid = self._plan()
+        invalid["schema_version"] = "2.0"
+        self.plan_path.write_text(json.dumps(invalid), encoding="utf-8")
+        with self.assertRaises(ValueError) as caught:
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=["R1-C1"]))
+        self.assertIn("\n- ", str(caught.exception))
+        self.assertNotIn("\\n- ", str(caught.exception))
+
     def test_apply_only_approved_items_and_preserve_pending_items(self):
         make_docx(self.input, [[("old phrase and another old phrase", False)]])
         plan = self._plan()
