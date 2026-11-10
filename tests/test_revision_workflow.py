@@ -171,7 +171,7 @@ class RevisionWorkflowTests(unittest.TestCase):
             self.assertIn("word/document.xml", archive.namelist())
         from docx import Document
         paragraphs = [p.text for p in Document(output).paragraphs]
-        joined = "\\n".join(paragraphs)
+        joined = "\n".join(paragraphs)
         self.assertIn("Response to Reviewers", joined)
         self.assertIn("Reviewer 1 — R1-C1", joined)
         self.assertIn("Response", joined)
