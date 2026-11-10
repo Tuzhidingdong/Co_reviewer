@@ -75,10 +75,17 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 
 ## Tests
 
-Run:
+Run the complete local checks on Windows from PowerShell:
+
+    .\scripts\run_quality_checks.ps1
+
+To install the declared dependencies into the currently active Python/Conda environment first:
+
+    .\scripts\run_quality_checks.ps1 -InstallDependencies
+
+The script compiles source and tests, runs the unit suite and checks the key CLI entry points. It does not replace opening the generated DOCX files in Microsoft Word.
+
+Individual commands:
 
     python -m unittest discover -s tests -v
-
-CLI help:
-
     python scripts/co_reviewer_cli.py --help

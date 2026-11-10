@@ -78,6 +78,18 @@ Inspect progress with:
 
 Mechanical verification checks the exact Word revision records. The Supervisor must still perform the scientific and cross-document review before changing an item to `verified`.
 
+## Local automated checks on Windows
+
+From PowerShell at any working directory, run:
+
+    .\scripts\run_quality_checks.ps1
+
+To install dependencies into the active Python/Conda environment before the checks:
+
+    .\scripts\run_quality_checks.ps1 -InstallDependencies
+
+This runs Python compilation, the complete unit suite and CLI entry-point checks. It does not automate Microsoft Word's visual/compatibility acceptance.
+
 ## Response Letter DOCX
 
 Generate an editable Word response letter from the revision plan:
