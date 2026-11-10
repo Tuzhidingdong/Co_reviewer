@@ -32,7 +32,7 @@ Use --comment-author only when filtering by the comment author's name. Do not fi
 
 ### Stage 2 — Build a revision plan
 
-Create a JSON plan following schemas/revision-plan.schema.json. Assign each reviewer concern a stable ID such as R2-C3. Each revision item may link multiple targets in Manuscript and SI. Record document role, input/output paths, Word XML part, paragraph index, precise existing text anchor, replacement and a readable location.
+Create a JSON plan following schemas/revision-plan.schema.json. Assign each reviewer concern a stable ID such as R2-C3. Each revision item may link multiple targets in Manuscript and SI. Record document role, input/output paths, Word XML part, paragraph index, precise existing text anchor, replacement and a readable location. For body text use `word/document.xml`; header/footer text uses its specific `word/headerN.xml` or `word/footerN.xml` part. The paragraph index is local to that part, so take it from that part's inventory entry rather than reusing a body index.
 
 Include the proposed response. Scientific content must be traceable to supplied data, figures, tables, calculations or verified sources.
 
