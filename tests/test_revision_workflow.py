@@ -113,6 +113,37 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(sealed["proposed_response"], "Updated response shown to and re-approved by the user.")
         self.assertEqual(cli.validate_plan(saved), [])
 
+    def test_approve_plan_refuses_unpreflighted_items(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        plan["revision_items"] = [plan["revision_items"][0]]
+        plan["revision_items"][0]["status"] = "planned"
+        plan["revision_items"][0].pop("approval_fingerprint", None)
+        plan["approved"] = False
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "has not passed source DOCX preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=["R1-C1"]))
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "planned")
+        self.assertFalse(self.output.exists())
+
+    def test_approve_plan_refuses_source_changed_since_preflight(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        make_docx(self.input, [[("old phrase", False)], [("Changed before approval.", False)]])
+        with self.assertRaisesRegex(ValueError, "Source DOCX changed after preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]]))
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "planned")
+        self.assertFalse(self.output.exists())
+
     def test_approved_item_fails_closed_after_its_scope_is_changed(self):
         plan = self._plan()
         plan["revision_items"][0]["targets"][0]["replace"] = "unapproved replacement"
