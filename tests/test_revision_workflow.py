@@ -75,11 +75,13 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(args.ids, ["R1-C1", "R2-C1"])
 
     def test_approve_plan_cli_seals_only_selected_items(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
         plan = self._plan()
         for item in plan["revision_items"]:
             item["status"] = "planned"
             item.pop("approval_fingerprint", None)
         plan["approved"] = False
+        cli.preflight_plan(plan)
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
         args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
         with contextlib.redirect_stdout(io.StringIO()):
@@ -95,9 +97,11 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(cli.validate_plan(saved), [])
 
     def test_approve_plan_reseals_an_edited_pending_approval(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
         plan = self._plan()
         first = plan["revision_items"][0]
         first["proposed_response"] = "Updated response shown to and re-approved by the user."
+        cli.preflight_plan(plan)
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
         args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
         with contextlib.redirect_stdout(io.StringIO()):
