@@ -549,7 +549,16 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             changed_items.append(item["id"])
         target["source_sha256"] = new_hash
 
-    document_reports = [entry["report"] for entry in prepared]
+    document_reports = []
+    for entry in prepared:
+        document_report = copy.deepcopy(entry["report"])
+        document_report["status"] = "preflighted"
+        document_report["edits_prepared"] = document_report.pop("edits_applied", 0)
+        for result in document_report.get("results", []):
+            result["status"] = "preflighted"
+            result.pop("delete_revision_id", None)
+            result.pop("insert_revision_id", None)
+        document_reports.append(document_report)
     results = [
         result
         for document_report in document_reports
@@ -870,7 +879,7 @@ def cmd_approve_plan(args):
     plan["approved"] = True
     write_json_atomic(plan_path, plan)
     print(f"[APPROVED] {len(requested)} revision item(s) sealed: {', '.join(requested)}")
-    print("[GUARD] Any later change to comments, proposed responses or document targets invalidates that item's approval.")
+    print("[GUARD] Any later change to comments, proposed responses, document targets or source DOCX versions invalidates that item's approval.")
     return 0
 
 
