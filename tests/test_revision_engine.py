@@ -404,6 +404,12 @@ class RevisionEngineTests(unittest.TestCase):
         paragraph = ET.SubElement(cell, q("p"))
         run = ET.SubElement(paragraph, q("r"))
         ET.SubElement(run, q("t")).text = "The table-cell value is outdated."
+        body.remove(table)
+        sect_pr = body.find("w:sectPr", cli.NS)
+        if sect_pr is not None:
+            body.insert(body.index(sect_pr), table)
+        else:
+            body.append(table)
         members["word/document.xml"] = ET.tostring(
             root, encoding="utf-8", xml_declaration=True
         )
