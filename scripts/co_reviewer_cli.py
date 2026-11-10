@@ -491,7 +491,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
     if errors:
-        raise ValueError("Revision plan validation failed:\\n- " + "\\n- ".join(errors))
+        raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
 
     eligible_items = [
         item for item in plan["revision_items"]
