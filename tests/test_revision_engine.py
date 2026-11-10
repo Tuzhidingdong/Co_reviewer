@@ -520,6 +520,105 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(report["validation"]["package_member_inventory"], "unchanged")
         self.assertEqual(report["validation"]["untouched_parts"], "byte-identical")
 
+    def test_one_revision_item_tracks_and_verifies_body_header_and_footer(self):
+        from docx import Document
+
+        document = Document()
+        document.add_paragraph("The electrolyte concentration was 0.5 M.")
+        section = document.sections[0]
+        section.header.paragraphs[0].text = "Manuscript ID: ABC-01"
+        section.footer.paragraphs[0].text = "Internal review copy 01"
+        document.save(self.input)
+
+        with zipfile.ZipFile(self.input) as archive:
+            names = set(archive.namelist())
+        self.assertIn("word/document.xml", names)
+        self.assertIn("word/header1.xml", names)
+        self.assertIn("word/footer1.xml", names)
+
+        plan = {
+            "schema_version": "1.0",
+            "approved": True,
+            "revision_items": [{
+                "id": "R1-C12",
+                "reviewer": "Reviewer 1",
+                "comment": "Keep the manuscript text and document labels consistent.",
+                "proposed_response": "We updated all three locations consistently.",
+                "status": "approved",
+                "targets": [
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                        "part": "word/document.xml",
+                        "p_idx": 0,
+                        "find": "0.5 M",
+                        "replace": "1.0 M",
+                        "location": "Main text"
+                    },
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                        "part": "word/header1.xml",
+                        "p_idx": 0,
+                        "find": "ABC-01",
+                        "replace": "ABC-02",
+                        "location": "Header"
+                    },
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                        "part": "word/footer1.xml",
+                        "p_idx": 0,
+                        "find": "Internal review copy 01",
+                        "replace": "Internal review copy 02",
+                        "location": "Footer"
+                    }
+                ]
+            }]
+        }
+        seal_approved_items(plan)
+        reports = cli.apply_plan(plan, "Test Author")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["edits_applied"], 3)
+        self.assertEqual(
+            {result["part"] for result in reports[0]["results"]},
+            {"word/document.xml", "word/header1.xml", "word/footer1.xml"}
+        )
+        self.assertEqual(
+            len({result["delete_revision_id"] for result in reports[0]["results"]}),
+            3
+        )
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, reports)
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 3)
+        self.assertEqual(verification["targets_verified"], 3)
+
+        with zipfile.ZipFile(self.output) as source:
+            for part, old, new in (
+                ("word/document.xml", "0.5 M", "1.0 M"),
+                ("word/header1.xml", "ABC-01", "ABC-02"),
+                ("word/footer1.xml", "Internal review copy 01", "Internal review copy 02")
+            ):
+                root = ET.fromstring(source.read(part))
+                deleted = "".join(
+                    node.text or "" for node in root.findall(".//w:del//w:delText", cli.NS)
+                )
+                inserted = "".join(
+                    node.text or "" for node in root.findall(".//w:ins//w:t", cli.NS)
+                )
+                self.assertIn(old, deleted)
+                self.assertIn(new, inserted)
+            self.assertIsNone(source.testzip())
+
+        reopened = Document(self.output)
+        self.assertIn("1.0 M", reopened.paragraphs[0].text)
+        self.assertIn("ABC-02", reopened.sections[0].header.paragraphs[0].text)
+        self.assertIn("Internal review copy 02", reopened.sections[0].footer.paragraphs[0].text)
+
     def test_inspector_indexes_plain_reviewer_paragraphs(self):
         make_docx(self.input, [[("Reviewer 1: Please clarify the mechanism.", False)], [("Please add the missing control experiment.", False)]])
         report = cli.inspect_docx(str(self.input))
