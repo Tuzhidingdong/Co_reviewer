@@ -6,6 +6,7 @@ import argparse
 import copy
 import json
 import io
+import hashlib
 import os
 import re
 import sys
@@ -411,7 +412,19 @@ def write_prepared_document(prepared: dict[str, Any]) -> dict[str, Any]:
 def apply_document(input_file: str, output_file: str, edits: list[dict[str, Any]], author: str) -> dict[str, Any]:
     return write_prepared_document(prepare_document(input_file, output_file, edits, author))
 
-def validate_plan(plan: Any, require_approval: bool = True) -> list[str]:
+def revision_item_fingerprint(item: dict[str, Any]) -> str:
+    """Fingerprint the exact reviewer-facing approval scope, excluding lifecycle metadata."""
+    payload = {
+        "id": item.get("id"),
+        "reviewer": item.get("reviewer"),
+        "comment": item.get("comment"),
+        "proposed_response": item.get("proposed_response", ""),
+        "targets": item.get("targets", []),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True) -> list[str]:
     errors = []
     if not isinstance(plan, dict): return ["Plan must be a JSON object."]
     if plan.get("schema_version") != "1.0": errors.append("schema_version must be '1.0'.")
@@ -432,8 +445,16 @@ def validate_plan(plan: Any, require_approval: bool = True) -> list[str]:
         if not isinstance(item.get("comment"), str) or not item["comment"].strip(): errors.append(f"{at}.comment is required.")
         if item.get("status") not in {"planned", "approved", "applied", "verified", "blocked"}:
             errors.append(f"{at}.status must be planned, approved, applied, verified or blocked.")
-        if item.get("status") in {"applied", "verified"} and plan.get("approved") is not True:
-            errors.append(f"{at}.approved state is inconsistent: applied/verified items require top-level approved=true.")
+        if item.get("status") in {"approved", "applied", "verified"}:
+            if plan.get("approved") is not True:
+                errors.append(f"{at}.approved state is inconsistent: approved/applied/verified items require top-level approved=true.")
+            if check_approval_integrity:
+                stored = item.get("approval_fingerprint")
+                expected = revision_item_fingerprint(item)
+                if not isinstance(stored, str) or stored != expected:
+                    errors.append(
+                        f"{at}.approval_fingerprint is missing or stale; re-approve this revision item before applying or verifying it."
+                    )
         targets = item.get("targets")
         if not isinstance(targets, list) or not targets: errors.append(f"{at}.targets must be non-empty."); continue
         for j, t in enumerate(targets):
@@ -668,6 +689,40 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
         if tmp and os.path.exists(tmp):
             os.unlink(tmp)
 
+def cmd_approve_plan(args):
+    plan_path = Path(args.plan)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    if errors:
+        raise ValueError("Cannot approve an invalid revision plan:\\n- " + "\\n- ".join(errors))
+
+    requested = list(dict.fromkeys(args.ids))
+    if not requested:
+        raise ValueError("Provide at least one revision item ID with --ids.")
+    by_id = {item.get("id"): item for item in plan["revision_items"]}
+    unknown = [item_id for item_id in requested if item_id not in by_id]
+    if unknown:
+        raise ValueError("Unknown revision item ID(s): " + ", ".join(unknown))
+
+    for item_id in requested:
+        state = by_id[item_id].get("status")
+        if state not in {"planned", "approved"}:
+            raise ValueError(
+                f"{item_id} is {state}; only planned or previously approved items can be approved. "
+                "Resolve/reopen the item explicitly before requesting approval again."
+            )
+
+    for item_id in requested:
+        item = by_id[item_id]
+        item["status"] = "approved"
+        item["approval_fingerprint"] = revision_item_fingerprint(item)
+    plan["approved"] = True
+    write_json_atomic(plan_path, plan)
+    print(f"[APPROVED] {len(requested)} revision item(s) sealed: {', '.join(requested)}")
+    print("[GUARD] Any later change to comments, proposed responses or document targets invalidates that item's approval.")
+    return 0
+
+
 def cmd_apply(args):
     plan_path = Path(args.plan)
     report_path = Path(args.report)
@@ -782,6 +837,10 @@ def build_parser():
     v = sub.add_parser("validate-plan", help="Validate a plan without editing files.")
     v.add_argument("--plan", required=True); v.add_argument("--allow-unapproved", action="store_true")
     v.set_defaults(func=cmd_validate)
+    ap = sub.add_parser("approve-plan", help="Record explicit user approval for selected revision items.")
+    ap.add_argument("--plan", required=True)
+    ap.add_argument("--ids", nargs="+", required=True, help="Revision item IDs explicitly approved by the user.")
+    ap.set_defaults(func=cmd_approve_plan)
     a = sub.add_parser("apply", help="Apply an approved plan to separate DOCX output files.")
     a.add_argument("--plan", required=True); a.add_argument("--author", default="Co_Reviewer")
     a.add_argument("--report", default="revision_apply_report.json"); a.set_defaults(func=cmd_apply)

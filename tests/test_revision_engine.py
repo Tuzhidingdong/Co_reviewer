@@ -36,6 +36,13 @@ def make_docx(path, chunks):
             archive.writestr(name, data)
     return members
 
+def seal_approved_items(plan):
+    for item in plan["revision_items"]:
+        if item.get("status") == "approved":
+            item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
+    return plan
+
+
 class RevisionEngineTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -103,6 +110,7 @@ class RevisionEngineTests(unittest.TestCase):
                 }]
             }]
         }
+        seal_approved_items(plan)
         reports = cli.apply_plan(plan, "Test Author")
         self.assertEqual(reports[0]["results"][0]["revision_item_id"], "R1-C1")
         verification = cli.verify_apply_report(plan, reports)
@@ -154,6 +162,7 @@ class RevisionEngineTests(unittest.TestCase):
                 }]
             }]
         }
+        seal_approved_items(plan)
         reports = cli.apply_plan(plan, "Test Author")
         edit = reports[0]["results"][0]
         self.assertGreater(edit["delete_revision_id"], 42)
@@ -206,6 +215,7 @@ class RevisionEngineTests(unittest.TestCase):
                 }
             ]
         }
+        seal_approved_items(plan)
         reports = cli.apply_plan(plan, "Test Author")
         edits = reports[0]["results"]
         self.assertEqual(len(edits), 2)
@@ -240,6 +250,7 @@ class RevisionEngineTests(unittest.TestCase):
                 }]
             }]
         }
+        seal_approved_items(plan)
         reports = cli.apply_plan(plan, "Test Author")
         edit = reports[0]["results"][0]
         self.assertIsNone(edit["insert_revision_id"])

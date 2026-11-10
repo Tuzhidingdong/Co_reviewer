@@ -30,7 +30,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _plan(self):
-        return {
+        plan = {
             "schema_version": "1.0",
             "approved": True,
             "revision_items": [
@@ -62,6 +62,39 @@ class RevisionWorkflowTests(unittest.TestCase):
                 }
             ]
         }
+        for item in plan["revision_items"]:
+            if item.get("status") == "approved":
+                item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
+        return plan
+
+    def test_approve_plan_cli_seals_only_selected_items(self):
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+        plan["approved"] = False
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_approve_plan(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertTrue(saved["approved"])
+        first, second = saved["revision_items"]
+        self.assertEqual(first["status"], "approved")
+        self.assertEqual(first["approval_fingerprint"], cli.revision_item_fingerprint(first))
+        self.assertEqual(second["status"], "planned")
+        self.assertNotIn("approval_fingerprint", second)
+        self.assertEqual(cli.validate_plan(saved), [])
+
+    def test_approved_item_fails_closed_after_its_scope_is_changed(self):
+        plan = self._plan()
+        plan["revision_items"][0]["targets"][0]["replace"] = "unapproved replacement"
+        errors = cli.validate_plan(plan)
+        self.assertTrue(any("approval_fingerprint" in error for error in errors))
+        with self.assertRaisesRegex(ValueError, "approval_fingerprint"):
+            cli.apply_plan(plan, "Test Author")
+        self.assertFalse(self.output.exists())
 
     def test_apply_only_approved_items_and_preserve_pending_items(self):
         make_docx(self.input, [[("old phrase and another old phrase", False)]])
@@ -124,6 +157,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         second_item["status"] = "approved"
         second_item["targets"][0]["input_file"] = str(self.output)
         second_item["targets"][0]["output_file"] = str(second_output)
+        second_item["approval_fingerprint"] = cli.revision_item_fingerprint(second_item)
         self.plan_path.write_text(json.dumps(after_first), encoding="utf-8")
 
         with contextlib.redirect_stdout(io.StringIO()):
