@@ -623,13 +623,13 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     source_hashes = {}
     for item in approved_items:
         expected_preflight = item.get("preflight_fingerprint")
-        if (
+        if expected_preflight is not None and (
             not isinstance(expected_preflight, str)
             or expected_preflight != revision_targets_fingerprint(item)
         ):
             raise ValueError(
-                f"{item_id} target scope has changed since preflight. "
-                "Run preflight-plan again and review its refreshed report before requesting approval."
+                f"{item['id']} target scope has changed since preflight. "
+                "Run preflight-plan again, review its refreshed report, and obtain renewed approval."
             )
         for target in item["targets"]:
             expected = target.get("source_sha256")
@@ -881,6 +881,15 @@ def cmd_approve_plan(args):
 
     for item_id in requested:
         item = by_id[item_id]
+        expected_preflight = item.get("preflight_fingerprint")
+        if (
+            not isinstance(expected_preflight, str)
+            or expected_preflight != revision_targets_fingerprint(item)
+        ):
+            raise ValueError(
+                f"{item_id} target scope has changed since preflight or has not been preflighted. "
+                "Run preflight-plan again and review its report before requesting approval."
+            )
         for target in item["targets"]:
             expected = target.get("source_sha256")
             if not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None:
