@@ -113,10 +113,10 @@ class RevisionEngineTests(unittest.TestCase):
         seal_approved_items(plan)
         reports = cli.apply_plan(plan, "Test Author")
         self.assertEqual(reports[0]["results"][0]["revision_item_id"], "R1-C1")
+        plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, reports)
         self.assertTrue(verification["passed"])
         self.assertEqual(verification["targets_verified"], 1)
-        plan["revision_items"][0]["status"] = "applied"
         draft = cli.render_response_letter(plan)
         self.assertIn("DRAFT (applied; not yet verified)", draft)
         self.assertIn("Section 3.2", draft)
@@ -182,6 +182,7 @@ class RevisionEngineTests(unittest.TestCase):
             for name, data in output_members.items():
                 archive.writestr(name, data)
 
+        plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, reports)
         self.assertFalse(verification["passed"])
         self.assertEqual(verification["results"][0]["status"], "failed")
@@ -221,6 +222,7 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(len(edits), 2)
         self.assertEqual(len({e["delete_revision_id"] for e in edits}), 2)
         self.assertEqual(len({e["insert_revision_id"] for e in edits}), 2)
+        plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, reports)
         self.assertTrue(verification["passed"])
         self.assertEqual(verification["targets_verified"], 2)
@@ -254,6 +256,7 @@ class RevisionEngineTests(unittest.TestCase):
         reports = cli.apply_plan(plan, "Test Author")
         edit = reports[0]["results"][0]
         self.assertIsNone(edit["insert_revision_id"])
+        plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, reports)
         self.assertTrue(verification["passed"])
         self.assertTrue(verification["results"][0]["checks"]["exact_deletion_match"])
