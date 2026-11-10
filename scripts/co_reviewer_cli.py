@@ -468,11 +468,107 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
             if isinstance(t.get("document"), str) and t["document"] not in {"Reviewers", "Manuscript", "SI", "Other"}:
                 errors.append(f"{tp}.document must be Reviewers, Manuscript, SI or Other.")
             if isinstance(t.get("find"), str) and not t["find"].strip(): errors.append(f"{tp}.find cannot be empty.")
+            if "source_sha256" in t and (
+                not isinstance(t["source_sha256"], str)
+                or re.fullmatch(r"[a-f0-9]{64}", t["source_sha256"]) is None
+            ):
+                errors.append(f"{tp}.source_sha256 must be a lowercase SHA-256 hex digest.")
             if "p_idx" in t and (not isinstance(t["p_idx"], int) or isinstance(t["p_idx"], bool) or t["p_idx"] < 0): errors.append(f"{tp}.p_idx must be a non-negative integer.")
             if "part" in t:
                 try: safe_part(str(t["part"]))
                 except ValueError as exc: errors.append(f"{tp}.part: {exc}")
     return errors
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).expanduser().open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") -> dict[str, Any]:
+    """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
+    errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    if errors:
+        raise ValueError("Revision plan validation failed:\\n- " + "\\n- ".join(errors))
+
+    eligible_items = [
+        item for item in plan["revision_items"]
+        if item.get("status") in {"planned", "approved"}
+    ]
+    if not eligible_items:
+        raise ValueError("No planned or approved revision items are available for preflight.")
+
+    grouped = defaultdict(list)
+    target_refs = []
+    for item in eligible_items:
+        for target in item["targets"]:
+            edit = {
+                "find": target["find"], "replace": target["replace"],
+                "part": target.get("part", "word/document.xml"),
+                "revision_item_id": item["id"], "reviewer": item["reviewer"],
+                "document": target["document"], "location": target.get("location", "")
+            }
+            if "p_idx" in target:
+                edit["p_idx"] = target["p_idx"]
+            grouped[(target["input_file"], target["output_file"])].append(edit)
+            target_refs.append((item, target))
+
+    outputs = [_canonical_artifact_path(out) for _, out in grouped]
+    inputs = [_canonical_artifact_path(inp) for inp, _ in grouped]
+    if len(outputs) != len(set(outputs)):
+        raise ValueError("Different input groups cannot write to the same output.")
+    if set(outputs) & set(inputs):
+        raise ValueError("An output path conflicts with an input path in this revision plan.")
+
+    source_paths = {
+        _canonical_artifact_path(inp): str(Path(inp).expanduser().resolve())
+        for inp, _ in grouped
+    }
+    source_hashes_before = {
+        key: sha256_file(path) for key, path in source_paths.items()
+    }
+
+    prepared = []
+    for (inp, out), edits in grouped.items():
+        prepared.append(prepare_document(inp, out, edits, author))
+
+    source_hashes_after = {
+        key: sha256_file(path) for key, path in source_paths.items()
+    }
+    if source_hashes_before != source_hashes_after:
+        raise ValueError("A source DOCX changed during preflight; no source fingerprints were recorded. Retry preflight.")
+
+    changed_items = []
+    for item, target in target_refs:
+        key = _canonical_artifact_path(target["input_file"])
+        new_hash = source_hashes_after[key]
+        previous_hash = target.get("source_sha256")
+        if item.get("status") == "approved" and previous_hash != new_hash:
+            changed_items.append(item["id"])
+        target["source_sha256"] = new_hash
+
+    document_reports = [entry["report"] for entry in prepared]
+    results = [
+        result
+        for document_report in document_reports
+        for result in document_report.get("results", [])
+    ]
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "passed": True,
+        "targets_total": len(target_refs),
+        "targets_preflighted": len(results),
+        "source_files": [
+            {"input_file": path, "sha256": source_hashes_after[key]}
+            for key, path in source_paths.items()
+        ],
+        "approval_scope_changed_items": sorted(set(changed_items)),
+        "documents": document_reports,
+        "results": results
+    }
+
 
 def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     errors = validate_plan(plan, True)
@@ -495,11 +591,34 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     inputs = [str(Path(inp).expanduser().resolve()) for inp, _ in grouped]
     if len(outputs) != len(set(outputs)): raise ValueError("Different input groups cannot write to the same output.")
     if set(outputs) & set(inputs): raise ValueError("An output path conflicts with an input path in this revision plan.")
+    # Verify each preflighted source file before and after preparing the edits.
+    # The approval fingerprint covers source_sha256 when it is present.
+    source_hashes = {}
+    for item in approved_items:
+        for target in item["targets"]:
+            expected = target.get("source_sha256")
+            if expected is None:
+                continue  # Backward compatibility for plans created before source preflight.
+            source_path = str(Path(target["input_file"]).expanduser().resolve())
+            actual = sha256_file(source_path)
+            if actual != expected:
+                raise ValueError(
+                    f"Source DOCX changed since preflight for {item['id']}: {source_path}. "
+                    "Run preflight-plan again, review the refreshed plan, and obtain renewed approval."
+                )
+            source_hashes[source_path] = expected
+
     # Prepare every document in memory first. A bad target in a later file therefore
     # cannot leave earlier output files partially generated.
     prepared = []
     for (inp, out), edits in grouped.items():
         prepared.append(prepare_document(inp, out, edits, author))
+
+    for source_path, expected in source_hashes.items():
+        if sha256_file(source_path) != expected:
+            raise ValueError(
+                f"Source DOCX changed during apply preparation: {source_path}. No output was written."
+            )
     return [write_prepared_document(item) for item in prepared]
 
 
@@ -688,6 +807,26 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
     finally:
         if tmp and os.path.exists(tmp):
             os.unlink(tmp)
+
+def cmd_preflight(args):
+    plan_path = Path(args.plan)
+    report_path = Path(args.out)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    validate_apply_artifact_paths(plan, plan_path, report_path)
+    report = preflight_plan(plan, args.author)
+
+    # Persist the input-version fingerprints first. If report persistence then
+    # fails, the plan remains safe but the user can simply rerun preflight.
+    write_json_atomic(plan_path, plan)
+    write_json_atomic(report_path, report)
+    print(f"[PREFLIGHT] {report['targets_preflighted']}/{report['targets_total']} target(s) are safe to apply.")
+    print(f"[SOURCE] SHA-256 fingerprints recorded for {len(report['source_files'])} source DOCX file(s).")
+    if report["approval_scope_changed_items"]:
+        print("[REAPPROVAL] Source versions changed for already-approved item(s): " + ", ".join(report["approval_scope_changed_items"]))
+    print(f"[OK] report: {report_path}")
+    print("[NOTE] Preflight does not edit DOCX files or grant approval.")
+    return 0
+
 
 def cmd_approve_plan(args):
     plan_path = Path(args.plan)
@@ -886,6 +1025,11 @@ def build_parser():
     v = sub.add_parser("validate-plan", help="Validate a plan without editing files.")
     v.add_argument("--plan", required=True); v.add_argument("--allow-unapproved", action="store_true")
     v.set_defaults(func=cmd_validate)
+    pf = sub.add_parser("preflight-plan", help="Check revision targets and bind approval to source DOCX versions without editing files.")
+    pf.add_argument("--plan", required=True)
+    pf.add_argument("--out", default="preflight_report.json")
+    pf.add_argument("--author", default="Co_Reviewer Preflight")
+    pf.set_defaults(func=cmd_preflight)
     ap = sub.add_parser("approve-plan", help="Record explicit user approval for selected revision items.")
     ap.add_argument("--plan", required=True)
     ap.add_argument("--ids", nargs="+", required=True, help="Revision item IDs explicitly approved by the user.")
