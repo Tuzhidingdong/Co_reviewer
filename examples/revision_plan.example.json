@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "approved": false,
+  "revision_items": [
+    {
+      "id": "R2-C3",
+      "reviewer": "Reviewer 2",
+      "comment": "Further evidence is required to support the proposed reaction mechanism.",
+      "proposed_response": "We plan to add additional evidence and clarify the mechanism.",
+      "status": "planned",
+      "targets": [
+        {
+          "document": "Manuscript",
+          "input_file": "input/Manuscript.docx",
+          "output_file": "output/Manuscript_revised.docx",
+          "part": "word/document.xml",
+          "p_idx": 42,
+          "location": "Section 3.2",
+          "find": "The proposed mechanism is supported by the results.",
+          "replace": "The proposed mechanism is further supported by the additional evidence."
+        },
+        {
+          "document": "SI",
+          "input_file": "input/SI.docx",
+          "output_file": "output/SI_revised.docx",
+          "part": "word/document.xml",
+          "p_idx": 86,
+          "location": "Figure S12 caption",
+          "find": "Figure S12. Original caption.",
+          "replace": "Figure S12. Revised caption with the additional evidence."
+        }
+      ]
+    }
+  ]
+}

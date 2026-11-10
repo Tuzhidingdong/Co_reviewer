@@ -1,0 +1,40 @@
+name: Co_Reviewer tests
+
+on:
+  push:
+    branches:
+      - main
+      - "upgrade/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: co-reviewer-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Check the declared minimum and the current user-relevant Python version.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile
+        run: python -m py_compile scripts/co_reviewer_cli.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: CLI help
+        run: python scripts/co_reviewer_cli.py --help
