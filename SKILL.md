@@ -36,11 +36,19 @@ Create a JSON plan following schemas/revision-plan.schema.json. Assign each revi
 
 Include the proposed response. Scientific content must be traceable to supplied data, figures, tables, calculations or verified sources.
 
+### Stage 2.5 — Preflight the source documents
+
+Before asking for approval, run the no-write preflight:
+
+    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan.json --out preflight_report.json
+
+This checks that all planned/approved anchors are unique and safely editable, prepares the proposed edits in memory without writing any DOCX, and records a SHA-256 fingerprint of each exact input DOCX in the relevant targets. Present the preflight result and affected source files to the user. A failed preflight blocks approval/application until the target is corrected. If a source DOCX changes later, rerun preflight and obtain renewed approval for every affected item.
+
 ### Stage 3 — User review and approval
 
 Present the reviewer comment, proposed response, affected files/locations, exact proposed edits, evidence questions and conflicts. Ask the user to approve or revise the plan. Approval may be partial: only selected revision items should be marked approved.
 
-Approval may be partial. Confirm the exact Revision Item IDs that the user approved; do not manually edit status or fingerprint fields. Stage 4 records this approval with `approve-plan`. Any later change to a comment, proposed response or target invalidates that item's approval, and the revised scope must be shown to the user and approved again. A planned/unapproved task must never be applied.
+Approval may be partial. Confirm the exact Revision Item IDs that the user approved; do not manually edit status or fingerprint fields. Stage 4 records this approval with `approve-plan`. Any later change to a comment, proposed response, target or preflighted source DOCX version invalidates that item's approval, and the revised scope must be shown to the user and approved again. A planned/unapproved task must never be applied.
 
 ### Stage 4 — Apply
 
