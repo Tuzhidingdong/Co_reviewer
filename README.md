@@ -28,7 +28,7 @@ Validate the draft plan and preflight every target before approval:
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json --allow-unapproved
     python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan.json --out preflight_report.json
 
-Preflight checks all planned anchors without writing DOCX files and records the SHA-256 of each exact input DOCX in the plan. Review the preflight report with the proposed edits before asking the user to approve selected Revision Item IDs. Then record that approval with `approve-plan`. Its fingerprint binds the reviewer comment, proposed response, linked targets and preflighted source versions. Changes to any of these require renewed user approval. The fingerprint detects workflow drift; it is not a cryptographic signature or user-identity proof. Then validate and apply only the sealed items:
+Preflight checks all planned anchors without writing DOCX files, records the SHA-256 of each exact input DOCX, and fingerprints the complete target set in the plan. Review the preflight report with the proposed edits before asking the user to approve selected Revision Item IDs. Then record that approval with `approve-plan`. Its fingerprint binds the reviewer comment, proposed response, linked targets and preflighted source versions. Changes to any of these require renewed user approval. The fingerprint detects workflow drift; it is not a cryptographic signature or user-identity proof. Then validate and apply only the sealed items:
 
     python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids R2-C3 R3-C1
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
