@@ -397,6 +397,7 @@ class RevisionEngineTests(unittest.TestCase):
                 }
             ]
         }
+        seal_approved_items(plan)
         with self.assertRaisesRegex(ValueError, "not found"):
             cli.apply_plan(plan, "Test Author")
         self.assertFalse(first_output.exists())

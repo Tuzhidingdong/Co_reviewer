@@ -9,7 +9,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Inspects DOCX comments, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
 - Produces a compact Markdown digest and a full machine-readable paragraph/comment inventory; ordinary prose in a Reviewer Comments DOCX is not mistaken for Word-native comments.
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
-- Requires explicit human approval before applying edits.
+- Requires explicit human approval before applying edits; a SHA-256 fingerprint binds approval to the exact reviewer comment, proposed response and document targets.
 - Applies Word-native insertions and deletions while preserving unaffected run formatting and package parts.
 - Preserves hyperlink relationships when an edit is wholly contained in a single simple hyperlink; fails closed when a target crosses a hyperlink boundary or unsupported Word structure.
 - Validates the output ZIP package and XML before writing the revised DOCX.
@@ -27,8 +27,9 @@ Validate the draft plan before approval:
 
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json --allow-unapproved
 
-After the user approves a subset of the plan, set top-level approved to true and mark only the selected revision items as `approved`. Validate the plan, then apply. The CLI applies only approved items and automatically changes their status to `applied`; remaining planned items are left untouched:
+After the user explicitly approves a subset, record that approval with `approve-plan`. It fingerprints the exact reviewer comment, proposed response and linked document targets; any later change invalidates the approval and requires renewed user approval. Then validate and apply only the sealed items:
 
+    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids R2-C3 R3-C1
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
     python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json
 
@@ -90,3 +91,4 @@ Individual commands:
 
     python -m unittest discover -s tests -v
     python scripts/co_reviewer_cli.py --help
+    python scripts/co_reviewer_cli.py approve-plan --help

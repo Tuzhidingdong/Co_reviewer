@@ -37,9 +37,9 @@ Use paragraph indices from the latest inventory. A target must be unique within 
 
 ## Incremental approval and application
 
-A revision plan may contain a mixture of `planned`, `approved`, `applied`, `verified` and `blocked` items. Set the plan-level `approved` flag to `true` only after the user has approved the plan. The apply command processes **only** items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` in the plan file automatically. This permits a later iteration to approve and apply only the remaining items without reapplying completed edits.
+A revision plan may contain a mixture of `planned`, `approved`, `applied`, `verified` and `blocked` items. After the user approves selected items, run `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. This command records a SHA-256 fingerprint over each selected item's reviewer, original comment, proposed response and complete target list. `validate-plan` and `apply` reject an item whose approval fingerprint is missing or stale. Any later change to those approval-scoped fields requires renewed user approval and a new fingerprint. The apply command processes only sealed items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` automatically.
 
-Use `status --plan plan/edits_plan.json` to inspect the current task summary. After mechanical verification and a separate scientific/semantic review, the Supervisor may mark the corresponding items `verified` in the plan.
+Use `status --plan plan/edits_plan.json` to inspect the current task summary. Record user approval for a selected subset with `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. After mechanical verification and a separate scientific/semantic review, the Supervisor may mark the corresponding items `verified` in the plan.
 
 ## Completion states
 

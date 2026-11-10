@@ -46,7 +46,8 @@ Only after explicit approval, set top-level approved=true and the selected items
 
 Validate:
 
-    python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
+    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids R2-C3 R3-C1
+python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
 
 Then apply:
 
