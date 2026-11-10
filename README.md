@@ -17,7 +17,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 
 ## Quick start
 
-Python 3.10+ and lxml 5+ are required. Install dependencies with: python -m pip install -r requirements.txt.
+Python 3.10+ is required. Install the DOCX/XML dependencies with: python -m pip install -r requirements.txt.
 
 PowerShell:
 
@@ -32,7 +32,7 @@ After the user approves a subset of the plan, set top-level approved to true and
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
     python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json
 
-After a successful apply, change the affected plan items from approved to applied. Verify the exact Word revision IDs and text:
+The apply command automatically persists successfully applied items as `applied` in the plan. Reuse the same report path for subsequent incremental iterations; each run is appended so the full revision history remains available. Verify the exact Word revision IDs and text:
 
     python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
 
@@ -47,9 +47,10 @@ See examples/revision_plan.example.json and docs/WORKFLOW.md.
 ## Safe revision engine: supported scope
 
 - A target must occur exactly once in its selected paragraph.
-- The target must be contained in a contiguous sequence of plain text runs that are direct children of that paragraph.
-- Existing run properties on text before, inside and after the target are retained.
-- Targets crossing hyperlinks, fields, drawings, bookmarks, content controls or other complex structures are refused rather than guessed.
+- Ordinary paragraph and table-cell text can be edited when the target is contained in a contiguous sequence of supported plain-text runs.
+- Text wholly contained in one simple hyperlink can be edited inside the hyperlink wrapper while preserving its relationship ID.
+- Existing run properties on text before, inside and after the target are retained where supported.
+- Targets crossing hyperlink boundaries, fields, drawings, bookmarks, content controls or other unsupported complex structures are refused rather than guessed.
 - Input files are never overwritten; output paths must be separate.
 - Untouched DOCX package members are checked byte-for-byte, and the package member inventory must remain unchanged.
 
