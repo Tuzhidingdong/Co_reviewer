@@ -163,6 +163,16 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertIn("\n- ", str(caught.exception))
         self.assertNotIn("\\n- ", str(caught.exception))
 
+    def test_source_docx_fingerprint_must_be_a_lowercase_sha256(self):
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+            item["targets"][0]["source_sha256"] = "not-a-sha256"
+        plan["approved"] = False
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(any("source_sha256" in error for error in errors))
+
     def test_preflight_cli_records_source_hashes_and_does_not_write_docx_outputs(self):
         make_docx(self.input, [[("old phrase and another old phrase", False)]])
         plan = self._plan()
