@@ -554,12 +554,20 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
 
     changed_items = []
     for item in eligible_items:
+        source_version_changed = False
         for target in item["targets"]:
             key = _canonical_artifact_path(target["input_file"])
-            target["source_sha256"] = source_hashes_after[key]
+            new_hash = source_hashes_after[key]
+            if target.get("source_sha256") != new_hash:
+                source_version_changed = True
+            target["source_sha256"] = new_hash
         new_fingerprint = revision_targets_fingerprint(item)
         previous_fingerprint = item.get("preflight_fingerprint")
-        if item.get("status") == "approved" and previous_fingerprint != new_fingerprint:
+        target_scope_changed = (
+            previous_fingerprint is not None
+            and previous_fingerprint != new_fingerprint
+        )
+        if item.get("status") == "approved" and (source_version_changed or target_scope_changed):
             changed_items.append(item["id"])
         item["preflight_fingerprint"] = new_fingerprint
 
