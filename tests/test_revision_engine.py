@@ -456,6 +456,70 @@ class RevisionEngineTests(unittest.TestCase):
             self.assertEqual(deleted, "The table-cell value is outdated.")
             self.assertEqual(inserted, "The table-cell value is updated.")
 
+    def test_real_python_docx_package_remains_openable_after_tracked_revision(self):
+        from docx import Document
+
+        document = Document()
+        document.add_heading("Results", level=1)
+        paragraph = document.add_paragraph()
+        paragraph.add_run("The electrolyte concentration was ")
+        emphasized = paragraph.add_run("0.5 M")
+        emphasized.bold = True
+        paragraph.add_run(" during cycling.")
+        table = document.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        table.cell(0, 0).text = "Sample"
+        table.cell(0, 1).text = "ZnSO4"
+        section = document.sections[0]
+        section.header.paragraphs[0].text = "Co_Reviewer package fixture"
+        section.footer.paragraphs[0].text = "Internal review copy"
+        document.core_properties.title = "DOCX integration fixture"
+        document.save(self.input)
+
+        report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 1,
+            "find": "0.5 M",
+            "replace": "1.0 M"
+        }], "Test Author")
+
+        reopened = Document(self.output)
+        self.assertEqual(reopened.core_properties.title, "DOCX integration fixture")
+        self.assertEqual(reopened.paragraphs[0].style.name, "Heading 1")
+        self.assertEqual(reopened.tables[0].cell(0, 0).text, "Sample")
+        self.assertEqual(reopened.tables[0].cell(0, 1).text, "ZnSO4")
+        self.assertEqual(reopened.sections[0].header.paragraphs[0].text, "Co_Reviewer package fixture")
+        self.assertEqual(reopened.sections[0].footer.paragraphs[0].text, "Internal review copy")
+
+        with zipfile.ZipFile(self.input) as source, zipfile.ZipFile(self.output) as revised:
+            self.assertEqual(set(source.namelist()), set(revised.namelist()))
+            for name in source.namelist():
+                if name != "word/document.xml":
+                    self.assertEqual(source.read(name), revised.read(name), name)
+
+            root = ET.fromstring(revised.read("word/document.xml"))
+            body_paragraphs = root.findall(".//w:body//w:p", cli.NS)
+            target_paragraph = body_paragraphs[1]
+            deletion = target_paragraph.find(".//w:del", cli.NS)
+            insertion = target_paragraph.find(".//w:ins", cli.NS)
+            self.assertIsNotNone(deletion)
+            self.assertIsNotNone(insertion)
+            self.assertEqual(deletion.get(q("author")), "Test Author")
+            self.assertEqual(insertion.get(q("author")), "Test Author")
+            self.assertTrue(deletion.get(q("date")))
+            self.assertTrue(insertion.get(q("date")))
+            self.assertEqual(
+                "".join(node.text or "" for node in deletion.findall(".//w:delText", cli.NS)),
+                "0.5 M"
+            )
+            self.assertEqual(
+                "".join(node.text or "" for node in insertion.findall(".//w:t", cli.NS)),
+                "1.0 M"
+            )
+            self.assertIsNotNone(insertion.find(".//w:rPr/w:b", cli.NS))
+
+        self.assertEqual(report["validation"]["package_member_inventory"], "unchanged")
+        self.assertEqual(report["validation"]["untouched_parts"], "byte-identical")
+
     def test_inspector_indexes_plain_reviewer_paragraphs(self):
         make_docx(self.input, [[("Reviewer 1: Please clarify the mechanism.", False)], [("Please add the missing control experiment.", False)]])
         report = cli.inspect_docx(str(self.input))
