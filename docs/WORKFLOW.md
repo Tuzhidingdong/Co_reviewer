@@ -35,9 +35,15 @@ For a local request, include only affected revision items and targets. Do not re
 
 Use paragraph indices from the latest inventory. For body text, target `word/document.xml`; for header or footer text, target its specific `word/headerN.xml` or `word/footerN.xml` part and use the index reported within that part. Never reuse a body paragraph index for a header/footer target. A target must be unique within its paragraph. Do not shorten the anchor to a generic phrase. A replacement wholly contained within one simple hyperlink is supported and retains the hyperlink wrapper and relationship. A replacement crossing the hyperlink boundary, field, drawing, bookmark or content control is refused. Report the limitation; do not disable validation.
 
-## Incremental approval and application
+## Source preflight and incremental approval
 
-A revision plan may contain a mixture of `planned`, `approved`, `applied`, `verified` and `blocked` items. After the user approves selected items, run `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. This command records a SHA-256 fingerprint over each selected item's reviewer, original comment, proposed response and complete target list. It detects stale approval scope but is not a cryptographic signature or identity proof; the Supervisor must invoke it only after explicit user approval. `validate-plan` and `apply` reject an item whose approval fingerprint is missing or stale. Any later change to those approval-scoped fields requires renewed user approval and a new fingerprint. The apply command processes only sealed items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` automatically.
+Before requesting approval for planned items, run the no-write preflight:
+
+    python scripts/co_reviewer_cli.py preflight-plan --plan plan/edits_plan.json --out reports/preflight_report.json
+
+The command validates every planned/approved anchor by preparing the edits in memory; it does not write or modify any DOCX. On success, it records a SHA-256 hash of each exact input DOCX in the corresponding targets and reports the target-level preflight results. Review this report with the revision plan before asking the user to approve specific Revision Item IDs.
+
+After the user approves selected items, run `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. The approval fingerprint covers each selected item's reviewer, original comment, proposed response and complete target list, including the source DOCX hashes recorded by preflight. It detects stale approval scope but is not a cryptographic signature or identity proof. `validate-plan` and `apply` reject an item whose approval fingerprint is missing or stale. Apply also rechecks the exact source DOCX bytes before and after preparing the edits. If a source DOCX changes after preflight/approval, run preflight again, show the refreshed source version to the user and obtain renewed approval. The apply command processes only sealed items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` automatically.
 
 Use `status --plan plan/edits_plan.json` to inspect the current task summary. Record user approval for a selected subset with `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. After mechanical verification and a separate scientific/semantic review, the Supervisor may mark the corresponding items `verified` in the plan.
 
