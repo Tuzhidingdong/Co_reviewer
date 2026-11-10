@@ -747,8 +747,10 @@ def validate_apply_artifact_paths(
     report_key = _canonical_artifact_path(report_path)
     if plan_key == report_key:
         raise ValueError("The revision plan and apply report must use different file paths.")
+    if not isinstance(plan, dict) or not isinstance(plan.get("revision_items"), list):
+        return  # Let the normal revision-plan validator produce the schema error.
 
-    for item in plan.get("revision_items", []):
+    for item in plan["revision_items"]:
         if not isinstance(item, dict):
             continue
         for target in item.get("targets", []):
