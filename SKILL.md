@@ -40,7 +40,7 @@ Include the proposed response. Scientific content must be traceable to supplied 
 
 Present the reviewer comment, proposed response, affected files/locations, exact proposed edits, evidence questions and conflicts. Ask the user to approve or revise the plan. Approval may be partial: only selected revision items should be marked approved.
 
-Only after explicit approval, run `approve-plan --plan edits_plan.json --ids R2-C3 R3-C1` for the selected items. This command records a SHA-256 fingerprint over each approved item's reviewer, original comment, proposed response and complete target list. `validate-plan` and `apply` reject missing or stale fingerprints. Any change to an approved item's comment, response or target invalidates the approval; present the revised item to the user and run `approve-plan` again only after renewed approval. A planned/unapproved task must never be applied.
+Approval may be partial. Confirm the exact Revision Item IDs that the user approved; do not manually edit status or fingerprint fields. Stage 4 records this approval with `approve-plan`. Any later change to a comment, proposed response or target invalidates that item's approval, and the revised scope must be shown to the user and approved again. A planned/unapproved task must never be applied.
 
 ### Stage 4 — Apply
 
