@@ -526,8 +526,8 @@ class RevisionEngineTests(unittest.TestCase):
         document = Document()
         document.add_paragraph("The electrolyte concentration was 0.5 M.")
         section = document.sections[0]
-        section.header.paragraphs[0].text = "Manuscript ID: ABC-01"
-        section.footer.paragraphs[0].text = "Internal review copy 01"
+        section.header.paragraphs[0].text = "Manuscript ID: ABC-01 | archive"
+        section.footer.paragraphs[0].text = "Internal review copy 01 - confidential"
         document.save(self.input)
 
         with zipfile.ZipFile(self.input) as archive:
@@ -615,9 +615,16 @@ class RevisionEngineTests(unittest.TestCase):
             self.assertIsNone(source.testzip())
 
         reopened = Document(self.output)
-        self.assertIn("1.0 M", reopened.paragraphs[0].text)
-        self.assertIn("ABC-02", reopened.sections[0].header.paragraphs[0].text)
-        self.assertIn("Internal review copy 02", reopened.sections[0].footer.paragraphs[0].text)
+        # python-docx intentionally does not interpret w:ins/w:del as ordinary
+        # run content. Reopening proves package readability; raw XML assertions
+        # above verify the inserted tracked text itself.
+        self.assertEqual(
+            reopened.paragraphs[0].text, "The electrolyte concentration was ."
+        )
+        self.assertIn("Manuscript ID: ", reopened.sections[0].header.paragraphs[0].text)
+        self.assertIn(" | archive", reopened.sections[0].header.paragraphs[0].text)
+        self.assertIn("Internal review copy ", reopened.sections[0].footer.paragraphs[0].text)
+        self.assertIn(" - confidential", reopened.sections[0].footer.paragraphs[0].text)
 
     def test_inspector_indexes_plain_reviewer_paragraphs(self):
         make_docx(self.input, [[("Reviewer 1: Please clarify the mechanism.", False)], [("Please add the missing control experiment.", False)]])
