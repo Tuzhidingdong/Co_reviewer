@@ -852,6 +852,22 @@ def cmd_approve_plan(args):
     if unknown:
         raise ValueError("Unknown revision item ID(s): " + ", ".join(unknown))
 
+    for item_id in requested:
+        item = by_id[item_id]
+        for target in item["targets"]:
+            expected = target.get("source_sha256")
+            if not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None:
+                raise ValueError(
+                    f"{item_id} has not passed source DOCX preflight. "
+                    "Run preflight-plan and review its report before requesting approval."
+                )
+            actual = sha256_file(target["input_file"])
+            if actual != expected:
+                raise ValueError(
+                    f"Source DOCX changed after preflight for {item_id}: {target['input_file']}. "
+                    "Run preflight-plan again and review the refreshed source version before approval."
+                )
+
     selected = set(requested)
     for item in plan["revision_items"]:
         state = item.get("status")
