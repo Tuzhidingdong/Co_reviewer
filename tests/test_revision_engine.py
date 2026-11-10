@@ -392,6 +392,49 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertFalse(second_output.exists())
 
 
+    def test_table_cell_text_is_revised_without_flattening_table_structure(self):
+        make_docx(self.input, [[("document placeholder", False)]])
+        with zipfile.ZipFile(self.input, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(members["word/document.xml"])
+        body = root.find(".//w:body", cli.NS)
+        table = ET.SubElement(body, q("tbl"))
+        row = ET.SubElement(table, q("tr"))
+        cell = ET.SubElement(row, q("tc"))
+        paragraph = ET.SubElement(cell, q("p"))
+        run = ET.SubElement(paragraph, q("r"))
+        ET.SubElement(run, q("t")).text = "The table-cell value is outdated."
+        members["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.input, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+
+        cli.apply_document(str(self.input), str(self.output), [{
+            "find": "The table-cell value is outdated.",
+            "replace": "The table-cell value is updated."
+        }], "Test Author")
+
+        with zipfile.ZipFile(self.output) as archive:
+            output_root = ET.fromstring(archive.read("word/document.xml"))
+            table = output_root.find(".//w:tbl", cli.NS)
+            self.assertIsNotNone(table)
+            self.assertEqual(len(table.findall(".//w:tr", cli.NS)), 1)
+            self.assertEqual(len(table.findall(".//w:tc", cli.NS)), 1)
+            self.assertEqual(
+                cli.visible_text(table.find(".//w:p", cli.NS)),
+                "The table-cell value is updated."
+            )
+            deleted = "".join(
+                node.text or "" for node in table.findall(".//w:del//w:delText", cli.NS)
+            )
+            inserted = "".join(
+                node.text or "" for node in table.findall(".//w:ins/w:r/w:t", cli.NS)
+            )
+            self.assertEqual(deleted, "The table-cell value is outdated.")
+            self.assertEqual(inserted, "The table-cell value is updated.")
+
     def test_inspector_indexes_plain_reviewer_paragraphs(self):
         make_docx(self.input, [[("Reviewer 1: Please clarify the mechanism.", False)], [("Please add the missing control experiment.", False)]])
         report = cli.inspect_docx(str(self.input))
