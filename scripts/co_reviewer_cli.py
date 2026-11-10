@@ -694,7 +694,7 @@ def cmd_approve_plan(args):
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
     if errors:
-        raise ValueError("Cannot approve an invalid revision plan:\\n- " + "\\n- ".join(errors))
+        raise ValueError("Cannot approve an invalid revision plan:\n- " + "\n- ".join(errors))
 
     requested = list(dict.fromkeys(args.ids))
     if not requested:
@@ -735,10 +735,45 @@ def cmd_approve_plan(args):
     return 0
 
 
+def _canonical_artifact_path(value: str | Path) -> str:
+    return os.path.normcase(str(Path(value).expanduser().resolve()))
+
+
+def validate_apply_artifact_paths(
+    plan: dict[str, Any], plan_path: str | Path, report_path: str | Path
+) -> None:
+    """Prevent JSON workflow artifacts from colliding with any referenced DOCX."""
+    plan_key = _canonical_artifact_path(plan_path)
+    report_key = _canonical_artifact_path(report_path)
+    if plan_key == report_key:
+        raise ValueError("The revision plan and apply report must use different file paths.")
+
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, dict):
+            continue
+        for target in item.get("targets", []):
+            if not isinstance(target, dict):
+                continue
+            for field, label in (("input_file", "DOCX input"), ("output_file", "DOCX output")):
+                value = target.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                key = _canonical_artifact_path(value)
+                if key == plan_key:
+                    raise ValueError(
+                        f"The revision plan path conflicts with a referenced {label}: {value}"
+                    )
+                if key == report_key:
+                    raise ValueError(
+                        f"The apply report path conflicts with a referenced {label}: {value}"
+                    )
+
+
 def cmd_apply(args):
     plan_path = Path(args.plan)
     report_path = Path(args.report)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    validate_apply_artifact_paths(plan, plan_path, report_path)
 
     # Keep an append-only report history across incremental revision iterations.
     # Load and validate it before writing any new DOCX output files.
