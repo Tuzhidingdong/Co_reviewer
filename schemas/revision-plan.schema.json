@@ -21,7 +21,7 @@
           "approval_fingerprint": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$",
-            "description": "SHA-256 fingerprint of the exact reviewer comment, proposed response and linked document targets approved by the user."
+            "description": "SHA-256 fingerprint of the exact reviewer comment, proposed response and linked document targets, including source DOCX hashes recorded by preflight-plan when present."
           },
           "status": { "enum": ["planned", "approved", "applied", "verified", "blocked"] },
           "targets": {
@@ -38,7 +38,12 @@
                 "p_idx": { "type": "integer", "minimum": 0 },
                 "location": { "type": "string" },
                 "find": { "type": "string", "minLength": 1 },
-                "replace": { "type": "string" }
+                "replace": { "type": "string" },
+                "source_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$",
+                  "description": "SHA-256 of the exact input DOCX bytes recorded by preflight-plan and bound into user approval."
+                }
               },
               "additionalProperties": false
             }
