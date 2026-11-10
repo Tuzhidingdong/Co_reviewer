@@ -189,6 +189,18 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(report["targets_total"], 2)
         self.assertEqual(report["targets_preflighted"], 2)
         self.assertEqual(report["source_files"][0]["sha256"], expected_hash)
+        self.assertTrue(all(
+            result["status"] == "preflighted"
+            and "delete_revision_id" not in result
+            and "insert_revision_id" not in result
+            for result in report["results"]
+        ))
+        self.assertTrue(all(
+            document_report["status"] == "preflighted"
+            and document_report["edits_prepared"] == document_report["edits_requested"]
+            and "edits_applied" not in document_report
+            for document_report in report["documents"]
+        ))
         for item in saved["revision_items"]:
             self.assertEqual(item["status"], "planned")
             self.assertEqual(item["targets"][0]["source_sha256"], expected_hash)
