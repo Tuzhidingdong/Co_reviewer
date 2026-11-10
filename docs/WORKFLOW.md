@@ -58,7 +58,7 @@ Run the mechanical check after applying the plan:
 
     python scripts/co_reviewer_cli.py verify --plan plan/edits_plan.json --apply-report output/revision_apply_report.json --out reports/revision_verification.json
 
-Keep using the same `output/revision_apply_report.json` path for subsequent incremental iterations so each run is appended to the report history.
+Keep using the same `output/revision_apply_report.json` path for subsequent incremental iterations so each run is appended to the report history. The CLI rejects plan/report paths that collide with any referenced DOCX input or output before writing documents.
 
 This verifies the exact Word revision IDs recorded by the apply report and checks that those specific deletion/insertion elements contain the expected text. It does **not** decide whether the new scientific explanation is correct.
 
