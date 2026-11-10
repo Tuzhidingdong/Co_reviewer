@@ -42,7 +42,7 @@ Before asking for approval, run the no-write preflight:
 
     python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan.json --out preflight_report.json
 
-This checks that all planned/approved anchors are unique and safely editable, prepares the proposed edits in memory without writing any DOCX, and records a SHA-256 fingerprint of each exact input DOCX in the relevant targets. Present the preflight result and affected source files to the user. A failed preflight blocks approval/application until the target is corrected. If a source DOCX changes later, rerun preflight and obtain renewed approval for every affected item.
+This checks that all planned/approved anchors are unique and safely editable, prepares the proposed edits in memory without writing any DOCX, records a SHA-256 fingerprint of each exact input DOCX in the relevant targets, and stores an item-level fingerprint over the complete preflighted target set. Present the preflight result and affected source files to the user. A failed preflight blocks approval/application until the target is corrected. If a source DOCX or any target field changes later, rerun preflight and obtain renewed approval for every affected item.
 
 ### Stage 3 — User review and approval
 
