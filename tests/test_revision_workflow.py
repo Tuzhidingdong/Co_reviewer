@@ -1,8 +1,11 @@
+import contextlib
+import io
 import json
 import sys
 import tempfile
 import unittest
 import zipfile
+from argparse import Namespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -84,6 +87,21 @@ class RevisionWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No revision items"):
             cli.apply_plan(plan, "Test Author")
         self.assertFalse(self.output.exists())
+
+    def test_cli_apply_persists_item_state_and_leaves_other_items_pending(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_apply(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+        self.assertEqual(saved["revision_items"][1]["status"], "planned")
+        self.assertTrue(self.report_path.is_file())
 
     def test_response_docx_contains_verified_and_draft_sections(self):
         plan = self._plan()

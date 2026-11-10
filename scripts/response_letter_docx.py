@@ -126,8 +126,6 @@ def render_response_docx(
         _set_run_font(run, size=9)
 
     for index, item in enumerate(items):
-        if index:
-            doc.add_page_break()
         reviewer = str(item.get("reviewer") or "Reviewer")
         item_id = str(item.get("id") or "UNASSIGNED")
         status = str(item.get("status") or "planned")

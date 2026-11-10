@@ -60,7 +60,7 @@ Run the mechanical check after applying the plan:
 
 This verifies the exact Word revision IDs recorded by the apply report and checks that those specific deletion/insertion elements contain the expected text. It does **not** decide whether the new scientific explanation is correct.
 
-Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. After a successful apply, first change the affected plan items from `approved` to `applied`. Only after mechanical verification and semantic review pass, change the relevant plan item's status to `verified`.
+Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after mechanical verification and semantic review pass, change the relevant plan item's status to `verified`.
 
 Render the response draft:
 

@@ -38,9 +38,9 @@ Include the proposed response. Scientific content must be traceable to supplied 
 
 ### Stage 3 — User review and approval
 
-Present the reviewer comment, proposed response, affected files/locations, exact proposed edits, evidence questions and conflicts. Ask the user to approve or revise the plan.
+Present the reviewer comment, proposed response, affected files/locations, exact proposed edits, evidence questions and conflicts. Ask the user to approve or revise the plan. Approval may be partial: only selected revision items should be marked approved.
 
-Only after explicit approval, set top-level approved=true and each included item's status to approved. A planned/unapproved task must never be applied.
+Only after explicit approval, set top-level approved=true and the selected items' status to approved. A planned/unapproved task must never be applied. If the comment, response or targets of an already approved item change, reset that item's status to planned and obtain approval again.
 
 ### Stage 4 — Apply
 
@@ -52,7 +52,7 @@ Then apply:
 
     python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json
 
-Inputs are immutable. Write revised copies to distinct output paths. After the CLI confirms success, update each completed plan item from approved to applied. If a target is refused because of ambiguity or complex XML, report the location and request a safer anchor or use a separately reviewed editing route. Never bypass the refusal by replacing the whole paragraph.
+Inputs are immutable. Write revised copies to distinct output paths. After the CLI confirms success, it automatically persists successfully applied items as applied in the plan. Only items explicitly marked approved are applied; planned, applied, verified and blocked items remain untouched. If a target is refused because of ambiguity or complex XML, report the location and request a safer anchor or use a separately reviewed editing route. Never bypass the refusal by replacing the whole paragraph.
 
 ### Stage 5 — Verify and report
 
@@ -66,7 +66,7 @@ Only after both mechanical and semantic checks pass, change the corresponding pl
 
     python scripts/co_reviewer_cli.py render-response --plan edits_plan.json --out Response_to_Reviewers.md
 
-The renderer never invents response text. Items not marked verified must remain visibly labelled as drafts; do not submit them as completed responses. Return the response draft, revised Manuscript and SI files, verification report and unresolved items.
+The Markdown and DOCX renderers never invent response text. Items not marked verified must remain visibly labelled as drafts; do not submit them as completed responses. Use `render-response-docx` for an editable Word response letter and `status` to summarize task progress. Return the response draft, revised Manuscript and SI files, verification report and unresolved items.
 
 ## Token and delegation rules
 
