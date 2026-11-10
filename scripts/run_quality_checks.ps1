@@ -32,7 +32,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to query the active Python interpreter."
     }
-    $VersionParts = $VersionText -split '\\.'
+    $VersionParts = $VersionText -split '\.'
     $Major = [int]$VersionParts[0]
     $Minor = [int]$VersionParts[1]
     if (($Major -lt 3) -or (($Major -eq 3) -and ($Minor -lt 10))) {
