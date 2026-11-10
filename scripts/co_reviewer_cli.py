@@ -641,12 +641,12 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
     tmp = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", newline="\\n",
+            mode="w", encoding="utf-8", newline=None,
             prefix=f".{target.name}.", suffix=".tmp",
             dir=target.parent, delete=False
         ) as handle:
             tmp = handle.name
-            handle.write(payload + "\\n")
+            handle.write(payload)
         os.replace(tmp, target)
         tmp = None
     finally:
@@ -699,7 +699,7 @@ def cmd_status(args):
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     errors = validate_plan(plan, require_approval=False)
     if errors:
-        raise ValueError("Invalid revision plan:\\n- " + "\\n- ".join(errors))
+        raise ValueError("Invalid revision plan:\n- " + "\n- ".join(errors))
     counts = defaultdict(int)
     for item in plan["revision_items"]:
         counts[item["status"]] += 1
@@ -728,7 +728,7 @@ def cmd_response_docx(args):
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     errors = validate_plan(plan, require_approval=False)
     if errors:
-        raise ValueError("Cannot render response letter from invalid plan:\\n- " + "\\n- ".join(errors))
+        raise ValueError("Cannot render response letter from invalid plan:\n- " + "\n- ".join(errors))
     try:
         from response_letter_docx import render_response_docx
     except ImportError as exc:
