@@ -27,7 +27,7 @@ Validate the draft plan before approval:
 
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json --allow-unapproved
 
-After the user approves the plan, set top-level approved to true and each selected revision item's status to approved. Validate again without --allow-unapproved, then apply:
+After the user approves a subset of the plan, set top-level approved to true and mark only the selected revision items as `approved`. Validate the plan, then apply. The CLI applies only approved items and automatically changes their status to `applied`; remaining planned items are left untouched:
 
     python scripts/co_reviewer_cli.py validate-plan --plan edits_plan.json
     python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json
@@ -36,9 +36,11 @@ After a successful apply, change the affected plan items from approved to applie
 
     python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
 
-After checking the revised Manuscript and SI scientifically and semantically, set only fully reviewed items to verified. Render the Response Letter draft:
+After checking the revised Manuscript and SI scientifically and semantically, set only fully reviewed items to `verified`. Render the Response Letter draft in Markdown:
 
     python scripts/co_reviewer_cli.py render-response --plan edits_plan.json --out Response_to_Reviewers.md
+
+Generate an editable Word Response Letter with `python scripts/co_reviewer_cli.py render-response-docx --plan edits_plan.json --out Response_to_Reviewers.docx`. Inspect progress with `python scripts/co_reviewer_cli.py status --plan edits_plan.json`.
 
 See examples/revision_plan.example.json and docs/WORKFLOW.md.
 
@@ -67,7 +69,7 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 
 - DOCX only; legacy DOC and PDF are not editable targets.
 - The current revision backend supports conservative plain-text-run replacements, not arbitrary edits across complex Word structures.
-- `render-response` currently writes a Markdown draft, not a finished DOCX Response Letter. The document Worker can format it with a supplied journal template.
+- `render-response` writes Markdown; `render-response-docx` creates an editable Word draft using the built-in clean layout. Journal-specific templates are not yet applied automatically.
 - Cross-document semantic consistency is reviewed by the Supervisor/author; the CLI verifies exact Word revision IDs and their text, but does not judge scientific meaning.
 - No Word COM backend or graphical interface is included yet.
 

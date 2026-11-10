@@ -8,14 +8,14 @@ version = "0.2.0"
 description = "A safe, traceable multi-document academic manuscript revision toolkit."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["lxml>=5.0.0"]
+dependencies = ["lxml>=5.0.0", "python-docx>=1.1.2"]
 
 [project.scripts]
 co-reviewer = "co_reviewer_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "scripts"}
-py-modules = ["co_reviewer_cli"]
+py-modules = ["co_reviewer_cli", "response_letter_docx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

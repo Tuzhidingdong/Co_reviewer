@@ -419,7 +419,6 @@ def validate_plan(plan: Any, require_approval: bool = True) -> list[str]:
             errors.append(f"{at}.status must be planned, approved, applied, verified or blocked.")
         if item.get("status") in {"applied", "verified"} and plan.get("approved") is not True:
             errors.append(f"{at}.approved state is inconsistent: applied/verified items require top-level approved=true.")
-        if require_approval and item.get("status") != "approved": errors.append(f"{at}.status must be 'approved' before apply.")
         targets = item.get("targets")
         if not isinstance(targets, list) or not targets: errors.append(f"{at}.targets must be non-empty."); continue
         for j, t in enumerate(targets):
@@ -442,8 +441,11 @@ def validate_plan(plan: Any, require_approval: bool = True) -> list[str]:
 def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     errors = validate_plan(plan, True)
     if errors: raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
+    approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
+    if not approved_items:
+        raise ValueError("No revision items are currently approved for application.")
     grouped = defaultdict(list)
-    for item in plan["revision_items"]:
+    for item in approved_items:
         for target in item["targets"]:
             edit = {
                 "find": target["find"], "replace": target["replace"],
@@ -480,6 +482,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
 
     results = []
     for item in plan.get("revision_items", []):
+        if item.get("status") not in {"applied", "verified"}:
+            continue
         item_id = item.get("id", "")
         for target in item.get("targets", []):
             output_path = str(Path(target["output_file"]).expanduser().resolve())
@@ -630,12 +634,42 @@ def cmd_validate(args):
     if args.allow_unapproved: print("[NOTE] Approval relaxed for validation only; apply always enforces it.")
     return 0
 
+def write_json_atomic(path: str | Path, data: Any) -> None:
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="\\n",
+            prefix=f".{target.name}.", suffix=".tmp",
+            dir=target.parent, delete=False
+        ) as handle:
+            tmp = handle.name
+            handle.write(payload + "\\n")
+        os.replace(tmp, target)
+        tmp = None
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+
 def cmd_apply(args):
-    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    plan_path = Path(args.plan)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
     reports = apply_plan(plan, args.author)
-    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.report).write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(args.report, reports)
+    applied_ids = {
+        edit.get("revision_item_id")
+        for report in reports
+        for edit in report.get("results", [])
+        if edit.get("status") == "applied"
+    }
+    for item in plan["revision_items"]:
+        if item.get("status") == "approved" and item.get("id") in applied_ids:
+            item["status"] = "applied"
+    write_json_atomic(plan_path, plan)
     for r in reports: print(f"[DONE] {r['output_file']}: {r['edits_applied']}/{r['edits_requested']} edits")
+    print(f"[STATE] Plan updated: {len(applied_ids)} revision item(s) marked applied.")
     print(f"[OK] report: {args.report}")
     return 0
 
@@ -658,7 +692,24 @@ def cmd_verify(args):
     print(f"[VERIFY] {report['targets_verified']}/{report['targets_total']} targets verified; {report['targets_failed']} failed.")
     print("[SCOPE] Mechanical Track Changes only; scientific meaning and cross-document consistency still require review.")
     print(f"[OK] report: {args.out}")
+    print("[NEXT] Mechanical verification is not semantic approval; review scientific consistency before marking items verified.")
     return 0 if report["passed"] else 2
+
+def cmd_status(args):
+    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    errors = validate_plan(plan, require_approval=False)
+    if errors:
+        raise ValueError("Invalid revision plan:\\n- " + "\\n- ".join(errors))
+    counts = defaultdict(int)
+    for item in plan["revision_items"]:
+        counts[item["status"]] += 1
+    print(f"[SUMMARY] {len(plan['revision_items'])} revision item(s)")
+    for status in ("planned", "approved", "applied", "verified", "blocked"):
+        print(f"  {status}: {counts[status]}")
+    for item in plan["revision_items"]:
+        targets = len(item.get("targets", []))
+        print(f"- {item['id']} | {item['reviewer']} | {item['status']} | {targets} target(s)")
+    return 0
 
 def cmd_response(args):
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
@@ -671,6 +722,23 @@ def cmd_response(args):
     verified = sum(1 for item in plan["revision_items"] if item.get("status") == "verified")
     print(f"[OK] Response letter draft: {output}")
     print(f"[SUMMARY] {len(plan['revision_items'])} item(s); {verified} marked verified. Review all draft labels before submission.")
+    return 0
+
+def cmd_response_docx(args):
+    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    errors = validate_plan(plan, require_approval=False)
+    if errors:
+        raise ValueError("Cannot render response letter from invalid plan:\\n- " + "\\n- ".join(errors))
+    try:
+        from response_letter_docx import render_response_docx
+    except ImportError as exc:
+        raise ValueError("DOCX response output requires python-docx; install project requirements.") from exc
+    output = render_response_docx(
+        plan, args.out, manuscript_title=args.manuscript_title, author=args.author
+    )
+    verified = sum(1 for item in plan["revision_items"] if item.get("status") == "verified")
+    print(f"[OK] Response Letter DOCX: {output}")
+    print(f"[SUMMARY] {len(plan['revision_items'])} item(s); {verified} marked verified. Draft labels are retained for all unfinished items.")
     return 0
 
 def build_parser():
@@ -698,6 +766,15 @@ def build_parser():
     rsp.add_argument("--plan", required=True)
     rsp.add_argument("--out", default="Response_to_Reviewers.md")
     rsp.set_defaults(func=cmd_response)
+    rspdocx = sub.add_parser("render-response-docx", help="Render the revision plan as a formatted Word Response Letter.")
+    rspdocx.add_argument("--plan", required=True)
+    rspdocx.add_argument("--out", default="Response_to_Reviewers.docx")
+    rspdocx.add_argument("--manuscript-title", default="")
+    rspdocx.add_argument("--author", default="")
+    rspdocx.set_defaults(func=cmd_response_docx)
+    st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
+    st.add_argument("--plan", required=True)
+    st.set_defaults(func=cmd_status)
     return p
 
 def main(argv=None):

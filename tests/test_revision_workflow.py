@@ -1,0 +1,123 @@
+import json
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import co_reviewer_cli as cli
+from response_letter_docx import render_response_docx
+from test_revision_engine import make_docx
+
+
+class RevisionWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.input = self.root / "input.docx"
+        self.output = self.root / "output.docx"
+        self.plan_path = self.root / "edits_plan.json"
+        self.report_path = self.root / "apply_report.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _plan(self):
+        return {
+            "schema_version": "1.0",
+            "approved": True,
+            "revision_items": [
+                {
+                    "id": "R1-C1",
+                    "reviewer": "Reviewer 1",
+                    "comment": "Please clarify the first statement.",
+                    "proposed_response": "We have clarified the first statement.",
+                    "status": "approved",
+                    "targets": [{
+                        "document": "Manuscript", "input_file": str(self.input),
+                        "output_file": str(self.output), "p_idx": 0,
+                        "location": "Section 1", "find": "old phrase",
+                        "replace": "revised phrase"
+                    }]
+                },
+                {
+                    "id": "R2-C1",
+                    "reviewer": "Reviewer 2",
+                    "comment": "Please provide further detail.",
+                    "proposed_response": "We will address this in a later iteration.",
+                    "status": "planned",
+                    "targets": [{
+                        "document": "SI", "input_file": str(self.input),
+                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 0,
+                        "location": "Section S1", "find": "another old phrase",
+                        "replace": "another revised phrase"
+                    }]
+                }
+            ]
+        }
+
+    def test_apply_only_approved_items_and_preserve_pending_items(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        plan = self._plan()
+        reports = cli.apply_plan(plan, "Test Author")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["edits_applied"], 1)
+        self.assertEqual(
+            [edit["revision_item_id"] for edit in reports[0]["results"]],
+            ["R1-C1"]
+        )
+        # Only the applied item is mechanically checked; the planned item is not
+        # treated as a missing/failed change in this iteration.
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, reports)
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 1)
+        self.assertEqual(plan["revision_items"][1]["status"], "planned")
+
+    def test_apply_refuses_when_no_item_is_approved(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        plan["revision_items"][0]["status"] = "planned"
+        with self.assertRaisesRegex(ValueError, "No revision items"):
+            cli.apply_plan(plan, "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_response_docx_contains_verified_and_draft_sections(self):
+        plan = self._plan()
+        plan["revision_items"][0]["status"] = "verified"
+        output = self.root / "Response_to_Reviewers.docx"
+        rendered = render_response_docx(
+            plan, output, manuscript_title="A sample manuscript", author="Corresponding Author"
+        )
+        self.assertTrue(Path(rendered).is_file())
+        with zipfile.ZipFile(output) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertIn("word/document.xml", archive.namelist())
+        from docx import Document
+        paragraphs = [p.text for p in Document(output).paragraphs]
+        joined = "\\n".join(paragraphs)
+        self.assertIn("Response to Reviewers", joined)
+        self.assertIn("Reviewer 1 — R1-C1", joined)
+        self.assertIn("Response", joined)
+        self.assertIn("Reviewer 2 — R2-C1", joined)
+        self.assertIn("DRAFT (planned; not yet verified)", joined)
+        self.assertIn("We will address this in a later iteration.", joined)
+
+    def test_response_docx_does_not_overwrite_existing_file(self):
+        plan = self._plan()
+        output = self.root / "existing.docx"
+        output.write_bytes(b"do not overwrite")
+        with self.assertRaises(FileExistsError):
+            render_response_docx(plan, output)
+        self.assertEqual(output.read_bytes(), b"do not overwrite")
+
+    def test_response_docx_rejects_non_docx_output(self):
+        with self.assertRaisesRegex(ValueError, "end with .docx"):
+            render_response_docx(self._plan(), self.root / "response.md")
+
+
+if __name__ == "__main__":
+    unittest.main()

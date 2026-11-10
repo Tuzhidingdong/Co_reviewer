@@ -35,6 +35,12 @@ For a local request, include only affected revision items and targets. Do not re
 
 Use paragraph indices from the latest inventory. A target must be unique within its paragraph. Do not shorten the anchor to a generic phrase. If a replacement crosses a hyperlink, field, drawing, bookmark or content control, the current backend refuses it. Report the limitation; do not disable validation.
 
+## Incremental approval and application
+
+A revision plan may contain a mixture of `planned`, `approved`, `applied`, `verified` and `blocked` items. Set the plan-level `approved` flag to `true` only after the user has approved the plan. The apply command processes **only** items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` in the plan file automatically. This permits a later iteration to approve and apply only the remaining items without reapplying completed edits.
+
+Use `status --plan plan/edits_plan.json` to inspect the current task summary. After mechanical verification and a separate scientific/semantic review, the Supervisor may mark the corresponding items `verified` in the plan.
+
 ## Completion states
 
 - planned: proposed by Supervisor;
@@ -60,4 +66,23 @@ Render the response draft:
 
     python scripts/co_reviewer_cli.py render-response --plan plan/edits_plan.json --out output/Response_to_Reviewers.md
 
-The renderer uses only the `proposed_response` text already provided in the plan. Missing reply text remains a placeholder. Items not marked `verified` are labelled as drafts and must not be presented as completed responses.
+The renderers use only the `proposed_response` text already provided in the plan. Missing reply text remains a placeholder. Items not marked `verified` are labelled as drafts and must not be presented as completed responses. Generate a Word file with `python scripts/co_reviewer_cli.py render-response-docx --plan plan/edits_plan.json --out output/Response_to_Reviewers.docx`; the existing Markdown renderer remains available.
+
+## Incremental task handling
+
+A plan can hold completed and unfinished items together. The plan-level `approved` flag confirms that the user has approved the current plan, while each item status records its individual lifecycle. `apply` processes only items marked `approved`, then automatically persists those items as `applied`. This prevents completed items from being submitted for a second edit when the user later approves a new subset.
+
+Inspect progress with:
+
+    python scripts/co_reviewer_cli.py status --plan edits_plan.json
+
+Mechanical verification checks the exact Word revision records. The Supervisor must still perform the scientific and cross-document review before changing an item to `verified`.
+
+## Response Letter DOCX
+
+Generate an editable Word response letter from the revision plan:
+
+    python scripts/co_reviewer_cli.py render-response-docx --plan edits_plan.json --out Response_to_Reviewers.docx
+
+The DOCX output preserves draft labels for every item not marked `verified`, includes linked document locations, and does not invent missing reply text. Existing output files are not overwritten; choose a new path for each generated version.
+
