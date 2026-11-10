@@ -234,6 +234,14 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(report["targets_total"], 2)
         self.assertEqual(report["targets_preflighted"], 2)
         self.assertEqual(report["source_files"][0]["sha256"], expected_hash)
+        self.assertEqual(
+            saved["revision_items"][0]["preflight_fingerprint"],
+            cli.revision_targets_fingerprint(saved["revision_items"][0])
+        )
+        self.assertEqual(
+            report["preflight_items"][0]["preflight_fingerprint"],
+            saved["revision_items"][0]["preflight_fingerprint"]
+        )
         self.assertTrue(all(
             result["status"] == "preflighted"
             and "delete_revision_id" not in result
@@ -251,6 +259,34 @@ class RevisionWorkflowTests(unittest.TestCase):
             self.assertEqual(item["targets"][0]["source_sha256"], expected_hash)
         self.assertFalse(self.output.exists())
         self.assertFalse((self.root / "si_revised.docx").exists())
+
+    def test_approve_plan_refuses_target_changes_after_preflight_until_repreflight(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+
+        item["targets"][0]["find"] = "outdated terminology"
+        item["targets"][0]["replace"] = "updated terminology"
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "target scope has changed since preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]]))
+
+        # Re-preflight the modified anchor before the user approves that revised target.
+        report = cli.preflight_plan(plan)
+        self.assertTrue(report["passed"])
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(saved), [])
 
     def test_approved_plan_rejects_source_docx_changed_after_preflight(self):
         make_docx(self.input, [[("old phrase", False)]])
