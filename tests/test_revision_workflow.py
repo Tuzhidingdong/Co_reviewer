@@ -103,6 +103,60 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertEqual(saved["revision_items"][1]["status"], "planned")
         self.assertTrue(self.report_path.is_file())
 
+    def test_incremental_iterations_preserve_docx_changes_and_apply_report_history(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        first_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(first_args), 0)
+
+        after_first = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(after_first["revision_items"][0]["status"], "applied")
+        self.assertEqual(after_first["revision_items"][1]["status"], "planned")
+
+        second_output = self.root / "output_round_02.docx"
+        second_item = after_first["revision_items"][1]
+        second_item["status"] = "approved"
+        second_item["targets"][0]["input_file"] = str(self.output)
+        second_item["targets"][0]["output_file"] = str(second_output)
+        self.plan_path.write_text(json.dumps(after_first), encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(first_args), 0)
+
+        final_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["status"] for item in final_plan["revision_items"]],
+            ["applied", "applied"]
+        )
+        history = json.loads(self.report_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(history), 2)
+        self.assertTrue(self.output.is_file())
+        self.assertTrue(second_output.is_file())
+
+        verification = cli.verify_apply_report(final_plan, history)
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 2)
+        self.assertEqual(verification["targets_verified"], 2)
+
+        with zipfile.ZipFile(second_output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:p", cli.NS)
+            deleted = "".join(
+                node.text or "" for node in paragraph.findall(".//w:del//w:delText", cli.NS)
+            )
+            inserted = "".join(
+                node.text or "" for node in paragraph.findall(".//w:ins//w:t", cli.NS)
+            )
+            self.assertIn("old phrase", deleted)
+            self.assertIn("another old phrase", deleted)
+            self.assertIn("revised phrase", inserted)
+            self.assertIn("another revised phrase", inserted)
+
     def test_response_docx_contains_verified_and_draft_sections(self):
         plan = self._plan()
         plan["revision_items"][0]["status"] = "verified"

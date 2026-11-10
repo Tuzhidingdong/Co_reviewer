@@ -58,6 +58,8 @@ Run the mechanical check after applying the plan:
 
     python scripts/co_reviewer_cli.py verify --plan plan/edits_plan.json --apply-report output/revision_apply_report.json --out reports/revision_verification.json
 
+Keep using the same `output/revision_apply_report.json` path for subsequent incremental iterations so each run is appended to the report history.
+
 This verifies the exact Word revision IDs recorded by the apply report and checks that those specific deletion/insertion elements contain the expected text. It does **not** decide whether the new scientific explanation is correct.
 
 Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after mechanical verification and semantic review pass, change the relevant plan item's status to `verified`.

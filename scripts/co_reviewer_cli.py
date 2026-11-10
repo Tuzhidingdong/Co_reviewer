@@ -670,9 +670,22 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
 
 def cmd_apply(args):
     plan_path = Path(args.plan)
+    report_path = Path(args.report)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    # Keep an append-only report history across incremental revision iterations.
+    # Load and validate it before writing any new DOCX output files.
+    report_history = []
+    if report_path.exists():
+        report_history = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(report_history, list):
+            raise ValueError("Existing apply report must be a JSON array; refusing to overwrite it.")
+        if any(not isinstance(entry, dict) for entry in report_history):
+            raise ValueError("Existing apply report contains an invalid entry; refusing to overwrite it.")
+
     reports = apply_plan(plan, args.author)
-    write_json_atomic(args.report, reports)
+    report_history.extend(reports)
+    write_json_atomic(report_path, report_history)
     applied_ids = {
         edit.get("revision_item_id")
         for report in reports
