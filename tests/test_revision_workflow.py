@@ -163,6 +163,113 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertIn("\n- ", str(caught.exception))
         self.assertNotIn("\\n- ", str(caught.exception))
 
+    def test_preflight_cli_records_source_hashes_and_does_not_write_docx_outputs(self):
+        make_docx(self.input, [[("old phrase and another old phrase", False)]])
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+        plan["approved"] = False
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        report_path = self.root / "preflight_report.json"
+
+        args = cli.build_parser().parse_args([
+            "preflight-plan", "--plan", str(self.plan_path),
+            "--out", str(report_path)
+        ])
+        self.assertIs(args.func, cli.cmd_preflight)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_preflight(args)
+
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_hash = cli.sha256_file(self.input)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["targets_total"], 2)
+        self.assertEqual(report["targets_preflighted"], 2)
+        self.assertEqual(report["source_files"][0]["sha256"], expected_hash)
+        for item in saved["revision_items"]:
+            self.assertEqual(item["status"], "planned")
+            self.assertEqual(item["targets"][0]["source_sha256"], expected_hash)
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.root / "si_revised.docx").exists())
+
+    def test_approved_plan_rejects_source_docx_changed_after_preflight(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        cli.preflight_plan(plan)
+        self.assertEqual(item["targets"][0]["source_sha256"], cli.sha256_file(self.input))
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+
+        # Keep the original anchor but change the source DOCX version after approval.
+        make_docx(self.input, [[("old phrase", False)], [("An added paragraph.", False)]])
+        approved_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, "Source DOCX changed since preflight"):
+            cli.apply_plan(approved_plan, "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_repreflight_of_changed_approved_source_requires_renewed_approval(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+
+        make_docx(self.input, [[("old phrase", False)], [("Source version changed.", False)]])
+        refreshed = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        report = cli.preflight_plan(refreshed)
+        self.assertEqual(report["approval_scope_changed_items"], [item["id"]])
+        self.assertTrue(any(
+            "approval_fingerprint" in error for error in cli.validate_plan(refreshed)
+        ))
+
+        self.plan_path.write_text(json.dumps(refreshed), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+        renewed = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(renewed), [])
+        reports = cli.apply_plan(renewed, "Test Author")
+        self.assertEqual(reports[0]["edits_applied"], 1)
+        self.assertTrue(self.output.exists())
+
+    def test_failed_preflight_does_not_record_partial_source_fingerprints(self):
+        make_docx(self.input, [[("This anchor does not exist.", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        with self.assertRaisesRegex(ValueError, "not found"):
+            cli.preflight_plan(plan)
+        self.assertNotIn("source_sha256", item["targets"][0])
+        self.assertFalse(self.output.exists())
+
     def test_apply_only_approved_items_and_preserve_pending_items(self):
         make_docx(self.input, [[("old phrase and another old phrase", False)]])
         plan = self._plan()
