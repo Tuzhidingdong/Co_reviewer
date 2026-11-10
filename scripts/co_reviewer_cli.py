@@ -412,6 +412,13 @@ def write_prepared_document(prepared: dict[str, Any]) -> dict[str, Any]:
 def apply_document(input_file: str, output_file: str, edits: list[dict[str, Any]], author: str) -> dict[str, Any]:
     return write_prepared_document(prepare_document(input_file, output_file, edits, author))
 
+def revision_targets_fingerprint(item: dict[str, Any]) -> str:
+    """Fingerprint the exact target anchors and source DOCX versions checked by preflight."""
+    payload = {"targets": item.get("targets", [])}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def revision_item_fingerprint(item: dict[str, Any]) -> str:
     """Fingerprint the exact reviewer-facing approval scope, excluding lifecycle metadata."""
     payload = {
@@ -473,6 +480,11 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 or re.fullmatch(r"[a-f0-9]{64}", t["source_sha256"]) is None
             ):
                 errors.append(f"{tp}.source_sha256 must be a lowercase SHA-256 hex digest.")
+            if "preflight_fingerprint" in item and (
+                not isinstance(item["preflight_fingerprint"], str)
+                or re.fullmatch(r"[a-f0-9]{64}", item["preflight_fingerprint"]) is None
+            ):
+                errors.append(f"{at}.preflight_fingerprint must be a lowercase SHA-256 hex digest.")
             if "p_idx" in t and (not isinstance(t["p_idx"], int) or isinstance(t["p_idx"], bool) or t["p_idx"] < 0): errors.append(f"{tp}.p_idx must be a non-negative integer.")
             if "part" in t:
                 try: safe_part(str(t["part"]))
@@ -541,13 +553,15 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         raise ValueError("A source DOCX changed during preflight; no source fingerprints were recorded. Retry preflight.")
 
     changed_items = []
-    for item, target in target_refs:
-        key = _canonical_artifact_path(target["input_file"])
-        new_hash = source_hashes_after[key]
-        previous_hash = target.get("source_sha256")
-        if item.get("status") == "approved" and previous_hash != new_hash:
+    for item in eligible_items:
+        for target in item["targets"]:
+            key = _canonical_artifact_path(target["input_file"])
+            target["source_sha256"] = source_hashes_after[key]
+        new_fingerprint = revision_targets_fingerprint(item)
+        previous_fingerprint = item.get("preflight_fingerprint")
+        if item.get("status") == "approved" and previous_fingerprint != new_fingerprint:
             changed_items.append(item["id"])
-        target["source_sha256"] = new_hash
+        item["preflight_fingerprint"] = new_fingerprint
 
     document_reports = []
     for entry in prepared:
@@ -574,6 +588,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             for key, path in source_paths.items()
         ],
         "approval_scope_changed_items": sorted(set(changed_items)),
+        "preflight_items": [
+            {"revision_item_id": item["id"], "preflight_fingerprint": item["preflight_fingerprint"]}
+            for item in eligible_items
+        ],
         "documents": document_reports,
         "results": results
     }
@@ -604,6 +622,15 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     # The approval fingerprint covers source_sha256 when it is present.
     source_hashes = {}
     for item in approved_items:
+        expected_preflight = item.get("preflight_fingerprint")
+        if (
+            not isinstance(expected_preflight, str)
+            or expected_preflight != revision_targets_fingerprint(item)
+        ):
+            raise ValueError(
+                f"{item_id} target scope has changed since preflight. "
+                "Run preflight-plan again and review its refreshed report before requesting approval."
+            )
         for target in item["targets"]:
             expected = target.get("source_sha256")
             if expected is None:
