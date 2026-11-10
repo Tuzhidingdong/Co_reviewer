@@ -94,6 +94,21 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertNotIn("approval_fingerprint", second)
         self.assertEqual(cli.validate_plan(saved), [])
 
+    def test_approve_plan_reseals_an_edited_pending_approval(self):
+        plan = self._plan()
+        first = plan["revision_items"][0]
+        first["proposed_response"] = "Updated response shown to and re-approved by the user."
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_approve_plan(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        sealed = saved["revision_items"][0]
+        self.assertEqual(sealed["approval_fingerprint"], cli.revision_item_fingerprint(sealed))
+        self.assertEqual(sealed["proposed_response"], "Updated response shown to and re-approved by the user.")
+        self.assertEqual(cli.validate_plan(saved), [])
+
     def test_approved_item_fails_closed_after_its_scope_is_changed(self):
         plan = self._plan()
         plan["revision_items"][0]["targets"][0]["replace"] = "unapproved replacement"

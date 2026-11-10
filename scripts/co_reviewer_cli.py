@@ -704,6 +704,18 @@ def cmd_approve_plan(args):
     if unknown:
         raise ValueError("Unknown revision item ID(s): " + ", ".join(unknown))
 
+    selected = set(requested)
+    for item in plan["revision_items"]:
+        state = item.get("status")
+        if state in {"applied", "verified"} or (state == "approved" and item.get("id") not in selected):
+            stored = item.get("approval_fingerprint")
+            expected = revision_item_fingerprint(item)
+            if not isinstance(stored, str) or stored != expected:
+                raise ValueError(
+                    f"{item.get('id')} has a stale approval/history fingerprint. "
+                    "Do not rewrite a completed item; restore its recorded scope or resolve the plan history first."
+                )
+
     for item_id in requested:
         state = by_id[item_id].get("status")
         if state not in {"planned", "approved"}:

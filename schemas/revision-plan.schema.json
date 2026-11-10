@@ -44,6 +44,17 @@
             }
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["approved", "applied", "verified"] }
+              }
+            },
+            "then": { "required": ["approval_fingerprint"] }
+          }
+        ],
         "additionalProperties": false
       }
     }
