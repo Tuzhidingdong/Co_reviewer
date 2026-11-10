@@ -88,7 +88,7 @@ Inspect progress with:
 
     python scripts/co_reviewer_cli.py status --plan edits_plan.json
 
-Mechanical verification checks the exact Word revision records. The Supervisor must still perform the scientific and cross-document review before changing an item to `verified`.
+Mechanical verification checks the exact Word revision records. The Supervisor must still perform the scientific and cross-document review before using `confirm-verified`; do not change the `verified` status manually.
 
 ## Local automated checks on Windows
 
