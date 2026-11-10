@@ -452,6 +452,11 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
         if not isinstance(item.get("comment"), str) or not item["comment"].strip(): errors.append(f"{at}.comment is required.")
         if item.get("status") not in {"planned", "approved", "applied", "verified", "blocked"}:
             errors.append(f"{at}.status must be planned, approved, applied, verified or blocked.")
+        if "preflight_fingerprint" in item and (
+            not isinstance(item["preflight_fingerprint"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", item["preflight_fingerprint"]) is None
+        ):
+            errors.append(f"{at}.preflight_fingerprint must be a lowercase SHA-256 hex digest.")
         if item.get("status") in {"approved", "applied", "verified"}:
             if plan.get("approved") is not True:
                 errors.append(f"{at}.approved state is inconsistent: approved/applied/verified items require top-level approved=true.")
@@ -480,11 +485,6 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 or re.fullmatch(r"[a-f0-9]{64}", t["source_sha256"]) is None
             ):
                 errors.append(f"{tp}.source_sha256 must be a lowercase SHA-256 hex digest.")
-            if "preflight_fingerprint" in item and (
-                not isinstance(item["preflight_fingerprint"], str)
-                or re.fullmatch(r"[a-f0-9]{64}", item["preflight_fingerprint"]) is None
-            ):
-                errors.append(f"{at}.preflight_fingerprint must be a lowercase SHA-256 hex digest.")
             if "p_idx" in t and (not isinstance(t["p_idx"], int) or isinstance(t["p_idx"], bool) or t["p_idx"] < 0): errors.append(f"{tp}.p_idx must be a non-negative integer.")
             if "part" in t:
                 try: safe_part(str(t["part"]))
