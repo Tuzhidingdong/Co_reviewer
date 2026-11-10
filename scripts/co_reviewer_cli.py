@@ -887,7 +887,7 @@ def cmd_approve_plan(args):
             or expected_preflight != revision_targets_fingerprint(item)
         ):
             raise ValueError(
-                f"{item_id} target scope has changed since preflight or has not been preflighted. "
+                f"{item_id} has not passed source DOCX preflight or its target scope has changed since preflight. "
                 "Run preflight-plan again and review its report before requesting approval."
             )
         for target in item["targets"]:
