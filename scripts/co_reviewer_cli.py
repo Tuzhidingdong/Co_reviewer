@@ -987,7 +987,21 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                                 vertical.get(qn("val")) if vertical is not None else None
                             )
                         })
-                    native_script_format_preserved = actual_run_formats == expected_run_formats
+                    expected_script_signature = [
+                        (character, entry.get("vertical_alignment"))
+                        for entry in expected_run_formats
+                        for character in entry.get("text", "")
+                    ]
+                    actual_script_signature = [
+                        (character, entry.get("vertical_alignment"))
+                        for entry in actual_run_formats
+                        for character in entry.get("text", "")
+                    ]
+                    # Word may split/merge adjacent runs when saving. Compare
+                    # per-character formatting, not incidental run boundaries.
+                    native_script_format_preserved = (
+                        actual_script_signature == expected_script_signature
+                    )
                 else:
                     native_script_format_preserved = True
                 result["checks"] = {
