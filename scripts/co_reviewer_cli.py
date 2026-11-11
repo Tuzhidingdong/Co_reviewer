@@ -482,11 +482,33 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     f"Safe edit refused at {part} P[{idx}]: {reason}. "
                     "Target may cross a hyperlink boundary or involve a field, drawing, bookmark, content control or other unsupported complex node."
                 )
+            inserted_run_formats = []
+            if insert_revision_id is not None:
+                insertion = next(
+                    (
+                        node for node in para.findall(".//w:ins", NS)
+                        if node.get(qn("id")) == str(insert_revision_id)
+                    ),
+                    None
+                )
+                if insertion is not None:
+                    for inserted_run in insertion.findall(".//w:r", NS):
+                        run_text = "".join(
+                            node.text or "" for node in inserted_run.findall("w:t", NS)
+                        )
+                        vertical = inserted_run.find("w:rPr/w:vertAlign", NS)
+                        inserted_run_formats.append({
+                            "text": run_text,
+                            "vertical_alignment": (
+                                vertical.get(qn("val")) if vertical is not None else None
+                            )
+                        })
             edit_result = {
                 "part": part, "p_idx": idx, "find": old, "replace": new,
                 "status": "applied", "delete_revision_id": delete_revision_id,
                 "insert_revision_id": insert_revision_id,
-                "inserted_text": normalize_script_characters(new)
+                "inserted_text": normalize_script_characters(new),
+                "inserted_run_formats": inserted_run_formats
             }
             for metadata_key in ("revision_item_id", "reviewer", "document", "location"):
                 if metadata_key in edit:
@@ -951,17 +973,37 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         for run in inserted_runs
                     )
                 )
+                expected_run_formats = edit.get("inserted_run_formats")
+                if isinstance(expected_run_formats, list):
+                    actual_run_formats = []
+                    for run in inserted_runs:
+                        run_text = "".join(
+                            node.text or "" for node in run.findall("w:t", NS)
+                        )
+                        vertical = run.find("w:rPr/w:vertAlign", NS)
+                        actual_run_formats.append({
+                            "text": run_text,
+                            "vertical_alignment": (
+                                vertical.get(qn("val")) if vertical is not None else None
+                            )
+                        })
+                    native_script_format_preserved = actual_run_formats == expected_run_formats
+                else:
+                    native_script_format_preserved = True
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
                     "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
-                    "inserted_runs_red": inserted_runs_red
+                    "inserted_runs_red": inserted_runs_red,
+                    "native_script_format_preserved": native_script_format_preserved
                 }
                 result["p_idx"] = p_idx
-                if old_ok and new_ok and inserted_runs_red:
+                if old_ok and new_ok and inserted_runs_red and native_script_format_preserved:
                     result["status"] = "verified"
                 elif not inserted_runs_red:
                     result["reason"] = "One or more inserted runs are missing the required explicit red font color (FF0000)."
+                elif not native_script_format_preserved:
+                    result["reason"] = "Native subscript/superscript run formatting changed after the apply/save operation."
                 else:
                     result["reason"] = "Expected deleted or inserted text was not found in the target paragraph."
             except (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
