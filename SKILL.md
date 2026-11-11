@@ -36,6 +36,21 @@ Create a JSON plan following schemas/revision-plan.schema.json. Assign each revi
 
 Include the proposed response. Scientific content must be traceable to supplied data, figures, tables, calculations or verified sources.
 
+### Language, tense and sentence-context gate
+
+Before presenting any proposed edit for approval, inspect the complete sentence containing the anchor and enough adjacent text to understand its time reference. Draft the replacement in context, not as an isolated phrase. For every changed sentence:
+
+- Preserve the tense already established by the surrounding scientific narrative unless the reviewer explicitly requires a change in time reference. Do not convert all revisions mechanically to past or present tense.
+- As a default convention, describe completed experiments, procedures and observations in the past tense; use present tense for established scientific facts, generally valid statements, and what a figure/table currently shows. Interpret results in the tense that matches the claim and the surrounding paragraph.
+- Check subject–verb agreement, singular/plural, articles, prepositions, parallel structure, pronoun/reference clarity and transitions into the unchanged text.
+- Read the full sentence before and after the edit, then read the whole paragraph once more. An insertion that is grammatically correct in isolation but makes the paragraph tense or logic inconsistent must be revised before approval.
+- Show the user the original sentence, proposed complete sentence and exact replacement span. Briefly note the tense choice where it is not obvious.
+- If the evidence or temporal meaning is ambiguous, flag the uncertainty and ask rather than guessing. Never change scientific meaning, sample identity, numerical values or causal strength merely to improve English.
+
+### Scientific notation and Word character formatting
+
+Use native Word character formatting in delivered DOCX files. When proposing a new subscript or superscript in a replacement, encode it with the corresponding Unicode subscript/superscript characters in the plan (for example, `SO₄²⁻`); the revision engine converts supported characters to ordinary base characters inside runs with native Word `w:vertAlign` formatting. Do not substitute caret notation such as `SO4^2-`, HTML tags, or manually typed baseline digits when a true subscript/superscript is intended. The engine fails closed for unsupported Unicode characters explicitly named as subscript/superscript; flag them for an explicit formatting route. During review, inspect both the rendered appearance and the underlying Word formatting.
+
 ### Stage 2.5 — Preflight the source documents
 
 Before asking for approval, run the no-write preflight:
@@ -62,6 +77,12 @@ Then apply:
     python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json
 
 Inputs are immutable. Write revised copies to distinct output paths. After the CLI confirms success, it automatically persists successfully applied items as applied in the plan. Only items explicitly marked approved are applied; planned, applied, verified and blocked items remain untouched. Reuse the same apply-report path across incremental iterations; the CLI appends each iteration so previous revision evidence remains available for full-plan verification. Before applying, the CLI rejects plan/report paths that collide with any referenced DOCX input or output. A target wholly contained in one simple hyperlink may be edited inside that hyperlink while preserving its relationship and wrapper. Targets crossing a hyperlink boundary, fields, drawings, bookmarks, content controls or other unsupported XML must still be refused. If a target is refused, report the location and request a safer anchor or use a separately reviewed editing route. Never bypass the refusal by replacing the whole paragraph.
+
+### Marked-version formatting gate
+
+- Every inserted run is kept inside a native Word `w:ins` revision and receives explicit red font color `FF0000`; the exact inserted text and red formatting are checked by mechanical verification. Deletions remain native `w:del` revisions.
+- Word's Track Changes display can override run font color when Insertions is set to **By Author**. For a consistent red All Markup view, set Review → Tracking dialog launcher → Advanced Options → Insertions → Color → Red on the reviewing computer. This is a local Word display preference, not a property guaranteed by the DOCX on every computer.
+- Never fake tracked changes using red font alone. Never color unchanged text red. Preserve the native insertion/deletion revisions and retain the red inserted text for the Marked deliverable.
 
 ### Stage 5 — Verify and report
 
