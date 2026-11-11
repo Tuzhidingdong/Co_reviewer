@@ -1455,6 +1455,16 @@ def cmd_confirm_verified(args):
     hashes_before = {key: sha256_file(path) for key, path in output_paths.items()}
 
     verification = verify_apply_report(plan, apply_reports)
+    if not verification.get("untracked_text_audit", {}).get("passed", False):
+        violations = verification.get("untracked_text_audit", {}).get("violations", [])
+        details = "; ".join(
+            f"{entry.get('output_file', '')} {entry.get('part', '')}: {entry.get('reason', '')}"
+            for entry in violations[:5]
+        )
+        raise ValueError(
+            "Cannot confirm verified while direct/untracked text changes are present or the "
+            "untracked-text audit cannot complete. " + details
+        )
     results_by_id = defaultdict(list)
     for result in verification["results"]:
         results_by_id[result.get("revision_item_id")].append(result)
