@@ -90,7 +90,7 @@ Run the mechanical verification command:
 
     python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
 
-This checks the exact Word revision IDs recorded by the apply report and confirms that those specific deletion/insertion elements contain the expected text at the reported location. It does not validate scientific meaning. Then inspect the actual revised documents and check that Reviewer responses, Manuscript and SI agree on claims, values, units, sample names and figure/table numbering.
+This checks exact Word revision IDs, deleted/inserted text, explicit red font on inserted runs, and whether recorded native subscript/superscript formatting survives the DOCX save round-trip. It does not validate scientific meaning. Then inspect the actual revised documents and check that Reviewer responses, Manuscript and SI agree on claims, values, units, sample names and figure/table numbering.
 
 Only after both mechanical and semantic checks pass, record the state through the guarded command (never edit `status` manually):
 
