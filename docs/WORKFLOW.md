@@ -76,7 +76,7 @@ Run the mechanical check after applying the plan:
 
 Keep using the same `output/revision_apply_report.json` path for subsequent incremental iterations so each run is appended to the report history. The CLI rejects plan/report paths that collide with any referenced DOCX input or output before writing documents.
 
-This verifies the exact Word revision IDs recorded by the apply report and checks that those specific deletion/insertion elements contain the expected text. It does **not** decide whether the new scientific explanation is correct.
+This verifies the exact Word revision IDs, deletion/insertion text, explicit red font on inserted runs and the per-character native subscript/superscript formatting recorded by the apply report. It does **not** decide whether the new scientific explanation is correct.
 
 Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after both reviews pass, record completion with the guarded command below; do not edit item status manually:
 
