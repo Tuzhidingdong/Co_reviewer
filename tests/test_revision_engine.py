@@ -733,5 +733,23 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(verification["targets_verified"], 1)
 
 
+    def test_inspector_reports_native_word_script_runs(self):
+        paragraph = ET.Element(cli.qn("p"))
+        for value, alignment in (("SO", None), ("4", "subscript"), ("2−", "superscript")):
+            run = ET.SubElement(paragraph, cli.qn("r"))
+            if alignment:
+                rpr = ET.SubElement(run, cli.qn("rPr"))
+                ET.SubElement(rpr, cli.qn("vertAlign"), {cli.qn("val"): alignment})
+            ET.SubElement(run, cli.qn("t")).text = value
+
+        self.assertEqual(
+            cli.extract_native_script_runs(paragraph),
+            [
+                {"text": "4", "vertical_alignment": "subscript"},
+                {"text": "2−", "vertical_alignment": "superscript"}
+            ]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
