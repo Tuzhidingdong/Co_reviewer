@@ -721,6 +721,14 @@ class RevisionEngineTests(unittest.TestCase):
         edit = report["results"][0]
         self.assertEqual(edit["replace"], "SO₄²⁻")
         self.assertEqual(edit["inserted_text"], "SO42−")
+        self.assertEqual(
+            edit["inserted_run_formats"],
+            [
+                {"text": "SO", "vertical_alignment": None},
+                {"text": "4", "vertical_alignment": "subscript"},
+                {"text": "2−", "vertical_alignment": "superscript"}
+            ]
+        )
         plan = {
             "revision_items": [{
                 "id": "R1-C1",
