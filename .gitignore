@@ -11,4 +11,4 @@ __pycache__/
 htmlcov/
 
 # Generated local Microsoft Word acceptance files
-artifacts/word-compatibility-check/
+artifacts/word-compatibility-check*/
