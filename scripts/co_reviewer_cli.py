@@ -308,9 +308,6 @@ def make_insert_runs(source: ET.Element, text: str) -> list[ET.Element]:
         # the first matched source run.
         if has_explicit_script:
             _set_run_property(run, "vertAlign", alignment)
-        # Explicit font color is for the deliverable's Marked copy. Word's
-        # Track Changes display color can still be overridden by local Word UI settings.
-        _set_run_property(run, "color", "FF0000")
         runs.append(run)
     return runs
 
@@ -871,6 +868,126 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     return [write_prepared_document(item) for item in prepared]
 
 
+def _untracked_paragraph_text(paragraph: ET.Element) -> str:
+    """Collect paragraph text outside tracked insertion/deletion/move wrappers."""
+    excluded = {qn("ins"), qn("del"), qn("moveFrom"), qn("moveTo")}
+    output: list[str] = []
+
+    def visit(node: ET.Element) -> None:
+        if node.tag in excluded:
+            return
+        if node.tag == qn("t") and node.text:
+            output.append(node.text)
+        elif node.tag == qn("tab"):
+            output.append("\\t")
+        elif node.tag == qn("br"):
+            output.append("\\n")
+        for child in node:
+            visit(child)
+
+    visit(paragraph)
+    return "".join(output)
+
+
+def _tracked_text_parts(archive: zipfile.ZipFile) -> dict[str, list[str]]:
+    """Read text-bearing Word parts used by the DOCX inventory."""
+    result: dict[str, list[str]] = {}
+    for name in archive.namelist():
+        if not name.startswith("word/") or not name.endswith(".xml"):
+            continue
+        if not (
+            name == "word/document.xml"
+            or re.fullmatch(r"word/(?:header|footer)\\d+\\.xml", name)
+            or name in {"word/footnotes.xml", "word/endnotes.xml"}
+        ):
+            continue
+        root = parse_xml(archive.read(name))
+        paragraphs = (
+            root.findall(".//w:body//w:p", NS)
+            if name == "word/document.xml"
+            else root.findall(".//w:p", NS)
+        )
+        result[name] = [_untracked_paragraph_text(paragraph) for paragraph in paragraphs]
+    return result
+
+
+def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect text changed outside native Track Changes in every applied DOCX output."""
+    violations: list[dict[str, Any]] = []
+    documents_checked = 0
+
+    for document_report in apply_reports:
+        edits = [
+            edit for edit in document_report.get("results", [])
+            if isinstance(edit, dict) and edit.get("status") == "applied"
+        ]
+        if not edits:
+            continue
+        input_file = document_report.get("input_file")
+        output_file = document_report.get("output_file")
+        if not input_file or not output_file:
+            violations.append({
+                "output_file": output_file or "",
+                "reason": "Apply report is missing input_file/output_file; untracked-edit audit cannot run."
+            })
+            continue
+        source_path = Path(input_file).expanduser()
+        output_path = Path(output_file).expanduser()
+        try:
+            with zipfile.ZipFile(source_path, "r") as source_archive:
+                source_parts = _tracked_text_parts(source_archive)
+            with zipfile.ZipFile(output_path, "r") as output_archive:
+                output_parts = _tracked_text_parts(output_archive)
+        except (OSError, KeyError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
+            violations.append({
+                "input_file": str(source_path),
+                "output_file": str(output_path),
+                "reason": f"Unable to audit untracked text changes: {exc}"
+            })
+            continue
+
+        documents_checked += 1
+        expected_parts = copy.deepcopy(source_parts)
+        for edit in edits:
+            part = edit.get("part", "word/document.xml")
+            p_idx = edit.get("p_idx")
+            find_text = edit.get("find", "")
+            paragraphs = expected_parts.get(part)
+            if paragraphs is None or not isinstance(p_idx, int) or isinstance(p_idx, bool) or not (0 <= p_idx < len(paragraphs)):
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part, "p_idx": p_idx,
+                    "reason": "Applied target cannot be mapped to the source paragraph for untracked-edit audit."
+                })
+                continue
+            if not isinstance(find_text, str) or paragraphs[p_idx].count(find_text) != 1:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part, "p_idx": p_idx,
+                    "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
+                })
+                continue
+            paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
+
+        for part in sorted(set(expected_parts) | set(output_parts)):
+            expected = expected_parts.get(part)
+            actual = output_parts.get(part)
+            if expected != actual:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part,
+                    "reason": "Text outside native w:ins/w:del/w:moveFrom/w:moveTo differs from the source after accounting for approved deletions. This indicates a direct/untracked edit or an unsupported Word rewrite.",
+                    "expected_untracked_paragraphs": expected,
+                    "actual_untracked_paragraphs": actual
+                })
+
+    return {
+        "passed": not violations,
+        "documents_checked": documents_checked,
+        "violations": violations
+    }
+
+
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Mechanically verify each planned Track Changes edit in its generated DOCX."""
     report_index = {}
@@ -961,18 +1078,6 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     run for node in insert_nodes
                     for run in node.findall(".//w:r", NS)
                 ]
-                # Newer apply reports carry inserted_text. For these reports,
-                # red insertion formatting is a required deliverable invariant.
-                # Older reports remain verifiable without retroactive color checks.
-                red_required = "inserted_text" in edit
-                inserted_runs_red = (
-                    True if insert_id is None or not red_required
-                    else bool(inserted_runs) and all(
-                        (run.find("w:rPr/w:color", NS) is not None)
-                        and run.find("w:rPr/w:color", NS).get(qn("val")) == "FF0000"
-                        for run in inserted_runs
-                    )
-                )
                 expected_run_formats = edit.get("inserted_run_formats")
                 if isinstance(expected_run_formats, list):
                     actual_run_formats = []
@@ -1008,14 +1113,11 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
                     "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
-                    "inserted_runs_red": inserted_runs_red,
                     "native_script_format_preserved": native_script_format_preserved
                 }
                 result["p_idx"] = p_idx
-                if old_ok and new_ok and inserted_runs_red and native_script_format_preserved:
+                if old_ok and new_ok and native_script_format_preserved:
                     result["status"] = "verified"
-                elif not inserted_runs_red:
-                    result["reason"] = "One or more inserted runs are missing the required explicit red font color (FF0000)."
                 elif not native_script_format_preserved:
                     result["reason"] = "Native subscript/superscript run formatting changed after the apply/save operation."
                 else:
@@ -1025,10 +1127,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
             results.append(result)
 
     passed = sum(1 for item in results if item["status"] == "verified")
+    untracked_audit = audit_untracked_text_changes(apply_reports)
+    target_passed = bool(results) and passed == len(results)
     return {
-        "scope": "Mechanical DOCX Track Changes verification only; scientific correctness and cross-document semantic consistency require separate review.",
+        "scope": "Mechanical DOCX Track Changes verification and untracked-text audit only; scientific correctness and cross-document semantic consistency require separate review.",
         "targets_total": len(results), "targets_verified": passed,
-        "targets_failed": len(results) - passed, "passed": bool(results) and passed == len(results),
+        "targets_failed": len(results) - passed,
+        "untracked_text_audit": untracked_audit,
+        "passed": target_passed and untracked_audit["passed"],
         "results": results
     }
 
