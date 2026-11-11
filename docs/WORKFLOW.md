@@ -39,7 +39,7 @@ Use paragraph indices from the latest inventory. For body text, target `word/doc
 
 Before the user approves an edit, read the complete sentence containing the anchor and enough adjacent text to understand the paragraph's time reference. Draft in context rather than replacing an isolated phrase. Preserve the surrounding tense unless the scientific time reference genuinely changes; do not mechanically convert revisions to past or present. Completed procedures and observations are generally past tense; established scientific facts and what figures/tables show are often present tense. Also check subject–verb agreement, articles, number, prepositions, parallel structure and transitions. The approval preview must show the original full sentence, proposed full sentence and exact replacement span. Flag ambiguity rather than guessing.
 
-## Native Word scientific notation and red Marked text
+## Native Word scientific notation and Marked-version integrity
 
 When a replacement needs subscripts/superscripts, put the corresponding supported Unicode script characters in the plan (for example `SO₄²⁻`). The CLI converts compatibility-decomposable subscript/superscript characters to ordinary base characters in separate runs with native Word `w:vertAlign` values. Do not use caret notation or HTML as a formatting substitute. Unsupported Unicode script characters are refused during preflight; use an explicit, reviewed formatting route instead.
 
