@@ -32,6 +32,7 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
 
     document = Document()
     document.add_paragraph("The electrolyte concentration was 0.5 M.")
+    document.add_paragraph("The sulfate species in the electrolyte was SO4.")
     table = document.add_table(rows=1, cols=1)
     table.style = "Table Grid"
     table.cell(0, 0).text = "The measured cell voltage was 1.8 V."
@@ -49,6 +50,7 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
     output_path = str(paths["output"])
     target_specs = [
         ("word/document.xml", "0.5 M", "1.0 M", "Main body paragraph"),
+        ("word/document.xml", "SO4", "SO₄²⁻", "Native subscript and superscript"),
         ("word/document.xml", "1.8 V", "2.0 V", "Table cell"),
         ("word/header1.xml", "ABC-01", "ABC-02", "Header"),
         ("word/footer1.xml", "Internal review copy 01", "Internal review copy 02", "Footer"),
