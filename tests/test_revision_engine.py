@@ -670,5 +670,68 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(report["paragraphs"][0]["p_idx"], 0)
         self.assertIn("clarify the mechanism", report["paragraphs"][0]["text"])
 
+    def test_unicode_script_insertions_are_native_word_format_and_red(self):
+        make_docx(self.input, [[("The sulfate formula is SO4.", False)]])
+        target = {
+            "document": "Manuscript",
+            "input_file": str(self.input),
+            "output_file": str(self.output),
+            "p_idx": 0,
+            "location": "Body paragraph 1",
+            "find": "SO4",
+            "replace": "SO₄²⁻"
+        }
+        report = cli.apply_document(
+            str(self.input), str(self.output),
+            [{
+                **target,
+                "revision_item_id": "R1-C1",
+                "reviewer": "Reviewer 1"
+            }],
+            "Co_Reviewer test"
+        )
+
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:body//w:p", cli.NS)
+            insertion = paragraph.find(".//w:ins", cli.NS)
+            self.assertIsNotNone(insertion)
+            runs = insertion.findall(".//w:r", cli.NS)
+            self.assertEqual(
+                ["".join(node.text or "" for node in run.findall("w:t", cli.NS))
+                 for run in runs],
+                ["SO", "4", "2−"]
+            )
+
+            alignments = []
+            colors = []
+            for run in runs:
+                rpr = run.find("w:rPr", cli.NS)
+                self.assertIsNotNone(rpr)
+                color = rpr.find("w:color", cli.NS)
+                self.assertIsNotNone(color)
+                colors.append(color.get(cli.qn("val")))
+                vertical = rpr.find("w:vertAlign", cli.NS)
+                alignments.append(vertical.get(cli.qn("val")) if vertical is not None else None)
+
+            self.assertEqual(colors, ["FF0000", "FF0000", "FF0000"])
+            self.assertEqual(alignments, [None, "subscript", "superscript"])
+            self.assertEqual(cli.visible_text(paragraph), "The sulfate formula is SO42−.")
+
+        edit = report["results"][0]
+        self.assertEqual(edit["replace"], "SO₄²⁻")
+        self.assertEqual(edit["inserted_text"], "SO42−")
+        plan = {
+            "revision_items": [{
+                "id": "R1-C1",
+                "status": "applied",
+                "targets": [target]
+            }]
+        }
+        verification = cli.verify_apply_report(plan, [report])
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_verified"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
