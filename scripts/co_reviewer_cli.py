@@ -879,9 +879,9 @@ def _untracked_paragraph_text(paragraph: ET.Element) -> str:
         if node.tag == qn("t") and node.text:
             output.append(node.text)
         elif node.tag == qn("tab"):
-            output.append("\\t")
+            output.append("\t")
         elif node.tag == qn("br"):
-            output.append("\\n")
+            output.append("\n")
         for child in node:
             visit(child)
 
@@ -897,7 +897,7 @@ def _tracked_text_parts(archive: zipfile.ZipFile) -> dict[str, list[str]]:
             continue
         if not (
             name == "word/document.xml"
-            or re.fullmatch(r"word/(?:header|footer)\\d+\\.xml", name)
+            or re.fullmatch(r"word/(?:header|footer)\d+\.xml", name)
             or name in {"word/footnotes.xml", "word/endnotes.xml"}
         ):
             continue
@@ -1394,7 +1394,18 @@ def cmd_verify(args):
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[VERIFY] {report['targets_verified']}/{report['targets_total']} targets verified; {report['targets_failed']} failed.")
-    print("[SCOPE] Mechanical Track Changes only; scientific meaning and cross-document consistency still require review.")
+    audit = report.get("untracked_text_audit", {})
+    print(
+        f"[UNTRACKED TEXT AUDIT] {audit.get('documents_checked', 0)} document(s) checked; "
+        f"{len(audit.get('violations', []))} untracked-text violation(s)."
+    )
+    for violation in audit.get("violations", []):
+        print(
+            f"[UNTRACKED TEXT] {violation.get('output_file', '')} "
+            f"{violation.get('part', '')}: {violation.get('reason', '')}",
+            file=sys.stderr
+        )
+    print("[SCOPE] Native Track Changes and untracked-text integrity only; scientific meaning and cross-document consistency still require review.")
     print(f"[OK] report: {args.out}")
     print("[NEXT] Mechanical verification is not semantic approval; review scientific consistency before marking items verified.")
     return 0 if report["passed"] else 2
