@@ -61,7 +61,7 @@ try {
     Write-Host "  $OutputDocx"
     Write-Host ""
     Write-Host "In Word, select Review > Tracking > All Markup and inspect both body edits, the formula, table cell, header and footer."
-    Write-Host "For a consistent red display, set Review > Tracking dialog > Advanced Options > Insertions > Color to Red."
+    Write-Host "Confirm that every text change appears as a native deletion/insertion revision, not a direct text rewrite."
     Write-Host "Confirm that the formula uses true subscript/superscript formatting (not Unicode glyphs on the baseline)."
     Write-Host "Save the same DOCX, close Word, and reopen it. Do not accept or reject the revisions."
     Write-Host "Then rerun the CLI verify command against the saved DOCX; use the command shown in the repository guide."
