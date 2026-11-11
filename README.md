@@ -82,6 +82,28 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 - Cross-document semantic consistency is reviewed by the Supervisor/author; the CLI verifies exact Word revision IDs and their text, but does not judge scientific meaning.
 - No Word COM backend or graphical interface is included yet.
 
+## Microsoft Word compatibility acceptance
+
+The automated tests verify the generated WordprocessingML, but they cannot prove how Microsoft Word displays and re-saves Track Changes. A separate synthetic acceptance fixture is provided for that purpose. It uses no manuscript or SI files.
+
+Run from the repository root in PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run_word_compatibility_check.ps1
+```
+
+The runner creates a local test folder under `artifacts/word-compatibility-check`, performs preflight, approves the synthetic test item, applies four native Track Changes replacements, and verifies the result before Word is opened. The fixture covers one body paragraph, one table cell, the header and the footer. Generated files are ignored by Git.
+
+Open `word_compatibility_revised.docx` in Microsoft Word. On the Review tab, set Display for Review to **All Markup** and ensure insertions and deletions are shown. Inspect all four locations: each old value should appear as a deletion and each new value as an insertion. Do not accept or reject any changes. Save the same DOCX, close Word, and reopen it.
+
+After saving in Word, rerun mechanical verification from the repository root:
+
+```powershell
+python scripts/co_reviewer_cli.py verify --plan artifacts/word-compatibility-check/word_compatibility_plan.json --apply-report artifacts/word-compatibility-check/word_compatibility_apply_report.json --out artifacts/word-compatibility-check/word_compatibility_verification_after_word.json
+```
+
+A successful post-Word verification means all four exact revision IDs and their deleted/inserted text survived the Word save round-trip. It does not replace the visual inspection. Do not run `confirm-verified` on this synthetic fixture; semantic confirmation is intended for actual manuscript/SI revisions after scientific review.
+
 ## Tests
 
 Run the complete local checks on Windows from PowerShell:
