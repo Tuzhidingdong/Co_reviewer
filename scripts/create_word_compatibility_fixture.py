@@ -79,7 +79,7 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
                     "in two body paragraphs, a table cell, the header and the footer."
                 ),
                 "proposed_response": (
-                    "The synthetic DOCX fixture was revised in four locations for Word "
+                    "The synthetic DOCX fixture was revised in five locations for Word "
                     "compatibility inspection. This is a test response, not manuscript content."
                 ),
                 "status": "planned",
