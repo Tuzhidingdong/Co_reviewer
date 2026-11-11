@@ -9,3 +9,6 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Generated local Microsoft Word acceptance files
+artifacts/word-compatibility-check/
