@@ -48,7 +48,7 @@ try {
     Invoke-CoReviewerPython -Name "Approve synthetic acceptance item" -PythonArgs @(
         $Cli, "approve-plan", "--plan", $Plan, "--ids", "WORD-QA-01"
     )
-    Invoke-CoReviewerPython -Name "Apply native Track Changes to four locations" -PythonArgs @(
+    Invoke-CoReviewerPython -Name "Apply native Track Changes to five locations" -PythonArgs @(
         $Cli, "apply", "--plan", $Plan, "--author", "Co_Reviewer Word QA", "--report", $ApplyReport
     )
     Invoke-CoReviewerPython -Name "Verify exact Track Changes before opening Word" -PythonArgs @(
