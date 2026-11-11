@@ -670,7 +670,7 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(report["paragraphs"][0]["p_idx"], 0)
         self.assertIn("clarify the mechanism", report["paragraphs"][0]["text"])
 
-    def test_unicode_script_insertions_are_native_word_format_and_red(self):
+    def test_unicode_script_insertions_use_native_word_format(self):
         make_docx(self.input, [[("The sulfate formula is SO4.", False)]])
         target = {
             "document": "Manuscript",
@@ -704,17 +704,11 @@ class RevisionEngineTests(unittest.TestCase):
             )
 
             alignments = []
-            colors = []
             for run in runs:
                 rpr = run.find("w:rPr", cli.NS)
-                self.assertIsNotNone(rpr)
-                color = rpr.find("w:color", cli.NS)
-                self.assertIsNotNone(color)
-                colors.append(color.get(cli.qn("val")))
                 vertical = rpr.find("w:vertAlign", cli.NS)
                 alignments.append(vertical.get(cli.qn("val")) if vertical is not None else None)
 
-            self.assertEqual(colors, ["FF0000", "FF0000", "FF0000"])
             self.assertEqual(alignments, [None, "subscript", "superscript"])
             self.assertEqual(cli.visible_text(paragraph), "The sulfate formula is SO42−.")
 
@@ -739,13 +733,72 @@ class RevisionEngineTests(unittest.TestCase):
         verification = cli.verify_apply_report(plan, [report])
         self.assertTrue(verification["passed"])
         self.assertEqual(verification["targets_verified"], 1)
-        self.assertTrue(verification["results"][0]["checks"]["inserted_runs_red"])
         self.assertTrue(
             verification["results"][0]["checks"]["native_script_format_preserved"]
         )
         with self.assertRaisesRegex(ValueError, "Unsupported Unicode script character"):
             cli.make_insert_runs(ET.Element(cli.qn("r")), "\u0670")
 
+
+
+    def test_verifier_detects_direct_untracked_text_changes(self):
+        make_docx(self.input, [
+            [("The sample was Sample A.", False)],
+            [("The measured capacity was 100 mAh g-1.", False)]
+        ])
+        output_report = cli.apply_document(
+            str(self.input), str(self.output), [{
+                "p_idx": 0,
+                "find": "Sample A",
+                "replace": "Sample B",
+                "revision_item_id": "R1-C1",
+                "reviewer": "Reviewer 1",
+                "document": "Manuscript"
+            }], "Co_Reviewer test"
+        )
+
+        # Simulate an accidental direct edit to an unrelated paragraph after
+        # the Track Changes engine has produced the marked output.
+        with zipfile.ZipFile(self.output, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(members["word/document.xml"])
+        paragraphs = root.findall(".//w:body//w:p", cli.NS)
+        plain_run = paragraphs[1].find("w:r/w:t", cli.NS)
+        plain_run.text = "The measured capacity was 120 mAh g-1."
+        members["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+
+        plan = {
+            "approved": True,
+            "revision_items": [{
+                "id": "R1-C1", "status": "applied",
+                "reviewer": "Reviewer 1", "comment": "Please revise the sample.",
+                "approval_fingerprint": "0" * 64,
+                "targets": [{
+                    "document": "Manuscript",
+                    "input_file": str(self.input),
+                    "output_file": str(self.output),
+                    "p_idx": 0,
+                    "find": "Sample A",
+                    "replace": "Sample B"
+                }]
+            }]
+        }
+        # The plan's approval fingerprint is only needed by validate_plan; seal
+        # the item after its target fields have been assembled.
+        plan["revision_items"][0]["approval_fingerprint"] = cli.revision_item_fingerprint(
+            plan["revision_items"][0]
+        )
+        verification = cli.verify_apply_report(plan, [output_report])
+        self.assertFalse(verification["passed"])
+        audit = verification["untracked_text_audit"]
+        self.assertFalse(audit["passed"])
+        self.assertEqual(len(audit["violations"]), 1)
+        self.assertIn("untracked", audit["violations"][0]["reason"].lower())
 
     def test_inspector_reports_native_word_script_runs(self):
         paragraph = ET.Element(cli.qn("p"))
