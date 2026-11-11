@@ -57,6 +57,19 @@ PLACEHOLDER_RE = re.compile(
 CAPTION_RE = re.compile(r"^(?:Fig(?:ure)?\.?|Table)\s*(?:S?\d+|S?[xX]+)", re.I)
 CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
 
+def extract_native_script_runs(paragraph: ET.Element) -> list[dict[str, str]]:
+    """Expose native Word subscript/superscript runs in the document inventory."""
+    result = []
+    for run in paragraph.findall(".//w:r", NS):
+        vertical = run.find("w:rPr/w:vertAlign", NS)
+        if vertical is None or vertical.get(qn("val")) not in {"subscript", "superscript"}:
+            continue
+        text = "".join(node.text or "" for node in run.findall("w:t", NS))
+        if text:
+            result.append({"text": text, "vertical_alignment": vertical.get(qn("val"))})
+    return result
+
+
 def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]:
     p = Path(path)
     report = {
@@ -106,7 +119,10 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                     txt = visible_text(para).strip()
                     report["paragraph_count"] += 1
                     if txt:
-                        report["paragraphs"].append({"part": part, "p_idx": idx, "text": txt})
+                        report["paragraphs"].append({
+                            "part": part, "p_idx": idx, "text": txt,
+                            "native_script_runs": extract_native_script_runs(para)
+                        })
                     cids = {x.get(qn("id"), "") for x in para.findall(".//w:commentRangeStart", NS)}
                     cids.update(x.get(qn("id"), "") for x in para.findall(".//w:commentReference", NS))
                     for cid in sorted(cids):
@@ -146,6 +162,10 @@ def write_reports(reports: list[dict[str, Any]], md_path: str, json_path: str | 
             lines.append("#### Text paragraphs from the reviewer document")
             for paragraph in r["paragraphs"][:max_items]:
                 lines.append(f"- [{paragraph['part']} P[{paragraph['p_idx']}]] {paragraph['text']}")
+                for script_run in paragraph.get("native_script_runs", []):
+                    lines.append(
+                        f"  - [NATIVE {script_run['vertical_alignment']}] {script_run['text']}"
+                    )
             if len(r["paragraphs"]) > max_items:
                 lines.append(f"- ... {len(r['paragraphs']) - max_items} more paragraphs in JSON inventory.")
         for c in r["comments"][:max_items]:
