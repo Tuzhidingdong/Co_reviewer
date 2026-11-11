@@ -705,8 +705,7 @@ class RevisionEngineTests(unittest.TestCase):
 
             alignments = []
             for run in runs:
-                rpr = run.find("w:rPr", cli.NS)
-                vertical = rpr.find("w:vertAlign", cli.NS)
+                vertical = run.find("w:rPr/w:vertAlign", cli.NS)
                 alignments.append(vertical.get(cli.qn("val")) if vertical is not None else None)
 
             self.assertEqual(alignments, [None, "subscript", "superscript"])
