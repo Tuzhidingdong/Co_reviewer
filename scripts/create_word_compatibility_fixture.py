@@ -108,7 +108,7 @@ def main() -> int:
     print("[CREATED] Synthetic source DOCX and revision plan.")
     for name in ("input", "output", "plan", "preflight", "apply_report", "verification", "word_verification"):
         print(f"[{name.upper()}] {paths[name]}")
-    print("[SCOPE] Body paragraph, table cell, header and footer; no real manuscript files are used.")
+    print("[SCOPE] Two body paragraphs (including native sub/superscript), table cell, header and footer; no real manuscript files are used.")
     return 0
 
 
