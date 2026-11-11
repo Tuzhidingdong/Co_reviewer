@@ -96,7 +96,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run_word_com
 
 The runner creates a local test folder under `artifacts/word-compatibility-check`, performs preflight, approves the synthetic test item, applies five native Track Changes replacements, and verifies exact deletion/insertion text plus the absence of untracked text changes before Word is opened. The fixture covers two body paragraphs (including a scientific formula with subscript and superscript), one table cell, the header and the footer. Generated files are ignored by Git.
 
-Open `word_compatibility_revised.docx` in Microsoft Word. On the Review tab, set Display for Review to **All Markup** and ensure insertions and deletions are shown. For a consistent red view, open the Tracking dialog launcher > Advanced Options and set Insertions > Color to **Red** (Word's By Author display color is a local preference). Inspect all five locations: each old value should appear as a deletion and each new value as an insertion; the formula should display 4 as subscript and 2− as superscript using native Word formatting. Do not accept or reject any changes. Save the same DOCX, close Word, and reopen it.
+Open `word_compatibility_revised.docx` in Microsoft Word. On the Review tab, set Display for Review to **All Markup** and ensure insertions and deletions are shown. Inspect all five locations: each old value should appear as a deletion and each new value as an insertion; the formula should display 4 as subscript and 2− as superscript using native Word formatting. Color is not an acceptance criterion. Do not accept or reject any changes. Save the same DOCX, close Word, and reopen it.
 
 After saving in Word, rerun mechanical verification from the repository root:
 
