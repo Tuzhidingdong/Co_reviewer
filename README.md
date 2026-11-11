@@ -15,7 +15,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Supports explicitly targeted body, header and footer Word XML parts; paragraph indices are local to the selected part.
 - Preserves hyperlink relationships when an edit is wholly contained in a single simple hyperlink; fails closed when a target crosses a hyperlink boundary or unsupported Word structure.
 - Validates the output ZIP package and XML before writing the revised DOCX.
-- Verifies applied insertions/deletions against the actual output files and renders a Response Letter draft without inventing replies.
+- Verifies the exact native insertion/deletion revisions and audits the entire output text against its source, rejecting direct/untracked text edits outside planned revisions; renders a Response Letter draft without inventing replies.
 
 ## Quick start
 
