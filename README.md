@@ -10,7 +10,7 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Produces a compact Markdown digest and a full machine-readable paragraph/comment inventory; ordinary prose in a Reviewer Comments DOCX is not mistaken for Word-native comments.
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
 - Requires explicit human approval before applying edits; a SHA-256 fingerprint binds approval to the exact reviewer comment, proposed response, document targets and (when preflighted) source DOCX versions.
-- Applies Word-native insertions and deletions while preserving unaffected run formatting and package parts. Newly inserted runs are explicitly red (`FF0000`) for the Marked deliverable and remain native `w:ins` revisions.
+- Applies every planned text change as native Word insertions/deletions (`w:ins`/`w:del`) while preserving unaffected run formatting and package parts. Direct text rewrites are not permitted in a Marked deliverable.
 - Converts supported Unicode subscript/superscript characters in replacement text (for example `SO₄²⁻`) into native Word `w:vertAlign` subscript/superscript runs; the verify command checks inserted text, red insertion formatting and preservation of native script formatting after a Word save round-trip.
 - Supports explicitly targeted body, header and footer Word XML parts; paragraph indices are local to the selected part.
 - Preserves hyperlink relationships when an edit is wholly contained in a single simple hyperlink; fails closed when a target crosses a hyperlink boundary or unsupported Word structure.
