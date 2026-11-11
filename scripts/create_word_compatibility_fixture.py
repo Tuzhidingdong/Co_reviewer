@@ -75,8 +75,8 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
                 "id": "WORD-QA-01",
                 "reviewer": "Co_Reviewer Word compatibility check",
                 "comment": (
-                    "Synthetic acceptance check: verify native Track Changes in the body, "
-                    "a table cell, the header and the footer."
+                    "Synthetic acceptance check: verify native Track Changes, red insertions and scientific script formatting "
+                    "in two body paragraphs, a table cell, the header and the footer."
                 ),
                 "proposed_response": (
                     "The synthetic DOCX fixture was revised in four locations for Word "
