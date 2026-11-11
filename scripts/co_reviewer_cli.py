@@ -261,6 +261,12 @@ def _script_character(character: str) -> tuple[str, str] | None:
     """Return native Word vertical alignment plus its ordinary base character."""
     decomposition = unicodedata.decomposition(character).split()
     if not decomposition or decomposition[0] not in {"<sub>", "<super>"}:
+        character_name = unicodedata.name(character, "")
+        if "SUPERSCRIPT" in character_name or "SUBSCRIPT" in character_name:
+            raise ValueError(
+                f"Unsupported Unicode script character U+{ord(character):04X} ({character_name}); "
+                "use a supported Unicode sub/superscript character or request explicit Word formatting."
+            )
         return None
     base = "".join(chr(int(codepoint, 16)) for codepoint in decomposition[1:])
     if not base:
