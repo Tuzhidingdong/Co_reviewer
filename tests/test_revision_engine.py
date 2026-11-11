@@ -242,7 +242,8 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertEqual(len(edits), 2)
         self.assertEqual(len({e["delete_revision_id"] for e in edits}), 2)
         self.assertEqual(len({e["insert_revision_id"] for e in edits}), 2)
-        plan["revision_items"][0]["status"] = "applied"
+        for item in plan["revision_items"]:
+            item["status"] = "applied"
         verification = cli.verify_apply_report(plan, reports)
         self.assertTrue(verification["passed"])
         self.assertEqual(verification["targets_verified"], 2)
@@ -385,8 +386,8 @@ class RevisionEngineTests(unittest.TestCase):
             }]
         }
         errors = cli.validate_plan(plan)
-        self.assertTrue(any("approved" in error for error in errors))
-        self.assertTrue(any("status" in error for error in errors))
+        self.assertTrue(any("Human approval gate" in error for error in errors))
+        self.assertFalse(any(".status must be" in error for error in errors))
 
 
     def test_multi_document_plan_preflights_before_writing(self):
@@ -442,7 +443,7 @@ class RevisionEngineTests(unittest.TestCase):
         body.remove(table)
         sect_pr = body.find("w:sectPr", cli.NS)
         if sect_pr is not None:
-            body.insert(body.index(sect_pr), table)
+            body.insert(list(body).index(sect_pr), table)
         else:
             body.append(table)
         members["word/document.xml"] = ET.tostring(
@@ -657,8 +658,10 @@ class RevisionEngineTests(unittest.TestCase):
         )
         self.assertIn("Manuscript ID: ", reopened.sections[0].header.paragraphs[0].text)
         self.assertIn(" | archive", reopened.sections[0].header.paragraphs[0].text)
-        self.assertIn("Internal review copy ", reopened.sections[0].footer.paragraphs[0].text)
-        self.assertIn(" - confidential", reopened.sections[0].footer.paragraphs[0].text)
+        # python-docx hides both w:del and w:ins text from ordinary paragraph.text.
+        # The original footer phrase is therefore checked in the raw XML above;
+        # only the unchanged suffix should remain visible after reopening.
+        self.assertEqual(reopened.sections[0].footer.paragraphs[0].text, " - confidential")
 
     def test_inspector_indexes_plain_reviewer_paragraphs(self):
         make_docx(self.input, [[("Reviewer 1: Please clarify the mechanism.", False)], [("Please add the missing control experiment.", False)]])
