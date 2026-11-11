@@ -558,5 +558,147 @@ class RevisionWorkflowTests(unittest.TestCase):
             render_response_docx(self._plan(), self.root / "response.md")
 
 
+    def test_end_to_end_one_reviewer_item_updates_manuscript_and_si(self):
+        reviewer_docx = self.root / "Reviewers.docx"
+        manuscript_input = self.root / "Manuscript.docx"
+        manuscript_output = self.root / "Manuscript_revised.docx"
+        si_input = self.root / "SI.docx"
+        si_output = self.root / "SI_revised.docx"
+        inventory_md = self.root / "workspace_digest.md"
+        inventory_json = self.root / "workspace_inventory.json"
+        preflight_json = self.root / "preflight_report.json"
+        verification_json = self.root / "verification_report.json"
+        response_md = self.root / "Response_to_Reviewers.md"
+        multi_report = self.root / "multi_document_apply_report.json"
+
+        reviewer_comment = (
+            "Reviewer 1: Please keep the sample identifier consistent in the "
+            "manuscript and Supporting Information."
+        )
+        make_docx(reviewer_docx, [[(reviewer_comment, False)]])
+        make_docx(manuscript_input, [[("The selected specimen is Sample ZB-01.", False)]])
+        make_docx(si_input, [[("Supporting Information record: Sample ZB-01.", False)]])
+        original_inputs = {
+            path: path.read_bytes()
+            for path in (reviewer_docx, manuscript_input, si_input)
+        }
+
+        # Inventory all three source documents before preparing the revision item.
+        inspect_args = Namespace(
+            rev=str(reviewer_docx), man=str(manuscript_input), si=str(si_input),
+            comment_author=None, out=str(inventory_md), json_out=str(inventory_json),
+            max_items_per_section=50
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_inspect(inspect_args), 0)
+        inventory = json.loads(inventory_json.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [report["role"] for report in inventory],
+            ["Reviewers", "Manuscript", "SI"]
+        )
+        self.assertIn(reviewer_comment, [
+            paragraph["text"]
+            for paragraph in inventory[0]["paragraphs"]
+        ])
+
+        # One reviewer concern deliberately links to two separate DOCX outputs.
+        plan = {
+            "schema_version": "1.0",
+            "approved": False,
+            "revision_items": [{
+                "id": "R1-C1",
+                "reviewer": "Reviewer 1",
+                "comment": reviewer_comment,
+                "proposed_response": (
+                    "We will align the sample identifier in the Manuscript and SI."
+                ),
+                "status": "planned",
+                "targets": [
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(manuscript_input),
+                        "output_file": str(manuscript_output),
+                        "p_idx": 0,
+                        "location": "Manuscript body paragraph 1",
+                        "find": "Sample ZB-01",
+                        "replace": "Sample ZB-02"
+                    },
+                    {
+                        "document": "SI",
+                        "input_file": str(si_input),
+                        "output_file": str(si_output),
+                        "p_idx": 0,
+                        "location": "SI body paragraph 1",
+                        "find": "Sample ZB-01",
+                        "replace": "Sample ZB-02"
+                    }
+                ]
+            }]
+        }
+        self.plan_path.write_text(
+            json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        preflight_args = Namespace(
+            plan=str(self.plan_path), out=str(preflight_json),
+            author="Co_Reviewer integration test"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_preflight(preflight_args), 0)
+        preflight = json.loads(preflight_json.read_text(encoding="utf-8"))
+        self.assertTrue(preflight["passed"])
+        self.assertEqual(preflight["targets_total"], 2)
+        self.assertEqual(preflight["targets_preflighted"], 2)
+        self.assertFalse(manuscript_output.exists())
+        self.assertFalse(si_output.exists())
+
+        approve_args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_approve_plan(approve_args), 0)
+
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(multi_report),
+            author="Co_Reviewer integration test"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+
+        saved_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved_plan["revision_items"][0]["status"], "applied")
+        self.assertTrue(manuscript_output.is_file())
+        self.assertTrue(si_output.is_file())
+        apply_history = json.loads(multi_report.read_text(encoding="utf-8"))
+        self.assertEqual(len(apply_history), 2)
+        self.assertEqual(
+            {Path(entry["output_file"]).name for entry in apply_history},
+            {"Manuscript_revised.docx", "SI_revised.docx"}
+        )
+
+        verify_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(multi_report),
+            out=str(verification_json)
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_verify(verify_args), 0)
+        verification = json.loads(verification_json.read_text(encoding="utf-8"))
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 2)
+        self.assertEqual(verification["targets_verified"], 2)
+        self.assertEqual(verification["targets_failed"], 0)
+
+        # An applied item remains a draft until a human confirms semantic review.
+        response_args = Namespace(plan=str(self.plan_path), out=str(response_md))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_response(response_args), 0)
+        response = response_md.read_text(encoding="utf-8")
+        self.assertIn("DRAFT (applied; not yet verified)", response)
+        self.assertIn("Manuscript_revised.docx", response)
+        self.assertIn("SI_revised.docx", response)
+
+        # Every original source remains byte-for-byte unchanged.
+        for source_path, original_bytes in original_inputs.items():
+            self.assertEqual(source_path.read_bytes(), original_bytes)
+
+
 if __name__ == "__main__":
     unittest.main()
