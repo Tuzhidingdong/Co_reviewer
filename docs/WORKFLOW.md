@@ -35,6 +35,16 @@ For a local request, include only affected revision items and targets. Do not re
 
 Use paragraph indices from the latest inventory. For body text, target `word/document.xml`; for header or footer text, target its specific `word/headerN.xml` or `word/footerN.xml` part and use the index reported within that part. Never reuse a body paragraph index for a header/footer target. A target must be unique within its paragraph. Do not shorten the anchor to a generic phrase. A replacement wholly contained within one simple hyperlink is supported and retains the hyperlink wrapper and relationship. A replacement crossing the hyperlink boundary, field, drawing, bookmark or content control is refused. Report the limitation; do not disable validation.
 
+## Language and tense quality gate
+
+Before the user approves an edit, read the complete sentence containing the anchor and enough adjacent text to understand the paragraph's time reference. Draft in context rather than replacing an isolated phrase. Preserve the surrounding tense unless the scientific time reference genuinely changes; do not mechanically convert revisions to past or present. Completed procedures and observations are generally past tense; established scientific facts and what figures/tables show are often present tense. Also check subject–verb agreement, articles, number, prepositions, parallel structure and transitions. The approval preview must show the original full sentence, proposed full sentence and exact replacement span. Flag ambiguity rather than guessing.
+
+## Native Word scientific notation and red Marked text
+
+When a replacement needs subscripts/superscripts, put the corresponding supported Unicode script characters in the plan (for example `SO₄²⁻`). The CLI converts compatibility-decomposable subscript/superscript characters to ordinary base characters in separate runs with native Word `w:vertAlign` values. Do not use caret notation or HTML as a formatting substitute. Unsupported Unicode script characters are refused during preflight; use an explicit, reviewed formatting route instead.
+
+Every newly inserted revision run receives explicit red font color `FF0000` and remains inside a native `w:ins`; deletions remain native `w:del`. Mechanical verification checks that the new insertion runs are red. Word may override the visible Track Changes color when its Insertions display is set to **By Author**. For a consistent red All Markup display, set Review → Tracking dialog launcher → Advanced Options → Insertions → Color → Red on the reviewing computer. This is a local Word display option and is not guaranteed by the DOCX on other computers. Do not replace native Track Changes with red font alone.
+
 ## Source preflight and incremental approval
 
 Before requesting approval for planned items, run the no-write preflight:
