@@ -110,6 +110,41 @@ class RevisionWorkflowTests(unittest.TestCase):
         saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
         self.assertEqual(saved["revision_items"][0]["status"], "applied")
 
+    def test_confirm_verified_refuses_direct_untracked_text_changes(self):
+        make_docx(self.input, [
+            [("old phrase and outdated terminology", False)],
+            [("An independent sentence remains unchanged.", False)]
+        ])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+
+        with zipfile.ZipFile(self.output, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(members["word/document.xml"])
+        paragraphs = root.findall(".//w:body//w:p", cli.NS)
+        text_node = paragraphs[1].find("w:r/w:t", cli.NS)
+        text_node.text = "An independent sentence was directly rewritten."
+        members["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+
+        confirm_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(self.report_path),
+            ids=["R1-C1"], semantic_review_confirmed=True
+        )
+        with self.assertRaisesRegex(ValueError, "direct/untracked text changes"):
+            cli.cmd_confirm_verified(confirm_args)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+
+
     def test_confirmed_verification_is_invalidated_when_output_changes(self):
         make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
