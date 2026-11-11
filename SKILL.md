@@ -78,11 +78,13 @@ Then apply:
 
 Inputs are immutable. Write revised copies to distinct output paths. After the CLI confirms success, it automatically persists successfully applied items as applied in the plan. Only items explicitly marked approved are applied; planned, applied, verified and blocked items remain untouched. Reuse the same apply-report path across incremental iterations; the CLI appends each iteration so previous revision evidence remains available for full-plan verification. Before applying, the CLI rejects plan/report paths that collide with any referenced DOCX input or output. A target wholly contained in one simple hyperlink may be edited inside that hyperlink while preserving its relationship and wrapper. Targets crossing a hyperlink boundary, fields, drawings, bookmarks, content controls or other unsupported XML must still be refused. If a target is refused, report the location and request a safer anchor or use a separately reviewed editing route. Never bypass the refusal by replacing the whole paragraph.
 
-### Marked-version formatting gate
+### Marked-version Track Changes integrity gate
 
-- Every inserted run is kept inside a native Word `w:ins` revision and receives explicit red font color `FF0000`; the exact inserted text and red formatting are checked by mechanical verification. Deletions remain native `w:del` revisions.
-- Word's Track Changes display can override run font color when Insertions is set to **By Author**. For a consistent red All Markup view, set Review → Tracking dialog launcher → Advanced Options → Insertions → Color → Red on the reviewing computer. This is a local Word display preference, not a property guaranteed by the DOCX on every computer.
-- Never fake tracked changes using red font alone. Never color unchanged text red. Preserve the native insertion/deletion revisions and retain the red inserted text for the Marked deliverable.
+- Every textual change in a Marked Manuscript or SI must be represented by native Word Track Changes: removed text inside `w:del`/`w:delText`, and added text inside `w:ins`/`w:t`. This is the acceptance criterion; font color is not.
+- All changes must be applied through the approved revision plan and `co_reviewer_cli.py apply`. Never directly rewrite a paragraph/run with `python-docx`, replace XML text nodes, use a second DOCX writer, or edit the Marked output in Word with Track Changes turned off. Do not let another writing worker save over the Marked DOCX.
+- If a target cannot be represented safely as native Track Changes, block that target and report it. Do not silently make the text change directly, even if the final wording is correct.
+- The `verify` command checks each planned deletion/insertion revision ID and exact text, then audits the whole output DOCX against its source. Text outside native revision wrappers must be unchanged except for the original anchor text removed into the planned deletion. Any other untracked text difference fails verification.
+- Text color is controlled by Word's review display preferences and is not used to decide whether a change is a tracked revision. Never fake Track Changes with color alone.
 
 ### Stage 5 — Verify and report
 
@@ -90,7 +92,7 @@ Run the mechanical verification command:
 
     python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
 
-This checks exact Word revision IDs, deleted/inserted text, explicit red font on inserted runs, and whether recorded native subscript/superscript formatting survives the DOCX save round-trip. It does not validate scientific meaning. Then inspect the actual revised documents and check that Reviewer responses, Manuscript and SI agree on claims, values, units, sample names and figure/table numbering.
+This checks exact Word revision IDs, deleted/inserted text, whole-document untracked-text integrity, and whether recorded native subscript/superscript formatting survives the DOCX save round-trip. It does not validate scientific meaning. Then inspect the actual revised documents and check that Reviewer responses, Manuscript and SI agree on claims, values, units, sample names and figure/table numbering.
 
 Only after both mechanical and semantic checks pass, record the state through the guarded command (never edit `status` manually):
 
