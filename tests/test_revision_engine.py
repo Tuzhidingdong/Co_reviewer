@@ -739,6 +739,12 @@ class RevisionEngineTests(unittest.TestCase):
         verification = cli.verify_apply_report(plan, [report])
         self.assertTrue(verification["passed"])
         self.assertEqual(verification["targets_verified"], 1)
+        self.assertTrue(verification["results"][0]["checks"]["inserted_runs_red"])
+        self.assertTrue(
+            verification["results"][0]["checks"]["native_script_format_preserved"]
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported Unicode script character"):
+            cli.make_insert_runs(ET.Element(cli.qn("r")), "\u0670")
 
 
     def test_inspector_reports_native_word_script_runs(self):
