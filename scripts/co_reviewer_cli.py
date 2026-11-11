@@ -909,14 +909,33 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     len(insert_nodes) == 1 and inserted == new_text
                     if new_text else insert_id is None and not inserted
                 )
+                inserted_runs = [
+                    run for node in insert_nodes
+                    for run in node.findall(".//w:r", NS)
+                ]
+                # Newer apply reports carry inserted_text. For these reports,
+                # red insertion formatting is a required deliverable invariant.
+                # Older reports remain verifiable without retroactive color checks.
+                red_required = "inserted_text" in edit
+                inserted_runs_red = (
+                    True if insert_id is None or not red_required
+                    else bool(inserted_runs) and all(
+                        (run.find("w:rPr/w:color", NS) is not None)
+                        and run.find("w:rPr/w:color", NS).get(qn("val")) == "FF0000"
+                        for run in inserted_runs
+                    )
+                )
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
-                    "exact_deletion_match": old_ok, "exact_insertion_match": new_ok
+                    "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
+                    "inserted_runs_red": inserted_runs_red
                 }
                 result["p_idx"] = p_idx
-                if old_ok and new_ok:
+                if old_ok and new_ok and inserted_runs_red:
                     result["status"] = "verified"
+                elif not inserted_runs_red:
+                    result["reason"] = "One or more inserted runs are missing the required explicit red font color (FF0000)."
                 else:
                     result["reason"] = "Expected deleted or inserted text was not found in the target paragraph."
             except (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
