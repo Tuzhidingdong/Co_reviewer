@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -195,6 +196,99 @@ def make_run(source: ET.Element, text: str, deleted: bool = False) -> ET.Element
         node.set(f"{{{XML}}}space", "preserve")
     return run
 
+# WordprocessingML run-property order (ECMA-376). New properties are inserted
+# at their schema position so Word does not need to repair our XML.
+_RUN_PROPERTY_ORDER = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
+    "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "noProof",
+    "snapToGrid", "vanish", "webHidden", "color", "spacing", "w", "kern",
+    "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd",
+    "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
+    "specVanish", "oMath", "rPrChange",
+)
+
+
+def _set_run_property(run: ET.Element, name: str, value: str | None) -> None:
+    """Replace one w:rPr property and keep the WordprocessingML property order."""
+    rpr = run.find("w:rPr", NS)
+    if rpr is None:
+        rpr = ET.Element(qn("rPr"))
+        run.insert(0, rpr)
+    for existing in list(rpr):
+        if existing.tag == qn(name):
+            rpr.remove(existing)
+    if value is None:
+        return
+    element = ET.Element(qn(name), {qn("val"): value})
+    try:
+        wanted = _RUN_PROPERTY_ORDER.index(name)
+    except ValueError:
+        rpr.append(element)
+        return
+    insertion_index = len(rpr)
+    for index, child in enumerate(list(rpr)):
+        try:
+            child_rank = _RUN_PROPERTY_ORDER.index(ET.QName(child).localname)
+        except ValueError:
+            continue
+        if child_rank > wanted:
+            insertion_index = index
+            break
+    rpr.insert(insertion_index, element)
+
+
+def _script_character(character: str) -> tuple[str, str] | None:
+    """Return native Word vertical alignment plus its ordinary base character."""
+    decomposition = unicodedata.decomposition(character).split()
+    if not decomposition or decomposition[0] not in {"<sub>", "<super>"}:
+        return None
+    base = "".join(chr(int(codepoint, 16)) for codepoint in decomposition[1:])
+    if not base:
+        return None
+    alignment = "subscript" if decomposition[0] == "<sub>" else "superscript"
+    return alignment, base
+
+
+def normalize_script_characters(text: str) -> str:
+    """Translate Unicode compatibility sub/superscripts to their base text."""
+    pieces = []
+    for character in text:
+        script = _script_character(character)
+        pieces.append(script[1] if script else character)
+    return "".join(pieces)
+
+
+def make_insert_runs(source: ET.Element, text: str) -> list[ET.Element]:
+    """Create red inserted runs and encode Unicode sub/superscripts as native Word formatting."""
+    if not text:
+        return []
+    parsed = [(script[0], script[1]) if (script := _script_character(ch)) else (None, ch)
+              for ch in text]
+    has_explicit_script = any(alignment is not None for alignment, _ in parsed)
+    segments: list[tuple[str | None, str]] = []
+    for alignment, character in parsed:
+        if segments and segments[-1][0] == alignment:
+            segments[-1] = (alignment, segments[-1][1] + character)
+        else:
+            segments.append((alignment, character))
+
+    runs = []
+    for alignment, segment_text in segments:
+        run = make_run(source, segment_text)
+        if run is None:
+            continue
+        # When the replacement explicitly contains script characters, ordinary
+        # characters form the baseline and must not inherit sub/superscript from
+        # the first matched source run.
+        if has_explicit_script:
+            _set_run_property(run, "vertAlign", alignment)
+        # Explicit font color is for the deliverable's Marked copy. Word's
+        # Track Changes display color can still be overridden by local Word UI settings.
+        _set_run_property(run, "color", "FF0000")
+        runs.append(run)
+    return runs
+
+
 def revision_wrapper(kind: str, rid: int, author: str, date: str, runs: list[ET.Element]) -> ET.Element:
     wrapper = ET.Element(qn(kind), {qn("id"): str(rid), qn("author"): author, qn("date"): date})
     for run in runs:
@@ -273,12 +367,12 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         if frag is not None: suffixes.append(frag)
     if first_matched is None:
         return False, next_id, "target could not be mapped to runs"
-    insert_run = make_run(first_matched, new)
+    insert_runs = make_insert_runs(first_matched, new)
     replacements = list(prefixes)
     if deletions:
         replacements.append(revision_wrapper("del", next_id, author, date, deletions)); next_id += 1
-    if insert_run is not None:
-        replacements.append(revision_wrapper("ins", next_id, author, date, [insert_run])); next_id += 1
+    if insert_runs:
+        replacements.append(revision_wrapper("ins", next_id, author, date, insert_runs)); next_id += 1
     replacements.extend(suffixes)
     # Only the selected contiguous run block is replaced. All other children of
     # the current container remain intact; hyperlinks are edited inside their
@@ -365,7 +459,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             edit_result = {
                 "part": part, "p_idx": idx, "find": old, "replace": new,
                 "status": "applied", "delete_revision_id": delete_revision_id,
-                "insert_revision_id": insert_revision_id
+                "insert_revision_id": insert_revision_id,
+                "inserted_text": normalize_script_characters(new)
             }
             for metadata_key in ("revision_item_id", "reviewer", "document", "location"):
                 if metadata_key in edit:
@@ -809,7 +904,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         for text_node in node.findall(".//w:t", NS)
                     )
                 old_ok = len(delete_nodes) == 1 and deleted == target["find"]
-                new_text = target["replace"]
+                new_text = edit.get("inserted_text", target["replace"])
                 new_ok = (
                     len(insert_nodes) == 1 and inserted == new_text
                     if new_text else insert_id is None and not inserted
