@@ -252,6 +252,37 @@ class ReviewAuditTests(unittest.TestCase):
             )
         )
 
+    def test_decision_queue_can_be_limited_to_one_word_comment_id(self):
+        reports = [{
+            "role": "Reviewers",
+            "comments": [
+                {"id": "1", "author": "Reviewer", "comment": "Comment one.", "anchor_paragraph": "Anchor one."},
+                {"id": "2", "author": "Reviewer", "comment": "Comment two.", "anchor_paragraph": "Anchor two."},
+            ],
+            "paragraphs": [],
+        }]
+        audit = {
+            "source_files": [],
+            "comment_matches": [
+                {
+                    "comment_id": "1", "reviewer": "Reviewer", "comment": "Comment one.",
+                    "reply_anchor": {"status": "reference_only", "text": ""},
+                    "target_status": "anchor_unresolved",
+                    "confirmed_matches": [], "candidate_matches": [],
+                },
+                {
+                    "comment_id": "2", "reviewer": "Reviewer", "comment": "Comment two.",
+                    "reply_anchor": {"status": "reference_only", "text": ""},
+                    "target_status": "anchor_unresolved",
+                    "confirmed_matches": [], "candidate_matches": [],
+                },
+            ],
+        }
+        queue = build_decision_queue(reports, audit, comment_ids=["2"])
+        self.assertEqual(len(queue["items"]), 1)
+        self.assertEqual(queue["items"][0]["comment_id"], "2")
+        self.assertEqual(queue["items"][0]["decision"]["status"], "pending")
+
     def test_cache_reuses_inventory_until_source_bytes_change(self):
         source = self.root / "Manuscript.docx"
         write_docx(source, [[("text", "Original paragraph.")]])
