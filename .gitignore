@@ -12,3 +12,6 @@ htmlcov/
 
 # Generated local Microsoft Word acceptance files
 artifacts/word-compatibility-check*/
+# Local evidence cache and quiet quality-check logs
+.co_reviewer_cache/
+artifacts/quality-checks/
