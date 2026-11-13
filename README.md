@@ -54,6 +54,30 @@ Generate an editable Word Response Letter with `python scripts/co_reviewer_cli.p
 
 See examples/revision_plan.example.json and docs/WORKFLOW.md.
 
+## V0.3 local evidence pipeline
+
+The model-agnostic evidence tools reduce repeated PDF/JSON/XML context transfer while preserving the existing revision and quality gates.
+
+Install the optional PDF dependency:
+
+    python -m pip install -r requirements-pdf.txt
+
+Inspect a Word-exported layout PDF and reuse its cached page evidence:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1
+
+Render only selected pages for visual confirmation:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1 --render-pages 1 13 25 --text-pages 13
+
+Summarize large structured outputs without dumping the original into context:
+
+    python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary
+    python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary --path /summary --path /checks/13
+    python scripts/evidence_tools.py structured-summary --input paragraph_runs.xml --format xml --out-dir reports/xml-summary
+
+PDF cache keys bind file SHA-256, tool/schema version, PyMuPDF version and inspection parameters. The tool detects possible line-number anomalies in the selectable-text layer, but its results are diagnostic only; flagged pages and representative unflagged pages still require visual review. It does not perform OCR or certify overall layout. JSON/XML summaries are structural indexes, not semantic verification. See [docs/EVIDENCE_PIPELINE.md](docs/EVIDENCE_PIPELINE.md).
+
 ## Safe revision engine: supported scope
 
 - A target must occur exactly once in its selected paragraph.
