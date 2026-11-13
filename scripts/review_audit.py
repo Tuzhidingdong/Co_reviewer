@@ -420,7 +420,8 @@ def _label_parts(label: str) -> tuple[str, int, str] | None:
 
 def _caption_identity_text(text: str) -> str:
     """Normalise caption wording for exact-copy grouping, not semantic inference."""
-    body = _CAPTION_RE.sub("", text or "", count=1)
+    match = _CAPTION_RE.match(text or "")
+    body = match.group("tail") if match else (text or "")
     body = normalize_match_text(body)
     body = re.sub(r"(?<=[a-z0-9])[-‐‑‒–—](?=[a-z0-9])", "", body)
     body = re.sub(r"[^\w]+", " ", body, flags=re.UNICODE)
