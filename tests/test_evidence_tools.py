@@ -73,15 +73,29 @@ class StructuredEvidenceTests(unittest.TestCase):
         source.write_text('{"items":[{"id":1},{"id":2}]}', encoding="utf-8")
         out_dir = self.root / "out"
         args = Namespace(
-            input=str(source), format="auto", out_dir=str(out_dir), path=["/items/1"],
+            input=str(source), format="auto", out_dir=str(out_dir),
+            cache_dir=str(self.root / "cache"), path=["/items/1"],
             sample_items=2, max_chars=200,
         )
-        with contextlib.redirect_stdout(io.StringIO()):
+        first_output = io.StringIO()
+        with contextlib.redirect_stdout(first_output):
             self.assertEqual(evidence.cmd_structured_summary(args), 0)
         report = json.loads((out_dir / "structured_evidence.json").read_text(encoding="utf-8"))
         digest = (out_dir / "structured_evidence.md").read_text(encoding="utf-8")
         self.assertEqual(report["selected_paths"]["/items/1"]["id"], 2)
         self.assertIn("SHA-256", digest)
+        self.assertIn("CACHE MISS", first_output.getvalue())
+
+        second_args = Namespace(**{**vars(args), "out_dir": str(self.root / "second")})
+        second_output = io.StringIO()
+        with contextlib.redirect_stdout(second_output):
+            self.assertEqual(evidence.cmd_structured_summary(second_args), 0)
+        self.assertIn("CACHE HIT", second_output.getvalue())
+        second = json.loads(
+            (Path(second_args.out_dir) / "structured_evidence.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(report["cache"]["key"], second["cache"]["key"])
+        self.assertTrue(second["cache"]["hit"])
 
 
 try:
