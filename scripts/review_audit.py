@@ -577,10 +577,17 @@ def _context_excerpts(report: dict[str, Any], match_rows: list[dict[str, Any]], 
     return excerpts
 
 
-def build_decision_queue(reports: list[dict[str, Any]], audit: dict[str, Any]) -> dict[str, Any]:
+def build_decision_queue(
+    reports: list[dict[str, Any]],
+    audit: dict[str, Any],
+    comment_ids: list[str] | None = None,
+) -> dict[str, Any]:
     reports_by_role = {item.get("role"): item for item in reports}
+    selected_ids = {str(value) for value in comment_ids} if comment_ids else None
     items = []
     for match in audit.get("comment_matches", []):
+        if selected_ids is not None and str(match.get("comment_id")) not in selected_ids:
+            continue
         reviewer_report = reports_by_role.get("Reviewers", {})
         source_comment = next(
             (item for item in reviewer_report.get("comments", []) if str(item.get("id")) == str(match.get("comment_id"))),
