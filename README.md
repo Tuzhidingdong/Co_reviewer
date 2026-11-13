@@ -76,7 +76,7 @@ Summarize large structured outputs without dumping the original into context:
     python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary --path /summary --path /checks/13
     python scripts/evidence_tools.py structured-summary --input paragraph_runs.xml --format xml --out-dir reports/xml-summary
 
-PDF cache keys bind file SHA-256, tool/schema version, PyMuPDF version and inspection parameters. The tool detects possible line-number anomalies in the selectable-text layer, but its results are diagnostic only; flagged pages and representative unflagged pages still require visual review. It does not perform OCR or certify overall layout. JSON/XML summaries are structural indexes, not semantic verification. See [docs/EVIDENCE_PIPELINE.md](docs/EVIDENCE_PIPELINE.md).
+PDF cache keys bind file SHA-256, tool/schema version, PyMuPDF version and inspection parameters. JSON/XML summary cache keys bind source SHA-256, format, tool version, requested JSON Pointers and sampling parameters. The tool detects possible line-number anomalies in the selectable-text layer, but its results are diagnostic only; flagged pages and representative unflagged pages still require visual review. It does not perform OCR or certify overall layout. JSON/XML summaries are structural indexes, not semantic verification. See [docs/EVIDENCE_PIPELINE.md](docs/EVIDENCE_PIPELINE.md).
 
 ## Safe revision engine: supported scope
 
