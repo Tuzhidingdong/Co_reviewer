@@ -6,8 +6,10 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 
 ## What it does
 
-- Inspects DOCX comments, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
-- Produces a compact Markdown digest and a full machine-readable paragraph/comment inventory; ordinary prose in a Reviewer Comments DOCX is not mistaken for Word-native comments.
+- Inspects DOCX comments, native Word selection ranges, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
+- Reconstructs selected text between each Word comment's range markers; distinguishes the selected text from its containing paragraph and does not infer an anchor from a comment reference alone.
+- Reuses SHA-256-bound parsed inventories so unchanged DOCX files are not reparsed; deterministic matching, numbering audits and evidence-packet generation run against the cached inventory.
+- Produces a compact Markdown digest, machine-readable inventory, cross-document match report, figure/table numbering audit and a bounded semantic-decision queue.
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
 - Requires explicit human approval before applying edits; a SHA-256 fingerprint binds approval to the exact reviewer comment, proposed response, document targets and (when preflighted) source DOCX versions.
 - Applies every planned text change as native Word insertions/deletions (`w:ins`/`w:del`) while preserving unaffected run formatting and package parts. Direct text rewrites are not permitted in a Marked deliverable.
@@ -21,9 +23,18 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 
 Python 3.10+ is required. Install the DOCX/XML dependencies with: python -m pip install -r requirements.txt.
 
-PowerShell:
+PowerShell — one parse/cache pass followed by deterministic auditing:
 
-    python scripts/co_reviewer_cli.py inspect --rev .\input\Reviewers.docx --man .\input\Manuscript.docx --si .\input\SI.docx --out workspace_digest.md --json-out workspace_inventory.json
+    python scripts/co_reviewer_cli.py audit --rev .\input\Reply.docx --man .\input\Manuscript.docx --si .\input\SI.docx --out workspace_digest.md --json-out workspace_inventory.json --audit-md-out review_audit_report.md --audit-out review_audit_report.json --decision-queue-out review_decision_queue.json --cache-dir .co-reviewer-cache
+
+The command writes:
+- `workspace_inventory.json`: parsed paragraph, native comment, anchor, caption and reference inventory.
+- `review_audit_report.json/.md`: exact and candidate cross-document matches plus figure/table numbering flags.
+- `review_decision_queue.json`: the comment and only the matched/candidate paragraph excerpts with adjacent context; the decision remains pending and requires user approval.
+
+Each DOCX inventory is cached by its SHA-256 and parser cache-schema version. The first run parses the files; a later run with unchanged source bytes reports cache hits and performs matching/numbering over the cached JSON without reopening the DOCX. If one input changes, only that input is reparsed. Use `--refresh-cache` to force a fresh parse. The cache directory is local and ignored by Git.
+
+A native target match is confirmed only when a resolved Word selection matches exactly and uniquely in a target document. Similarity/token-overlap results are candidates, not confirmed locations. Figure/table numbering checks are diagnostic only; the tool never renumbers files.
 
 Validate the draft plan and preflight every target before approval:
 
