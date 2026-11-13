@@ -48,6 +48,16 @@ For XML or JSONL, the same command creates a bounded structure/index report:
 
 The structural-summary cache key includes source SHA-256, format, tool/schema version, requested JSON Pointers and sampling limits. Identical inputs and parameters reuse the cached summary; changed source bytes or options produce a new entry. The report identifies file SHA-256 and structure, and makes clear that sampled counts are not exhaustive semantic validation. JSON/XML source files are not rewritten. When an exact value must be checked, retrieve the corresponding path/element from the original source.
 
+## CrossRef reference metadata
+
+For a CrossRef response JSON, index every returned record without transferring its complete metadata payload:
+
+    python scripts/evidence_tools.py crossref-index --input crossref_response.json --out-dir reports/crossref-index
+
+The compact Markdown index includes each record's DOI, title, first author, year, journal and an exact JSON Pointer back to the original item. The machine report also flags missing DOI/title fields and duplicate DOI/title groups. It processes all CrossRef records rather than sampling the first few.
+
+This index is not DOI authenticity verification and does not decide whether the returned work is the correct cited source. Open the original record at its evidence pointer for exact author lists, publication details or any conflicting entry. The cache is keyed by source SHA-256 and evidence-tool/schema version; changed source bytes require a new index.
+
 ## 3. Context delivery rules
 
 - Send the compact Markdown digest to the Supervisor by default, not the full machine report.
