@@ -78,6 +78,12 @@ Summarize large structured outputs without dumping the original into context:
 
 PDF cache keys bind file SHA-256, tool/schema version, PyMuPDF version and inspection parameters. JSON/XML summary cache keys bind source SHA-256, format, tool version, requested JSON Pointers and sampling parameters. The tool detects possible line-number anomalies in the selectable-text layer, but its results are diagnostic only; flagged pages and representative unflagged pages still require visual review. It does not perform OCR or certify overall layout. JSON/XML summaries are structural indexes, not semantic verification. See [docs/EVIDENCE_PIPELINE.md](docs/EVIDENCE_PIPELINE.md).
 
+Index every CrossRef result into a compact bibliographic table with duplicate/missing-field flags:
+
+    python scripts/evidence_tools.py crossref-index --input crossref_response.json --out-dir reports/crossref-index
+
+The index retains exact JSON Pointers to the original items; it is not a DOI authenticity or scientific-source verification.
+
 ## Safe revision engine: supported scope
 
 - A target must occur exactly once in its selected paragraph.
