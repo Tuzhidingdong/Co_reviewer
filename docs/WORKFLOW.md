@@ -18,6 +18,30 @@ Keep original inputs immutable. Use a dedicated folder per round:
       reports/
         workspace_digest.md
         workspace_inventory.json
+        review_audit_report.md
+        review_audit_report.json
+        review_decision_queue.json
+      .co-reviewer-cache/
+        docx-v1-<source-sha256>-<author-filter>.json
+
+## Single-pass inventory, native anchors and cached audit
+
+Start with one audit command rather than separate per-feature document reads:
+
+    python scripts/co_reviewer_cli.py audit --rev revision_round_01/input/Reply.docx --man revision_round_01/input/Manuscript.docx --si revision_round_01/input/SI.docx --out revision_round_01/reports/workspace_digest.md --json-out revision_round_01/reports/workspace_inventory.json --audit-md-out revision_round_01/reports/review_audit_report.md --audit-out revision_round_01/reports/review_audit_report.json --decision-queue-out revision_round_01/reports/review_decision_queue.json --cache-dir revision_round_01/.co-reviewer-cache
+
+The first run parses each available DOCX once and caches its inventory against the source SHA-256 and cache-schema version. Re-running with unchanged inputs reuses those inventories; it recalculates matches/numbering from cached JSON without reparsing the DOCX. If one source changes, only that source inventory is refreshed. Use `--refresh-cache` only when deliberately forcing a fresh parse. Keep the cache local; it is ignored by Git and is not a deliverable.
+
+For each native Word comment, the inspector reconstructs the selected text between the matching `commentRangeStart` and `commentRangeEnd` markers. It reports the selected range separately from the containing paragraph. A comment reference without a recoverable range is labelled reference-only/unresolved; never treat the entire containing paragraph as the Word selection. Cross-paragraph ranges retain all touched paragraph indices.
+
+Cross-document matching has three evidence levels:
+- Exact and unique native-selection text in one target document: confirmed target candidate for review.
+- Exact text in more than one target document: ambiguous; no single document is inferred.
+- Token-overlap text: candidate only; it is never promoted to a confirmed target.
+
+The figure/table audit parses caption labels and textual Figure/Fig./Table references. It reports per-document caption order, first-mention order, duplicate captions, numbering gaps, unresolved references and unreferenced captions, plus labels repeated across documents. These are diagnostic flags, not a renumbering plan; the script never edits numbering automatically. Captions encoded only inside images, floating shapes or unsupported text boxes may be missed and must be reviewed.
+
+The decision queue includes each comment, the native anchor, confirmed/candidate locations and a bounded number of nearby paragraph excerpts. Feed only the relevant item from this queue to the model. Semantic disposition (Manuscript, SI, Reply only, multiple documents, no change or clarification needed) remains a pending proposal with evidence/rationale fields and an explicit user-approval requirement. The audit does not write a revision plan or modify DOCX files.
 
 ## Revision item identity
 
