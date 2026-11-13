@@ -608,15 +608,23 @@ def summarize_xml(path: Path, sample_items: int, max_chars: int) -> dict[str, An
 
 def crossref_items(data: Any) -> tuple[list[dict[str, Any]], str]:
     if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)], ""
-    if not isinstance(data, dict):
+        items, pointer = data, ""
+    elif isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, dict) and isinstance(message.get("items"), list):
+            items, pointer = message["items"], "/message/items"
+        elif isinstance(data.get("items"), list):
+            items, pointer = data["items"], "/items"
+        else:
+            raise ValueError("CrossRef records not found at /message/items or /items.")
+    else:
         raise ValueError("CrossRef JSON must be an object or an array of records.")
-    message = data.get("message")
-    if isinstance(message, dict) and isinstance(message.get("items"), list):
-        return [item for item in message["items"] if isinstance(item, dict)], "/message/items"
-    if isinstance(data.get("items"), list):
-        return [item for item in data["items"] if isinstance(item, dict)], "/items"
-    raise ValueError("CrossRef records not found at /message/items or /items.")
+    invalid = [index for index, item in enumerate(items) if not isinstance(item, dict)]
+    if invalid:
+        raise ValueError(
+            "CrossRef item(s) are not objects at index: " + ", ".join(map(str, invalid[:20]))
+        )
+    return items, pointer
 
 
 def crossref_first(value: Any) -> str | None:
@@ -654,7 +662,8 @@ def crossref_author(item: dict[str, Any]) -> str | None:
 
 
 def normalize_title(value: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+    # Preserve Unicode letters and digits in non-English reference titles.
+    return re.sub(r"[^\\w]+", " ", (value or "").casefold(), flags=re.UNICODE).replace("_", " ").strip()
 
 
 def build_crossref_index(data: Any) -> dict[str, Any]:
@@ -668,6 +677,8 @@ def build_crossref_index(data: Any) -> dict[str, Any]:
     for index, item in enumerate(raw_items):
         pointer = f"{base_pointer}/{index}" if base_pointer else f"/{index}"
         doi = clean_text(item.get("DOI", ""), 240).lower() or None
+        if doi:
+            doi = re.sub(r"^https?://(?:dx\\.)?doi\\.org/", "", doi)
         title = crossref_first(item.get("title"))
         journal = crossref_first(item.get("container-title"))
         record = {
