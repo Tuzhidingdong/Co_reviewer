@@ -397,6 +397,8 @@ def cmd_pdf_inspect(args: argparse.Namespace) -> int:
                 pdf_path, cache_key, args.render_pages or [], args.text_pages or [],
                 args.render_dpi, args.max_text_chars, not args.no_line_number_check, temporary_dir,
             )
+            if report["source"]["sha256"] != key_material["source_sha256"]:
+                raise RuntimeError("The source PDF changed during inspection; no cache entry was written.")
             write_json(temporary_dir / "pdf_evidence.json", report)
             write_markdown(temporary_dir / "pdf_evidence.md", pdf_markdown(report))
             write_json(temporary_dir / "manifest.json", {
@@ -711,8 +713,12 @@ def cmd_structured_summary(args: argparse.Namespace) -> int:
             "tool": {"name": "Co_Reviewer evidence tools", "version": TOOL_VERSION},
             "cache": {"key": cache_key, "hit": False},
         })
-        temporary_dir = Path(tempfile.mkdtemp(prefix=f".{cache_key[:12]}-", dir=cache_root / "structured" if (cache_root / "structured").exists() else cache_root))
+        structured_cache_root = cache_root / "structured"
+        structured_cache_root.mkdir(parents=True, exist_ok=True)
+        temporary_dir = Path(tempfile.mkdtemp(prefix=f".{cache_key[:12]}-", dir=structured_cache_root))
         try:
+            if sha256_file(source) != digest:
+                raise RuntimeError("The source file changed during summarization; no cache entry was written.")
             write_json(temporary_dir / "structured_evidence.json", report)
             write_markdown(temporary_dir / "structured_evidence.md", structured_markdown(source, digest, report))
             write_json(temporary_dir / "manifest.json", {
