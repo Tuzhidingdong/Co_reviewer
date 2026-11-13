@@ -78,6 +78,7 @@ try {
     Invoke-QualityCheck -Name "Check evidence CLI entry point" -PythonArgs @("scripts/evidence_tools.py", "--help")
     Invoke-QualityCheck -Name "Check PDF evidence command" -PythonArgs @("scripts/evidence_tools.py", "pdf-inspect", "--help")
     Invoke-QualityCheck -Name "Check structured evidence command" -PythonArgs @("scripts/evidence_tools.py", "structured-summary", "--help")
+    Invoke-QualityCheck -Name "Check CrossRef evidence command" -PythonArgs @("scripts/evidence_tools.py", "crossref-index", "--help")
     Invoke-QualityCheck -Name "Check Response Letter DOCX command" -PythonArgs @("scripts/co_reviewer_cli.py", "render-response-docx", "--help")
     Invoke-QualityCheck -Name "Check revision status command" -PythonArgs @("scripts/co_reviewer_cli.py", "status", "--help")
     Invoke-QualityCheck -Name "Check approval command" -PythonArgs @("scripts/co_reviewer_cli.py", "approve-plan", "--help")
