@@ -1,5 +1,26 @@
 # Co_Reviewer workflow guide
 
+## Local evidence preparation (V0.3)
+
+Before reviewing a Word-exported layout PDF, build a local evidence package:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1
+
+Read the compact Markdown digest first. The JSON report remains the detailed local record. Render only the pages requiring visual confirmation, plus a representative sample:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1 --render-pages 1 13 25 --text-pages 13
+
+A PDF cache entry is keyed by source SHA-256, evidence-tool/schema version, PyMuPDF version and render/extraction parameters. Reuse it for a later workflow stage only when those values are unchanged. New PDF bytes or changed parameters require a new inspection. The detector's left-margin line-number candidates are diagnostic only: inspect flagged pages visually, and do not assume continuous line numbering across pages unless the document settings establish it. Image-only pages are not OCR-checked.
+
+For large JSON/JSONL/XML files, retain the original and create a local summary:
+
+    python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary
+
+For JSON, use repeated --path arguments with JSON Pointer syntax to expose exact relevant branches. The summary reports sampled tree structure and never replaces exact verification against the source. Use a streaming summary for XML; consult the original element when a claim or value needs confirmation.
+
+Do not transfer full page screenshots, full structured reports, or complete test logs into the Supervisor context by default. Keep complete evidence locally; send bounded summaries and exact failure excerpts. These rules reduce repeated context, not reviewer coverage or validation requirements.
+
+
 ## Revision round structure
 
 Keep original inputs immutable. Use a dedicated folder per round:
