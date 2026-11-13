@@ -46,7 +46,7 @@ For XML or JSONL, the same command creates a bounded structure/index report:
 
     python scripts/evidence_tools.py structured-summary --input paragraph_runs.xml --format xml --out-dir reports/xml-summary
 
-The report identifies file SHA-256 and structure, and makes clear that sampled counts are not exhaustive semantic validation. JSON/XML source files are not rewritten. When an exact value must be checked, retrieve the corresponding path/element from the original source.
+The structural-summary cache key includes source SHA-256, format, tool/schema version, requested JSON Pointers and sampling limits. Identical inputs and parameters reuse the cached summary; changed source bytes or options produce a new entry. The report identifies file SHA-256 and structure, and makes clear that sampled counts are not exhaustive semantic validation. JSON/XML source files are not rewritten. When an exact value must be checked, retrieve the corresponding path/element from the original source.
 
 ## 3. Context delivery rules
 
