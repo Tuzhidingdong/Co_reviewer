@@ -262,19 +262,25 @@ def _candidate_anchor_matches(anchor_text: str, report: dict[str, Any], limit: i
         target_tokens = _tokens(paragraph.get("text", ""))
         if not target_tokens:
             continue
-        score = len(anchor_tokens & target_tokens) / max(1, len(anchor_tokens))
-        if score >= 0.45:
+        shared = len(anchor_tokens & target_tokens)
+        # A selected range may be much longer than the relevant target paragraph.
+        # Score containment against the shorter side as well as query coverage so
+        # useful excerpts are retained as candidates without ever becoming confirmed.
+        anchor_coverage = shared / max(1, len(anchor_tokens))
+        target_coverage = shared / max(1, len(target_tokens))
+        score = max(anchor_coverage, target_coverage)
+        if score >= 0.30 and shared >= 3:
             candidates.append({
                 "part": paragraph.get("part"),
                 "p_idx": paragraph.get("p_idx"),
                 "para_id": paragraph.get("para_id"),
                 "match_type": "token_overlap_candidate",
                 "match_score": round(score, 3),
+                "shared_token_count": shared,
                 "matched_text": paragraph.get("text", "")[:1600],
             })
-    candidates.sort(key=lambda item: (-item["match_score"], item["part"] or "", item["p_idx"] or 0))
+    candidates.sort(key=lambda item: (-item["match_score"], -item["shared_token_count"], item["part"] or "", item["p_idx"] or 0))
     return candidates[:limit]
-
 
 def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
@@ -286,27 +292,45 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
         ]
         if not selections and anchor_text:
             selections = [{"text": anchor_text}]
+
+        # These secondary query texts can retrieve relevant context when the
+        # selected range is absent, incomplete, or paraphrased in the target file.
+        # They are candidate-only signals and can never confirm a target.
+        candidate_queries: list[tuple[str, str]] = [
+            (item.get("text") or "", "native_selection")
+            for item in selections
+        ]
+        if comment.get("anchor_paragraph"):
+            candidate_queries.append((comment["anchor_paragraph"], "containing_paragraph"))
+        if comment.get("comment"):
+            candidate_queries.append((comment["comment"], "reviewer_comment"))
+
         exact: list[dict[str, Any]] = []
         candidates: list[dict[str, Any]] = []
         for target_report in target_reports:
             role = target_report.get("role", "Document")
-            role_has_exact = False
-            role_candidates: list[dict[str, Any]] = []
+            role_exact: list[dict[str, Any]] = []
             for selection_index, selection in enumerate(selections):
                 selected_text = selection.get("text") or ""
                 for item in _exact_anchor_matches(selected_text, target_report):
                     item["document"] = role
                     item["selection_index"] = selection_index
                     item["matched_anchor_text"] = selected_text[:1200]
-                    exact.append(item)
-                    role_has_exact = True
-                if not role_has_exact:
-                    for item in _candidate_anchor_matches(selected_text, target_report):
-                        item["document"] = role
-                        item["selection_index"] = selection_index
-                        role_candidates.append(item)
-            if not role_has_exact:
-                candidates.extend(role_candidates)
+                    role_exact.append(item)
+            if role_exact:
+                exact.extend(role_exact)
+                continue
+
+            role_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+            for query_text, query_source in candidate_queries:
+                for item in _candidate_anchor_matches(query_text, target_report):
+                    item["document"] = role
+                    item["query_source"] = query_source
+                    key = (item.get("part"), item.get("p_idx"))
+                    current = role_candidates.get(key)
+                    if current is None or item["match_score"] > current["match_score"]:
+                        role_candidates[key] = item
+            candidates.extend(role_candidates.values())
 
         # Deduplicate exact results that can arise when multiple ranges overlap the
         # same target paragraph; preserve selection provenance in the audit record.
@@ -318,6 +342,15 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
             )
             unique_exact[key] = item
         exact = list(unique_exact.values())
+        candidates.sort(
+            key=lambda item: (
+                -item.get("match_score", 0),
+                -item.get("shared_token_count", 0),
+                item.get("document", ""),
+                item.get("part", ""),
+                item.get("p_idx") or 0,
+            )
+        )
 
         anchor_status = comment.get("anchor_status", "markers_missing")
         if _PLACEHOLDER_RE.search(anchor_text):
@@ -348,8 +381,8 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
             "candidate_matches": candidates[:10],
             "note": (
                 "A cross-document match is confirmed only when a resolved native Word selection "
-                "matches exactly and uniquely. Comment text or token overlap is never promoted "
-                "to a confirmed target."
+                "matches exactly and uniquely. Containing-paragraph, reviewer-comment and token-overlap "
+                "searches are candidate-only and can never be promoted to confirmed targets."
             ),
         })
     return results
