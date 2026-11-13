@@ -67,10 +67,11 @@ def validate_pages(values: list[int] | None, page_count: int, option_name: str) 
     return selected
 
 
-def pdf_text_lines(page: Any) -> tuple[list[dict[str, Any]], int]:
+def pdf_text_lines(page: Any) -> tuple[list[dict[str, Any]], int, int]:
     lines: list[dict[str, Any]] = []
     text_chars = 0
     data = page.get_text("dict")
+    text_blocks = sum(1 for block in data.get("blocks", []) if block.get("type") == 0)
     for block_index, block in enumerate(data.get("blocks", [])):
         if block.get("type") != 0:
             continue
@@ -91,7 +92,7 @@ def pdf_text_lines(page: Any) -> tuple[list[dict[str, Any]], int]:
                 ],
                 "spans": spans,
             })
-    return lines, text_chars
+    return lines, text_chars, text_blocks
 
 
 def find_line_numbers(
@@ -106,7 +107,7 @@ def find_line_numbers(
             if not box or not LINE_NUMBER_RE.fullmatch(value):
                 continue
             x0, y0, x1, y1 = (float(item) for item in box)
-            if x0 > page_width * 0.20 or y0 < page_height * 0.035 or y1 > page_height * 0.965:
+            if x0 > page_width * 0.12 or y0 < page_height * 0.035 or y1 > page_height * 0.965:
                 continue
             found.append({
                 "page": page_number, "number": int(value),
@@ -199,8 +200,7 @@ def build_pdf_report(
         for index, page in enumerate(document):
             page_number = index + 1
             width, height = dimensions[index]
-            lines, text_chars = pdf_text_lines(page)
-            blocks = page.get_text("dict").get("blocks", [])
+            lines, text_chars, text_blocks = pdf_text_lines(page)
             candidates = find_line_numbers(lines, width, height, page_number) if check_line_numbers else []
             candidates_all.extend(candidates)
             page_findings: list[str] = []
@@ -259,7 +259,7 @@ def build_pdf_report(
             pages.append({
                 "page": page_number, "width_pt": round(width, 2), "height_pt": round(height, 2),
                 "rotation": int(page.rotation), "text_characters": text_chars,
-                "text_blocks": sum(1 for block in blocks if block.get("type") == 0),
+                "text_blocks": text_blocks,
                 "text_lines": len(lines), "line_number_candidates": len(candidates),
                 "first_line_number": candidates[0]["number"] if candidates else None,
                 "last_line_number": candidates[-1]["number"] if candidates else None,
