@@ -26,8 +26,19 @@ function Invoke-QualityCheck {
     $SafeName = $Name -replace '[^A-Za-z0-9_.-]', '_'
     $StepLogPath = Join-Path $LogRoot "step-$SafeName-$RunStamp-$PID.log"
 
-    & python @PythonArgs *> $StepLogPath
-    $ExitCode = $LASTEXITCODE
+    # Native executables can write normal progress output (for example,
+    # unittest -v) to stderr. With ErrorActionPreference=Stop, PowerShell
+    # may promote those redirected stderr records to terminating errors
+    # before the native process exit code can be checked.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & python @PythonArgs *> $StepLogPath
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
 
     Add-Content -LiteralPath $LogPath -Encoding UTF8 -Value ([Environment]::NewLine + "===== $Name (exit $ExitCode) =====")
     if (Test-Path -LiteralPath $StepLogPath) {
