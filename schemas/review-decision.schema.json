@@ -38,7 +38,22 @@
               "text": { "type": "string" },
               "part": { "type": ["string", "null"] },
               "p_idx": { "type": ["integer", "null"] },
-              "paragraphs": { "type": "array", "items": { "type": "integer" } }
+              "paragraphs": { "type": "array", "items": { "type": "integer" } },
+              "selections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["text", "part", "start", "end", "paragraphs"],
+                  "properties": {
+                    "text": { "type": "string" },
+                    "part": { "type": ["string", "null"] },
+                    "start": { "type": ["object", "null"] },
+                    "end": { "type": ["object", "null"] },
+                    "paragraphs": { "type": "array", "items": { "type": "integer" } }
+                  },
+                  "additionalProperties": true
+                }
+              }
             },
             "additionalProperties": true
           },
