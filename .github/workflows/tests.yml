@@ -55,6 +55,8 @@ jobs:
         run: python scripts/evidence_tools.py pdf-inspect --help
       - name: Evidence structured-summary command help
         run: python scripts/evidence_tools.py structured-summary --help
+      - name: Evidence CrossRef index command help
+        run: python scripts/evidence_tools.py crossref-index --help
       - name: Source preflight CLI help
         run: python scripts/co_reviewer_cli.py preflight-plan --help
       - name: Verified-state confirmation CLI help
