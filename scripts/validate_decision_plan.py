@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 
-def _role(value: str) -> str:
-    value = (value or "").strip()
+def _role(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
     return "Reviewers" if value.casefold() in {"reply", "reviewer", "reviewers"} else value
 
 
@@ -31,6 +33,8 @@ def _paragraph_index(inventory: Any) -> dict[tuple[str, str, int], dict[str, Any
     result = {}
     for role, report in _documents(inventory).items():
         for paragraph in report.get("paragraphs", []):
+            if not isinstance(paragraph, dict):
+                continue
             try:
                 key = (role, paragraph.get("part", "word/document.xml"), int(paragraph["p_idx"]))
             except (KeyError, TypeError, ValueError):
@@ -54,6 +58,9 @@ def validate_decision_plan(
         errors.append("tasks must be a non-empty array.")
         tasks = []
 
+    if audit is not None and not isinstance(audit, dict):
+        errors.append("review_audit_report must be a JSON object.")
+        audit = {}
     audit = audit or {}
     inventory = inventory if inventory is not None else []
     docs = _documents(inventory)
@@ -138,7 +145,7 @@ def validate_decision_plan(
             "content_placement_decision", "response_only", "author_decision",
             "evidence_request", "other",
         }
-        if task.get("task_type") not in task_types:
+        if not isinstance(task.get("task_type"), str) or task.get("task_type") not in task_types:
             errors.append(f"{prefix}.task_type has an unsupported value.")
         if not isinstance(task.get("proposed_action"), str) or not task.get("proposed_action", "").strip():
             errors.append(f"{prefix}.proposed_action must be a non-empty string.")
@@ -161,7 +168,7 @@ def validate_decision_plan(
             task_sequences[task_id] = sequence
         if task.get("requires_user_approval") is not True:
             errors.append(f"{prefix}.requires_user_approval must be true.")
-        if task.get("readiness") not in {
+        if not isinstance(task.get("readiness"), str) or task.get("readiness") not in {
             "ready_for_author_approval", "needs_clarification", "blocked_by_missing_evidence"
         }:
             errors.append(f"{prefix}.readiness has an unsupported value.")
@@ -188,6 +195,9 @@ def validate_decision_plan(
         if len({str(item) for item in dependency_list}) != len(dependency_list):
             errors.append(f"{prefix}.dependencies contains duplicates.")
         dependencies[task_id] = [str(item) for item in dependency_list]
+
+        if not isinstance(task.get("unresolved_questions"), list):
+            errors.append(f"{prefix}.unresolved_questions must be an array.")
 
         evidence = task.get("evidence", [])
         if not isinstance(evidence, list) or not evidence:
@@ -216,11 +226,11 @@ def validate_decision_plan(
             if not isinstance(excerpt, str) or not excerpt.strip():
                 errors.append(f"{ep}.source_excerpt must be non-empty.")
                 continue
-            if item.get("match_status") not in {
+            if not isinstance(item.get("match_status"), str) or item.get("match_status") not in {
                 "confirmed", "candidate", "ambiguous", "unresolved", "not_applicable"
             }:
                 errors.append(f"{ep}.match_status has an unsupported value.")
-            if item.get("evidence_type") not in {
+            if not isinstance(item.get("evidence_type"), str) or item.get("evidence_type") not in {
                 "reviewer_comment", "native_anchor", "paragraph", "caption",
                 "reference", "table", "figure", "audit_finding",
             }:
@@ -267,7 +277,7 @@ def validate_decision_plan(
             p_idx = target.get("p_idx")
             if document not in {"Reviewers", "Manuscript", "SI"} or not isinstance(part, str) or not part:
                 errors.append(f"{tp} must identify a known document role and Word part.")
-            if target.get("action") not in {
+            if not isinstance(target.get("action"), str) or target.get("action") not in {
                 "replace", "add", "remove", "renumber", "reference_update",
                 "keep", "inspect_only", "reply_only",
             }:
@@ -280,7 +290,7 @@ def validate_decision_plan(
             if (
                 not isinstance(basis, list)
                 or not basis
-                or any(item not in evidence_ids for item in basis)
+                or any(not isinstance(item, str) or item not in evidence_ids for item in basis)
             ):
                 errors.append(f"{tp}.evidence_ids must be non-empty and refer only to evidence IDs in the same task.")
             else:
@@ -296,7 +306,9 @@ def validate_decision_plan(
 
     if not isinstance(plan.get("comment_scope"), str):
         errors.append("comment_scope must be explicitly declared.")
-    scope = plan.get("comment_scope", "all_comments")
+        scope = None
+    else:
+        scope = plan.get("comment_scope")
     included_ids_value = plan.get("included_comment_ids", [])
     if not isinstance(included_ids_value, list):
         errors.append("included_comment_ids must be an array.")
