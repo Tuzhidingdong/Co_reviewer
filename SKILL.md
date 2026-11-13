@@ -30,6 +30,28 @@ Omit unavailable arguments. Review both ordinary text paragraphs in the Reviewer
 
 Use --comment-author only when filtering by the comment author's name. Do not filter comments by the manuscript author's name.
 
+### Stage 1.5 — Prepare compact local evidence
+
+When a Word-exported layout PDF is available, use the local evidence tool instead of opening every rendered page and transferring the full PDF text into Supervisor context:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1
+
+The tool indexes the PDF selectable-text layer, page geometry and candidate line-number positions locally. Its Markdown digest is the default Supervisor input. Keep the detailed JSON and the complete PDF as local evidence. Render only pages that need visual review, for example pages named by findings plus a small representative sample:
+
+    python scripts/evidence_tools.py pdf-inspect --pdf Manuscript_clean_layout.pdf --out-dir reports/pdf-stage1 --render-pages 1 13 25 --text-pages 13
+
+The line-number detector is a heuristic, not an acceptance test. Confirm flagged pages and representative unflagged pages visually. Do not infer cross-page continuity unless the document's line-numbering configuration is known. Image-only pages are flagged because this tool does not perform OCR; they must not be reported as checked.
+
+For Stage 4 or any later pass, compare the PDF SHA-256 and tool/inspection parameters. Reuse the cached evidence package when all are unchanged. Re-run inspection when the source PDF or parameters change. Do not re-read or re-render an unchanged PDF merely because the workflow entered another stage.
+
+For large JSON, JSONL or XML evidence files, preserve the original and create a bounded structural summary:
+
+    python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary
+
+For JSON, add exact JSON Pointer excerpts only when needed, for example: --path /summary --path /checks/13. Read the digest first; retrieve a small set of exact records from the original file only for failures, conflicts or reviewer-relevant questions. XML is indexed locally with a streaming parser. Sampling limits must remain visible in the report; a structural summary is not semantic verification.
+
+Do not send complete JSON/XML inventories, raw service metadata, full test output or the full page-by-page PDF extraction to the Supervisor by default. Keep the complete machine artifacts on disk and provide summary counts, failure counts, omitted/sampled counts and evidence pointers. The visual and scientific review gates remain mandatory where applicable.
+
 ### Stage 2 — Build a revision plan
 
 Create a JSON plan following schemas/revision-plan.schema.json. Assign each reviewer concern a stable ID such as R2-C3. Each revision item may link multiple targets in Manuscript and SI. Record document role, input/output paths, Word XML part, paragraph index, precise existing text anchor, replacement and a readable location. For body text use `word/document.xml`; header/footer text uses its specific `word/headerN.xml` or `word/footerN.xml` part. The paragraph index is local to that part, so take it from that part's inventory entry rather than reusing a body index.
