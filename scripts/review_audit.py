@@ -444,7 +444,7 @@ def audit_figure_table_numbering(reports: list[dict[str, Any]]) -> dict[str, Any
     duplicate_labels_across_documents = []
     for (kind, label), rows in all_captions.items():
         doc_roles = sorted({row["document"] for row in rows})
-        if len(rows) > 1:
+        if len(doc_roles) > 1:
             duplicate_labels_across_documents.append({
                 "kind": kind, "label": label, "occurrences": rows,
                 "document_roles": doc_roles,
