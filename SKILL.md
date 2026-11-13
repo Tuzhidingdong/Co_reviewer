@@ -48,7 +48,7 @@ For large JSON, JSONL or XML evidence files, preserve the original and create a 
 
     python scripts/evidence_tools.py structured-summary --input verification_stage1.json --out-dir reports/verification-summary
 
-For JSON, add exact JSON Pointer excerpts only when needed, for example: --path /summary --path /checks/13. Read the digest first; retrieve a small set of exact records from the original file only for failures, conflicts or reviewer-relevant questions. XML is indexed locally with a streaming parser. Sampling limits must remain visible in the report; a structural summary is not semantic verification.
+For JSON, add exact JSON Pointer excerpts only when needed, for example: --path /summary --path /checks/13. Read the digest first; retrieve a small set of exact records from the original file only for failures, conflicts or reviewer-relevant questions. JSON/JSONL/XML summaries are cached by source SHA-256, format and summarization parameters; reuse the cache only when these inputs match. XML is indexed locally with a streaming parser. Sampling limits must remain visible in the report; a structural summary is not semantic verification.
 
 Do not send complete JSON/XML inventories, raw service metadata, full test output or the full page-by-page PDF extraction to the Supervisor by default. Keep the complete machine artifacts on disk and provide summary counts, failure counts, omitted/sampled counts and evidence pointers. The visual and scientific review gates remain mandatory where applicable.
 
