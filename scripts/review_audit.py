@@ -551,7 +551,7 @@ def build_review_audit(reports: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _context_excerpts(report: dict[str, Any], match_rows: list[dict[str, Any]], max_chars: int = 1800) -> list[dict[str, Any]]:
+def _context_excerpts(report: dict[str, Any], match_rows: list[dict[str, Any]], max_chars: int = 1200) -> list[dict[str, Any]]:
     by_part = _paragraphs_by_part(report)
     selected: set[tuple[str, int]] = set()
     for match in match_rows:
@@ -594,27 +594,62 @@ def build_decision_queue(
             {},
         )
         evidence = []
-        for document_match in match.get("confirmed_matches", []) + match.get("candidate_matches", [])[:3]:
+        selected_matches = (
+            match.get("confirmed_matches", [])[:3]
+            + match.get("candidate_matches", [])[:3]
+        )
+        for document_match in selected_matches:
             target_report = reports_by_role.get(document_match.get("document"), {})
-            for excerpt in _context_excerpts(target_report, [document_match]):
+            for excerpt in _context_excerpts(target_report, [document_match], max_chars=1200):
                 evidence.append({"document": document_match.get("document"), **excerpt})
         if source_comment.get("anchor_paragraph"):
             evidence.insert(0, {
                 "document": "Reviewers",
                 "part": source_comment.get("part"),
                 "p_idx": source_comment.get("p_idx"),
-                "text": source_comment.get("anchor_paragraph", "")[:1800],
+                "text": source_comment.get("anchor_paragraph", "")[:1200],
                 "evidence_role": "comment-anchor-source-paragraph",
             })
+
+        def compact_match(item: dict[str, Any]) -> dict[str, Any]:
+            keep = (
+                "document", "part", "p_idx", "p_idx_end", "para_id",
+                "match_type", "match_score", "shared_token_count",
+                "selection_index", "query_source",
+            )
+            return {key: item[key] for key in keep if key in item}
+
+        reply_anchor = match.get("reply_anchor", {})
+        compact_anchor = {
+            "status": reply_anchor.get("status"),
+            "text": reply_anchor.get("text", ""),
+            "part": reply_anchor.get("part"),
+            "p_idx": reply_anchor.get("p_idx"),
+            "paragraphs": reply_anchor.get("paragraphs", []),
+            # Keep coordinates for individual ranges but not their text again;
+            # the combined native selection text is already stored above.
+            "selections": [
+                {
+                    key: selection[key]
+                    for key in ("part", "start", "end", "paragraphs")
+                    if key in selection
+                }
+                for selection in reply_anchor.get("selections", [])
+            ],
+        }
         items.append({
             "comment_id": match.get("comment_id"),
             "reviewer": match.get("reviewer"),
             "comment": match.get("comment"),
-            "reply_anchor": match.get("reply_anchor"),
+            "reply_anchor": compact_anchor,
             "target_status": match.get("target_status"),
-            "confirmed_matches": match.get("confirmed_matches", []),
-            "candidate_matches": match.get("candidate_matches", [])[:3],
-            "evidence_excerpts": evidence[:12],
+            "confirmed_matches": [
+                compact_match(item) for item in match.get("confirmed_matches", [])[:3]
+            ],
+            "candidate_matches": [
+                compact_match(item) for item in match.get("candidate_matches", [])[:3]
+            ],
+            "evidence_excerpts": evidence[:8],
             "decision": {
                 "status": "pending",
                 "disposition": None,
