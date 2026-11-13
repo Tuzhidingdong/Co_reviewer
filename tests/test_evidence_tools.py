@@ -130,7 +130,11 @@ class PdfEvidenceTests(unittest.TestCase):
         self.assertGreaterEqual(report["summary"]["line_number_candidates"], 4)
         finding_codes = {item["code"] for item in report["findings"]}
         self.assertTrue(
-            {"duplicate_line_number_candidates", "non_increasing_line_numbers"} & finding_codes
+            {
+                "duplicate_line_number_candidates",
+                "non_increasing_line_numbers",
+                "line_number_gaps",
+            } & finding_codes
         )
         self.assertTrue((Path(args.out_dir) / "page-001.png").is_file())
         self.assertTrue(report["selected_page_text"]["1"])
