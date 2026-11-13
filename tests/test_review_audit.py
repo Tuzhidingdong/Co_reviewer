@@ -98,6 +98,8 @@ class ReviewAuditTests(unittest.TestCase):
         comment = report["comments"][0]
         self.assertEqual(comment["anchor_status"], "range_resolved")
         self.assertEqual(comment["anchor_text"], "alpha\nbeta")
+        self.assertEqual(len(comment["anchor_selections"]), 1)
+        self.assertEqual(comment["anchor_selections"][0]["text"], "alpha\nbeta")
         self.assertEqual(comment["anchor_paragraphs"], [0, 1])
         self.assertEqual(comment["part"], "word/document.xml")
         self.assertEqual(comment["p_idx"], 0)
@@ -199,6 +201,13 @@ class ReviewAuditTests(unittest.TestCase):
         self.assertEqual(
             len(audit["by_document"]["SI"]["duplicate_captions"]), 1
         )
+        # Figure captions skip S2, which must be reported as a numbering gap.
+        self.assertTrue(
+            any(
+                row["kind"] == "figure" and "S2" in row["missing_labels"]
+                for row in audit["by_document"]["SI"]["numbering_gaps"]
+            )
+        )
         # First-mention order decreases from S3 to S1.
         self.assertTrue(
             any(
@@ -229,6 +238,14 @@ class ReviewAuditTests(unittest.TestCase):
         self.assertEqual(third_status, "miss")
         self.assertEqual(len(calls), 2)
         self.assertNotEqual(second["source_sha256"], third["source_sha256"])
+
+    def test_inspection_outputs_cannot_overwrite_source_docx(self):
+        source = self.root / "Manuscript.docx"
+        write_docx(source, [[("text", "Keep the source intact.")]])
+        original = source.read_bytes()
+        with self.assertRaisesRegex(ValueError, "overwrite a source DOCX"):
+            cli.validate_inspection_artifact_paths([str(source)], [str(source)])
+        self.assertEqual(source.read_bytes(), original)
 
     def test_audit_cli_writes_bounded_decision_queue_and_uses_cache_on_second_run(self):
         reply = self.root / "Reply.docx"
