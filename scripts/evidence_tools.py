@@ -663,7 +663,7 @@ def crossref_author(item: dict[str, Any]) -> str | None:
 
 def normalize_title(value: str | None) -> str:
     # Preserve Unicode letters and digits in non-English reference titles.
-    return re.sub(r"[^\\w]+", " ", (value or "").casefold(), flags=re.UNICODE).replace("_", " ").strip()
+    return re.sub(r"[^\w]+", " ", (value or "").casefold(), flags=re.UNICODE).replace("_", " ").strip()
 
 
 def build_crossref_index(data: Any) -> dict[str, Any]:
@@ -678,7 +678,7 @@ def build_crossref_index(data: Any) -> dict[str, Any]:
         pointer = f"{base_pointer}/{index}" if base_pointer else f"/{index}"
         doi = clean_text(item.get("DOI", ""), 240).lower() or None
         if doi:
-            doi = re.sub(r"^https?://(?:dx\\.)?doi\\.org/", "", doi)
+            doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi)
         title = crossref_first(item.get("title"))
         journal = crossref_first(item.get("container-title"))
         record = {
