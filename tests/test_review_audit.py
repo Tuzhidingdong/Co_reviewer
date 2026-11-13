@@ -20,6 +20,8 @@ from review_audit import (
     build_review_audit,
     extract_comment_ranges,
     load_cached_inspection,
+    parse_caption,
+    extract_figure_table_references,
 )
 
 
@@ -358,6 +360,142 @@ class ReviewAuditTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(cli.cmd_audit(args), 0)
         self.assertIn("[CACHE] 3 hit(s), 0 parse(s)", output.getvalue())
+
+
+    def test_narrative_figure_sentence_is_not_misclassified_as_caption(self):
+        text = "Figure 1 has been updated in response to the reviewer."
+        self.assertIsNone(parse_caption(text, "word/document.xml", 4))
+        refs = extract_figure_table_references(text, "word/document.xml", 4)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["labels"], ["1"])
+
+    def test_caption_style_can_identify_caption_without_punctuation(self):
+        text = "Figure S3 Pseudo-second-order kinetic fitting for uranium removal"
+        caption = parse_caption(
+            text, "word/document.xml", 8, paragraph_style="Caption"
+        )
+        self.assertIsNotNone(caption)
+        self.assertEqual(caption["label"], "S3")
+        self.assertIn("paragraph_style", caption["detection_signals"])
+
+    def test_subpanel_and_abbreviated_number_ranges_resolve_to_workspace_captions(self):
+        refs = extract_figure_table_references(
+            "The result appears in Fig. 1a and Figs. S5-S7; panels are in Fig. 3e-3h.",
+            "word/document.xml", 12,
+        )
+        labels = [label for row in refs for label in row["labels"]]
+        self.assertEqual(labels, ["1A", "S5", "S6", "S7", "3E", "3F", "3G", "3H"])
+        reports = [
+            {
+                "role": "Manuscript",
+                "captions_and_drawings": [],
+                "figure_table_references": refs,
+            },
+            {
+                "role": "SI",
+                "captions_and_drawings": [
+                    {"caption_kind": "figure", "caption_label": "1",
+                     "part": "word/document.xml", "p_idx": 0, "text": "Figure 1. Main figure."},
+                    {"caption_kind": "figure", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 5, "text": "Figure S5. Structure five."},
+                    {"caption_kind": "figure", "caption_label": "S6",
+                     "part": "word/document.xml", "p_idx": 6, "text": "Figure S6. Structure six."},
+                    {"caption_kind": "figure", "caption_label": "S7",
+                     "part": "word/document.xml", "p_idx": 7, "text": "Figure S7. Structure seven."},
+                    {"caption_kind": "figure", "caption_label": "3",
+                     "part": "word/document.xml", "p_idx": 3, "text": "Figure 3. Main figure three."},
+                ],
+                "figure_table_references": [],
+            },
+        ]
+        audit = audit_figure_table_numbering(reports)
+        self.assertEqual(audit["unresolved_references"], [])
+        resolutions = [row["resolution"] for row in audit["reference_resolution"]]
+        self.assertEqual(resolutions[0], "subpanel_resolved_to_main_figure_cross_document")
+        self.assertEqual(resolutions[1:4], ["resolved_cross_document"] * 3)
+        self.assertEqual(resolutions[4:], [
+            "subpanel_resolved_to_main_figure_cross_document"
+        ] * 4)
+
+    def test_duplicate_caption_classification_separates_internal_conflict_and_cross_document_copy(self):
+        reports = [
+            {
+                "role": "SI",
+                "captions_and_drawings": [
+                    {"caption_kind": "table", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 10,
+                     "text": "Table S5. Uranium release under leaching conditions."},
+                    {"caption_kind": "table", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 20,
+                     "text": "Table S5. DFT computational parameters."},
+                    {"caption_kind": "figure", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 30,
+                     "text": "Figure S5. Oxygen vacancy coordination."},
+                ],
+                "figure_table_references": [],
+            },
+            {
+                "role": "Reviewers",
+                "captions_and_drawings": [
+                    {"caption_kind": "table", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 40,
+                     "text": "Table S5. DFT computational parameters."},
+                    {"caption_kind": "figure", "caption_label": "S5",
+                     "part": "word/document.xml", "p_idx": 50,
+                     "text": "Figure S5. Oxygen vacancy coordination."},
+                ],
+                "figure_table_references": [],
+            },
+        ]
+        audit = audit_figure_table_numbering(reports)
+        internal = [
+            row for row in audit["duplicate_captions_within_documents"]
+            if row["document"] == "SI" and row["kind"] == "table" and row["label"] == "S5"
+        ]
+        self.assertEqual(len(internal), 1)
+        self.assertEqual(
+            internal[0]["classification"],
+            "same_document_same_label_different_captions",
+        )
+        cross = {
+            (row["kind"], row["label"]): row["classification"]
+            for row in audit["cross_document_caption_groups"]
+        }
+        self.assertEqual(
+            cross[("table", "S5")],
+            "cross_document_same_label_different_captions",
+        )
+        self.assertEqual(
+            cross[("figure", "S5")],
+            "cross_document_caption_reproduction",
+        )
+
+    def test_workspace_caption_absence_is_distinguished_from_cross_document_reference(self):
+        reports = [
+            {
+                "role": "Reviewers",
+                "captions_and_drawings": [],
+                "figure_table_references": [
+                    {"kind": "figure", "labels": ["2"], "part": "word/document.xml",
+                     "p_idx": 7, "text": "Fig. 2"},
+                    {"kind": "figure", "labels": ["S99"], "part": "word/document.xml",
+                     "p_idx": 8, "text": "Fig. S99"},
+                ],
+            },
+            {
+                "role": "Manuscript",
+                "captions_and_drawings": [
+                    {"caption_kind": "figure", "caption_label": "2",
+                     "part": "word/document.xml", "p_idx": 3, "text": "Figure 2. Main text figure."}
+                ],
+                "figure_table_references": [],
+            },
+            {"role": "SI", "captions_and_drawings": [], "figure_table_references": []},
+        ]
+        audit = audit_figure_table_numbering(reports)
+        self.assertEqual(len(audit["unresolved_references"]), 1)
+        resolutions = [row["resolution"] for row in audit["reference_resolution"]]
+        self.assertEqual(resolutions, ["resolved_cross_document", "no_caption_in_workspace"])
 
 
 if __name__ == "__main__":

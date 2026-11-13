@@ -104,9 +104,10 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
 
             if "word/comments.xml" in names:
                 croot = parse_xml(z.read("word/comments.xml"))
-                for comment in croot.findall(".//w:comment", NS):
+                for comment_xml_p_idx, comment in enumerate(croot.findall(".//w:comment", NS)):
                     comment_id = comment.get(qn("id"), "")
                     comment_metadata[comment_id] = {
+                        "comment_xml_p_idx": comment_xml_p_idx,
                         "author": comment.get(qn("author"), ""),
                         "date": comment.get(qn("date"), ""),
                         "text": "".join(
@@ -145,9 +146,13 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                     para_id = para.get(
                         "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
                     )
+                    style_node = para.find("w:pPr/w:pStyle", NS)
+                    paragraph_style = style_node.get(qn("val"), "") if style_node is not None else ""
+                    paragraph_has_drawing = has_drawing(para)
                     if txt:
                         report["paragraphs"].append({
                             "part": part, "p_idx": idx, "para_id": para_id, "text": txt,
+                            "paragraph_style": paragraph_style,
                             "native_script_runs": extract_native_script_runs(para)
                         })
                         paragraph_lookup[(part, idx)] = txt
@@ -169,18 +174,28 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                             "part": part, "p_idx": idx, "text": txt
                         })
 
-                    caption = parse_caption(txt, part, idx) if txt else None
-                    if caption or has_drawing(para):
+                    caption = (
+                        parse_caption(
+                            txt, part, idx,
+                            paragraph_style=paragraph_style,
+                            has_drawing=paragraph_has_drawing,
+                        )
+                        if txt else None
+                    )
+                    if caption or paragraph_has_drawing:
                         report["captions_and_drawings"].append({
                             "part": part, "p_idx": idx, "para_id": para_id,
-                            "has_drawing": has_drawing(para),
+                            "has_drawing": paragraph_has_drawing,
+                            "paragraph_style": paragraph_style,
                             "caption_kind": caption["kind"] if caption else None,
                             "caption_label": caption["label"] if caption else None,
-                            "text": txt[:240],
+                            "caption_detection_signals": caption["detection_signals"] if caption else [],
+                            "detection_confidence": caption["detection_confidence"] if caption else "drawing_without_caption",
+                            "text": txt[:500],
                         })
                     if txt:
                         report["figure_table_references"].extend(
-                            extract_figure_table_references(txt, part, idx)
+                            extract_figure_table_references(txt, part, idx, caption=caption)
                         )
 
                 if part == "word/document.xml":
@@ -242,6 +257,7 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                     "part": first_location.get("part", "unknown"),
                     "p_idx": first_location.get("p_idx", -1),
                     "id": comment_id,
+                    "comment_xml_p_idx": metadata.get("comment_xml_p_idx"),
                     "author": metadata["author"],
                     "date": metadata["date"],
                     "comment": metadata["text"],
@@ -1368,7 +1384,17 @@ def cmd_audit(args):
     print(f"[SUMMARY] {len(reports)} document(s); {sum(x['paragraph_count'] for x in reports)} paragraphs; {audit['comment_count']} reviewer comment(s); {count_errors} error(s)")
     print(f"[MATCHES] {audit['comment_target_status_counts']}")
     numbering = audit["figure_table_numbering"]
-    print(f"[NUMBERING] {len(numbering['unresolved_references'])} unresolved reference(s); {len(numbering['duplicate_labels_across_documents'])} duplicate label(s); {len(numbering['unreferenced_captions'])} unreferenced caption(s)")
+    print(f"[NUMBERING] {len(numbering['unresolved_references'])} workspace-unresolved reference(s); {len(numbering.get('ambiguous_references', []))} ambiguous/repeated target(s); {len(numbering['duplicate_labels_across_documents'])} cross-document label group(s); {len(numbering['unreferenced_captions'])} unreferenced caption(s)")
+    summary = numbering.get("summary", {})
+    if summary:
+        print(
+            "[NUMBERING DETAIL] "
+            f"same-document={summary.get('resolved_same_document', 0)}; "
+            f"cross-document={summary.get('resolved_cross_document', 0)}; "
+            f"subpanel-to-main-figure={summary.get('subpanel_resolved', 0)}; "
+            f"internal-same-label-different-caption={summary.get('same_document_same_label_different_captions', 0)}; "
+            f"cross-document-same-label-different-caption={summary.get('cross_document_same_label_different_captions', 0)}"
+        )
     return 1 if count_errors else 0
 
 def cmd_validate(args):

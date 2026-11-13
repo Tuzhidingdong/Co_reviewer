@@ -9,7 +9,9 @@ Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and 
 - Inspects DOCX comments, native Word selection ranges, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
 - Reconstructs selected text between each Word comment's range markers; distinguishes the selected text from its containing paragraph and does not infer an anchor from a comment reference alone.
 - Reuses SHA-256-bound parsed inventories so unchanged DOCX files are not reparsed; deterministic matching, numbering audits and evidence-packet generation run against the cached inventory.
-- Produces a compact Markdown digest, machine-readable inventory, cross-document match report, figure/table numbering audit and a bounded semantic-decision queue.
+- Produces a compact Markdown digest, machine-readable inventory, cross-document match report, classified figure/table reference audit and a bounded semantic-decision queue.
+- Synthesizes a complete review round into atomic, deduplicated tasks with evidence provenance and an explicit dependency graph; all reviewer comments in scope are covered in one decision pass.
+- Validates pending decision plans against source hashes, native comment IDs, inventory coordinates, quoted evidence, target/evidence links, dependency order and mandatory user-approval states.
 - Represents reviewer comments as stable revision items (for example, R2-C3) with linked targets in multiple documents.
 - Requires explicit human approval before applying edits; a SHA-256 fingerprint binds approval to the exact reviewer comment, proposed response, document targets and (when preflighted) source DOCX versions.
 - Applies every planned text change as native Word insertions/deletions (`w:ins`/`w:del`) while preserving unaffected run formatting and package parts. Direct text rewrites are not permitted in a Marked deliverable.
@@ -27,12 +29,20 @@ PowerShell — one parse/cache pass followed by deterministic auditing:
 
     python scripts/co_reviewer_cli.py audit --rev .\input\Reply.docx --man .\input\Manuscript.docx --si .\input\SI.docx --out workspace_digest.md --json-out workspace_inventory.json --audit-md-out review_audit_report.md --audit-out review_audit_report.json --decision-queue-out review_decision_queue.json --cache-dir .co-reviewer-cache
 
-To limit the model packet to one Word comment while keeping the full deterministic audit, add `--comment-ids 3` (replace `3` with the actual Word comment ID). This prevents unrelated comment evidence from entering the model context.
+By default, the decision queue includes all Word comments in the round. Add `--comment-ids 3` only when the user explicitly requests a selected subset; do not process a normal review round one comment per user turn.
 
 The command writes:
 - `workspace_inventory.json`: parsed paragraph, native comment, anchor, caption and reference inventory.
-- `review_audit_report.json/.md`: exact and candidate cross-document matches plus figure/table numbering flags.
-- `review_decision_queue.json`: a bounded packet conforming to `schemas/review-decision.schema.json`; it includes each native anchor once and at most 8 context excerpts (1,200 characters each). The decision remains pending and requires user approval.
+- `review_audit_report.json/.md`: exact and candidate cross-document matches plus classified figure/table references, subpanels/ranges, internal collisions and cross-document caption groups.
+- `review_decision_queue.json`: a bounded packet conforming to `schemas/review-decision.schema.json`; it includes each native anchor once and at most 8 context excerpts (1,200 characters each).
+
+For the complete decision stage, analyse all queue items plus the workspace-level audit together. Split compound reviewer requests into atomic tasks, merge overlapping tasks while retaining all source comment IDs, and add global consistency tasks that are not anchored to one comment. Generate `revision_decision_plan.md/.json` using `schemas/revision-decision-plan.schema.json`; every task remains pending and requires author approval. Validate provenance and task dependencies with:
+
+```powershell
+python scripts/validate_decision_plan.py --plan revision_decision_plan.json --audit review_audit_report.json --inventory workspace_inventory.json
+```
+
+The validator checks structure/provenance/dependency integrity, not scientific correctness. Do not create an executable revision plan or enter preflight/approval/apply until the author accepts the decision scope.
 
 Each DOCX inventory is cached by its SHA-256 and parser cache-schema version. The first run parses the files; a later run with unchanged source bytes reports cache hits and performs matching/numbering over the cached JSON without reopening the DOCX. If one input changes, only that input is reparsed. Use `--refresh-cache` to force a fresh parse. The cache directory is local and ignored by Git.
 

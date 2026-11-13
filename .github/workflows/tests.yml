@@ -51,6 +51,8 @@ jobs:
         run: python scripts/co_reviewer_cli.py --help
       - name: Cached review audit CLI help
         run: python scripts/co_reviewer_cli.py audit --help
+      - name: Pending decision-plan validator CLI help
+        run: python scripts/validate_decision_plan.py --help
       - name: Source preflight CLI help
         run: python scripts/co_reviewer_cli.py preflight-plan --help
       - name: Verified-state confirmation CLI help

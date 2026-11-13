@@ -13,22 +13,21 @@ from typing import Any, Callable
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 3
 
 _CAPTION_RE = re.compile(
-    r"^\s*(?P<kind>figure|fig\.?|table)\s*(?P<label>S?\d+[a-z]?)\b",
-    re.IGNORECASE,
-)
+    r"^\s*(?P<kind>figure|fig\.?|table)\s*(?P<label>S?\d+[a-z]?)\b(?P<tail>.*)$", re.IGNORECASE)
 _REFERENCE_RE = re.compile(
-    r"\b(?P<kind>figures?|figs?\.?|tables?)\s*"
-    r"(?P<first>S?\d+[a-z]?)"
-    r"(?:\s*(?:-|–|—|to)\s*(?P<last>S?\d+[a-z]?))?",
-    re.IGNORECASE,
-)
+    r"\b(?P<kind>figures?|figs?\.?|tables?)\s*(?P<first>S?\d+[a-z]?)"
+    r"(?:\s*(?:-|–|—|to)\s*(?P<last>S?\d+[a-z]?))?", re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(
-    r"\b(?:page|lines?)\s*[xX]+|\[\[(?:TODO|TBD|XX)[^\]]*\]\]",
-    re.IGNORECASE,
-)
+    r"\b(?:page|lines?)\s*[xX]+|\[\[(?:TODO|TBD|XX)[^\]]*\]\]", re.IGNORECASE)
+_NARRATIVE_CAPTION_VERBS_RE = re.compile(
+    r"^\s+(?:has|have|had|was|were|is|are|shows?|showed|illustrates?|demonstrates?|"
+    r"indicates?|reveals?|presents?|summarizes?|compares?|depicts?|contains?|"
+    r"includes?|provides?|reports?|lists?)\b", re.IGNORECASE)
+_RANGE_DELIMITER_RE = re.compile(r"^\s*(?:[.:：|]|[-–—])\s*")
+
 _STOP_WORDS = {
     "the", "and", "for", "with", "from", "that", "this", "these", "those",
     "into", "onto", "please", "should", "would", "could", "figure", "fig",
@@ -117,20 +116,35 @@ def extract_comment_ranges(root: Any, part: str) -> dict[str, list[dict[str, Any
     return dict(completed)
 
 
-def parse_caption(text: str, part: str, p_idx: int) -> dict[str, Any] | None:
+def parse_caption(
+    text: str, part: str, p_idx: int,
+    paragraph_style: str | None = None, has_drawing: bool = False,
+) -> dict[str, Any] | None:
+    """Recognise caption-like paragraphs without misclassifying narrative references."""
     match = _CAPTION_RE.match(text or "")
     if not match:
         return None
     kind_text = match.group("kind").casefold()
     kind = "table" if kind_text.startswith("table") else "figure"
-    label = match.group("label").upper()
+    label, tail = match.group("label").upper(), match.group("tail") or ""
+    compact_style = re.sub(r"[^a-z]", "", (paragraph_style or "").casefold())
+    style_signal = "caption" in compact_style or compact_style in {"figure", "tabletitle"}
+    delimiter_signal = bool(_RANGE_DELIMITER_RE.match(tail))
+    drawing_signal = bool(has_drawing)
+    if not (style_signal or delimiter_signal or drawing_signal):
+        return None
+    if not style_signal and not drawing_signal and _NARRATIVE_CAPTION_VERBS_RE.match(tail):
+        return None
+    signals = (["paragraph_style"] if style_signal else []) + (
+        ["caption_delimiter"] if delimiter_signal else []) + (
+        ["drawing_in_paragraph"] if drawing_signal else [])
     return {
-        "kind": kind,
-        "label": label,
-        "part": part,
-        "p_idx": p_idx,
-        "text": text,
+        "kind": kind, "label": label, "part": part, "p_idx": p_idx, "text": text,
+        "paragraph_style": paragraph_style or "", "detection_signals": signals,
+        "detection_confidence": "high" if style_signal or delimiter_signal else "supported",
     }
+
+
 
 
 def _normalise_kind(value: str) -> str:
@@ -138,41 +152,51 @@ def _normalise_kind(value: str) -> str:
 
 
 def _expand_label_range(first: str, last: str | None) -> list[str]:
+    """Expand numeric and panel ranges, including abbreviated prefixes such as S5-7."""
     first = first.upper()
     if not last:
         return [first]
     last = last.upper()
-    first_match = re.fullmatch(r"(S?)(\d+)([A-Z]?)", first)
-    last_match = re.fullmatch(r"(S?)(\d+)([A-Z]?)", last)
-    if not first_match or not last_match:
+    a = re.fullmatch(r"(S?)(\d+)([A-Z]?)", first)
+    b = re.fullmatch(r"(S?)(\d+)([A-Z]?)", last)
+    if not a or not b:
         return [first, last]
-    if first_match.group(1) != last_match.group(1):
+    ap, an, aa = a.groups()
+    bp, bn, ba = b.groups()
+    if not bp and ap:
+        bp = ap
+    if ap != bp:
         return [first, last]
-    if first_match.group(3) or last_match.group(3):
+    start, stop = int(an), int(bn)
+    if an == bn and aa and ba:
+        x, y = ord(aa), ord(ba)
+        return [f"{ap}{an}{chr(i)}" for i in range(x, y + 1)] if x <= y and y-x <= 25 else [first, last]
+    if aa or ba or stop < start or stop-start > 30:
         return [first, last]
-    start, stop = int(first_match.group(2)), int(last_match.group(2))
-    if stop < start or stop - start > 30:
-        return [first, last]
-    prefix = first_match.group(1)
-    return [f"{prefix}{number}" for number in range(start, stop + 1)]
+    return [f"{ap}{n}" for n in range(start, stop + 1)]
 
 
-def extract_figure_table_references(text: str, part: str, p_idx: int) -> list[dict[str, Any]]:
-    """Extract textual Figure/Fig./Table references; caption paragraphs are excluded."""
-    if _CAPTION_RE.match(text or ""):
+
+
+def extract_figure_table_references(
+    text: str, part: str, p_idx: int, caption: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract references unless this paragraph was positively identified as a caption."""
+    if caption is None:
+        caption = parse_caption(text, part, p_idx)
+    if caption is not None:
         return []
-    records: list[dict[str, Any]] = []
+    records = []
     for match in _REFERENCE_RE.finditer(text or ""):
-        kind = _normalise_kind(match.group("kind"))
-        labels = _expand_label_range(match.group("first"), match.group("last"))
         records.append({
-            "kind": kind,
-            "labels": labels,
-            "part": part,
-            "p_idx": p_idx,
-            "text": match.group(0),
+            "kind": _normalise_kind(match.group("kind")),
+            "labels": _expand_label_range(match.group("first"), match.group("last")),
+            "part": part, "p_idx": p_idx, "text": match.group(0),
+            "range_reference": match.group("last") is not None,
         })
     return records
+
+
 
 
 def normalize_match_text(text: str) -> str:
@@ -394,135 +418,295 @@ def _label_parts(label: str) -> tuple[str, int, str] | None:
     return match.group(1), int(match.group(2)), match.group(3)
 
 
+def _caption_identity_text(text: str) -> str:
+    """Normalise caption wording for exact-copy grouping, not semantic inference."""
+    body = _CAPTION_RE.sub("", text or "", count=1)
+    body = normalize_match_text(body)
+    body = re.sub(r"(?<=[a-z0-9])[-‐‑‒–—](?=[a-z0-9])", "", body)
+    body = re.sub(r"[^\w]+", " ", body, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _reference_label_parts(label: str) -> tuple[str, str | None]:
+    parts = _label_parts(label)
+    if not parts:
+        return label.upper(), None
+    prefix, number, panel = parts
+    return f"{prefix}{number}", panel or None
+
+
 def audit_figure_table_numbering(reports: list[dict[str, Any]]) -> dict[str, Any]:
-    all_captions: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    all_references: list[dict[str, Any]] = []
-    per_document: dict[str, Any] = {}
+    """Audit caption/reference relationships without confusing labels with objects."""
+    all_captions = defaultdict(list)
+    all_references = []
+    per_document = {}
+    duplicate_caption_groups = []
+    cross_document_caption_groups = []
+    caption_identity_groups = defaultdict(list)
 
     for report in reports:
         role = report.get("role", "Document")
         captions = sorted(
-            report.get("captions_and_drawings", []),
-            key=lambda item: (item.get("part", ""), int(item.get("p_idx", 0))),
+            (row for row in report.get("captions_and_drawings", [])
+             if row.get("caption_kind") and row.get("caption_label")),
+            key=lambda row: (row.get("part", ""), int(row.get("p_idx", 0))),
         )
-        captions = [item for item in captions if item.get("caption_kind") and item.get("caption_label")]
         references = sorted(
             report.get("figure_table_references", []),
-            key=lambda item: (item.get("part", ""), int(item.get("p_idx", 0))),
+            key=lambda row: (row.get("part", ""), int(row.get("p_idx", 0))),
         )
-        for caption in captions:
-            all_captions[(caption["caption_kind"], caption["caption_label"])].append({
-                "document": role, **caption
-            })
         for reference in references:
             for label in reference.get("labels", []):
                 all_references.append({"document": role, **reference, "label": label})
+        for caption in captions:
+            all_captions[(caption["caption_kind"], caption["caption_label"])].append(
+                {"document": role, **caption}
+            )
+            identity = _caption_identity_text(caption.get("text", ""))
+            if identity:
+                fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+                caption_identity_groups[fingerprint].append({
+                    "document": role, "kind": caption["caption_kind"],
+                    "label": caption["caption_label"], "part": caption.get("part"),
+                    "p_idx": caption.get("p_idx"), "para_id": caption.get("para_id"),
+                    "text": caption.get("text", "")[:500],
+                })
 
-        label_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        label_groups = defaultdict(list)
         for caption in captions:
             parts = _label_parts(caption["caption_label"])
             if parts:
                 label_groups[(caption["caption_kind"], parts[0])].append(caption)
-
-        duplicates = []
-        gaps = []
+        duplicates, gaps = [], []
         for (kind, prefix), rows in label_groups.items():
             counts = Counter(row["caption_label"] for row in rows)
             for label, count in counts.items():
                 if count > 1:
-                    duplicates.append({"kind": kind, "label": label, "count": count})
-            numeric = sorted({parts[1] for row in rows if (parts := _label_parts(row["caption_label"]))})
+                    same_rows = [row for row in rows if row["caption_label"] == label]
+                    fingerprints = {_caption_identity_text(row.get("text", "")) for row in same_rows}
+                    group = {
+                        "kind": kind, "label": label, "count": count,
+                        "classification": (
+                            "same_document_duplicate_same_caption" if len(fingerprints) == 1
+                            else "same_document_same_label_different_captions"
+                        ),
+                        "occurrences": [{
+                            "document": role, "part": row.get("part"),
+                            "p_idx": row.get("p_idx"), "para_id": row.get("para_id"),
+                            "text": row.get("text", "")[:500],
+                        } for row in same_rows],
+                    }
+                    duplicates.append(group)
+                    duplicate_caption_groups.append({"document": role, **group})
+            numeric = sorted({parts[1] for row in rows
+                              if (parts := _label_parts(row["caption_label"]))})
             if len(numeric) >= 2:
-                missing = [f"{prefix}{number}" for number in range(numeric[0], numeric[-1] + 1) if number not in numeric]
+                missing = [f"{prefix}{n}" for n in range(numeric[0], numeric[-1]+1)
+                           if n not in numeric]
                 if missing:
                     gaps.append({"kind": kind, "prefix": prefix, "missing_labels": missing})
 
-        first_mentions: dict[str, list[str]] = {"figure": [], "table": []}
+        first_mentions = {"figure": [], "table": []}
+        occurrences = []
         for reference in references:
-            kind = reference["kind"]
             for label in reference.get("labels", []):
-                if label not in first_mentions[kind]:
-                    first_mentions[kind].append(label)
-
+                base, panel = _reference_label_parts(label)
+                # First-mention numbering is based on the manuscript body, not
+                # headers, footers, footnotes or response-letter locations.
+                if (
+                    reference.get("part") == "word/document.xml"
+                    and base not in first_mentions[reference["kind"]]
+                ):
+                    first_mentions[reference["kind"]].append(base)
+                occurrences.append({
+                    "kind": reference["kind"], "label": label, "base_label": base,
+                    "panel": panel, "part": reference.get("part"),
+                    "p_idx": reference.get("p_idx"), "text": reference.get("text", ""),
+                    "range_reference": bool(reference.get("range_reference")),
+                })
         out_of_order = []
         for kind, labels in first_mentions.items():
-            previous: dict[str, int] = {}
+            previous = {}
             for label in labels:
                 parts = _label_parts(label)
                 if not parts:
                     continue
-                prefix, number, suffix = parts
+                prefix, number, _suffix = parts
                 if prefix in previous and number < previous[prefix]:
                     out_of_order.append({
-                        "kind": kind,
-                        "label": label,
+                        "kind": kind, "label": label,
                         "previous_number": previous[prefix],
                         "reason": "first-mention sequence decreases",
                     })
                 previous[prefix] = number
-
         per_document[role] = {
-            "captions_in_document_order": [
-                {"kind": row["caption_kind"], "label": row["caption_label"], "part": row["part"],
-                 "p_idx": row["p_idx"], "text": row.get("text", "")[:500]}
-                for row in captions
-            ],
+            "captions_in_document_order": [{
+                "kind": row["caption_kind"], "label": row["caption_label"],
+                "part": row["part"], "p_idx": row["p_idx"],
+                "para_id": row.get("para_id"), "text": row.get("text", "")[:500],
+                "detection_confidence": row.get("detection_confidence", "legacy_or_unknown"),
+            } for row in captions],
             "first_mention_order": first_mentions,
+            "reference_occurrences": occurrences,
             "duplicate_captions": duplicates,
             "numbering_gaps": gaps,
             "out_of_order_first_mentions": out_of_order,
             "reference_count": len(references),
         }
 
-    unresolved_references = []
+    reference_resolution, unresolved_references, ambiguous_references = [], [], []
+    referenced_keys = set()
     for reference in all_references:
-        key = (reference["kind"], reference["label"])
-        if not all_captions.get(key):
+        kind, label = reference["kind"], reference["label"]
+        base, panel = _reference_label_parts(label)
+        exact_rows = all_captions.get((kind, label), [])
+        parent_rows = all_captions.get((kind, base), []) if panel else []
+        matches = exact_rows or parent_rows
+        local = [row for row in matches if row["document"] == reference["document"]]
+        remote = [row for row in matches if row["document"] != reference["document"]]
+        if matches:
+            fingerprints = {_caption_identity_text(row.get("text", "")) for row in matches}
+            distinct_fingerprints = {value for value in fingerprints if value}
+            if len(distinct_fingerprints) > 1:
+                if len(local) == 1:
+                    resolution = "resolved_same_document_with_cross_document_collision"
+                else:
+                    resolution = "ambiguous_caption_label_collision"
+            elif len(local) > 1:
+                resolution = "multiple_same_document_occurrences_same_caption"
+            elif not local and len(remote) > 1:
+                resolution = "multiple_cross_document_occurrences_same_caption"
+            elif panel:
+                resolution = (
+                    "subpanel_resolved_to_main_figure_same_document" if local
+                    else "subpanel_resolved_to_main_figure_cross_document"
+                )
+            else:
+                resolution = "resolved_same_document" if local else "resolved_cross_document"
+            matched_labels = [row["caption_label"] for row in matches]
+            referenced_keys.add((kind, label))
+            if panel:
+                referenced_keys.add((kind, base))
+            if resolution.startswith("ambiguous") or resolution.startswith("multiple_"):
+                ambiguous_references.append({
+                    "document": reference["document"], "kind": kind, "label": label,
+                    "part": reference["part"], "p_idx": reference["p_idx"],
+                    "reference_text": reference["text"], "resolution": resolution,
+                    "matched_documents": sorted({row["document"] for row in matches}),
+                    "matched_caption_locations": [
+                        {"document": row["document"], "part": row.get("part"),
+                         "p_idx": row.get("p_idx"), "text": row.get("text", "")[:300]}
+                        for row in matches
+                    ],
+                })
+        else:
+            resolution, matched_labels = "no_caption_in_workspace", []
             unresolved_references.append({
-                "document": reference["document"],
-                "kind": reference["kind"],
-                "label": reference["label"],
-                "part": reference["part"],
-                "p_idx": reference["p_idx"],
-                "reference_text": reference["text"],
+                "document": reference["document"], "kind": kind, "label": label,
+                "part": reference["part"], "p_idx": reference["p_idx"],
+                "reference_text": reference["text"], "resolution": resolution,
+                "base_label": base if panel else None,
             })
+        reference_resolution.append({
+            "document": reference["document"], "kind": kind, "label": label,
+            "base_label": base if panel else None, "panel": panel,
+            "part": reference["part"], "p_idx": reference["p_idx"],
+            "reference_text": reference["text"],
+            "range_reference": bool(reference.get("range_reference")),
+            "resolution": resolution, "matched_caption_labels": matched_labels,
+            "matched_documents": sorted({row["document"] for row in matches}),
+            "same_document_match_count": len(local),
+            "cross_document_match_count": len(remote),
+        })
 
     unreferenced_captions = []
-    referenced_keys = {(row["kind"], row["label"]) for row in all_references}
-    for key, rows in all_captions.items():
-        if key not in referenced_keys:
+    for (kind, label), rows in all_captions.items():
+        base, _panel = _reference_label_parts(label)
+        if (kind, label) not in referenced_keys and (kind, base) not in referenced_keys:
             for row in rows:
                 unreferenced_captions.append({
-                    "document": row["document"],
-                    "kind": key[0],
-                    "label": key[1],
-                    "part": row["part"],
-                    "p_idx": row["p_idx"],
+                    "document": row["document"], "kind": kind, "label": label,
+                    "part": row["part"], "p_idx": row["p_idx"],
                     "caption_text": row.get("text", "")[:500],
                 })
 
     duplicate_labels_across_documents = []
     for (kind, label), rows in all_captions.items():
-        doc_roles = sorted({row["document"] for row in rows})
-        if len(doc_roles) > 1:
-            duplicate_labels_across_documents.append({
-                "kind": kind, "label": label, "occurrences": rows,
-                "document_roles": doc_roles,
-            })
+        roles = sorted({row["document"] for row in rows})
+        if len(roles) <= 1:
+            continue
+        fingerprints = {_caption_identity_text(row.get("text", "")) for row in rows}
+        classification = ("cross_document_caption_reproduction" if len(fingerprints) == 1
+                          else "cross_document_same_label_different_captions")
+        group = {
+            "kind": kind, "label": label, "classification": classification,
+            "occurrences": [{
+                "document": row["document"], "part": row.get("part"),
+                "p_idx": row.get("p_idx"), "para_id": row.get("para_id"),
+                "text": row.get("text", "")[:500],
+            } for row in rows],
+            "document_roles": roles,
+        }
+        duplicate_labels_across_documents.append(group)
+        cross_document_caption_groups.append(group)
 
+    identity_groups = [{
+        "text_fingerprint": fingerprint,
+        "classification": "text_identical_caption_occurrences_not_proof_of_same_visual_object",
+        "occurrence_count": len(rows), "occurrences": rows,
+    } for fingerprint, rows in caption_identity_groups.items() if len(rows) > 1]
+    counts = Counter(item["resolution"] for item in reference_resolution)
     return {
-        "scope": "Caption paragraphs and textual Figure/Fig./Table references in inspected DOCX parts.",
+        "schema_version": "2.0",
+        "scope": "Caption-like paragraphs and textual Figure/Fig./Table references in inspected DOCX parts.",
         "automatic_renumbering": False,
         "by_document": per_document,
+        "reference_resolution": reference_resolution,
+        "reference_resolution_counts": dict(counts),
         "unresolved_references": unresolved_references,
+        "ambiguous_references": ambiguous_references,
         "unreferenced_captions": unreferenced_captions,
+        "duplicate_captions_within_documents": duplicate_caption_groups,
         "duplicate_labels_across_documents": duplicate_labels_across_documents,
+        "cross_document_caption_groups": cross_document_caption_groups,
+        "caption_text_identity_groups": identity_groups,
+        "summary": {
+            "reference_occurrences": len(reference_resolution),
+            "resolved_same_document": counts.get("resolved_same_document", 0),
+            "resolved_cross_document": counts.get("resolved_cross_document", 0),
+            "subpanel_resolved": sum(v for k, v in counts.items()
+                                     if k.startswith("subpanel_resolved_to_main_figure")),
+            "no_caption_in_workspace": counts.get("no_caption_in_workspace", 0),
+            "ambiguous_reference_occurrences": sum(
+                1 for item in reference_resolution
+                if item["resolution"].startswith("ambiguous")
+                or item["resolution"].startswith("multiple_")
+            ),
+            "same_document_same_label_different_captions": sum(
+                row["classification"] == "same_document_same_label_different_captions"
+                for row in duplicate_caption_groups),
+            "same_document_duplicate_same_caption": sum(
+                row["classification"] == "same_document_duplicate_same_caption"
+                for row in duplicate_caption_groups),
+            "cross_document_same_label_different_captions": sum(
+                row["classification"] == "cross_document_same_label_different_captions"
+                for row in cross_document_caption_groups),
+            "cross_document_caption_reproductions": sum(
+                row["classification"] == "cross_document_caption_reproduction"
+                for row in cross_document_caption_groups),
+        },
         "limitations": [
             "This is a deterministic consistency audit, not an automatic renumbering operation.",
+            "Caption detection requires a caption-style signal, drawing in the paragraph, or a conventional label delimiter; unusual layouts may need manual confirmation.",
+            "Identical caption text is evidence of textual equivalence, not proof that two visual objects are identical.",
+            "Subpanel references resolve to the parent figure caption when no separate subpanel caption exists; visual panel lettering still requires inspection.",
+            "Cross-document repetitions are classified separately from same-document duplicate labels; differing text under the same cross-document label is a review flag, not an automatic error.",
             "Captions embedded only as image text, floating shapes, or unsupported text boxes may not be represented as ordinary paragraphs.",
             "A reported gap or unreferenced caption is a review flag; it is not proof that a figure/table is missing.",
         ],
     }
+
+
 
 
 def build_review_audit(reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -668,12 +852,17 @@ def build_decision_queue(
         "source_files": audit.get("source_files", []),
         "instructions": [
             "This is a compact evidence packet, not an automatic revision decision.",
-            "Decide one reviewer comment at a time; use only the supplied excerpts and verified user-provided evidence.",
+            "Process all selected comment items together as one revision round; do not require one user request per comment.",
+            "Split compound comments into atomic work items, and merge overlapping requests into one shared task while retaining every source comment ID.",
+            "Independently inspect the workspace-level figure/table audit; global numbering and consistency tasks are not limited to native comment anchors.",
+            "Classify confirmed, candidate, ambiguous and unresolved evidence without promoting semantic similarity or token overlap to an exact match.",
+            "Distinguish subpanel references, ranges, cross-document references, repeated captions and same-document label collisions.",
             "Do not infer scientific results, numerical values, causal claims, or missing experimental evidence.",
-            "If evidence is insufficient, request only the exact additional paragraph/table/figure evidence needed.",
-            "Propose whether the response belongs in the Manuscript, SI, Reply only, multiple documents, or needs clarification.",
+            "If evidence is insufficient, complete all other supported analysis and list the exact missing evidence in the affected task.",
+            "Propose whether each outcome belongs in the Manuscript, SI, Reply only, multiple documents, no change or author clarification.",
             "Show exact target locations and a concise rationale; do not modify DOCX files.",
-            "All proposed changes remain pending until the user explicitly approves the revision plan.",
+            "Represent task dependencies explicitly and ensure they form an acyclic execution order.",
+            "All proposed changes remain pending and require explicit user approval; this packet never authorises edits.",
         ],
         "items": items,
     }
@@ -711,8 +900,20 @@ def write_audit_markdown(audit: dict[str, Any], path: str | Path) -> None:
     numbering = audit.get("figure_table_numbering", {})
     lines.extend(["", "## Figure/table numbering flags", ""])
     lines.append(f"- Unresolved references: {len(numbering.get('unresolved_references', []))}")
+    lines.append(f"- Ambiguous/repeated reference targets: {len(numbering.get('ambiguous_references', []))}")
     lines.append(f"- Unreferenced captions: {len(numbering.get('unreferenced_captions', []))}")
     lines.append(f"- Duplicate labels across documents: {len(numbering.get('duplicate_labels_across_documents', []))}")
+    summary = numbering.get("summary", {})
+    if summary:
+        lines.extend([
+            f"- References resolved in the same document: {summary.get('resolved_same_document', 0)}",
+            f"- References resolved only in another workspace document: {summary.get('resolved_cross_document', 0)}",
+            f"- Subpanel references resolved to a parent figure: {summary.get('subpanel_resolved', 0)}",
+            f"- Same-document same-label/different-caption conflicts: {summary.get('same_document_same_label_different_captions', 0)}",
+            f"- Same-document repeated identical captions: {summary.get('same_document_duplicate_same_caption', 0)}",
+            f"- Cross-document same-label/different-caption flags: {summary.get('cross_document_same_label_different_captions', 0)}",
+            f"- Cross-document caption reproductions: {summary.get('cross_document_caption_reproductions', 0)}",
+        ])
     for role, details in numbering.get("by_document", {}).items():
         lines.extend([
             "",
