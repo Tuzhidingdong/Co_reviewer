@@ -255,6 +255,18 @@ def build_pdf_report(
                         "message": "Candidate numbers are not strictly increasing top-to-bottom: "
                         + ", ".join(decreases[:8]),
                     })
+                gaps = [
+                    f"{values[pos - 1]}->{values[pos]}"
+                    for pos in range(1, len(values))
+                    if values[pos] - values[pos - 1] > 1
+                ]
+                if gaps:
+                    page_findings.append("line_number_gaps")
+                    findings.append({
+                        "severity": "review", "code": "line_number_gaps",
+                        "page": page_number,
+                        "message": "Possible gap(s) in candidate line numbers: " + ", ".join(gaps[:8]),
+                    })
 
             pages.append({
                 "page": page_number, "width_pt": round(width, 2), "height_pt": round(height, 2),
