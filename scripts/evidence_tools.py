@@ -280,6 +280,17 @@ def build_pdf_report(
                 rendered.append(name)
 
         pages_with_text = sum(1 for page in pages if page["text_characters"] > 0)
+        pages_with_line_numbers = sum(1 for page in pages if page["line_number_candidates"] > 0)
+        if check_line_numbers and pages_with_line_numbers and pages_with_line_numbers < page_count:
+            for page in pages:
+                if page["line_number_candidates"] == 0:
+                    page["findings"].append("no_line_number_candidates")
+                    findings.append({
+                        "severity": "warning",
+                        "code": "no_line_number_candidates",
+                        "page": page["page"],
+                        "message": "No left-margin line-number candidate was detected on this page; confirm whether numbering is expected here.",
+                    })
         return {
             "schema_version": CACHE_SCHEMA,
             "generated_at_utc": utc_now(),
@@ -298,7 +309,7 @@ def build_pdf_report(
                 "pages_without_text": page_count - pages_with_text,
                 "text_characters": sum(page["text_characters"] for page in pages),
                 "line_number_candidates": len(candidates_all),
-                "pages_with_line_numbers": sum(1 for page in pages if page["line_number_candidates"]),
+                "pages_with_line_numbers": pages_with_line_numbers,
                 "automatic_findings": len(findings),
             },
             "pages": pages, "line_number_candidates": candidates_all,
@@ -355,9 +366,17 @@ def cmd_pdf_inspect(args: argparse.Namespace) -> int:
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            cache_hit = manifest.get("key") == cache_key and manifest.get("schema_version") == CACHE_SCHEMA
+            cache_hit = (
+                manifest.get("key") == cache_key
+                and manifest.get("schema_version") == CACHE_SCHEMA
+                and manifest.get("key_material") == key_material
+                and (cache_entry / "pdf_evidence.json").is_file()
+                and (cache_entry / "pdf_evidence.md").is_file()
+            )
         except (OSError, json.JSONDecodeError):
             cache_hit = False
+    if not cache_hit and cache_entry.exists():
+        shutil.rmtree(cache_entry)
 
     if not cache_hit:
         temporary_dir = Path(tempfile.mkdtemp(prefix=f".{cache_key[:12]}-", dir=cache_root))
@@ -380,8 +399,13 @@ def cmd_pdf_inspect(args: argparse.Namespace) -> int:
             raise
 
     report = json.loads((cache_entry / "pdf_evidence.json").read_text(encoding="utf-8"))
+    report["source"]["path"] = str(pdf_path)
     report["cache"]["hit"] = cache_hit
     report["cache"]["entry"] = str(cache_entry)
+    expected_renders = set(report["rendered_pages"])
+    for stale_image in output_dir.glob("page-*.png"):
+        if stale_image.name not in expected_renders:
+            stale_image.unlink()
     for source in cache_entry.iterdir():
         if source.is_file() and source.name != "manifest.json":
             shutil.copy2(source, output_dir / source.name)
