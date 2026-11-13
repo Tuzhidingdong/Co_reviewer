@@ -43,9 +43,8 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["text", "part", "start", "end", "paragraphs"],
+                  "required": ["part", "start", "end", "paragraphs"],
                   "properties": {
-                    "text": { "type": "string" },
                     "part": { "type": ["string", "null"] },
                     "start": { "type": ["object", "null"] },
                     "end": { "type": ["object", "null"] },
@@ -64,7 +63,7 @@
           "candidate_matches": { "type": "array", "items": { "type": "object" } },
           "evidence_excerpts": {
             "type": "array",
-            "maxItems": 12,
+            "maxItems": 8,
             "items": {
               "type": "object",
               "required": ["document", "part", "p_idx", "text"],
@@ -73,7 +72,7 @@
                 "part": { "type": "string" },
                 "p_idx": { "type": "integer", "minimum": 0 },
                 "para_id": { "type": ["string", "null"] },
-                "text": { "type": "string", "maxLength": 1800 },
+                "text": { "type": "string", "maxLength": 1200 },
                 "evidence_role": { "type": "string" }
               },
               "additionalProperties": true
