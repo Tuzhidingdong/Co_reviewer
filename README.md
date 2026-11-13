@@ -27,6 +27,8 @@ PowerShell — one parse/cache pass followed by deterministic auditing:
 
     python scripts/co_reviewer_cli.py audit --rev .\input\Reply.docx --man .\input\Manuscript.docx --si .\input\SI.docx --out workspace_digest.md --json-out workspace_inventory.json --audit-md-out review_audit_report.md --audit-out review_audit_report.json --decision-queue-out review_decision_queue.json --cache-dir .co-reviewer-cache
 
+To limit the model packet to one Word comment while keeping the full deterministic audit, add `--comment-ids 3` (replace `3` with the actual Word comment ID). This prevents unrelated comment evidence from entering the model context.
+
 The command writes:
 - `workspace_inventory.json`: parsed paragraph, native comment, anchor, caption and reference inventory.
 - `review_audit_report.json/.md`: exact and candidate cross-document matches plus figure/table numbering flags.
