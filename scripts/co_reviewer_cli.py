@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from lxml import etree as ET
+from review_audit import (
+    build_decision_queue, build_review_audit, cache_summary,
+    extract_comment_ranges, extract_figure_table_references,
+    load_cached_inspection, parse_caption, write_audit_markdown,
+)
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 XML = "http://www.w3.org/XML/1998/namespace"
@@ -76,7 +81,7 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
         "file": str(p), "exists": p.is_file(), "media_count": 0, "paragraph_count": 0,
         "table_count": 0, "tracked_insertions": 0, "tracked_deletions": 0,
         "comments": [], "paragraphs": [], "placeholders": [], "chinese_notes": [],
-        "captions_and_drawings": [], "errors": []
+        "captions_and_drawings": [], "figure_table_references": [], "errors": []
     }
     if not p.is_file():
         report["errors"].append("File does not exist.")
@@ -84,65 +89,174 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
     if p.suffix.lower() != ".docx":
         report["errors"].append("Only .docx files are supported.")
         return report
+
+    comment_metadata: dict[str, dict[str, Any]] = {}
+    anchor_ranges: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    comment_references: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    paragraph_lookup: dict[tuple[str, int], str] = {}
+
     try:
         with zipfile.ZipFile(p) as z:
             names = z.namelist()
-            report["media_count"] = sum(n.startswith("word/media/") and not n.endswith("/") for n in names)
-            comments = {}
+            report["media_count"] = sum(
+                n.startswith("word/media/") and not n.endswith("/") for n in names
+            )
+
             if "word/comments.xml" in names:
                 croot = parse_xml(z.read("word/comments.xml"))
-                for c in croot.findall(".//w:comment", NS):
-                    cid = c.get(qn("id"), "")
-                    comments[cid] = {
-                        "author": c.get(qn("author"), ""),
-                        "text": "".join(x.text or "" for x in c.findall(".//w:t", NS)).strip()
+                for comment in croot.findall(".//w:comment", NS):
+                    comment_id = comment.get(qn("id"), "")
+                    comment_metadata[comment_id] = {
+                        "author": comment.get(qn("author"), ""),
+                        "date": comment.get(qn("date"), ""),
+                        "text": "".join(
+                            node.text or "" for node in comment.findall(".//w:t", NS)
+                        ).strip(),
                     }
+
             parts = []
-            for n in names:
-                if not n.startswith("word/") or not n.endswith(".xml"):
+            for name in names:
+                if not name.startswith("word/") or not name.endswith(".xml"):
                     continue
-                if n == "word/document.xml" or re.fullmatch(r"word/(?:header|footer)\d+\.xml", n) or n in {
-                    "word/footnotes.xml", "word/endnotes.xml"
-                }:
-                    parts.append(n)
-            parts.sort(key=lambda x: (x != "word/document.xml", x))
+                if (
+                    name == "word/document.xml"
+                    or re.fullmatch(r"word/(?:header|footer)\d+\.xml", name)
+                    or name in {"word/footnotes.xml", "word/endnotes.xml"}
+                ):
+                    parts.append(name)
+            parts.sort(key=lambda value: (value != "word/document.xml", value))
+
             for part in parts:
                 try:
                     root = parse_xml(z.read(part))
                 except ET.XMLSyntaxError as exc:
                     report["errors"].append(f"{part}: invalid XML: {exc}")
                     continue
+
                 report["tracked_insertions"] += len(root.findall(".//w:ins", NS))
                 report["tracked_deletions"] += len(root.findall(".//w:del", NS))
+                for comment_id, ranges in extract_comment_ranges(root, part).items():
+                    anchor_ranges[comment_id].extend(ranges)
+
                 paragraphs = root.findall(".//w:p", NS)
                 for idx, para in enumerate(paragraphs):
                     txt = visible_text(para).strip()
                     report["paragraph_count"] += 1
+                    para_id = para.get(
+                        "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+                    )
                     if txt:
                         report["paragraphs"].append({
-                            "part": part, "p_idx": idx, "text": txt,
+                            "part": part, "p_idx": idx, "para_id": para_id, "text": txt,
                             "native_script_runs": extract_native_script_runs(para)
                         })
-                    cids = {x.get(qn("id"), "") for x in para.findall(".//w:commentRangeStart", NS)}
-                    cids.update(x.get(qn("id"), "") for x in para.findall(".//w:commentReference", NS))
-                    for cid in sorted(cids):
-                        c = comments.get(cid)
-                        if c and (not comment_author or comment_author.casefold() in c["author"].casefold()):
-                            report["comments"].append({
-                                "part": part, "p_idx": idx, "id": cid, "author": c["author"],
-                                "comment": c["text"], "anchor_paragraph": txt
+                        paragraph_lookup[(part, idx)] = txt
+
+                    for marker in para.findall(".//w:commentReference", NS):
+                        comment_id = marker.get(qn("id"), "")
+                        if comment_id:
+                            comment_references[comment_id].append({
+                                "part": part, "p_idx": idx, "para_id": para_id
                             })
+
                     flags = sorted(set(PLACEHOLDER_RE.findall(txt)))
                     if flags:
-                        report["placeholders"].append({"part": part, "p_idx": idx, "matches": flags, "text": txt})
-                    if txt and CHINESE_RE.search(txt):
-                        report["chinese_notes"].append({"part": part, "p_idx": idx, "text": txt})
-                    if CAPTION_RE.match(txt) or has_drawing(para):
-                        report["captions_and_drawings"].append({
-                            "part": part, "p_idx": idx, "has_drawing": has_drawing(para), "text": txt[:240]
+                        report["placeholders"].append({
+                            "part": part, "p_idx": idx, "matches": flags, "text": txt
                         })
+                    if txt and CHINESE_RE.search(txt):
+                        report["chinese_notes"].append({
+                            "part": part, "p_idx": idx, "text": txt
+                        })
+
+                    caption = parse_caption(txt, part, idx) if txt else None
+                    if caption or has_drawing(para):
+                        report["captions_and_drawings"].append({
+                            "part": part, "p_idx": idx, "para_id": para_id,
+                            "has_drawing": has_drawing(para),
+                            "caption_kind": caption["kind"] if caption else None,
+                            "caption_label": caption["label"] if caption else None,
+                            "text": txt[:240],
+                        })
+                    if txt:
+                        report["figure_table_references"].extend(
+                            extract_figure_table_references(txt, part, idx)
+                        )
+
                 if part == "word/document.xml":
                     report["table_count"] = len(root.findall(".//w:tbl", NS))
+
+            # Emit exactly one inventory entry per native comment, even when its
+            # selected range spans several paragraphs or Word parts.
+            for comment_id, metadata in comment_metadata.items():
+                if comment_author and comment_author.casefold() not in metadata["author"].casefold():
+                    continue
+
+                ranges = anchor_ranges.get(comment_id, [])
+                resolved_ranges = [
+                    item for item in ranges
+                    if item.get("complete") and item.get("text")
+                ]
+                if resolved_ranges:
+                    anchor_status = "range_resolved"
+                elif ranges:
+                    anchor_status = "range_incomplete" if any(not x.get("complete") for x in ranges) else "empty_range"
+                elif comment_references.get(comment_id):
+                    anchor_status = "reference_only"
+                else:
+                    anchor_status = "markers_missing"
+
+                anchor_text = "\n[separate Word selection]\n".join(
+                    item["text"] for item in resolved_ranges
+                )
+                locations = []
+                for item in ranges:
+                    locations.append({
+                        "part": item.get("part"),
+                        "start": item.get("start"),
+                        "end": item.get("end"),
+                        "paragraphs": item.get("paragraphs", []),
+                        "complete": item.get("complete", False),
+                    })
+                first_range = ranges[0] if ranges else None
+                reference_locations = comment_references.get(comment_id, [])
+                first_location = (
+                    first_range.get("start") if first_range else
+                    (reference_locations[0] if reference_locations else {})
+                ) or {}
+                source_paragraphs = []
+                for location in locations:
+                    part = location.get("part")
+                    for p_idx in location.get("paragraphs", []):
+                        key = (part, int(p_idx))
+                        if key in paragraph_lookup and paragraph_lookup[key] not in source_paragraphs:
+                            source_paragraphs.append(paragraph_lookup[key])
+                if not source_paragraphs and first_location:
+                    source_text = paragraph_lookup.get(
+                        (first_location.get("part"), int(first_location.get("p_idx", -1))), ""
+                    )
+                    if source_text:
+                        source_paragraphs.append(source_text)
+
+                report["comments"].append({
+                    "part": first_location.get("part", "unknown"),
+                    "p_idx": first_location.get("p_idx", -1),
+                    "id": comment_id,
+                    "author": metadata["author"],
+                    "date": metadata["date"],
+                    "comment": metadata["text"],
+                    "anchor_status": anchor_status,
+                    "anchor_text": anchor_text,
+                    "anchor_ranges": locations,
+                    "anchor_paragraphs": sorted({
+                        int(index)
+                        for location in locations
+                        for index in location.get("paragraphs", [])
+                    }),
+                    "reference_locations": reference_locations,
+                    "anchor_paragraph": "\n".join(source_paragraphs),
+                })
+
     except (OSError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
         report["errors"].append(f"Unable to inspect DOCX: {exc}")
     return report
@@ -170,7 +284,8 @@ def write_reports(reports: list[dict[str, Any]], md_path: str, json_path: str | 
                 lines.append(f"- ... {len(r['paragraphs']) - max_items} more paragraphs in JSON inventory.")
         for c in r["comments"][:max_items]:
             lines.append(f"- [{c['part']} P[{c['p_idx']}] Comment #{c['id']} / {c['author']}]: {c['comment']}")
-            lines.append(f"  - Anchored text: {c['anchor_paragraph']}")
+            lines.append(f"  - Native Word anchor ({c.get('anchor_status', 'unknown')}): {c.get('anchor_text') or '[not recoverable from range markers]'}")
+            lines.append(f"  - Containing paragraph: {c['anchor_paragraph']}")
         if len(r["comments"]) > max_items:
             lines.append(f"- ... {len(r['comments']) - max_items} more comments in JSON inventory.")
         lines += ["", "### Placeholders"]
@@ -1174,18 +1289,54 @@ def render_response_letter(plan: dict[str, Any]) -> str:
         lines.extend(["", "---", ""])
     return "\n".join(lines).rstrip() + "\n"
 
-def cmd_inspect(args):
+def _inspect_selected_files(args):
     files = [("Reviewers", args.rev), ("Manuscript", args.man), ("SI", args.si)]
     selected = [(role, path) for role, path in files if path]
-    if not selected: raise ValueError("Provide at least one of --rev, --man or --si.")
+    if not selected:
+        raise ValueError("Provide at least one of --rev, --man or --si.")
+    cache_dir = getattr(args, "cache_dir", ".co-reviewer-cache")
+    refresh = bool(getattr(args, "refresh_cache", False))
     reports = []
+    cache_results = []
     for role, path in selected:
-        result = inspect_docx(path, args.comment_author); result["role"] = role; reports.append(result)
+        result, cache_status = load_cached_inspection(
+            path, args.comment_author, cache_dir, inspect_docx, refresh=refresh
+        )
+        result["role"] = role
+        reports.append(result)
+        cache_results.append((str(path), cache_status))
+    return reports, cache_summary(cache_results)
+
+
+def cmd_inspect(args):
+    reports, cache = _inspect_selected_files(args)
     write_reports(reports, args.out, args.json_out or None, max(1, args.max_items_per_section))
     count_errors = sum(len(x["errors"]) for x in reports)
     print(f"[OK] Markdown: {args.out}")
     if args.json_out: print(f"[OK] JSON: {args.json_out}")
+    print(f"[CACHE] {cache['hits']} hit(s), {cache['misses']} parse(s); directory: {getattr(args, 'cache_dir', '.co-reviewer-cache')}")
     print(f"[SUMMARY] {len(reports)} document(s); {sum(x['paragraph_count'] for x in reports)} paragraphs; {sum(len(x['comments']) for x in reports)} comments; {count_errors} error(s)")
+    return 1 if count_errors else 0
+
+
+def cmd_audit(args):
+    reports, cache = _inspect_selected_files(args)
+    audit = build_review_audit(reports)
+    decision_queue = build_decision_queue(reports, audit)
+    write_reports(reports, args.out, args.json_out or None, max(1, args.max_items_per_section))
+    write_audit_markdown(audit, args.audit_md_out)
+    write_json_atomic(args.audit_out, audit)
+    write_json_atomic(args.decision_queue_out, decision_queue)
+    count_errors = sum(len(x["errors"]) for x in reports)
+    print(f"[OK] Workspace digest: {args.out}")
+    if args.json_out: print(f"[OK] Parsed inventory: {args.json_out}")
+    print(f"[OK] Deterministic audit: {args.audit_md_out} / {args.audit_out}")
+    print(f"[OK] Bounded AI decision queue: {args.decision_queue_out}")
+    print(f"[CACHE] {cache['hits']} hit(s), {cache['misses']} parse(s); directory: {getattr(args, 'cache_dir', '.co-reviewer-cache')}")
+    print(f"[SUMMARY] {len(reports)} document(s); {sum(x['paragraph_count'] for x in reports)} paragraphs; {audit['comment_count']} reviewer comment(s); {count_errors} error(s)")
+    print(f"[MATCHES] {audit['comment_target_status_counts']}")
+    numbering = audit["figure_table_numbering"]
+    print(f"[NUMBERING] {len(numbering['unresolved_references'])} unresolved reference(s); {len(numbering['duplicate_labels_across_documents'])} duplicate label(s); {len(numbering['unreferenced_captions'])} unreferenced caption(s)")
     return 1 if count_errors else 0
 
 def cmd_validate(args):
@@ -1562,7 +1713,21 @@ def build_parser():
     i.add_argument("--out", default="workspace_digest.md")
     i.add_argument("--json-out", default="workspace_inventory.json")
     i.add_argument("--max-items-per-section", type=int, default=50)
+    i.add_argument("--cache-dir", default=".co-reviewer-cache")
+    i.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
     i.set_defaults(func=cmd_inspect)
+    au = sub.add_parser("audit", help="Inspect once, reuse hash-bound caches, match comments and audit figure/table references.")
+    au.add_argument("--rev"); au.add_argument("--man"); au.add_argument("--si")
+    au.add_argument("--comment-author", default=None)
+    au.add_argument("--out", default="workspace_digest.md")
+    au.add_argument("--json-out", default="workspace_inventory.json")
+    au.add_argument("--audit-md-out", default="review_audit_report.md")
+    au.add_argument("--audit-out", default="review_audit_report.json")
+    au.add_argument("--decision-queue-out", default="review_decision_queue.json")
+    au.add_argument("--cache-dir", default=".co-reviewer-cache")
+    au.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
+    au.add_argument("--max-items-per-section", type=int, default=50)
+    au.set_defaults(func=cmd_audit)
     v = sub.add_parser("validate-plan", help="Validate a plan without editing files.")
     v.add_argument("--plan", required=True); v.add_argument("--allow-unapproved", action="store_true")
     v.set_defaults(func=cmd_validate)
