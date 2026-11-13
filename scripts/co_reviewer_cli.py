@@ -247,6 +247,16 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                     "comment": metadata["text"],
                     "anchor_status": anchor_status,
                     "anchor_text": anchor_text,
+                    "anchor_selections": [
+                        {
+                            "text": item.get("text", ""),
+                            "part": item.get("part"),
+                            "start": item.get("start"),
+                            "end": item.get("end"),
+                            "paragraphs": item.get("paragraphs", []),
+                        }
+                        for item in resolved_ranges
+                    ],
                     "anchor_ranges": locations,
                     "anchor_paragraphs": sorted({
                         int(index)
