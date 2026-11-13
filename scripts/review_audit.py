@@ -280,17 +280,44 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
     results: list[dict[str, Any]] = []
     for comment in reviewer_report.get("comments", []):
         anchor_text = comment.get("anchor_text") or ""
+        selections = [
+            item for item in comment.get("anchor_selections", [])
+            if item.get("text")
+        ]
+        if not selections and anchor_text:
+            selections = [{"text": anchor_text}]
         exact: list[dict[str, Any]] = []
         candidates: list[dict[str, Any]] = []
         for target_report in target_reports:
             role = target_report.get("role", "Document")
-            for item in _exact_anchor_matches(anchor_text, target_report):
-                item["document"] = role
-                exact.append(item)
-            if not exact or not any(item["document"] == role for item in exact):
-                for item in _candidate_anchor_matches(anchor_text, target_report):
+            role_has_exact = False
+            role_candidates: list[dict[str, Any]] = []
+            for selection_index, selection in enumerate(selections):
+                selected_text = selection.get("text") or ""
+                for item in _exact_anchor_matches(selected_text, target_report):
                     item["document"] = role
-                    candidates.append(item)
+                    item["selection_index"] = selection_index
+                    item["matched_anchor_text"] = selected_text[:1200]
+                    exact.append(item)
+                    role_has_exact = True
+                if not role_has_exact:
+                    for item in _candidate_anchor_matches(selected_text, target_report):
+                        item["document"] = role
+                        item["selection_index"] = selection_index
+                        role_candidates.append(item)
+            if not role_has_exact:
+                candidates.extend(role_candidates)
+
+        # Deduplicate exact results that can arise when multiple ranges overlap the
+        # same target paragraph; preserve selection provenance in the audit record.
+        unique_exact: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for item in exact:
+            key = (
+                item.get("document"), item.get("part"), item.get("p_idx"),
+                item.get("p_idx_end"), item.get("matched_anchor_text"),
+            )
+            unique_exact[key] = item
+        exact = list(unique_exact.values())
 
         anchor_status = comment.get("anchor_status", "markers_missing")
         if _PLACEHOLDER_RE.search(anchor_text):
@@ -311,6 +338,7 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
             "reply_anchor": {
                 "status": anchor_status,
                 "text": anchor_text,
+                "selections": selections,
                 "part": comment.get("part"),
                 "p_idx": comment.get("p_idx"),
                 "paragraphs": comment.get("anchor_paragraphs", []),
@@ -325,7 +353,6 @@ def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports:
             ),
         })
     return results
-
 
 def _label_parts(label: str) -> tuple[str, int, str] | None:
     match = re.fullmatch(r"(S?)(\d+)([A-Z]?)", (label or "").upper())
