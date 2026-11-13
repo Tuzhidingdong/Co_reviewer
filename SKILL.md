@@ -22,13 +22,19 @@ Co_Reviewer manages a revision round. It does not invent experiments, results, n
 
 ### Stage 1 — Inventory
 
-Run the CLI with available input files:
+Run one inventory-and-audit pass with the available input files:
 
-    python scripts/co_reviewer_cli.py inspect --rev Reviewers.docx --man Manuscript.docx --si SI.docx --out workspace_digest.md --json-out workspace_inventory.json
+    python scripts/co_reviewer_cli.py audit --rev Reply.docx --man Manuscript.docx --si SI.docx --out workspace_digest.md --json-out workspace_inventory.json --audit-md-out review_audit_report.md --audit-out review_audit_report.json --decision-queue-out review_decision_queue.json --cache-dir .co-reviewer-cache
 
-Omit unavailable arguments. Review both ordinary text paragraphs in the Reviewer Comments DOCX and native Word comments/anchors, plus paragraph/table indices, figure/table captions, drawings, existing Track Changes, placeholders and Chinese notes. The JSON inventory retains all non-empty paragraphs; the Markdown digest shows a bounded reviewer-text excerpt. Chinese notes are review flags, not automatic errors.
+Omit unavailable arguments. The command parses each source DOCX once per SHA-256/version and stores the resulting paragraph/comment inventory in the local cache. The deterministic audit then reuses those in-memory inventories for native comment anchors, cross-document matching and figure/table consistency. It does not send entire DOCX files to the model.
 
-Use --comment-author only when filtering by the comment author's name. Do not filter comments by the manuscript author's name.
+The inventory includes both ordinary reviewer-document paragraphs and native Word comments. For each native comment, the selected text is reconstructed from the matching `commentRangeStart` and `commentRangeEnd` markers in the same document part. A comment reference without a recoverable range is labelled `reference_only` or `markers_missing`; its containing paragraph is shown separately and must not be mistaken for the selected text. One comment is recorded once even when its range crosses paragraphs.
+
+The audit confirms a cross-document target only when the native selection text matches exactly and uniquely in Manuscript or SI. Token-overlap matches are candidates only; ambiguous or missing targets remain unresolved. Figure/table auditing reports caption order, first-mention order, duplicates, gaps, unresolved references and unreferenced captions. It is diagnostic only and never renumbers documents.
+
+The command also writes a bounded `review_decision_queue.json` with the comment, resolved anchor, confirmed/candidate locations and selected paragraph context. Use this as the only model input for semantic decisions, one comment at a time. The model must decide whether the response belongs in Manuscript, SI, Reply only, multiple documents, no change, or needs clarification; it must cite the supplied evidence and leave every decision pending until the user approves a revision plan. Do not infer scientific results or invent edits.
+
+Use `--comment-author` only when filtering by the comment author's name. Do not filter comments by the manuscript author's name. `--refresh-cache` forces re-parsing; otherwise a changed DOCX SHA-256 invalidates only that file's cached inventory. Matching, numbering and decision-queue generation are cheap deterministic passes over the cached inventories and can be repeated without reopening the source DOCX files.
 
 ### Stage 2 — Build a revision plan
 
