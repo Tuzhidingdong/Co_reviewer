@@ -571,9 +571,11 @@ def summarize_xml(path: Path, sample_items: int, max_chars: int) -> dict[str, An
     samples: list[dict[str, str]] = []
     root_tag = None
     element_count = 0
+    stack: list[ET.Element] = []
     try:
         for event, element in ET.iterparse(path, events=("start", "end")):
             if event == "start":
+                stack.append(element)
                 element_count += 1
                 tag = str(element.tag).split("}")[-1]
                 tags[tag] += 1
@@ -585,6 +587,9 @@ def summarize_xml(path: Path, sample_items: int, max_chars: int) -> dict[str, An
                 if text_value and len(samples) < sample_items:
                     samples.append({"tag": str(element.tag).split("}")[-1], "text": text_value})
                 element.clear()
+                if len(stack) > 1:
+                    stack[-2].remove(element)
+                stack.pop()
     except ET.ParseError as exc:
         raise ValueError(f"Invalid XML: {exc}") from exc
     return {
@@ -652,33 +657,89 @@ def cmd_structured_summary(args: argparse.Namespace) -> int:
     kind = args.format
     if kind == "auto":
         kind = "jsonl" if extension in {".jsonl", ".ndjson"} else "xml" if extension == ".xml" else "json"
-    if kind == "json":
-        data = json.loads(source.read_text(encoding="utf-8-sig"))
-        report = summarize_json(data, args.path or [], args.sample_items, args.max_chars)
-    elif kind == "jsonl":
-        if args.path:
-            raise ValueError("--path JSON pointers are supported only for JSON files.")
-        report = summarize_jsonl(source, args.sample_items, args.max_chars)
-    elif kind == "xml":
-        if args.path:
-            raise ValueError("--path JSON pointers are supported only for JSON files.")
-        report = summarize_xml(source, args.sample_items, args.max_chars)
-    else:
-        raise ValueError(f"Unsupported format: {kind}")
 
     digest = sha256_file(source)
-    report.update({
-        "schema_version": CACHE_SCHEMA, "generated_at_utc": utc_now(),
-        "source": {"path": str(source), "sha256": digest, "size_bytes": source.stat().st_size},
-        "tool": {"name": "Co_Reviewer evidence tools", "version": TOOL_VERSION},
-    })
+    parameters = {
+        "tool_version": TOOL_VERSION,
+        "cache_schema": CACHE_SCHEMA,
+        "format": kind,
+        "paths": args.path or [],
+        "sample_items": args.sample_items,
+        "max_chars": args.max_chars,
+    }
+    key_material = {"source_sha256": digest, "operation": "structured-summary", "parameters": parameters}
+    cache_key = hashlib.sha256(canonical_json(key_material).encode("utf-8")).hexdigest()
+    cache_root = Path(args.cache_dir).expanduser().resolve()
+    cache_entry = cache_root / "structured" / cache_key
+    manifest_path = cache_entry / "manifest.json"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_hit = False
+
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            cache_hit = (
+                manifest.get("key") == cache_key
+                and manifest.get("schema_version") == CACHE_SCHEMA
+                and manifest.get("key_material") == key_material
+                and (cache_entry / "structured_evidence.json").is_file()
+                and (cache_entry / "structured_evidence.md").is_file()
+            )
+        except (OSError, json.JSONDecodeError):
+            cache_hit = False
+    if not cache_hit and cache_entry.exists():
+        shutil.rmtree(cache_entry)
+
+    if not cache_hit:
+        if kind == "json":
+            data = json.loads(source.read_text(encoding="utf-8-sig"))
+            report = summarize_json(data, args.path or [], args.sample_items, args.max_chars)
+        elif kind == "jsonl":
+            if args.path:
+                raise ValueError("--path JSON pointers are supported only for JSON files.")
+            report = summarize_jsonl(source, args.sample_items, args.max_chars)
+        elif kind == "xml":
+            if args.path:
+                raise ValueError("--path JSON pointers are supported only for JSON files.")
+            report = summarize_xml(source, args.sample_items, args.max_chars)
+        else:
+            raise ValueError(f"Unsupported format: {kind}")
+
+        report.update({
+            "schema_version": CACHE_SCHEMA, "generated_at_utc": utc_now(),
+            "source": {"path": str(source), "sha256": digest, "size_bytes": source.stat().st_size},
+            "tool": {"name": "Co_Reviewer evidence tools", "version": TOOL_VERSION},
+            "cache": {"key": cache_key, "hit": False},
+        })
+        temporary_dir = Path(tempfile.mkdtemp(prefix=f".{cache_key[:12]}-", dir=cache_root / "structured" if (cache_root / "structured").exists() else cache_root))
+        try:
+            write_json(temporary_dir / "structured_evidence.json", report)
+            write_markdown(temporary_dir / "structured_evidence.md", structured_markdown(source, digest, report))
+            write_json(temporary_dir / "manifest.json", {
+                "schema_version": CACHE_SCHEMA, "key": cache_key,
+                "key_material": key_material, "created_at_utc": utc_now(),
+            })
+            cache_entry.parent.mkdir(parents=True, exist_ok=True)
+            if cache_entry.exists():
+                shutil.rmtree(cache_entry)
+            os.replace(temporary_dir, cache_entry)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+    report = json.loads((cache_entry / "structured_evidence.json").read_text(encoding="utf-8"))
+    report["source"]["path"] = str(source)
+    report["cache"] = {"key": cache_key, "hit": cache_hit, "entry": str(cache_entry)}
     output_dir = Path(args.out_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "structured_evidence.json"
     markdown_path = output_dir / "structured_evidence.md"
     write_json(json_path, report)
     write_markdown(markdown_path, structured_markdown(source, digest, report))
-    print(f"[SUMMARY] {report['format']} structure summarized; SHA-256 {digest[:16]}…")
+    print(
+        f"[{'CACHE HIT' if cache_hit else 'CACHE MISS'}] "
+        f"{report['format']} structure summarized; SHA-256 {digest[:16]}…"
+    )
     print(f"[DETAIL] {json_path}")
     print(f"[DIGEST] {markdown_path}")
     return 0
@@ -706,6 +767,7 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("--input", required=True)
     summary.add_argument("--format", choices=("auto", "json", "jsonl", "xml"), default="auto")
     summary.add_argument("--out-dir", required=True)
+    summary.add_argument("--cache-dir", default=".co_reviewer_cache")
     summary.add_argument("--path", action="append", default=[], help="JSON Pointer to include; repeat as needed.")
     summary.add_argument("--sample-items", type=int, default=3)
     summary.add_argument("--max-chars", type=int, default=400)
