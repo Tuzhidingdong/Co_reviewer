@@ -133,11 +133,11 @@ A successful post-Word verification means all four exact revision IDs and their 
 
 Run the complete local checks on Windows from PowerShell:
 
-    .\scripts\run_quality_checks.ps1
+    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe"
 
-To install the declared dependencies into the currently active Python/Conda environment first:
+Replace the interpreter path with the intended Python 3.10+ environment. To install the declared dependencies into that environment first:
 
-    .\scripts\run_quality_checks.ps1 -InstallDependencies
+    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe" -InstallDependencies
 
 The script compiles source and tests, runs the unit suite and checks the key CLI entry points. It does not replace opening the generated DOCX files in Microsoft Word.
 

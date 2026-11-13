@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$InstallDependencies
+    [switch]$InstallDependencies,
+    [string]$PythonExe = "python"
 )
 
 Set-StrictMode -Version Latest
@@ -8,6 +9,21 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepoRoot
+
+$PythonCommand = $null
+if (Test-Path -LiteralPath $PythonExe -PathType Leaf) {
+    $PythonCommand = (Resolve-Path -LiteralPath $PythonExe).Path
+}
+else {
+    $PythonApp = Get-Command $PythonExe -CommandType Application -ErrorAction SilentlyContinue
+    if ($PythonApp) {
+        $PythonCommand = $PythonApp.Source
+    }
+}
+if (-not $PythonCommand) {
+    Pop-Location
+    throw "Python executable was not found: $PythonExe"
+}
 
 function Invoke-QualityCheck {
     param(
@@ -17,18 +33,14 @@ function Invoke-QualityCheck {
 
     Write-Host ""
     Write-Host "== $Name ==" -ForegroundColor Cyan
-    & python @PythonArgs
+    & $PythonCommand @PythonArgs
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE."
     }
 }
 
 try {
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        throw "Python was not found on PATH. Activate the intended Python/Conda environment first."
-    }
-
-    $VersionText = (& python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
+    $VersionText = (& $PythonCommand -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to query the active Python interpreter."
     }

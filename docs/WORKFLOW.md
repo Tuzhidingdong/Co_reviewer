@@ -10,7 +10,6 @@ Keep original inputs immutable. Use a dedicated folder per round:
         Manuscript.docx
         SI.docx
       plan/
-        revision_decision_plan.json
         edits_plan.json
       output/
         Manuscript_revised.docx
@@ -22,9 +21,6 @@ Keep original inputs immutable. Use a dedicated folder per round:
         review_audit_report.md
         review_audit_report.json
         review_decision_queue.json
-        revision_decision_plan.md
-        revision_decision_plan.json
-        cross_document_consistency_audit.md
       .co-reviewer-cache/
         docx-v1-<source-sha256>-<author-filter>.json
 
@@ -132,11 +128,11 @@ Mechanical verification checks the exact Word revision records. The Supervisor m
 
 From PowerShell at any working directory, run:
 
-    .\scripts\run_quality_checks.ps1
+    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe"
 
-To install dependencies into the active Python/Conda environment before the checks:
+Replace the interpreter path with the intended Python 3.10+ environment. To install dependencies into that environment before the checks:
 
-    .\scripts\run_quality_checks.ps1 -InstallDependencies
+    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe" -InstallDependencies
 
 This runs Python compilation, the complete unit suite and CLI entry-point checks. It does not automate Microsoft Word's visual/compatibility acceptance.
 

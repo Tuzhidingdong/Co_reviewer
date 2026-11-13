@@ -25,7 +25,12 @@ def _normalise(value: str) -> str:
 
 
 def _documents(inventory: Any) -> dict[str, dict[str, Any]]:
-    rows = inventory if isinstance(inventory, list) else inventory.get("documents", [])
+    if isinstance(inventory, list):
+        rows = inventory
+    elif isinstance(inventory, dict):
+        rows = inventory.get("documents", [])
+    else:
+        return {}
     return {_role(row.get("role", "")): row for row in rows if isinstance(row, dict)}
 
 

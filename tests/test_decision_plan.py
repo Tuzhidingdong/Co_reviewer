@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -205,6 +206,32 @@ class DecisionPlanValidationTests(unittest.TestCase):
         })
         errors = validate_decision_plan(plan, audit, inventory)
         self.assertEqual(errors, [])
+
+    def test_schema_file_is_valid_json_and_enforces_pending_approval(self):
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "revision-decision-plan.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertIn("comment_scope", schema["required"])
+        self.assertIn("status", schema["properties"]["tasks"]["items"]["required"])
+        self.assertEqual(
+            schema["properties"]["tasks"]["items"]["properties"]["status"]["const"],
+            "pending",
+        )
+        self.assertIs(
+            schema["properties"]["tasks"]["items"]["properties"]["requires_user_approval"]["const"],
+            True,
+        )
+
+    def test_malformed_ai_fields_are_reported_without_crashing(self):
+        plan, audit, inventory = fixture()
+        plan["tasks"][0]["target_documents"] = [{"not": "a role"}]
+        plan["tasks"][0]["targets"][0]["document"] = {"not": "a role"}
+        plan["tasks"][0]["targets"][0]["action"] = ["replace"]
+        plan["tasks"][0]["targets"][0]["evidence_ids"] = [{"not": "an id"}]
+        errors = validate_decision_plan(plan, audit, inventory)
+        self.assertTrue(any("target_documents" in error for error in errors))
+        self.assertTrue(any("known document role" in error for error in errors))
+        self.assertTrue(any("action has an unsupported" in error for error in errors))
+        self.assertTrue(any("evidence_ids" in error for error in errors))
 
 
 if __name__ == "__main__":
