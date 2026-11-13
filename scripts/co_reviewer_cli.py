@@ -1805,7 +1805,7 @@ def build_parser():
 def main(argv=None):
     parser = build_parser(); args = parser.parse_args(argv)
     try: return args.func(args)
-    except (OSError, ValueError, KeyError, json.JSONDecodeError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
+    except (OSError, ValueError, KeyError, RuntimeError, json.JSONDecodeError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr); return 2
 
 if __name__ == "__main__":
