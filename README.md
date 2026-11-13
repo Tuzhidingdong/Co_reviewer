@@ -32,7 +32,7 @@ To limit the model packet to one Word comment while keeping the full determinist
 The command writes:
 - `workspace_inventory.json`: parsed paragraph, native comment, anchor, caption and reference inventory.
 - `review_audit_report.json/.md`: exact and candidate cross-document matches plus figure/table numbering flags.
-- `review_decision_queue.json`: the comment and only the matched/candidate paragraph excerpts with adjacent context; the decision remains pending and requires user approval.
+- `review_decision_queue.json`: a bounded packet conforming to `schemas/review-decision.schema.json`; it includes each native anchor once and at most 8 context excerpts (1,200 characters each). The decision remains pending and requires user approval.
 
 Each DOCX inventory is cached by its SHA-256 and parser cache-schema version. The first run parses the files; a later run with unchanged source bytes reports cache hits and performs matching/numbering over the cached JSON without reopening the DOCX. If one input changes, only that input is reparsed. Use `--refresh-cache` to force a fresh parse. The cache directory is local and ignored by Git.
 
