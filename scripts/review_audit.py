@@ -44,7 +44,7 @@ def _qn(local: str) -> str:
 def extract_comment_ranges(root: Any, part: str) -> dict[str, list[dict[str, Any]]]:
     """Recover text selected by native Word commentRangeStart/commentRangeEnd markers."""
     paragraphs = root.findall(".//w:p", NS)
-    paragraph_index = {id(node): index for index, node in enumerate(paragraphs)}
+    paragraph_index = {node: index for index, node in enumerate(paragraphs)}
     active: dict[str, dict[str, Any]] = {}
     completed: dict[str, list[dict[str, Any]]] = defaultdict(list)
     current_p_idx = -1
@@ -71,7 +71,7 @@ def extract_comment_ranges(root: Any, part: str) -> dict[str, list[dict[str, Any
 
     for node in root.iter():
         if node.tag == _qn("p"):
-            current_p_idx = paragraph_index.get(id(node), -1)
+            current_p_idx = paragraph_index.get(node, -1)
             if active:
                 enter_paragraph(current_p_idx)
             continue
