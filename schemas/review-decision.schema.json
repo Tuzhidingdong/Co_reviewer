@@ -88,7 +88,25 @@
                 "enum": ["manuscript", "si", "reply_only", "manuscript_and_si", "no_change", "clarification_needed", null]
               },
               "rationale": { "type": ["string", "null"] },
-              "proposed_targets": { "type": "array", "items": { "type": "object" } },
+              "proposed_targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["document", "part", "p_idx", "action"],
+                  "properties": {
+                    "document": { "enum": ["Manuscript", "SI", "Reply", "Other"] },
+                    "part": { "type": "string", "minLength": 1 },
+                    "p_idx": { "type": "integer", "minimum": 0 },
+                    "para_id": { "type": ["string", "null"] },
+                    "location": { "type": "string" },
+                    "action": { "enum": ["add", "replace", "remove", "reference_only", "keep_out"] },
+                    "source_excerpt": { "type": "string", "maxLength": 1200 },
+                    "proposed_change": { "type": "string" },
+                    "evidence_basis": { "type": "array", "items": { "type": "string" } }
+                  },
+                  "additionalProperties": false
+                }
+              },
               "response_outline": { "type": ["string", "null"] },
               "supporting_evidence": { "type": "array", "items": { "type": "string" } },
               "missing_evidence_or_questions": { "type": "array", "items": { "type": "string" } },
