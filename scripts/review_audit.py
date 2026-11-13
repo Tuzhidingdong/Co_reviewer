@@ -654,7 +654,9 @@ def write_audit_markdown(audit: dict[str, Any], path: str | Path) -> None:
         "choose scientific revisions, or modify any DOCX file.",
         "",
     ])
-    Path(path).write_text("\n".join(lines), encoding="utf-8")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines), encoding="utf-8")
 
 
 def sha256_file(path: str | Path) -> str:
