@@ -271,6 +271,17 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
         report["errors"].append(f"Unable to inspect DOCX: {exc}")
     return report
 
+def validate_inspection_artifact_paths(source_paths: list[str], output_paths: list[str]) -> None:
+    sources = {Path(path).expanduser().resolve() for path in source_paths}
+    outputs = [Path(path).expanduser().resolve() for path in output_paths if path]
+    duplicates = sorted({str(path) for path in outputs if outputs.count(path) > 1})
+    if duplicates:
+        raise ValueError("Inspection outputs must use distinct paths: " + ", ".join(duplicates))
+    collisions = sorted(str(path) for path in outputs if path in sources)
+    if collisions:
+        raise ValueError("Inspection output would overwrite a source DOCX; choose another path: " + ", ".join(collisions))
+
+
 def write_reports(reports: list[dict[str, Any]], md_path: str, json_path: str | None, max_items: int = 20) -> None:
     lines = ["# Co_Reviewer Workspace Digest", "", f"Generated: {datetime.now(timezone.utc).isoformat()}", ""]
     for r in reports:
@@ -315,9 +326,13 @@ def write_reports(reports: list[dict[str, Any]], md_path: str, json_path: str | 
         lines += ["", "---", ""]
     if len(lines) > 300:
         lines = lines[:297] + ["", "[TRUNCATED] Full paragraph/comment and structure inventory is available in the JSON file."]
-    Path(md_path).write_text("\n".join(lines), encoding="utf-8")
+    md_target = Path(md_path)
+    md_target.parent.mkdir(parents=True, exist_ok=True)
+    md_target.write_text("\n".join(lines), encoding="utf-8")
     if json_path:
-        Path(json_path).write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_target = Path(json_path)
+        json_target.parent.mkdir(parents=True, exist_ok=True)
+        json_target.write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def run_plain_text(run: ET.Element) -> str | None:
     allowed = {qn("rPr"), qn("t")}
@@ -1319,6 +1334,9 @@ def _inspect_selected_files(args):
 
 
 def cmd_inspect(args):
+    source_paths = [path for path in (args.rev, args.man, args.si) if path]
+    output_paths = [args.out] + ([args.json_out] if args.json_out else [])
+    validate_inspection_artifact_paths(source_paths, output_paths)
     reports, cache = _inspect_selected_files(args)
     write_reports(reports, args.out, args.json_out or None, max(1, args.max_items_per_section))
     count_errors = sum(len(x["errors"]) for x in reports)
@@ -1330,6 +1348,10 @@ def cmd_inspect(args):
 
 
 def cmd_audit(args):
+    source_paths = [path for path in (args.rev, args.man, args.si) if path]
+    output_paths = [args.out, args.audit_md_out, args.audit_out, args.decision_queue_out]
+    output_paths.extend([args.json_out] if args.json_out else [])
+    validate_inspection_artifact_paths(source_paths, output_paths)
     reports, cache = _inspect_selected_files(args)
     audit = build_review_audit(reports)
     decision_queue = build_decision_queue(reports, audit)
