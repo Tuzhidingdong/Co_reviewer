@@ -97,6 +97,69 @@ class StructuredEvidenceTests(unittest.TestCase):
         self.assertEqual(report["cache"]["key"], second["cache"]["key"])
         self.assertTrue(second["cache"]["hit"])
 
+    def test_crossref_index_covers_every_record_flags_anomalies_and_reuses_cache(self):
+        source = self.root / "crossref.json"
+        payload = {
+            "message": {
+                "items": [
+                    {
+                        "DOI": "10.1234/ABC",
+                        "title": ["A Zinc Battery Study"],
+                        "author": [{"given": "Ada", "family": "Lovelace"}],
+                        "issued": {"date-parts": [[2024, 3, 1]]},
+                        "container-title": ["Journal of Batteries"],
+                    },
+                    {
+                        "DOI": "https://doi.org/10.1234/abc",
+                        "title": ["A Zinc Battery Study"],
+                        "author": [{"given": "Grace", "family": "Hopper"}],
+                        "published-online": {"date-parts": [[2023]]},
+                    },
+                    {"title": ["锌电池研究"]},
+                    {"DOI": "10.1234/missing-title"},
+                ]
+            }
+        }
+        source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        args = Namespace(
+            input=str(source),
+            out_dir=str(self.root / "crossref-out"),
+            cache_dir=str(self.root / "cache"),
+        )
+        first_output = io.StringIO()
+        with contextlib.redirect_stdout(first_output):
+            self.assertEqual(evidence.cmd_crossref_index(args), 0)
+        report_path = Path(args.out_dir) / "crossref_evidence.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["summary"]["records"], 4)
+        self.assertEqual(report["records"][0]["year"], 2024)
+        self.assertEqual(report["records"][0]["first_author"], "Ada Lovelace")
+        self.assertEqual(report["records"][1]["doi"], "10.1234/abc")
+        self.assertEqual(report["summary"]["duplicate_doi_groups"], 1)
+        self.assertEqual(report["summary"]["duplicate_title_groups"], 1)
+        self.assertEqual(report["summary"]["without_doi"], 1)
+        self.assertEqual(report["summary"]["without_title"], 1)
+        self.assertIn("/message/items/2", report["records"][2]["evidence_pointer"])
+        self.assertNotIn("missing_title", {
+            item["code"] for item in report["anomalies"] if item.get("index") == 2
+        })
+        self.assertIn("CACHE MISS", first_output.getvalue())
+
+        second_args = Namespace(
+            input=str(source),
+            out_dir=str(self.root / "crossref-out-second"),
+            cache_dir=str(self.root / "cache"),
+        )
+        second_output = io.StringIO()
+        with contextlib.redirect_stdout(second_output):
+            self.assertEqual(evidence.cmd_crossref_index(second_args), 0)
+        self.assertIn("CACHE HIT", second_output.getvalue())
+        second_report = json.loads(
+            (Path(second_args.out_dir) / "crossref_evidence.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(report["cache"]["key"], second_report["cache"]["key"])
+        self.assertTrue(second_report["cache"]["hit"])
+
 
 try:
     import fitz  # type: ignore
