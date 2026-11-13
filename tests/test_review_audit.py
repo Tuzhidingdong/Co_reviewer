@@ -345,6 +345,13 @@ class ReviewAuditTests(unittest.TestCase):
         self.assertEqual(audit["comment_matches"][0]["target_status"], "exact_unique")
         self.assertEqual(queue["items"][0]["decision"]["status"], "pending")
         self.assertTrue(queue["instructions"])
+        self.assertLessEqual(len(queue["items"][0]["evidence_excerpts"]), 8)
+        self.assertTrue(
+            all(len(row["text"]) <= 1200 for row in queue["items"][0]["evidence_excerpts"])
+        )
+        self.assertTrue(
+            all("text" not in row for row in queue["items"][0]["reply_anchor"]["selections"])
+        )
         self.assertTrue(Path(args.audit_md_out).is_file())
 
         output = io.StringIO()
