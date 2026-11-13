@@ -606,6 +606,255 @@ def summarize_xml(path: Path, sample_items: int, max_chars: int) -> dict[str, An
     }
 
 
+def crossref_items(data: Any) -> tuple[list[dict[str, Any]], str]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)], ""
+    if not isinstance(data, dict):
+        raise ValueError("CrossRef JSON must be an object or an array of records.")
+    message = data.get("message")
+    if isinstance(message, dict) and isinstance(message.get("items"), list):
+        return [item for item in message["items"] if isinstance(item, dict)], "/message/items"
+    if isinstance(data.get("items"), list):
+        return [item for item in data["items"] if isinstance(item, dict)], "/items"
+    raise ValueError("CrossRef records not found at /message/items or /items.")
+
+
+def crossref_first(value: Any) -> str | None:
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if value is None:
+        return None
+    text = clean_text(value, 500)
+    return text or None
+
+
+def crossref_year(item: dict[str, Any]) -> int | None:
+    for field in ("published-print", "published-online", "issued", "published", "created"):
+        value = item.get(field)
+        date_parts = value.get("date-parts") if isinstance(value, dict) else None
+        if isinstance(date_parts, list) and date_parts and isinstance(date_parts[0], list) and date_parts[0]:
+            try:
+                year = int(date_parts[0][0])
+                if 1000 <= year <= 3000:
+                    return year
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def crossref_author(item: dict[str, Any]) -> str | None:
+    authors = item.get("author")
+    if not isinstance(authors, list) or not authors or not isinstance(authors[0], dict):
+        return None
+    first = authors[0]
+    given = clean_text(first.get("given", ""), 100)
+    family = clean_text(first.get("family", ""), 120)
+    name = " ".join(part for part in (given, family) if part).strip()
+    return name or clean_text(first.get("name", ""), 160) or None
+
+
+def normalize_title(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+
+
+def build_crossref_index(data: Any) -> dict[str, Any]:
+    raw_items, base_pointer = crossref_items(data)
+    records: list[dict[str, Any]] = []
+    doi_positions: dict[str, list[int]] = defaultdict(list)
+    title_positions: dict[str, list[int]] = defaultdict(list)
+    missing_doi: list[int] = []
+    missing_title: list[int] = []
+
+    for index, item in enumerate(raw_items):
+        pointer = f"{base_pointer}/{index}" if base_pointer else f"/{index}"
+        doi = clean_text(item.get("DOI", ""), 240).lower() or None
+        title = crossref_first(item.get("title"))
+        journal = crossref_first(item.get("container-title"))
+        record = {
+            "index": index,
+            "evidence_pointer": pointer,
+            "doi": doi,
+            "title": title,
+            "first_author": crossref_author(item),
+            "year": crossref_year(item),
+            "journal": journal,
+            "volume": clean_text(item.get("volume", ""), 80) or None,
+            "issue": clean_text(item.get("issue", ""), 80) or None,
+            "page": clean_text(item.get("page", ""), 80) or None,
+            "type": clean_text(item.get("type", ""), 80) or None,
+        }
+        records.append(record)
+        if doi:
+            doi_positions[doi].append(index)
+        else:
+            missing_doi.append(index)
+        normalized = normalize_title(title)
+        if normalized:
+            title_positions[normalized].append(index)
+        else:
+            missing_title.append(index)
+
+    duplicate_dois = [
+        {"doi": doi, "indices": indices}
+        for doi, indices in sorted(doi_positions.items()) if len(indices) > 1
+    ]
+    duplicate_titles = [
+        {"normalized_title": title, "indices": indices}
+        for title, indices in sorted(title_positions.items()) if len(indices) > 1
+    ]
+    anomalies = []
+    for index in missing_doi:
+        anomalies.append({"code": "missing_doi", "index": index, "message": "CrossRef item has no DOI."})
+    for index in missing_title:
+        anomalies.append({"code": "missing_title", "index": index, "message": "CrossRef item has no title."})
+    for group in duplicate_dois:
+        anomalies.append({
+            "code": "duplicate_doi", "indices": group["indices"],
+            "message": f"DOI occurs {len(group['indices'])} times: {group['doi']}",
+        })
+    for group in duplicate_titles:
+        anomalies.append({
+            "code": "duplicate_title", "indices": group["indices"],
+            "message": f"Normalized title occurs {len(group['indices'])} times.",
+        })
+    return {
+        "format": "crossref-reference-index",
+        "summary": {
+            "records": len(records),
+            "with_doi": len(records) - len(missing_doi),
+            "without_doi": len(missing_doi),
+            "with_title": len(records) - len(missing_title),
+            "without_title": len(missing_title),
+            "duplicate_doi_groups": len(duplicate_dois),
+            "duplicate_title_groups": len(duplicate_titles),
+            "anomalies": len(anomalies),
+        },
+        "records": records,
+        "anomalies": anomalies,
+        "duplicate_dois": duplicate_dois,
+        "duplicate_titles": duplicate_titles,
+        "limits": [
+            "This index extracts bibliographic fields; it does not prove that a DOI identifies the cited work.",
+            "Duplicate title/DOI flags require human review and do not automatically mean a reference is invalid.",
+            "The original CrossRef response remains the source of truth for exact metadata.",
+        ],
+    }
+
+
+def crossref_markdown(report: dict[str, Any], digest: str) -> list[str]:
+    summary = report["summary"]
+    lines = [
+        "# CrossRef compact reference index", "",
+        f"- Source SHA-256: {digest}",
+        f"- Records: {summary['records']}",
+        f"- With DOI: {summary['with_doi']}; without DOI: {summary['without_doi']}",
+        f"- With title: {summary['with_title']}; without title: {summary['without_title']}",
+        f"- Duplicate DOI groups: {summary['duplicate_doi_groups']}",
+        f"- Duplicate title groups: {summary['duplicate_title_groups']}",
+        "", "## All records", "",
+        "| # | Year | First author | Title | Journal | DOI | Source pointer |",
+        "|---:|---:|---|---|---|---|---|",
+    ]
+    for record in report["records"]:
+        def cell(value: Any) -> str:
+            return clean_text(value, 180).replace("|", "\\|") if value else "—"
+        lines.append(
+            f"| {record['index'] + 1} | {cell(record['year'])} | {cell(record['first_author'])} | "
+            f"{cell(record['title'])} | {cell(record['journal'])} | {cell(record['doi'])} | "
+            f"{record['evidence_pointer']} |"
+        )
+    lines.extend(["", "## Anomalies", ""])
+    if report["anomalies"]:
+        for item in report["anomalies"]:
+            indices = item.get("indices", [item.get("index")])
+            lines.append(
+                f"- **{item['code']}** — {item['message']} (indices: {', '.join(map(str, indices))})"
+            )
+    else:
+        lines.append("- No missing-title/DOI or duplicate-title/DOI anomalies detected.")
+    lines.extend([
+        "", "> This is a compact field index, not DOI authenticity verification. "
+        "Open the original CrossRef item at its JSON Pointer when checking a specific reference.",
+    ])
+    return lines
+
+
+def cmd_crossref_index(args: argparse.Namespace) -> int:
+    source = Path(args.input).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Input file not found: {source}")
+    digest = sha256_file(source)
+    parameters = {"tool_version": TOOL_VERSION, "cache_schema": CACHE_SCHEMA}
+    key_material = {"source_sha256": digest, "operation": "crossref-index", "parameters": parameters}
+    cache_key = hashlib.sha256(canonical_json(key_material).encode("utf-8")).hexdigest()
+    cache_root = Path(args.cache_dir).expanduser().resolve()
+    cache_entry = cache_root / "crossref" / cache_key
+    manifest_path = cache_entry / "manifest.json"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_hit = False
+
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            cache_hit = (
+                manifest.get("key") == cache_key
+                and manifest.get("schema_version") == CACHE_SCHEMA
+                and manifest.get("key_material") == key_material
+                and (cache_entry / "crossref_evidence.json").is_file()
+                and (cache_entry / "crossref_evidence.md").is_file()
+            )
+        except (OSError, json.JSONDecodeError):
+            cache_hit = False
+    if not cache_hit and cache_entry.exists():
+        shutil.rmtree(cache_entry)
+
+    if not cache_hit:
+        data = json.loads(source.read_text(encoding="utf-8-sig"))
+        report = build_crossref_index(data)
+        if sha256_file(source) != digest:
+            raise RuntimeError("The CrossRef source changed during indexing; no cache entry was written.")
+        report.update({
+            "schema_version": CACHE_SCHEMA,
+            "generated_at_utc": utc_now(),
+            "source": {"path": str(source), "sha256": digest, "size_bytes": source.stat().st_size},
+            "tool": {"name": "Co_Reviewer evidence tools", "version": TOOL_VERSION},
+            "cache": {"key": cache_key, "hit": False},
+        })
+        crossref_cache_root = cache_root / "crossref"
+        crossref_cache_root.mkdir(parents=True, exist_ok=True)
+        temporary_dir = Path(tempfile.mkdtemp(prefix=f".{cache_key[:12]}-", dir=crossref_cache_root))
+        try:
+            write_json(temporary_dir / "crossref_evidence.json", report)
+            write_markdown(temporary_dir / "crossref_evidence.md", crossref_markdown(report, digest))
+            write_json(temporary_dir / "manifest.json", {
+                "schema_version": CACHE_SCHEMA, "key": cache_key,
+                "key_material": key_material, "created_at_utc": utc_now(),
+            })
+            if cache_entry.exists():
+                shutil.rmtree(cache_entry)
+            os.replace(temporary_dir, cache_entry)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+    report = json.loads((cache_entry / "crossref_evidence.json").read_text(encoding="utf-8"))
+    report["source"]["path"] = str(source)
+    report["cache"] = {"key": cache_key, "hit": cache_hit, "entry": str(cache_entry)}
+    output_dir = Path(args.out_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "crossref_evidence.json"
+    markdown_path = output_dir / "crossref_evidence.md"
+    write_json(json_path, report)
+    write_markdown(markdown_path, crossref_markdown(report, digest))
+    print(
+        f"[{'CACHE HIT' if cache_hit else 'CACHE MISS'}] CrossRef index: "
+        f"{report['summary']['records']} record(s), {report['summary']['anomalies']} anomaly item(s)."
+    )
+    print(f"[SUMMARY] {markdown_path}")
+    print(f"[DETAIL] {json_path}")
+    return 0
+
+
 def structured_markdown(source: Path, digest: str, report: dict[str, Any]) -> list[str]:
     structure = report["structure"]
     lines = [
@@ -778,6 +1027,15 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("--sample-items", type=int, default=3)
     summary.add_argument("--max-chars", type=int, default=400)
     summary.set_defaults(func=cmd_structured_summary)
+
+    crossref = subparsers.add_parser(
+        "crossref-index",
+        help="Create a compact index of every CrossRef result and flag missing/duplicate identifiers.",
+    )
+    crossref.add_argument("--input", required=True)
+    crossref.add_argument("--out-dir", required=True)
+    crossref.add_argument("--cache-dir", default=".co_reviewer_cache")
+    crossref.set_defaults(func=cmd_crossref_index)
     return parser
 
 
