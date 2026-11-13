@@ -163,6 +163,42 @@ class ReviewAuditTests(unittest.TestCase):
         self.assertEqual(result["target_status"], "ambiguous_exact_match")
         self.assertEqual({item["document"] for item in result["confirmed_matches"]}, {"Manuscript", "SI"})
 
+    def test_unresolved_native_anchor_uses_paragraph_context_for_candidates_only(self):
+        reply = self.root / "Reply.docx"
+        manuscript = self.root / "Manuscript.docx"
+        si = self.root / "SI.docx"
+        source_context = (
+            "Atomic Coordination Analysis from Figures S5-S7. "
+            "At the oxygen vacancy site, uranium coordinates with oxygen atoms."
+        )
+        write_docx(
+            reply,
+            [[("text", source_context), ("reference", "9")]],
+            [{"id": "9", "text": "Should this atomic coordination analysis be added to the main text?"}],
+        )
+        write_docx(
+            manuscript,
+            [[("text", "The oxygen vacancy site modifies uranium coordination, as supported by the atomic coordination analysis in Figures S5-S7.")]],
+        )
+        write_docx(si, [[("text", "Figure S5. Coordination around the oxygen vacancy.")]])
+        reports = []
+        for role, path in [("Reviewers", reply), ("Manuscript", manuscript), ("SI", si)]:
+            data = cli.inspect_docx(str(path))
+            data["role"] = role
+            reports.append(data)
+
+        result = build_review_audit(reports)["comment_matches"][0]
+        self.assertEqual(result["target_status"], "anchor_unresolved")
+        self.assertEqual(result["confirmed_matches"], [])
+        self.assertTrue(result["candidate_matches"])
+        self.assertTrue(
+            any(row["document"] == "Manuscript" for row in result["candidate_matches"])
+        )
+        queue = build_decision_queue(reports, {"comment_matches": [result], "source_files": []})
+        self.assertTrue(queue["items"][0]["evidence_excerpts"])
+        self.assertEqual(queue["items"][0]["decision"]["status"], "pending")
+        self.assertTrue(queue["items"][0]["decision"]["requires_user_approval"])
+
     def test_numbering_audit_finds_gaps_duplicates_and_unresolved_references(self):
         manuscript = self.root / "Manuscript.docx"
         si = self.root / "SI.docx"
