@@ -49,6 +49,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: CLI help
         run: python scripts/co_reviewer_cli.py --help
+      - name: Cached review audit CLI help
+        run: python scripts/co_reviewer_cli.py audit --help
       - name: Source preflight CLI help
         run: python scripts/co_reviewer_cli.py preflight-plan --help
       - name: Verified-state confirmation CLI help
