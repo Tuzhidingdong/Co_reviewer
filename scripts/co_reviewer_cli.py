@@ -1492,7 +1492,7 @@ def cmd_build_revision_ledger(args):
     scheduler_batch = select_ready_tasks(workflow.get("tasks", []))
     selected_task_ids = list(dict.fromkeys(getattr(args, "task_ids", None) or scheduler_batch))
     unavailable = set(selected_task_ids) - set(scheduler_batch)
-    if not selected_task_ids or unavailable:
+    if unavailable:
         raise ValueError(
             "RevisionLedger can only be built from the current conflict-free ready batch. "
             "Unavailable task ID(s): " + ", ".join(sorted(unavailable))
