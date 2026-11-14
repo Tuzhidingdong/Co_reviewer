@@ -1,5 +1,7 @@
+import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,6 +44,17 @@ def _operation(**overrides):
 
 
 class RevisionModelsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.pdf_path = self.root / "Manuscript_final.pdf"
+        self.pdf_bytes = b"%PDF-1.4\nsynthetic final-layout artifact\n%%EOF"
+        self.pdf_path.write_bytes(self.pdf_bytes)
+        self.pdf_sha256 = hashlib.sha256(self.pdf_bytes).hexdigest()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
     def test_revision_ledger_schema_keeps_patch_and_response_unit_separate(self):
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "revision-ledger.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -248,10 +261,11 @@ class RevisionModelsTests(unittest.TestCase):
             final_locations=[ResponseLocation(
                 document="Manuscript",
                 output_file="Manuscript_revised.docx",
+                pdf_file=str(self.pdf_path),
                 page=3,
                 line_start=12,
                 line_end=15,
-                pdf_sha256=HASH_B,
+                pdf_sha256=self.pdf_sha256,
                 location_map_id="map-001",
                 mapping_fingerprint=HASH_A,
             )],
@@ -275,6 +289,7 @@ class RevisionModelsTests(unittest.TestCase):
                 final_locations=[ResponseLocation(
                     document="Manuscript",
                     output_file="Revised.docx",
+                    pdf_file=str(self.pdf_path),
                     page=1,
                     line_start=1,
                     line_end=1,
@@ -311,15 +326,22 @@ class RevisionModelsTests(unittest.TestCase):
                 "final_locations": [{
                     "document": "Manuscript",
                     "output_file": "Manuscript_revised.docx",
+                    "pdf_file": str(self.pdf_path),
                     "page": 3,
                     "line_start": 12,
                     "line_end": 14,
-                    "pdf_sha256": HASH_B,
+                    "pdf_sha256": self.pdf_sha256,
                     "location_map_id": "map-001",
                     "mapping_fingerprint": HASH_A,
                 }],
             }],
         }
+        map_path = self.root / "location_map.json"
+        map_path.write_text(json.dumps(location_map), encoding="utf-8")
+        location_map["location_map_file"] = str(map_path)
+        location_map["location_map_file_sha256"] = hashlib.sha256(
+            map_path.read_bytes()
+        ).hexdigest()
         ledger.record_response_locations(location_map, actor="Location Mapper")
         self.assertEqual(ledger.response_units[0].status, "location_mapped")
         self.assertEqual(ledger.response_units[0].final_locations[0].page, 3)
@@ -368,6 +390,7 @@ class RevisionModelsTests(unittest.TestCase):
         location = ResponseLocation(
             document="Manuscript",
             output_file="Manuscript_revised.docx",
+            pdf_file=str(self.pdf_path),
             page=2,
             line_start=4,
             line_end=5,
