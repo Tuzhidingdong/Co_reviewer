@@ -1313,7 +1313,7 @@ def cmd_build_revision_ledger(args):
             + "\n- ".join(workflow_errors)
         )
     scheduler_batch = select_ready_tasks(workflow.get("tasks", []))
-    selected_task_ids = list(dict.fromkeys(args.task_ids or scheduler_batch))
+    selected_task_ids = list(dict.fromkeys(getattr(args, "task_ids", None) or scheduler_batch))
     unavailable = set(selected_task_ids) - set(scheduler_batch)
     if not selected_task_ids or unavailable:
         raise ValueError(
