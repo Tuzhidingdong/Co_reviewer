@@ -99,19 +99,21 @@ CLI commands now include:
 - \`create-working-clean-views\`
 - \`complete-response-units\`
 
-The location commands consume an externally produced map. They do not yet generate the Word COM/PDF pagination or line mapping themselves.
+The location commands include a Windows-only `map-response-locations` producer:
+
+- Opens only the ledger's hash-verified Working Clean View copies in a new, hidden Microsoft Word COM instance; source and Marked DOCX files are not overwritten.
+- Enables continuous line numbering, lets Word paginate, saves a separate Word-final Clean DOCX and exports its PDF.
+- Locates exact Patch replacement text in the Word layout, reads actual page/line positions through Word COM, and confirms the target text is extractable from the same PDF page.
+- Requires semantically confirmed ResponseUnits and verified Patches. It fails closed for ambiguous/missing text, deletions without surviving text, non-body Word parts, multi-page targets and unsupported phrase lengths.
+- Binds each mapping to both final DOCX and PDF SHA-256 values, plus the immutable location-map JSON. A later change to any bound artifact invalidates the mapping.
+
+Install the optional Windows dependencies with `pip install -e ".[word-pdf]"`. The producer has been implemented but has **not yet been executed on the user's Windows/Word installation**; COM pagination, line-number correspondence and PDF extraction remain pending local acceptance. The external `record-response-locations` command remains available for independently produced maps.
 
 ## Regression inventory and validation status
 
-- Original baseline: 76 test methods.
-- New document-engine module tests: 5.
-- New identity tests: 12.
-- New Workflow Engine tests: 17.
-- Decision-plan integration additions: 3.
-- New RevisionLedger/ResponseUnit model tests: 19.
-- New CLI integration tests: 9.
-- New Working Clean View tests: 4.
-- **Expected current inventory: 145 test methods.** This is a source inventory count, not an executed-test or pass claim.
+- The preserved v0.3 regression baseline contains 76 original test methods.
+- The current tracked `tests/*.py` source inventory contains **158 test methods**.
+- This is a source inventory count only. It is not an executed-test count, a CI result or a pass claim. Recalculate it whenever tests are added or removed.
 
 The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
@@ -121,7 +123,7 @@ Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip
 
 1. **Complete parser-backed identity migration:** generate object registry records from real DOCX parts, match objects across revisions, normalize actual citation systems and retire paragraph-index scheduling keys.
 2. **Complete the execution state machine:** integrate Patch batches directly with the Workflow Engine DAG and add cross-task conflict/rebase handling. Working Clean View and first-generation Patch supersession/replay prevention are now implemented. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
-3. **Build the final-location engine:** Word COM pagination, PDF export and evidence-backed page/line mapping. ResponseUnits already have a consumer contract but still need the actual producer.
+3. **Validate the final-location producer on Windows:** the Word COM/PDF producer now exists; next acceptance must confirm Word pagination, continuous line numbers, PDF page correspondence and unchanged source files on the user's installed Word version.
 4. **End-to-end acceptance:** run all tests on Windows, then separately validate synthetic Word GUI/save-round-trip, multi-document iterative patching and final Response Letter consistency.
 
 ## Verification boundary

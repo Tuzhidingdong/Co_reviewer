@@ -1652,6 +1652,47 @@ def cmd_confirm_response_units(args):
     return 0
 
 
+def cmd_map_response_locations(args):
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    output_dir = Path(args.out_dir).expanduser().resolve()
+    location_map_path = (
+        Path(args.location_map).expanduser().resolve()
+        if args.location_map
+        else output_dir / "response_location_map.json"
+    )
+    if ledger_path == location_map_path:
+        raise ValueError("Location map must not overwrite the RevisionLedger.")
+
+    ledger = _load_revision_ledger(ledger_path)
+    from co_reviewer.word_pdf_mapper import generate_word_pdf_location_map
+
+    location_map = generate_word_pdf_location_map(
+        ledger,
+        ledger_path=ledger_path,
+        output_dir=output_dir,
+    )
+    location_map_path.parent.mkdir(parents=True, exist_ok=True)
+    if location_map_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite an existing location map: {location_map_path}"
+        )
+    write_json_atomic(location_map_path, location_map)
+    location_map["location_map_file"] = str(location_map_path)
+    location_map["location_map_file_sha256"] = sha256_file(location_map_path)
+    ledger.record_response_locations(location_map, actor=args.actor)
+    write_json_atomic(ledger_path, ledger.to_dict())
+
+    mapped = sum(
+        1 for unit in ledger.response_units
+        if unit.status in {"location_mapped", "completed"}
+    )
+    print(f"[WORD/PDF MAPPED] {mapped} ResponseUnit(s) have verified final locations.")
+    print(f"[DOCX/PDF OUTPUT] {output_dir}")
+    print(f"[LOCATION MAP] {location_map_path}")
+    print(f"[OK] RevisionLedger: {ledger_path}")
+    return 0
+
+
 def cmd_record_response_locations(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
     location_map_path = Path(args.location_map).expanduser().resolve()
@@ -2123,6 +2164,12 @@ def build_parser():
     cru.add_argument("--actor", default="Human Author")
     cru.add_argument("--semantic-review-confirmed", action="store_true", required=True)
     cru.set_defaults(func=cmd_confirm_response_units)
+    mloc = sub.add_parser("map-response-locations", help="Use Microsoft Word COM to paginate final Clean DOCX files, export PDFs and map verified Patch text to final page/line locations.")
+    mloc.add_argument("--ledger", required=True)
+    mloc.add_argument("--out-dir", required=True, help="New or empty directory for Word-final Clean DOCX and PDF artifacts.")
+    mloc.add_argument("--location-map", help="Optional output JSON path; defaults to response_location_map.json inside --out-dir.")
+    mloc.add_argument("--actor", default="Microsoft Word COM/PDF Mapper")
+    mloc.set_defaults(func=cmd_map_response_locations)
     rloc = sub.add_parser("record-response-locations", help="Attach final PDF page/line locations to ResponseUnits.")
     rloc.add_argument("--ledger", required=True)
     rloc.add_argument("--location-map", required=True)

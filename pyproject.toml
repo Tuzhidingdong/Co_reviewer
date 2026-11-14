@@ -10,6 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["lxml>=5.0.0", "python-docx>=1.1.2"]
 
+[project.optional-dependencies]
+word-pdf = [
+  "pywin32>=306; platform_system == 'Windows'",
+  "PyMuPDF>=1.24",
+]
+
 [project.scripts]
 co-reviewer = "co_reviewer_cli:main"
 

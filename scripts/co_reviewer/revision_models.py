@@ -384,10 +384,21 @@ class ResponseLocation:
     pdf_sha256: str
     location_map_id: str
     mapping_fingerprint: str
+    output_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.document, "document")
-        _safe_docx_path(self.output_file, "output_file")
+        output_path = Path(_safe_docx_path(self.output_file, "output_file")).expanduser().resolve()
+        if self.output_sha256 is not None:
+            expected_output_sha256 = _sha256(self.output_sha256, "output_sha256")
+            if not output_path.is_file():
+                raise RevisionModelError(f"Final mapped DOCX does not exist: {output_path}")
+            try:
+                actual_output_sha256 = sha256_file(output_path)
+            except OSError as exc:
+                raise RevisionModelError(f"Cannot hash final mapped DOCX {output_path}: {exc}") from exc
+            if actual_output_sha256 != expected_output_sha256:
+                raise RevisionModelError(f"Final mapped DOCX changed after line mapping: {output_path}")
         pdf_path = Path(_text(self.pdf_file, "pdf_file")).expanduser().resolve()
         if pdf_path.suffix.casefold() != ".pdf":
             raise RevisionModelError("pdf_file must point to a .pdf file.")
@@ -420,6 +431,7 @@ class ResponseLocation:
             "pdf_sha256": self.pdf_sha256,
             "location_map_id": self.location_map_id,
             "mapping_fingerprint": self.mapping_fingerprint,
+            "output_sha256": self.output_sha256,
         }
 
     @property
@@ -529,6 +541,16 @@ class ResponseUnit:
                     errors.append(f"Final mapped PDF changed after line mapping: {pdf_path}")
             except OSError as exc:
                 errors.append(f"Cannot recheck final mapped PDF {pdf_path}: {exc}")
+            if location.output_sha256 is not None:
+                output_path = Path(location.output_file).expanduser().resolve()
+                if not output_path.is_file():
+                    errors.append(f"Final mapped DOCX no longer exists: {output_path}")
+                else:
+                    try:
+                        if sha256_file(output_path) != location.output_sha256:
+                            errors.append(f"Final mapped DOCX changed after line mapping: {output_path}")
+                    except OSError as exc:
+                        errors.append(f"Cannot recheck final mapped DOCX {output_path}: {exc}")
             if location.mapping_fingerprint != self.location_map_fingerprint:
                 errors.append(
                     f"ResponseUnit {self.response_unit_id} contains a location from another map."
@@ -896,6 +918,7 @@ class RevisionLedger:
                     pdf_sha256=row.get("pdf_sha256"),
                     location_map_id=row.get("location_map_id"),
                     mapping_fingerprint=row.get("mapping_fingerprint"),
+                    output_sha256=row.get("output_sha256"),
                 )
                 for row in raw_locations if isinstance(row, Mapping)
             ]
@@ -1900,6 +1923,7 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
                 pdf_sha256=item.get("pdf_sha256"),
                 location_map_id=item.get("location_map_id"),
                 mapping_fingerprint=item.get("mapping_fingerprint"),
+                output_sha256=item.get("output_sha256"),
             )
             for item in row.get("final_locations", [])
         ]
