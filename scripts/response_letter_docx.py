@@ -114,11 +114,11 @@ def render_response_docx(
         _set_run_font(run, size=9)
 
     counts = {state: sum(1 for item in items if item.get("status") == state)
-              for state in ("planned", "approved", "applied", "verified", "blocked")}
+              for state in ("planned", "approved", "applied", "verified", "blocked", "location_pending")}
     summary = doc.add_paragraph(
         "Revision items: {total} | Verified: {verified} | Applied, not verified: {applied} | Open/blocked: {other}".format(
             total=len(items), verified=counts["verified"], applied=counts["applied"],
-            other=counts["planned"] + counts["approved"] + counts["blocked"]
+            other=counts["planned"] + counts["approved"] + counts["blocked"] + counts["location_pending"]
         )
     )
     summary.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -140,6 +140,21 @@ def render_response_docx(
         response = str(item.get("proposed_response") or "").strip()
         if status == "verified":
             _add_label(doc, "Response", response)
+        elif status == "location_pending":
+            _add_label(
+                doc,
+                "Proposed response — SEMANTIC REVIEWED; FINAL PDF PAGE/LINE MAPPING PENDING"
+            )
+            draft = doc.add_paragraph(
+                response or "[Response text required; Co_Reviewer will not invent a reply.]"
+            )
+            draft.paragraph_format.keep_together = True
+            note = doc.add_paragraph(
+                "Scientific/semantic review is recorded. Do not submit until final PDF page and line locations are mapped."
+            )
+            for run in note.runs:
+                _set_run_font(run, size=9)
+                run.italic = True
         else:
             _add_label(doc, f"Proposed response — DRAFT ({status}; not yet verified)")
             draft = doc.add_paragraph(
