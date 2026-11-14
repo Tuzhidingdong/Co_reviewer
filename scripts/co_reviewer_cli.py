@@ -1262,6 +1262,10 @@ def cmd_record_response_locations(args):
         raise ValueError("Location map must not overwrite the RevisionLedger.")
     ledger = _load_revision_ledger(ledger_path)
     location_map = json.loads(location_map_path.read_text(encoding="utf-8"))
+    if not isinstance(location_map, dict):
+        raise ValueError("Location map JSON root must be an object.")
+    location_map["location_map_file"] = str(location_map_path)
+    location_map["location_map_file_sha256"] = sha256_file(location_map_path)
     ledger.record_response_locations(location_map, actor=args.actor)
     write_json_atomic(ledger_path, ledger.to_dict())
     mapped = sum(1 for unit in ledger.response_units if unit.status in {"location_mapped", "completed"})
