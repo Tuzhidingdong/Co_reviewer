@@ -79,20 +79,55 @@ function Invoke-QualityCheck {
     Add-QualityLog "===== $Name ====="
     Add-QualityLog "COMMAND: $PythonCommand $($PythonArgs -join ' ')"
 
-    # Capture both native stdout and stderr here. Do not rely on the caller
-    # or agent terminal to persist PowerShell's native command streams.
-    $CapturedOutput = @(& $PythonCommand @PythonArgs 2>&1)
-    $CommandExitCode = $LASTEXITCODE
+    # Capture native stdout/stderr through .NET instead of PowerShell's
+    # error stream. Python tests may intentionally write diagnostics to stderr
+    # while the process still exits successfully.
+    $ProcessInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $ProcessInfo.FileName = $PythonCommand
+    $ProcessInfo.WorkingDirectory = $RepoRoot
+    $ProcessInfo.UseShellExecute = $false
+    $ProcessInfo.CreateNoWindow = $true
+    $ProcessInfo.RedirectStandardOutput = $true
+    $ProcessInfo.RedirectStandardError = $true
+    foreach ($Argument in $PythonArgs) {
+        [void]$ProcessInfo.ArgumentList.Add([string]$Argument)
+    }
 
-    foreach ($Item in $CapturedOutput) {
-        if ($Item -is [System.Management.Automation.ErrorRecord]) {
-            $Line = $Item.ToString()
+    $Process = [System.Diagnostics.Process]::new()
+    try {
+        $Process.StartInfo = $ProcessInfo
+        if (-not $Process.Start()) {
+            throw "Unable to start Python process for quality check: $Name"
         }
-        else {
-            $Line = [string]$Item
+
+        # Read both streams asynchronously before waiting to avoid pipe deadlocks.
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
+        $Process.WaitForExit()
+        $StdoutText = $StdoutTask.GetAwaiter().GetResult()
+        $StderrText = $StderrTask.GetAwaiter().GetResult()
+        $CommandExitCode = $Process.ExitCode
+    }
+    finally {
+        $Process.Dispose()
+    }
+
+    foreach ($Stream in @(
+        [pscustomobject]@{ Name = "STDOUT"; Text = $StdoutText }
+        [pscustomobject]@{ Name = "STDERR"; Text = $StderrText }
+    )) {
+        if (-not [string]::IsNullOrEmpty($Stream.Text)) {
+            Add-QualityLog "--- $($Stream.Name) ---"
+            $Lines = [regex]::Split($Stream.Text, "\r\n|\n|\r")
+            for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
+                # Split() adds one trailing empty item when the stream ends in a newline.
+                if (($Index -eq ($Lines.Count - 1)) -and ($Lines[$Index].Length -eq 0)) {
+                    continue
+                }
+                Add-QualityLog $Lines[$Index]
+                Write-Host $Lines[$Index]
+            }
         }
-        Add-QualityLog $Line
-        Write-Host $Line
     }
 
     Add-QualityLog "EXIT_CODE=$CommandExitCode"
