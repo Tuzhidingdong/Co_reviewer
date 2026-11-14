@@ -213,6 +213,8 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
             continue
         if unit.location_requirement == "not_required":
             continue
+        if unit.location_requirement == "manual_required" and unit.status in {"location_mapped", "completed"}:
+            continue
         if not unit.semantic_review_confirmed or unit.status not in {"verified", "location_mapped", "completed"}:
             continue
 
@@ -689,6 +691,8 @@ def _reusable_role_mapping(
         pdf_hashes.add(location.pdf_sha256)
         positions[job.key] = (location.page, location.line_start, location.line_end)
     if len(output_files) != 1 or len(pdf_files) != 1 or len(output_hashes) != 1 or len(pdf_hashes) != 1 or len(role_page_counts) != 1:
+        return None
+    if any(item != role_sequence_audits[0] for item in role_sequence_audits[1:]):
         return None
     output_file = next(iter(output_files))
     pdf_file = next(iter(pdf_files))
