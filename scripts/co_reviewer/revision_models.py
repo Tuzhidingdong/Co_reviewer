@@ -551,16 +551,16 @@ class ResponseUnit:
             raise RevisionModelError("reply_only ResponseUnits must use location_requirement=not_required.")
         if self.disposition != "no_change" and self.location_requirement == "existing_anchor_required":
             raise RevisionModelError("existing_anchor_required is reserved for no_change ResponseUnits.")
-        if self.disposition != "revised" and self.location_requirement == "manual_required":
-            raise RevisionModelError("manual_required is reserved for revised ResponseUnits.")
+        if self.disposition not in {"revised", "no_change"} and self.location_requirement == "manual_required":
+            raise RevisionModelError("manual_required is reserved for revised or anchored no_change ResponseUnits.")
         if self.disposition in {"reply_only", "no_change", "clarification_needed"} and (self.linked_patch_ids or self.linked_operation_ids):
             raise RevisionModelError(
                 f"{self.disposition} ResponseUnits cannot claim Patch or PatchOperation links; "
                 "only disposition=revised may carry executable operations."
             )
         if self.disposition == "no_change":
-            if self.location_requirement != "existing_anchor_required":
-                raise RevisionModelError("no_change ResponseUnits must use existing_anchor_required.")
+            if self.location_requirement not in {"existing_anchor_required", "manual_required"}:
+                raise RevisionModelError("no_change ResponseUnits must use existing_anchor_required or manual_required.")
             if not all((self.anchor_evidence_id, self.anchor_document, self.anchor_part, self.anchor_source_excerpt)) or self.anchor_p_idx is None:
                 raise RevisionModelError("no_change ResponseUnits require a confirmed evidence ID, document, Word part, paragraph index and source excerpt.")
             _text(self.anchor_source_excerpt, "anchor_source_excerpt")
@@ -717,7 +717,11 @@ class ResponseUnit:
                 f"{self.location_requirement} ResponseUnit requires mapping_method={expected_method}."
             )
         if self.location_requirement == "manual_required":
-            expected_locator_ids = {f"manual:{operation_id}" for operation_id in self.linked_operation_ids}
+            expected_locator_ids = (
+                {f"manual:anchor:{self.anchor_evidence_id}"}
+                if self.disposition == "no_change"
+                else {f"manual:{operation_id}" for operation_id in self.linked_operation_ids}
+            )
             actual_locator_ids = {item.locator_id for item in final_locations}
             if expected_locator_ids != actual_locator_ids:
                 raise RevisionModelError(
@@ -996,7 +1000,11 @@ class RevisionLedger:
             if unit.status in {"location_mapped", "completed"}:
                 expected_locator_ids = set(unit.linked_operation_ids)
                 if unit.disposition == "no_change" and unit.anchor_evidence_id:
-                    expected_locator_ids = {f"anchor:{unit.anchor_evidence_id}"}
+                    expected_locator_ids = (
+                        {f"manual:anchor:{unit.anchor_evidence_id}"}
+                        if unit.location_requirement == "manual_required"
+                        else {f"anchor:{unit.anchor_evidence_id}"}
+                    )
                 elif unit.location_requirement == "manual_required":
                     expected_locator_ids = {
                         f"manual:{operation_id}" for operation_id in unit.linked_operation_ids
