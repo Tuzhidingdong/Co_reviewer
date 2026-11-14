@@ -88,7 +88,7 @@ This legacy-shaped edits_plan_batch_01.json is an adapter payload for the existi
 
 Before approval, run the no-write source preflight and synchronize its evidence into the RevisionLedger:
 
-    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report.json --revision-ledger revision_ledger.json
+    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report_batch_01.json --revision-ledger revision_ledger.json
 
 Present the preflight result, exact target operations, input/output paths and source hashes to the author. A failed or ambiguous target blocks the batch. If an input source or Patch operand changes after preflight, rebuild/re-authorize the affected scope and rerun preflight; do not reuse stale approval.
 
@@ -96,7 +96,7 @@ After the author approves the exact preflighted Patch IDs, record that approval 
 
     python scripts/co_reviewer_cli.py approve-plan --plan edits_plan_batch_01.json --ids T1 T2 --revision-ledger revision_ledger.json --actor "Human Author"
 
-This is a second, narrower gate: approve-workflow-tasks authorizes the prepared task scope, while approve-plan binds approval to the exact preflighted Patch operations and source versions. Both are required. Do not apply a Patch that has not passed both gates.
+This is a second, narrower gate: approve-workflow-tasks authorizes the prepared task scope, while approve-plan binds approval to the exact preflighted Patch operations and source versions. Both are required. Do not apply a Patch that has not passed both gates. Use a new preflight-report filename for each later batch. Keep the same revision_apply_report.json across batches because apply appends execution records; give each batch its own Decision/Revision Plan and verification-report filename.
 
 ### Stage 4 — Apply approved changes using native Word Track Changes
 
@@ -112,7 +112,7 @@ Never directly rewrite a paragraph/run with python-docx, replace XML text nodes,
 
 Run mechanical verification against the actual apply report:
 
-    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --out revision_verification.json
+    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --out revision_verification_batch_01.json
 
 This checks exact revision IDs and deleted/inserted text, whole-document untracked-text integrity, and supported native subscript/superscript formatting. It does not judge scientific correctness.
 
@@ -152,7 +152,7 @@ Only after every required ResponseUnit has semantic review and final PDF locatio
 
 Render the editable Response Letter from the RevisionLedger:
 
-    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out Response_to_Reviewers.docx --manuscript-title "Manuscript title" --author "Corresponding Author"
+    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out Response_to_Reviewers.docx --manuscript-title "Manuscript title" --author "Corresponding Author" --quality-report ResponseLetter_quality_report.json
 
 Also retain the Markdown draft when useful:
 
