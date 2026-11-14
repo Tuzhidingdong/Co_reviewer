@@ -74,7 +74,7 @@ class WorkflowSchedule:
 _SCOPE_FINGERPRINT_FIELDS = (
     "task_id", "sequence", "stage", "task_type", "title",
     "source_comment_ids", "target_documents", "evidence", "proposed_action",
-    "targets", "target_refs", "dependencies", "target_groups", "readiness",
+    "targets", "target_refs", "source_versions", "dependencies", "target_groups", "readiness",
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids",
@@ -984,6 +984,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         errors.append("Workflow ledger source_files must be an array.")
         sources = []
     seen_sources: set[tuple[str, str]] = set()
+    source_records: set[tuple[str, str, str]] = set()
     source_hashes_by_role: dict[str, set[str]] = defaultdict(set)
     for index, source in enumerate(sources):
         prefix = f"Workflow ledger source_files[{index}]"
@@ -1004,8 +1005,12 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             if source_key in seen_sources:
                 errors.append(f"{prefix} duplicates source {role}/{file_path}.")
             seen_sources.add(source_key)
-        if isinstance(role, str) and _is_sha256(digest):
+        if (
+            isinstance(role, str) and isinstance(file_path, str)
+            and isinstance(digest, str) and _is_sha256(digest)
+        ):
             source_hashes_by_role[role].add(digest)
+            source_records.add((role, file_path, digest))
 
     documents = ledger.get("documents", [])
     if not isinstance(documents, list):
@@ -1102,6 +1107,32 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if not isinstance(task, Mapping):
             continue
         task_id = task.get("task_id", f"index {index}")
+        task_source_versions = task.get("source_versions", [])
+        if not isinstance(task_source_versions, list):
+            errors.append(f"Task {task_id} source_versions must be an array.")
+            task_source_versions = []
+        seen_task_sources: set[tuple[str, str, str]] = set()
+        for source_index, source_version in enumerate(task_source_versions):
+            prefix = f"Task {task_id} source_versions[{source_index}]"
+            if not isinstance(source_version, Mapping):
+                errors.append(f"{prefix} must be an object.")
+                continue
+            role = source_version.get("role")
+            file_path = source_version.get("file")
+            digest = source_version.get("sha256")
+            if (
+                not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}
+                or not isinstance(file_path, str) or not file_path.strip()
+                or not _is_sha256(digest)
+            ):
+                errors.append(f"{prefix} requires a supported role, file and SHA-256.")
+                continue
+            key = (role, file_path, digest)
+            if key in seen_task_sources:
+                errors.append(f"{prefix} duplicates a source version.")
+            seen_task_sources.add(key)
+            if key not in source_records:
+                errors.append(f"{prefix} is not present in the Workflow Ledger source_files.")
         task_type = task.get("task_type")
         if not isinstance(task_type, str) or task_type not in _WORKFLOW_TASK_TYPES:
             errors.append(f"Task {task_id} has unsupported task_type {task_type!r}.")
@@ -1291,6 +1322,53 @@ def build_workflow_ledger(
         decision_plan.get("tasks"),
         target_refs_by_task=target_refs_by_task,
     )
+    source_records_by_role: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for source in decision_plan.get("source_files", []):
+        if not isinstance(source, Mapping):
+            continue
+        role = source.get("role")
+        if role == "Reply":
+            role = "Reviewers"
+        file_path = source.get("file")
+        digest = source.get("sha256")
+        if (
+            isinstance(role, str) and role
+            and isinstance(file_path, str) and file_path
+            and isinstance(digest, str) and _is_sha256(digest)
+        ):
+            source_records_by_role[role].append({
+                "role": role,
+                "file": file_path,
+                "sha256": digest,
+            })
+    for task in tasks:
+        roles: set[str] = set()
+        if isinstance(task.get("target_documents"), (list, tuple)):
+            roles.update(
+                "Reviewers" if role == "Reply" else role
+                for role in task["target_documents"]
+                if isinstance(role, str) and role
+            )
+        if task.get("source_comment_ids"):
+            roles.add("Reviewers")
+        for evidence in task.get("evidence", []):
+            if isinstance(evidence, Mapping):
+                role = evidence.get("document")
+                if isinstance(role, str) and role:
+                    roles.add("Reviewers" if role == "Reply" else role)
+        for target in task.get("targets", []):
+            if isinstance(target, Mapping):
+                role = target.get("document")
+                if isinstance(role, str) and role:
+                    roles.add("Reviewers" if role == "Reply" else role)
+        task["source_versions"] = [
+            copy.deepcopy(source)
+            for role in sorted(roles)
+            for source in sorted(
+                source_records_by_role.get(role, []),
+                key=lambda item: (item["file"], item["sha256"]),
+            )
+        ]
     ledger = {
         "schema_version": "0.5.1",
         "revision_round_id": revision_round_id.strip(),

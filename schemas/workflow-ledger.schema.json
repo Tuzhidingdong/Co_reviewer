@@ -167,6 +167,19 @@
           "type": "array",
           "items": { "$ref": "document-identity.schema.json#/$defs/targetRef" }
         },
+        "source_versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "file", "sha256"],
+            "properties": {
+              "role": { "enum": ["Reviewers", "Manuscript", "SI"] },
+              "file": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        },
         "readiness": {
           "enum": [
             "ready_for_author_approval",

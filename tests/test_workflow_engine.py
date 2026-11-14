@@ -210,6 +210,74 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(validate_workflow_tasks([completed]), [])
         self.assertEqual(task["status"], "ready")
 
+    def test_task_scope_fingerprint_binds_relevant_source_file_versions(self):
+        base_plan = {
+            "source_files": [{
+                "role": "Reviewers",
+                "file": "Reviewers.docx",
+                "sha256": INPUT_HASH,
+            }, {
+                "role": "Manuscript",
+                "file": "Manuscript.docx",
+                "sha256": OUTPUT_HASH,
+            }],
+            "tasks": [{
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "local_revision",
+                "title": "Revise a manuscript paragraph",
+                "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "Please clarify.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                    "source_comment_id": "C1",
+                }],
+                "proposed_action": "Clarify the paragraph.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 3,
+                    "action": "replace",
+                    "evidence_ids": ["E1"],
+                }],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.9,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        first = build_workflow_ledger(
+            base_plan, "round-source-version", STAMP
+        )
+        task = first["tasks"][0]
+        self.assertEqual(
+            {row["role"] for row in task["source_versions"]},
+            {"Reviewers", "Manuscript"},
+        )
+        original_fingerprint = workflow_scope_fingerprint(task)
+
+        updated_plan = json.loads(json.dumps(base_plan))
+        updated_plan["source_files"][1]["sha256"] = "d" * 64
+        second = build_workflow_ledger(
+            updated_plan, "round-source-version", STAMP
+        )
+        self.assertNotEqual(
+            original_fingerprint,
+            workflow_scope_fingerprint(second["tasks"][0]),
+        )
+        self.assertEqual(
+            second["tasks"][0]["source_versions"][1]["sha256"],
+            "d" * 64,
+        )
+
     def test_targetref_revision_change_invalidates_task_scope_fingerprint(self):
         task = _task("T1", [], "planned", ["doc-stable|object=para-01"])
         task["targets"] = [{
