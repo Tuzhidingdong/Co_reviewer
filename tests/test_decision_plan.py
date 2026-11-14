@@ -130,6 +130,10 @@ def _make_identity_ready_sources(root: Path, plan, audit, inventory):
     # The inventory paragraph is an advisory p_idx anchor. This synthetic DOCX
     # does not carry the fixture's artificial paraId, so only p_idx is supplied.
     plan["tasks"][0]["targets"][0]["para_id"] = None
+    for row in inventory:
+        if row.get("role") == "Manuscript":
+            for paragraph in row.get("paragraphs", []):
+                paragraph["para_id"] = None
 
 
 class DecisionPlanValidationTests(unittest.TestCase):

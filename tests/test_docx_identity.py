@@ -246,6 +246,51 @@ class DocxIdentityRegistryTests(unittest.TestCase):
         self.assertEqual(first_dimensions["structure_sha256"], second_dimensions["structure_sha256"])
         self.assertNotEqual(first_dimensions["formatting_sha256"], second_dimensions["formatting_sha256"])
 
+    def test_inventory_paragraph_text_must_match_actual_docx(self):
+        path = self._docx("inventory-mismatch.docx", ["Actual paragraph."])
+        inventory = _inventory(path)
+        inventory[0]["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "para_id": None,
+            "text": "Stale or wrong paragraph.",
+        }]
+        with self.assertRaisesRegex(DocxIdentityError, "text does not match the actual DOCX"):
+            build_document_identity_manifest(inventory)
+
+    def test_inventory_para_id_must_match_actual_docx(self):
+        path = self._docx(
+            "inventory-paraid.docx",
+            ["Actual paragraph."],
+            {"Actual paragraph.": "ABCD1234"},
+        )
+        inventory = _inventory(path)
+        inventory[0]["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "para_id": "WRONG123",
+            "text": "Actual paragraph.",
+        }]
+        with self.assertRaisesRegex(DocxIdentityError, "paraId does not match the actual DOCX"):
+            build_document_identity_manifest(inventory)
+
+    def test_character_range_cannot_exceed_actual_object_text(self):
+        path = self._docx("offset.docx", ["Short text."])
+        manifest, _ = build_document_identity_manifest(_inventory(path))
+        refs, errors = build_target_refs_by_task([{
+            "task_id": "T1",
+            "targets": [{
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "action": "replace",
+                "start_offset": 0,
+                "end_offset": 999,
+            }],
+        }], manifest)
+        self.assertEqual(refs["T1"], [])
+        self.assertTrue(any("exceeds the resolved object's visible-text length" in error for error in errors))
+
     def test_stale_inventory_hash_is_rejected_before_identity_generation(self):
         path = self._docx("stale.docx", ["Original."])
         report = _inventory(path)

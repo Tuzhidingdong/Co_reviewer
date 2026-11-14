@@ -454,6 +454,77 @@ def _prior_indices(
     return native, fingerprints
 
 
+def _validate_inventory_paragraphs(
+    inventory_row: Mapping[str, Any],
+    descriptors: Sequence[Mapping[str, Any]],
+    *,
+    role: str,
+) -> None:
+    """Verify that inventory (part,p_idx,text,paraId) anchors describe this exact DOCX."""
+    raw_paragraphs = inventory_row.get("paragraphs", [])
+    if not isinstance(raw_paragraphs, list):
+        raise DocxIdentityError(
+            f"Inventory paragraphs for {role} must be an array; rebuild the workspace inventory."
+        )
+    descriptor_index: dict[tuple[str, int], list[Mapping[str, Any]]] = defaultdict(list)
+    for descriptor in descriptors:
+        hint = descriptor.get("location_hint")
+        if not isinstance(hint, Mapping):
+            continue
+        p_idx = hint.get("p_idx")
+        part = descriptor.get("part")
+        if isinstance(part, str) and isinstance(p_idx, int) and not isinstance(p_idx, bool):
+            descriptor_index[(part, p_idx)].append(descriptor)
+
+    seen: set[tuple[str, int]] = set()
+    for index, row in enumerate(raw_paragraphs):
+        if not isinstance(row, Mapping):
+            raise DocxIdentityError(
+                f"Inventory paragraphs[{index}] for {role} must be an object."
+            )
+        part = row.get("part")
+        p_idx = row.get("p_idx")
+        if (
+            not isinstance(part, str) or not part
+            or not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0
+        ):
+            raise DocxIdentityError(
+                f"Inventory paragraphs[{index}] for {role} needs a valid part/p_idx."
+            )
+        key = (part, p_idx)
+        if key in seen:
+            raise DocxIdentityError(
+                f"Inventory duplicates paragraph location {role}/{part}/p_idx={p_idx}."
+            )
+        seen.add(key)
+        candidates = descriptor_index.get(key, [])
+        if len(candidates) != 1:
+            raise DocxIdentityError(
+                f"Inventory paragraph {role}/{part}/p_idx={p_idx} resolves to "
+                f"{len(candidates)} actual DOCX paragraphs. Rebuild inventory before "
+                "creating object identities; no positional fallback is permitted."
+            )
+        candidate = candidates[0]
+        expected_text = row.get("text")
+        actual_text = candidate.get("payload", {}).get("text")
+        if not isinstance(expected_text, str) or not isinstance(actual_text, str):
+            raise DocxIdentityError(
+                f"Inventory paragraph {role}/{part}/p_idx={p_idx} has invalid text."
+            )
+        if normalize_visible_text(expected_text) != normalize_visible_text(actual_text):
+            raise DocxIdentityError(
+                f"Inventory paragraph text does not match the actual DOCX at "
+                f"{role}/{part}/p_idx={p_idx}. Rebuild inventory."
+            )
+        expected_para_id = row.get("para_id")
+        actual_para_id = candidate.get("native_id")
+        if expected_para_id not in {None, ""} and expected_para_id != actual_para_id:
+            raise DocxIdentityError(
+                f"Inventory paraId does not match the actual DOCX at "
+                f"{role}/{part}/p_idx={p_idx}. Rebuild inventory."
+            )
+
+
 def build_document_identity_manifest(
     inventory: Any,
     *,
@@ -479,11 +550,14 @@ def build_document_identity_manifest(
     ):
         raise DocxIdentityError("Previous identity manifest must be a valid v0.5.1 documents/objects manifest.")
     if isinstance(previous_manifest, Mapping):
+        if any(not isinstance(item, Mapping) for item in previous_manifest.get("documents", [])):
+            raise DocxIdentityError("Previous identity manifest contains malformed document records.")
+        if any(not isinstance(item, Mapping) for item in previous_manifest.get("objects", [])):
+            raise DocxIdentityError("Previous identity manifest contains malformed object records.")
         for row in previous_manifest.get("documents", []):
-            if isinstance(row, Mapping):
-                role = _role(row.get("role"))
-                prior_roles[role] += 1
-                prior_documents[role] = row
+            role = _role(row.get("role"))
+            prior_roles[role] += 1
+            prior_documents[role] = row
         duplicates = sorted(role for role, count in prior_roles.items() if count > 1)
         if duplicates:
             raise DocxIdentityError(
@@ -495,6 +569,7 @@ def build_document_identity_manifest(
     document_records: list[dict[str, Any]] = []
     object_records: list[dict[str, Any]] = []
     report_rows: list[dict[str, Any]] = []
+    object_text_by_id: dict[str, str] = {}
 
     for row in rows:
         if not isinstance(row, Mapping):
@@ -520,6 +595,7 @@ def build_document_identity_manifest(
             )
 
         parsed, descriptors = _read_docx(source_path)
+        _validate_inventory_paragraphs(row, descriptors, role=role)
         previous = prior_documents.get(role)
         document_id = (
             previous.get("document_id")
@@ -621,6 +697,8 @@ def build_document_identity_manifest(
                 location_hint=hint,
             )
             object_records.append(identity.to_dict())
+            if isinstance(descriptor.get("payload", {}).get("text"), str):
+                object_text_by_id[object_id] = descriptor["payload"]["text"]
 
         report_rows.append({
             "role": role,
@@ -635,6 +713,7 @@ def build_document_identity_manifest(
         "schema_version": "0.5.1",
         "documents": document_records,
         "objects": object_records,
+        "_object_text_by_id": object_text_by_id,
     }
     report = {
         "algorithm": "native-paraId-then-unique-exact-fingerprint-v1",
@@ -673,6 +752,9 @@ def validate_manifest_sources(
             errors.append(f"Identity manifest contains duplicate role {role}.")
         by_role[role] = row
     plan_rows = plan.get("source_files", [])
+    if not isinstance(plan_rows, list):
+        errors.append("Decision plan source_files must be an array.")
+        plan_rows = []
     plan_by_role: dict[str, Mapping[str, Any]] = {}
     for row in plan_rows:
         if not isinstance(row, Mapping):
@@ -856,6 +938,39 @@ def build_target_refs_by_task(
             item = candidates[0]
             start_offset = target.get("start_offset")
             end_offset = target.get("end_offset")
+            object_payload_candidates = [
+                row for row in objects
+                if row.get("document_id") == item.get("document_id")
+                and row.get("revision_id") == item.get("revision_id")
+                and row.get("object_id") == item.get("object_id")
+            ]
+            object_text = (
+                object_payload_candidates[0].get("text")
+                if object_payload_candidates else None
+            )
+            # Object text is stored as part of the canonical fingerprint payload,
+            # so recover it only from the parser's manifest-private payload map below.
+            text_by_object = manifest.get("_object_text_by_id", {})
+            if isinstance(text_by_object, Mapping):
+                object_text = text_by_object.get(item.get("object_id"), object_text)
+            if start_offset is not None or end_offset is not None:
+                if not isinstance(object_text, str):
+                    errors.append(
+                        f"Task {task_id} target[{target_index}] has offsets but no visible-text length."
+                    )
+                    continue
+                if (
+                    not isinstance(start_offset, int) or isinstance(start_offset, bool)
+                    or not isinstance(end_offset, int) or isinstance(end_offset, bool)
+                    or start_offset < 0 or end_offset <= start_offset
+                    or end_offset > len(normalize_visible_text(object_text))
+                ):
+                    errors.append(
+                        f"Task {task_id} target[{target_index}] character range "
+                        f"{start_offset!r}:{end_offset!r} exceeds the resolved object's "
+                        f"visible-text length {len(normalize_visible_text(object_text))}."
+                    )
+                    continue
             try:
                 ref = TargetRef(
                     document_id=item.get("document_id"),

@@ -1686,6 +1686,7 @@ def cmd_build_document_identity(args):
         inventory,
         previous_manifest=previous,
     )
+    manifest.pop("_object_text_by_id", None)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(output_path, manifest)
     totals = report["totals"]
