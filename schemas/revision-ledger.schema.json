@@ -49,6 +49,14 @@
       "items": {
         "$ref": "#/$defs/revisionEvent"
       }
+    },
+    "workflow_task_fingerprints": {
+      "type": "object",
+      "description": "Scope fingerprints for every Workflow Ledger task in this review round. Lifecycle state/event changes do not alter scope; evidence, action, dependency or target changes do.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
     }
   },
   "$defs": {
