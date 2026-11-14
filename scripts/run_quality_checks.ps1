@@ -59,7 +59,11 @@ $script:FailedCheck = $null
 $script:FailedExitCode = $null
 
 function Add-QualityLog {
-    param([Parameter(Mandatory = $true)][string]$Message)
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Message
+    )
     Add-Content -LiteralPath $LogPath -Value $Message -Encoding UTF8
 }
 
