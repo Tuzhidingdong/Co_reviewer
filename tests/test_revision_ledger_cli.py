@@ -702,6 +702,23 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(merged.revision_round_id, "round-dag-sync")
         self.assertEqual(merged.workflow_task_fingerprints["T1"], workflow_scope_fingerprint(task1))
+        # A subsequent build may not repeat the original reviewer map. Keep
+        # the reviewer identity already recorded for this later-batch ResponseUnit.
+        response2_after_merge = next(
+            unit for unit in merged.response_units
+            if unit.response_unit_id == "RU-T2-C-T2"
+        )
+        self.assertEqual(response2_after_merge.reviewer, "Reviewer 1")
+
+        # Each exported legacy plan represents only the current pending batch.
+        # Historical verified Patches remain in the RevisionLedger but must not
+        # be required in the next batch's plan payload.
+        batch_two_plan = merged.to_legacy_revision_plan()
+        self.assertEqual(
+            [item["id"] for item in batch_two_plan["revision_items"]],
+            ["T2"],
+        )
+        merged.assert_legacy_plan_matches(batch_two_plan)
 
     def test_authorized_rebase_supersedes_verified_patch_and_preserves_history(self):
         source = self.root / "Manuscript_source.docx"
