@@ -43,7 +43,18 @@ class WordPdfMapperContractTests(unittest.TestCase):
         self.marked_docx.write_bytes(b"marked docx")
         self.clean_docx.write_bytes(b"accepted-changes clean view")
         self.pdf.write_bytes(b"%PDF-1.4 synthetic")
-        self.map_file.write_text('{"map":"synthetic"}', encoding="utf-8")
+        self.map_file.write_text(json.dumps({
+            "documents": [{
+                "document": "Manuscript",
+                "word_page_count": 3,
+                "sequence_audit": {
+                    "status": "manual_review",
+                    "detected": {"Figure": [], "Table": []},
+                    "issues": [],
+                    "manual_review": [{"reason": "Synthetic fixture has no native sequence fields."}],
+                },
+            }]
+        }), encoding="utf-8")
         self.operation = PatchOperation.from_mapping({
             "operation_id": "OP-1",
             "document": "Manuscript",
