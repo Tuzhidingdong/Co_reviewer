@@ -69,60 +69,92 @@ When a replacement needs subscripts/superscripts, put the corresponding supporte
 
 Every textual change in the Marked Manuscript/SI must use native Word Track Changes: deleted text in `w:del`/`w:delText`, inserted text in `w:ins`/`w:t`. Font color is not an acceptance criterion. All Marked-file edits must pass through the approved revision plan and CLI `apply`; do not directly rewrite text with `python-docx`, XML text replacement, another DOCX writer, or Word with Track Changes turned off. Unsupported targets must be blocked, not silently changed directly. `verify` checks exact revision IDs/text and audits all text outside revision wrappers against the source so unrelated direct text changes fail verification.
 
-## Source preflight and incremental approval
+## Workflow Ledger, Patch batches and approval
 
-Before requesting approval for planned items, run the no-write preflight:
+The current round-level control plane is the Workflow Ledger; the RevisionLedger is the durable record of Patch and ResponseUnit execution. Do not start from a separately maintained legacy revision plan.
 
-    python scripts/co_reviewer_cli.py preflight-plan --plan plan/edits_plan.json --out reports/preflight_report.json
+After the author accepts the pending Decision Plan's scientific dispositions and target scope, validate it and persist the Workflow Ledger:
 
-The command validates every planned/approved anchor by preparing the edits in memory; it does not write or modify any DOCX. On success, it records a SHA-256 hash of each exact input DOCX in the corresponding targets and an item-level preflight fingerprint over the complete target set. `approve-plan` rejects target edits made after preflight, as well as changed source files; rerun preflight before approving a changed target. Review this report with the revision plan before asking the user to approve specific Revision Item IDs.
+    python scripts/validate_decision_plan.py --plan revision_decision_plan.json --audit reports/review_audit_report.json --inventory reports/workspace_inventory.json --workflow-ledger-out workflow_ledger.json --revision-round-id round-2026-11-14
 
-After the user approves selected items, run `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. The approval fingerprint covers each selected item's reviewer, original comment, proposed response and complete target list, including the source DOCX hashes recorded by preflight. It detects stale approval scope but is not a cryptographic signature or identity proof. `validate-plan` and `apply` reject an item whose approval fingerprint is missing or stale. Apply also rechecks the exact source DOCX bytes before and after preparing the edits. If a source DOCX changes after preflight/approval, run preflight again, show the refreshed source version to the user and obtain renewed approval. The apply command processes only sealed items whose status is `approved`; planned or blocked items remain untouched. After successful application, the CLI updates those items to `applied` automatically.
+Use a parser-backed identity manifest only when its source hashes match the current inputs. The resulting tasks remain planned and require explicit approval.
 
-Use `status --plan plan/edits_plan.json` to inspect the current task summary. Record user approval for a selected subset with `approve-plan --plan plan/edits_plan.json --ids R2-C3 R3-C1`. After mechanical verification and a separate scientific/semantic review, the Supervisor must use `confirm-verified`; never edit the `verified` status manually.
+Before task authorization, enrich each executable task with exact `patch_operations`: one per target, each containing the document role, immutable input DOCX path, separate output DOCX path, Word part, paragraph index, exact find/replace strings, readable location and same-target evidence IDs. Include only an author-reviewed proposed response. Do not create operations for unresolved/ambiguous targets. Preserve all source comment IDs and add a `reviewer_map.json` so each comment retains its actual reviewer. For example:
 
-## Completion states
+    {
+      "T1": {
+        "comment_ids": {
+          "1": "Reviewer 1",
+          "2": "Reviewer 2"
+        }
+      }
+    }
 
-- planned: proposed by Supervisor;
-- approved: explicitly approved by the user;
-- applied: CLI reports the edit was applied;
-- verified: output was re-inspected and checked;
-- blocked: evidence is missing, the target is ambiguous, or the current backend cannot safely edit it.
+Authorize the prepared task scope, then build the conflict-free ready batch:
 
-The response letter must not claim "we have revised/added/corrected" for a task that is only planned or approved.
+    python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
+    python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --reviewer-map reviewer_map.json --out revision_ledger.json
+    python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --out edits_plan_batch_01.json
 
+The scheduler enforces dependency and target-group conflict boundaries. `--task-ids` can select only a subset of the currently ready batch. Use a unique exported plan filename for every batch; the exporter does not overwrite an existing plan. Keep the same Workflow Ledger and RevisionLedger paths so task state and Patch history remain connected.
 
-## Final verification and response draft
+## Preflight, exact Patch approval, apply and verification
 
-Run the mechanical check after applying the plan:
+Preflight the exact exported Patch batch and synchronize the source/version evidence into the RevisionLedger:
 
-    python scripts/co_reviewer_cli.py verify --plan plan/edits_plan.json --apply-report output/revision_apply_report.json --out reports/revision_verification.json
+    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report_batch_01.json --revision-ledger revision_ledger.json
 
-Keep using the same `output/revision_apply_report.json` path for subsequent incremental iterations so each run is appended to the report history. The CLI rejects plan/report paths that collide with any referenced DOCX input or output before writing documents.
+Review the exact edits, paths and source hashes with the author. Then record the second approval, bound to the preflighted Patch operations:
 
-This verifies the exact Word revision IDs and deletion/insertion text, audits the output for direct/untracked text changes outside the planned revisions, and checks the per-character native subscript/superscript formatting recorded by the apply report. It does **not** decide whether the new scientific explanation is correct.
+    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan_batch_01.json --ids T1 --revision-ledger revision_ledger.json --actor "Human Author"
 
-Next, inspect the revised Manuscript and SI. Check all claims in the response against the actual edits, and compare numerical values, units, sample names, figure/table labels and cross-references between the two documents. The apply command persists the `applied` state automatically. Only after both reviews pass, record completion with the guarded command below; do not edit item status manually:
+Both gates are required: `approve-workflow-tasks` authorizes the prepared task scope; `approve-plan` authorizes the exact preflighted Patch operations and source versions. A task-scope approval alone is not permission to edit a DOCX.
 
-    python scripts/co_reviewer_cli.py confirm-verified --plan plan/edits_plan.json --apply-report output/revision_apply_report.json --ids R2-C3 R3-C1 --semantic-review-confirmed
+Apply only after both approvals:
 
-The command re-runs exact Track Changes verification against the current output files, records their SHA-256 hashes and requires an explicit semantic-review acknowledgement. If a revised DOCX changes later, plan validation and Response Letter rendering reject the stale verified state. This workflow-integrity control does not prove user identity and does not judge scientific correctness.
+    python scripts/co_reviewer_cli.py apply --plan edits_plan_batch_01.json --author "Author Name" --report output/revision_apply_report.json --revision-ledger revision_ledger.json
 
-Render the response draft:
+Inputs must remain immutable, and each output DOCX path must be distinct. The existing Word-native Track Changes writer is the only writer. Do not edit a Marked DOCX directly or bypass a refused complex target.
 
-    python scripts/co_reviewer_cli.py render-response --plan plan/edits_plan.json --out output/Response_to_Reviewers.md
+Run exact mechanical verification:
 
-The renderers use only the `proposed_response` text already provided in the plan. Missing reply text remains a placeholder. Items not marked `verified` are labelled as drafts and must not be presented as completed responses. Generate a Word file with `python scripts/co_reviewer_cli.py render-response-docx --plan plan/edits_plan.json --out output/Response_to_Reviewers.docx`; the existing Markdown renderer remains available.
+    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report output/revision_apply_report.json --out reports/revision_verification_batch_01.json
 
-## Incremental task handling
+Only after mechanical verification and separate scientific/semantic review of the revised Manuscript/SI pass, seal the Patch outputs and synchronize task state:
 
-A plan can hold completed and unfinished items together. The plan-level `approved` flag confirms that the user has approved the current plan, while each item status records its individual lifecycle. `apply` processes only items marked `approved`, then automatically persists those items as `applied`. This prevents completed items from being submitted for a second edit when the user later approves a new subset.
+    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan_batch_01.json --apply-report output/revision_apply_report.json --ids T1 --semantic-review-confirmed --revision-ledger revision_ledger.json
+    python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
 
-Inspect progress with:
+Use unique plan, preflight and verification report filenames for each later batch. Reuse the same `output/revision_apply_report.json` within the round because each apply run appends its execution records. After synchronization, review newly ready tasks and any same-target/dependency invalidations. Refresh affected evidence and paths against the latest outputs, obtain renewed authorization and build the next conflict-free batch. Do not apply a downstream task against an outdated DOCX.
 
-    python scripts/co_reviewer_cli.py status --plan edits_plan.json
+## Clean views, final Word/PDF locations and Response Letter
 
-Mechanical verification checks the exact Word revision records. The Supervisor must still perform the scientific and cross-document review before using `confirm-verified`; do not change the `verified` status manually.
+After the in-scope Patch batches are verified, produce separate accepted-changes projections:
+
+    python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
+
+Working Clean Views are intermediate review projections, not final Word-layout Clean deliverables. Inspect Marked and Working Clean DOCX files together and check claims, sample identities, numerical values, units, figures/tables and cross-references across Manuscript and SI.
+
+After the author confirms each ResponseUnit's wording and semantic consistency, record that review:
+
+    python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-T1-1 --semantic-review-confirmed --actor "Human Author"
+
+On Windows with Microsoft Word installed and the optional Word/PDF dependencies, generate final Word-layout Clean DOCX files, PDFs and actual page/line locations:
+
+    python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
+
+The page and line references must come from real Word COM pagination and corresponding PDFs. XML paragraph indices are not page/line numbers. If Word COM is unavailable or a target is unsupported for reliable location mapping, leave the ResponseUnit incomplete and report the blocker.
+
+Only after the author accepts readiness and PDF-backed location evidence is attached, complete the relevant ResponseUnits:
+
+    python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-T1-1 --ready-for-submission-confirmed --actor "Human Author"
+
+Render Response Letter files from the RevisionLedger:
+
+    python scripts/co_reviewer_cli.py render-response --revision-ledger revision_ledger.json --out output/Response_to_Reviewers.md
+    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out output/Response_to_Reviewers.docx --manuscript-title "Manuscript title" --author "Corresponding Author"
+
+A semantically reviewed ResponseUnit without final PDF mapping is still location-pending, not submission-ready. Keep draft/location-pending/completed labels intact. Never invent response wording or page/line locations.
 
 ## Local automated checks on Windows
 
@@ -138,9 +170,10 @@ This runs Python compilation, the complete unit suite and CLI entry-point checks
 
 ## Response Letter DOCX
 
-Generate an editable Word response letter from the revision plan:
+The current response renderers consume ResponseUnits from the RevisionLedger. Use the round's RevisionLedger rather than a separately maintained legacy revision plan:
 
-    python scripts/co_reviewer_cli.py render-response-docx --plan edits_plan.json --out Response_to_Reviewers.docx
+    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out Response_to_Reviewers.docx
+    python scripts/co_reviewer_cli.py render-response --revision-ledger revision_ledger.json --out Response_to_Reviewers.md
 
-The DOCX output preserves draft labels for every item not marked `verified`, includes linked document locations, and does not invent missing reply text. Existing output files are not overwritten; choose a new path for each generated version.
+The renderer preserves draft/location-pending/completed distinctions, reviewer attribution and linked document locations. Missing reply text and missing PDF page/line mappings remain explicit; the renderer never invents them. Existing output files are not overwritten; choose a new path for each generated version.
 
