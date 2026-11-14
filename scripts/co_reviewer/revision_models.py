@@ -402,15 +402,17 @@ class ResponseLocation:
     document: str
     output_file: str
     pdf_file: str
-    page: int
-    line_start: int
-    line_end: int
+    page: int | None
+    line_start: int | None
+    line_end: int | None
     pdf_sha256: str
     location_map_id: str
     mapping_fingerprint: str
     output_sha256: str
     locator_id: str
     source_clean_sha256: str
+    mapping_method: str = "word_com"
+    locator_text: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.document, "document")
@@ -429,12 +431,32 @@ class ResponseLocation:
             raise RevisionModelError("pdf_file must point to a .pdf file.")
         if not pdf_path.is_file():
             raise RevisionModelError(f"Final mapped PDF does not exist: {pdf_path}")
-        for name in ("page", "line_start", "line_end"):
-            value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-                raise RevisionModelError(f"{name} must be a positive integer.")
-        if self.line_end < self.line_start:
-            raise RevisionModelError("line_end cannot be earlier than line_start.")
+        if self.mapping_method not in {"word_com", "manual"}:
+            raise RevisionModelError("mapping_method must be word_com or manual.")
+        if self.mapping_method == "word_com":
+            for name in ("page", "line_start", "line_end"):
+                value = getattr(self, name)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                    raise RevisionModelError(f"{name} must be a positive integer for Word COM locations.")
+            if self.line_end < self.line_start:
+                raise RevisionModelError("line_end cannot be earlier than line_start.")
+            if self.locator_text is not None:
+                _text(self.locator_text, "locator_text")
+        else:
+            _text(self.locator_text, "locator_text")
+            if self.page is not None and (
+                not isinstance(self.page, int) or isinstance(self.page, bool) or self.page < 1
+            ):
+                raise RevisionModelError("Manual location page must be a positive integer or null.")
+            if self.line_start is not None or self.line_end is not None:
+                if self.page is None:
+                    raise RevisionModelError("Manual line numbers require a positive page number.")
+                for name in ("line_start", "line_end"):
+                    value = getattr(self, name)
+                    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                        raise RevisionModelError(f"Manual {name} must be positive when supplied.")
+                if self.line_end < self.line_start:
+                    raise RevisionModelError("Manual line_end cannot be earlier than line_start.")
         expected_pdf_sha256 = _sha256(self.pdf_sha256, "pdf_sha256")
         try:
             actual_pdf_sha256 = sha256_file(pdf_path)
@@ -461,10 +483,17 @@ class ResponseLocation:
             "output_sha256": self.output_sha256,
             "locator_id": self.locator_id,
             "source_clean_sha256": self.source_clean_sha256,
+            "mapping_method": self.mapping_method,
+            "locator_text": self.locator_text,
         }
 
     @property
     def display_text(self) -> str:
+        if self.mapping_method == "manual":
+            return (
+                f"Page {self.page}, {self.locator_text}"
+                if self.page is not None else str(self.locator_text)
+            )
         line_text = (
             f"line {self.line_start}"
             if self.line_start == self.line_end
@@ -560,7 +589,8 @@ class ResponseUnit:
         if self.status == "location_mapped" and self.location_requirement == "not_required":
             raise RevisionModelError("A not_required ResponseUnit cannot carry a Word/PDF location state.")
         if self.status in {"location_mapped", "completed"} and self.location_requirement == "manual_required":
-            raise RevisionModelError("manual_required ResponseUnits need an explicit manual locator.")
+            if not self.final_locations or any(location.mapping_method != "manual" for location in self.final_locations):
+                raise RevisionModelError("manual_required ResponseUnits need explicit manual locator records.")
         if self.status in {"location_mapped", "completed"} and self.location_requirement != "not_required":
             if not self.semantic_review_confirmed:
                 raise RevisionModelError("Location-mapped ResponseUnit requires semantic review.")
@@ -611,6 +641,11 @@ class ResponseUnit:
         if not self.final_locations:
             errors.append("Mapped ResponseUnit has no final PDF line locations.")
         for location in self.final_locations:
+            expected_method = "manual" if self.location_requirement == "manual_required" else "word_com"
+            if location.mapping_method != expected_method:
+                errors.append(
+                    f"ResponseUnit {self.response_unit_id} requires {expected_method} locator records."
+                )
             pdf_path = Path(location.pdf_file).expanduser().resolve()
             if not pdf_path.is_file():
                 errors.append(f"Final mapped PDF no longer exists: {pdf_path}")
@@ -663,8 +698,6 @@ class ResponseUnit:
     ) -> None:
         if self.location_requirement == "not_required":
             raise RevisionModelError("This ResponseUnit is explicitly not required to have a location.")
-        if self.location_requirement == "manual_required":
-            raise RevisionModelError("This ResponseUnit requires an author-reviewed manual locator.")
         if self.status not in {"verified", "location_mapped", "completed"} or not self.semantic_review_confirmed:
             raise RevisionModelError(
                 "ResponseUnit must pass semantic review before final location mapping."
@@ -674,6 +707,19 @@ class ResponseUnit:
             raise RevisionModelError("At least one final PDF page/line location is required.")
         if any(not isinstance(item, ResponseLocation) for item in final_locations):
             raise RevisionModelError("final_locations must contain ResponseLocation records.")
+        expected_method = "manual" if self.location_requirement == "manual_required" else "word_com"
+        if any(item.mapping_method != expected_method for item in final_locations):
+            raise RevisionModelError(
+                f"{self.location_requirement} ResponseUnit requires mapping_method={expected_method}."
+            )
+        if self.location_requirement == "manual_required":
+            expected_locator_ids = {f"manual:{operation_id}" for operation_id in self.linked_operation_ids}
+            actual_locator_ids = {item.locator_id for item in final_locations}
+            if expected_locator_ids != actual_locator_ids:
+                raise RevisionModelError(
+                    "Manual location records must cover exactly these PatchOperations: "
+                    + ", ".join(sorted(expected_locator_ids))
+                )
         if any(
             item.mapping_fingerprint != location_map_fingerprint
             for item in final_locations
@@ -946,6 +992,10 @@ class RevisionLedger:
                 expected_locator_ids = set(unit.linked_operation_ids)
                 if unit.disposition == "no_change" and unit.anchor_evidence_id:
                     expected_locator_ids = {f"anchor:{unit.anchor_evidence_id}"}
+                elif unit.location_requirement == "manual_required":
+                    expected_locator_ids = {
+                        f"manual:{operation_id}" for operation_id in unit.linked_operation_ids
+                    }
                 actual_locator_ids = {location.locator_id for location in unit.final_locations if location.locator_id}
                 if expected_locator_ids and expected_locator_ids - actual_locator_ids:
                     errors.append(
@@ -1067,6 +1117,8 @@ class RevisionLedger:
                     output_sha256=row.get("output_sha256"),
                     locator_id=row.get("locator_id"),
                     source_clean_sha256=row.get("source_clean_sha256"),
+                    mapping_method=row.get("mapping_method", "word_com"),
+                    locator_text=row.get("locator_text"),
                 )
                 for row in raw_locations if isinstance(row, Mapping)
             ]
@@ -2464,6 +2516,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
                 output_sha256=item.get("output_sha256"),
                 locator_id=item.get("locator_id"),
                 source_clean_sha256=item.get("source_clean_sha256"),
+                mapping_method=item.get("mapping_method", "word_com"),
+                locator_text=item.get("locator_text"),
             )
             for item in row.get("final_locations", [])
         ]
