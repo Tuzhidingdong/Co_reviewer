@@ -30,6 +30,11 @@ def _qn(local: str) -> str:
 
 _ACCEPT_WRAPPERS = {_qn("ins"), _qn("moveTo")}
 _REJECT_WRAPPERS = {_qn("del"), _qn("moveFrom")}
+_UNSUPPORTED_STRUCTURAL_REVISIONS = {
+    _qn("cellIns"),
+    _qn("cellDel"),
+    _qn("cellMerge"),
+}
 _REMOVE_ELEMENTS = {
     _qn("rPrChange"),
     _qn("pPrChange"),
@@ -39,9 +44,6 @@ _REMOVE_ELEMENTS = {
     _qn("tcPrChange"),
     _qn("numberingChange"),
     _qn("sectPrChange"),
-    _qn("cellIns"),
-    _qn("cellDel"),
-    _qn("cellMerge"),
     _qn("commentRangeStart"),
     _qn("commentRangeEnd"),
     _qn("commentReference"),
@@ -149,6 +151,11 @@ def _resolve_revisions(root: ET._Element) -> dict[str, int]:
                 else:
                     counts["moves_from_rejected"] += 1
                 _remove_child(parent, child)
+            elif child.tag in _UNSUPPORTED_STRUCTURAL_REVISIONS:
+                raise WorkingViewError(
+                    f"Unsupported table-structure revision element {ET.QName(child).localname}; "
+                    "the Working Clean View refuses to guess the accepted table structure."
+                )
             elif child.tag in _REMOVE_ELEMENTS:
                 if child.tag in {
                     _qn("commentRangeStart"),
@@ -306,7 +313,7 @@ def create_working_clean_view(
             raise WorkingViewError(f"Generated Word XML part {name} is malformed: {exc}") from exc
         for node in root.iter():
             if isinstance(node.tag, str) and ET.QName(node).namespace == W:
-                if node.tag in _ALL_REVISION_ELEMENTS or node.tag in {
+                if node.tag in _ALL_REVISION_ELEMENTS or node.tag in _UNSUPPORTED_STRUCTURAL_REVISIONS or node.tag in {
                     _qn("trackRevisions"), _qn("revisionView")
                 }:
                     residual.append(f"{name}:{ET.QName(node).localname}")
