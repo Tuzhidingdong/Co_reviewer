@@ -123,3 +123,14 @@ The Markdown and DOCX renderers never invent response text. Items not marked ver
 - Batch independent operations where safe; do not impose a fixed maximum number of Worker calls.
 - Reuse inventory for unchanged source files; re-inspect changed inputs or requested scopes only.
 - Before starting any OpenCode Worker, first inspect the currently available OpenCode Go models, then show the user the proposed role, selected model, active project root, inputs, expected outputs and validation boundary. Do not start a Worker invisibly; obtain explicit authorization first. After completion, report Job ID, Session ID, project, role, model, final state, concise result summary and token usage. Every Worker task must identify role, model, project, inputs, expected outputs and validation requirements.
+
+
+## Usage and output-quality evidence
+
+When running `inspect` or `audit`, optionally pass `--usage-ledger .co-reviewer-usage.jsonl` to record programmatic DOCX parse/cache events. These events record source hashes and metadata only; they do not store manuscript text and set `context_scope` to `none`.
+
+Use `record-usage-event` to append an event from a metadata-only JSON file when the actual model caller or worker has trustworthy token/context measurements. Never infer model input from file reads or infer token counts from text length. `audit-usage` groups reported token buckets by stage, actor and provider/model; unavailable values remain null. `estimate-usage` requires an explicit pricing file with disjoint bucket accounting and complete measurements.
+
+Run `audit-docx-quality --docx <file.docx> --profile <profile> --out <report.json>` for structural/typography checks. Supported profiles are `generic`, `clean-manuscript`, `marked-manuscript`, `word-final-clean` and `response-letter`. `render-response-docx` and `map-response-locations` also emit deterministic quality reports automatically.
+
+A DOCX quality report is not proof of visual correctness. Final pagination and page/line locations must still come from Microsoft Word COM and the corresponding exported PDF; scientific correctness requires human semantic review.

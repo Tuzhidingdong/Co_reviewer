@@ -147,3 +147,10 @@ Individual commands:
     python scripts/co_reviewer_cli.py --help
     python scripts/co_reviewer_cli.py approve-plan --help
     python scripts/co_reviewer_cli.py confirm-verified --help
+
+
+## Usage and Word-output quality audit
+
+Co_Reviewer can optionally record SHA-bound DOCX parse/cache observations with `inspect`/`audit --usage-ledger`. Caller-supplied model events can be appended with `record-usage-event`, summarized by `audit-usage`, and priced with `estimate-usage` only when explicit disjoint-bucket rates and complete token evidence are available. The ledger stores metadata, not manuscript text; filesystem reads do not prove model-context exposure.
+
+`audit-docx-quality` checks DOCX package/XML integrity, tracked changes, comments, draft placeholders, selected typography profiles, and optional PDF integrity. Response Letter DOCX generation and Word/PDF location mapping also emit quality reports. These deterministic checks complement—but do not replace—Microsoft Word visual acceptance, PDF page/line verification, or scientific semantic review. See `docs/COST_AND_QUALITY_AUDIT.md`.

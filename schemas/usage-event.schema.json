@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Usage Event",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp_utc",
+    "event_type",
+    "stage",
+    "actor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "event_type": {
+      "enum": [
+        "stage",
+        "document_read",
+        "model_usage",
+        "note"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "parse_inventory",
+        "cross_document_audit",
+        "decision_synthesis",
+        "decision_plan_validation",
+        "approval_preview",
+        "patch_authoring",
+        "patch_preflight",
+        "patch_execution",
+        "patch_verification",
+        "semantic_review",
+        "working_clean_projection",
+        "word_layout_mapping",
+        "response_letter_drafting",
+        "global_consistency_review",
+        "rework_retry",
+        "other"
+      ]
+    },
+    "actor": {
+      "enum": [
+        "supervisor",
+        "worker",
+        "system",
+        "external",
+        "unknown"
+      ]
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "token_usage": {
+      "type": "object",
+      "required": [
+        "source",
+        "reasoning_relation"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "measured",
+            "estimated",
+            "unavailable"
+          ]
+        },
+        "reasoning_relation": {
+          "enum": [
+            "included_in_output",
+            "separate",
+            "unknown"
+          ]
+        },
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_read_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_write_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "document_read": {
+      "type": "object",
+      "properties": {
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "cache_status": {
+          "enum": [
+            "hit",
+            "miss",
+            "bypass",
+            "unknown"
+          ]
+        },
+        "parsed": {
+          "type": "boolean"
+        },
+        "full_text_extracted": {
+          "type": "boolean"
+        },
+        "paragraphs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "characters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "context_scope": {
+          "enum": [
+            "none",
+            "excerpt",
+            "digest",
+            "full_text",
+            "unknown"
+          ]
+        },
+        "role": {
+          "type": "string"
+        }
+      }
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

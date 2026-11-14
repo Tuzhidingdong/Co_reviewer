@@ -57,3 +57,9 @@ jobs:
         run: python scripts/co_reviewer_cli.py preflight-plan --help
       - name: Verified-state confirmation CLI help
         run: python scripts/co_reviewer_cli.py confirm-verified --help
+      - name: Usage audit CLI help
+        run: python scripts/co_reviewer_cli.py audit-usage --help
+      - name: Usage event CLI help
+        run: python scripts/co_reviewer_cli.py record-usage-event --help
+      - name: DOCX quality audit CLI help
+        run: python scripts/co_reviewer_cli.py audit-docx-quality --help

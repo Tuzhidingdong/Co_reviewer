@@ -41,7 +41,23 @@
           "output_file": { "type": "string", "pattern": "\\.docx$" },
           "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
           "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
-          "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "quality_report_file": { "type": "string", "minLength": 1 },
+          "quality_report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "quality_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["document", "report_file", "report_sha256", "status"],
+        "properties": {
+          "document": { "type": "string", "minLength": 1 },
+          "report_file": { "type": "string", "minLength": 1 },
+          "report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] }
         },
         "additionalProperties": false
       }

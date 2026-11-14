@@ -48,6 +48,10 @@ from co_reviewer.revision_models import (
     response_units_to_legacy_plan,
 )
 from co_reviewer.working_view import WorkingViewError, create_working_clean_view
+from co_reviewer.usage_audit import (
+    record_usage_event, read_usage_events, build_usage_report, estimate_usage_cost,
+)
+from co_reviewer.docx_quality import audit_docx_quality
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -955,6 +959,29 @@ def _inspect_selected_files(args):
         result["role"] = role
         reports.append(result)
         cache_results.append((str(path), cache_status))
+        usage_ledger = getattr(args, "usage_ledger", None)
+        if usage_ledger:
+            paragraphs = result.get("paragraphs", [])
+            record_usage_event(usage_ledger, {
+                "event_type": "document_read",
+                "stage": "parse_inventory",
+                "actor": "system",
+                "document_read": {
+                    "role": role,
+                    "path": str(Path(path).expanduser().resolve()),
+                    "source_sha256": result.get("source_sha256"),
+                    "cache_status": cache_status,
+                    "parsed": cache_status == "miss",
+                    "full_text_extracted": cache_status == "miss",
+                    "paragraphs": len(paragraphs),
+                    "characters": sum(
+                        len(str(row.get("text") or "")) for row in paragraphs
+                        if isinstance(row, dict)
+                    ),
+                    "context_scope": "none",
+                    "measurement_scope": "programmatic_docx_inventory",
+                },
+            })
     return reports, cache_summary(cache_results)
 
 
@@ -1005,6 +1032,66 @@ def cmd_audit(args):
             f"cross-document-same-label-different-caption={summary.get('cross_document_same_label_different_captions', 0)}"
         )
     return 1 if count_errors else 0
+
+def cmd_record_usage_event(args):
+    payload = json.loads(Path(args.event).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Usage event input must be one JSON object.")
+    event = record_usage_event(args.ledger, payload)
+    print(f"[OK] Usage event {event['event_id']} appended to {Path(args.ledger).resolve()}")
+    return 0
+
+
+def cmd_audit_usage(args):
+    events, errors = read_usage_events(args.ledger)
+    report = build_usage_report(events, errors)
+    if args.pricing:
+        pricing = json.loads(Path(args.pricing).read_text(encoding="utf-8"))
+        report["cost_estimate"] = estimate_usage_cost(events, pricing)
+    if args.out:
+        write_json_atomic(args.out, report)
+        print(f"[OK] Usage audit: {Path(args.out).resolve()}")
+    docs = report["documents"]
+    print(
+        f"[USAGE] events={report['event_count']}; model events={report['model_usage_event_count']}; "
+        f"document reads={docs['events']}; full-text extractions={docs['full_text_extractions']}; "
+        f"cache hit/miss={docs['cache_hits']}/{docs['cache_misses']}"
+    )
+    if errors:
+        print(f"[WARNING] {len(errors)} malformed ledger line(s); see report.")
+    return 1 if errors else 0
+
+
+def cmd_estimate_usage(args):
+    events, errors = read_usage_events(args.ledger)
+    pricing = json.loads(Path(args.pricing).read_text(encoding="utf-8"))
+    estimate = estimate_usage_cost(events, pricing)
+    estimate["invalid_ledger_lines"] = errors
+    write_json_atomic(args.out, estimate)
+    print(
+        f"[COST ESTIMATE] {estimate['estimated_events']} event(s) priced; "
+        f"{len(estimate['unpriced_event_ids'])} unpriced; total={estimate['total_estimated_cost']} "
+        f"{estimate['currency']}"
+    )
+    print(f"[OK] Estimate report: {Path(args.out).resolve()}")
+    return 1 if errors else 0
+
+
+def cmd_audit_docx_quality(args):
+    report = audit_docx_quality(
+        args.docx, profile=args.profile, pdf_path=args.pdf,
+        expected_font=args.expected_font,
+    )
+    if args.out:
+        write_json_atomic(args.out, report)
+        print(f"[OK] DOCX quality report: {Path(args.out).resolve()}")
+    print(
+        f"[DOCX QUALITY] {report['status']}; "
+        f"passed={report['summary']['passed']}; warnings={report['summary']['warnings']}; "
+        f"failures={report['summary']['failures']}"
+    )
+    return 1 if report["status"] == "FAIL" else 0
+
 
 def cmd_validate(args):
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
@@ -1924,6 +2011,30 @@ def cmd_map_response_locations(args):
         ledger_path=ledger_path,
         output_dir=output_dir,
     )
+    quality_reports = []
+    for index, document_output in enumerate(location_map.get("documents", []), 1):
+        report = audit_docx_quality(
+            document_output["output_file"],
+            profile="word-final-clean",
+            pdf_path=document_output["pdf_file"],
+        )
+        if report["status"] == "FAIL":
+            raise ValueError(
+                f"Word/PDF output failed deterministic quality checks for "
+                f"{document_output.get('document')}: {report['summary']}"
+            )
+        report_name = f"word_final_quality_{index:02d}.json"
+        report_path = output_dir / report_name
+        write_json_atomic(report_path, report)
+        document_output["quality_report_file"] = str(report_path)
+        document_output["quality_report_sha256"] = sha256_file(report_path)
+        quality_reports.append({
+            "document": document_output.get("document"),
+            "report_file": str(report_path),
+            "report_sha256": sha256_file(report_path),
+            "status": report["status"],
+        })
+    location_map["quality_reports"] = quality_reports
     if location_map.get("revision_ledger_sha256") != ledger_sha256_before:
         raise ValueError("RevisionLedger changed before Word/PDF mapping began; refusing stale mapping.")
     if sha256_file(ledger_path) != ledger_sha256_before:
@@ -2300,11 +2411,19 @@ def cmd_response_docx(args):
         from response_letter_docx import render_response_docx
     except ImportError as exc:
         raise ValueError("DOCX response output requires python-docx; install project requirements.") from exc
+    quality_path = Path(args.quality_report).expanduser().resolve() if args.quality_report else Path(args.out).expanduser().resolve().with_suffix(".quality.json")
+    if quality_path.exists():
+        raise FileExistsError(f"Refusing to overwrite an existing DOCX quality report: {quality_path}")
     output = render_response_docx(
         plan, args.out, manuscript_title=args.manuscript_title, author=args.author
     )
+    quality = audit_docx_quality(output, profile="response-letter")
+    write_json_atomic(quality_path, quality)
+    if quality["status"] == "FAIL":
+        raise ValueError(f"Generated Response Letter failed deterministic DOCX quality checks: {quality['summary']}")
     verified = sum(1 for item in plan["revision_items"] if item.get("status") == "verified")
     print(f"[OK] Response Letter DOCX: {output}")
+    print(f"[DOCX QUALITY] {quality['status']}; report: {quality_path}")
     print(f"[SUMMARY] {len(plan['revision_items'])} item(s); {verified} marked verified. Draft labels are retained for all unfinished items.")
     return 0
 
@@ -2318,6 +2437,7 @@ def build_parser():
     i.add_argument("--json-out", default="workspace_inventory.json")
     i.add_argument("--max-items-per-section", type=int, default=50)
     i.add_argument("--cache-dir", default=".co-reviewer-cache")
+    i.add_argument("--usage-ledger", help="Optional JSONL metadata ledger for DOCX parse/cache observations; no document text is stored.")
     i.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
     i.set_defaults(func=cmd_inspect)
     au = sub.add_parser("audit", help="Inspect once, reuse hash-bound caches, match comments and audit figure/table references.")
@@ -2330,6 +2450,7 @@ def build_parser():
     au.add_argument("--decision-queue-out", default="review_decision_queue.json")
     au.add_argument("--comment-ids", nargs="+", default=None, help="Build the model evidence queue only for these Word comment IDs; the audit report remains complete.")
     au.add_argument("--cache-dir", default=".co-reviewer-cache")
+    au.add_argument("--usage-ledger", help="Optional JSONL metadata ledger for DOCX parse/cache observations; no document text is stored.")
     au.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
     au.add_argument("--max-items-per-section", type=int, default=50)
     au.set_defaults(func=cmd_audit)
@@ -2371,6 +2492,7 @@ def build_parser():
     rspdocx.add_argument("--out", default="Response_to_Reviewers.docx")
     rspdocx.add_argument("--manuscript-title", default="")
     rspdocx.add_argument("--author", default="")
+    rspdocx.add_argument("--quality-report", help="Optional path for the automatic DOCX quality report.")
     rspdocx.set_defaults(func=cmd_response_docx)
     cv = sub.add_parser("confirm-verified", help="Confirm selected items after exact DOCX verification and semantic review.")
     cv.add_argument("--plan", required=True)
@@ -2443,6 +2565,27 @@ def build_parser():
     cru2.add_argument("--actor", default="Human Author")
     cru2.add_argument("--ready-for-submission-confirmed", action="store_true", required=True)
     cru2.set_defaults(func=cmd_complete_response_units)
+    rec = sub.add_parser("record-usage-event", help="Append one evidence-labelled metadata event to a JSONL usage ledger.")
+    rec.add_argument("--ledger", default=".co-reviewer-usage.jsonl")
+    rec.add_argument("--event", required=True, help="JSON file containing one metadata-only usage event.")
+    rec.set_defaults(func=cmd_record_usage_event)
+    aua = sub.add_parser("audit-usage", help="Aggregate document-read and explicitly reported token usage without inferring missing values.")
+    aua.add_argument("--ledger", default=".co-reviewer-usage.jsonl")
+    aua.add_argument("--pricing", help="Optional explicit pricing JSON; cost estimation requires disjoint bucket semantics.")
+    aua.add_argument("--out", default="usage_audit_report.json")
+    aua.set_defaults(func=cmd_audit_usage)
+    est = sub.add_parser("estimate-usage", help="Estimate cost from explicit token events and a user-supplied pricing file.")
+    est.add_argument("--ledger", default=".co-reviewer-usage.jsonl")
+    est.add_argument("--pricing", required=True)
+    est.add_argument("--out", default="usage_cost_estimate.json")
+    est.set_defaults(func=cmd_estimate_usage)
+    dq = sub.add_parser("audit-docx-quality", help="Audit DOCX package, revision state, placeholders, typography profile and optional PDF.")
+    dq.add_argument("--docx", required=True)
+    dq.add_argument("--profile", choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"], default="generic")
+    dq.add_argument("--pdf", help="Optional related PDF for signature/page-integrity metadata.")
+    dq.add_argument("--expected-font", help="Optional required Normal-style font name.")
+    dq.add_argument("--out", help="Optional JSON report path.")
+    dq.set_defaults(func=cmd_audit_docx_quality)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)

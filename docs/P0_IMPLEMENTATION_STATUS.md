@@ -109,13 +109,33 @@ The location commands include a Windows-only `map-response-locations` producer:
 
 Install the optional Windows dependencies with `pip install -e ".[word-pdf]"`. The producer has been implemented but has **not yet been executed on the user's Windows/Word installation**; COM pagination, line-number correspondence and PDF extraction remain pending local acceptance. The external `record-response-locations` command remains available for independently produced maps.
 
+### P0-08 — Evidence-labelled usage and document-read audit
+
+Added `scripts/co_reviewer/usage_audit.py` and usage-event/pricing schemas:
+
+- Append-only JSONL events distinguish stage activity, programmatic DOCX reads, model-usage events and notes.
+- Optional `--usage-ledger` on `inspect` and `audit` records source SHA-256, cache hit/miss, parse/full-text extraction flags, paragraph/character counts and explicit `context_scope=none` for programmatic parsing.
+- `record-usage-event`, `audit-usage` and `estimate-usage` support caller-supplied model measurements, stage/actor/provider/model grouping, repeated full-read detection and explicit rate estimates.
+- Missing token buckets remain null. Reasoning/output overlap is recorded, and cost estimation refuses unavailable, partial or non-disjoint accounting data. Prompt and manuscript text are not stored.
+- Filesystem/parse counts never imply that content entered model context; context scope is recorded only when the caller supplies that evidence.
+
+### P0-09 — Deterministic DOCX/PDF quality audit
+
+Added `scripts/co_reviewer/docx_quality.py`, report schema and `audit-docx-quality`:
+
+- Checks package ZIP and relevant Word XML integrity, paragraph/table counts, tracked-revision inventory, comments, likely placeholders, Normal-style typography and section geometry.
+- Profiles distinguish generic, clean manuscript, marked manuscript, Word-final Clean and Response Letter outputs.
+- Optional PDF checking binds file SHA-256 and signature, and uses PyMuPDF page metadata when available.
+- Response Letter rendering emits a quality report automatically. Word COM/PDF mapping emits a per-document quality report and refuses to attach final locations when deterministic Clean/PDF checks fail.
+- These checks do not claim visual acceptance; actual Word layout, PDF page correspondence and scientific semantics remain separate gates.
+
 ## Regression inventory and validation status
 
 - The preserved v0.3 regression baseline contains 76 original test methods.
-- The current tracked `tests/*.py` source inventory contains **180 unique test methods**.
+- The current tracked `tests/*.py` source inventory contains **197 unique test methods**.
 - This is a source inventory count only. It is not an executed-test count, a CI result or a pass claim. Recalculate it whenever tests are added or removed.
 
-The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
+The P1 follow-on branch adds 17 test methods; its full Windows run remains pending after implementation. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
 Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip, COM pagination and final PDF line extraction remain unaccepted.
 
