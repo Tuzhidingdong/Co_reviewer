@@ -266,6 +266,54 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         ])
         self.assertEqual(parsed_approval.revision_ledger, str(self.ledger_path))
 
+    def test_supersede_patch_cli_reopens_response_and_writes_new_pending_patch(self):
+        ledger = self._ledger()
+        cli.write_json_atomic(self.ledger_path, ledger.to_dict())
+        replacement_path = self.root / "replacement_patch.json"
+        replacement_output = self.root / "Manuscript_r2.docx"
+        replacement_path.write_text(json.dumps({
+            "patch_id": "T1-R2",
+            "task_id": "T1",
+            "reviewer": "Reviewer 1",
+            "comment": "Please clarify the statement.",
+            "proposed_response": "We revised the clarification again.",
+            "supersedes_patch_id": "T1",
+            "operations": [{
+                "operation_id": "OP-R2",
+                "document": "Manuscript",
+                "input_file": str(self.input),
+                "output_file": str(replacement_output),
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "old phrase",
+                "replace": "more precise phrase",
+                "evidence_ids": ["E1"],
+            }],
+        }), encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_supersede_patch(Namespace(
+                ledger=str(self.ledger_path),
+                previous_patch_id="T1",
+                replacement_patch=str(replacement_path),
+                actor="Human Author",
+                reason="The original wording needs greater precision.",
+            )), 0)
+
+        updated = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(
+            {patch.patch_id: patch.status for patch in updated.patches},
+            {"T1": "superseded", "T1-R2": "planned"},
+        )
+        self.assertEqual(updated.response_units[0].linked_patch_ids, ["T1-R2"])
+        self.assertEqual(updated.response_units[0].status, "draft")
+        self.assertEqual(
+            [item["id"] for item in updated.to_legacy_revision_plan()["revision_items"]],
+            ["T1-R2"],
+        )
+
     def test_response_unit_cli_requires_semantic_review_pdf_map_and_completion_confirmation(self):
         unit = ResponseUnit(
             response_unit_id="RU-C1",
