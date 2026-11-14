@@ -62,6 +62,7 @@ class WorkflowEngineTests(unittest.TestCase):
             "targets": [{"action": "reply_only", "document": "Reviewers", "part": "word/document.xml", "p_idx": 0}],
         }])
         self.assertEqual(adapted[0]["status"], "planned")
+        self.assertEqual(adapted[0]["task_type"], "response_only")
         self.assertEqual(adapted[0]["target_groups"], [])
         self.assertEqual(build_workflow_schedule(adapted).target_group_components, ())
 
