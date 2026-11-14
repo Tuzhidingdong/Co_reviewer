@@ -47,7 +47,10 @@ from co_reviewer.revision_models import (
     revision_ledger_from_mapping,
     response_units_to_legacy_plan,
 )
-from co_reviewer.working_view import WorkingViewError, create_working_clean_view
+from co_reviewer.working_view import (
+    WorkingViewError, create_working_clean_view, inspect_clean_baseline,
+    strip_docx_comments_bytes,
+)
 from co_reviewer.usage_audit import (
     record_usage_event, read_usage_events, build_usage_report, estimate_usage_cost,
 )
@@ -626,6 +629,11 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
             raise ValueError(
                 f"Source DOCX changed during apply preparation: {source_path}. No output was written."
             )
+    # Marked delivery files retain native Track Changes but never carry internal Word comment bubbles.
+    for item in prepared:
+        cleaned_payload, hygiene = strip_docx_comments_bytes(item["payload"])
+        item["payload"] = cleaned_payload
+        item["report"]["comment_hygiene"] = hygiene
     return [write_prepared_document(item) for item in prepared]
 
 
@@ -962,6 +970,14 @@ def _inspect_selected_files(args):
             path, args.comment_author, cache_dir, inspect_docx, refresh=refresh
         )
         result["role"] = role
+        if role in {"Manuscript", "SI"}:
+            baseline = inspect_clean_baseline(path)
+            result["baseline_hygiene"] = baseline
+            if not baseline["clean"]:
+                result.setdefault("errors", []).append(
+                    f"Baseline is not clean for {role}: unresolved Word revision/comment markup "
+                    f"{baseline['blocking_counts']}. Supply a clean baseline DOCX before starting the revision round."
+                )
         reports.append(result)
         cache_results.append((str(path), cache_status))
         usage_ledger = getattr(args, "usage_ledger", None)

@@ -8,6 +8,7 @@ Manuscript or a substitute for Microsoft Word save/render validation.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import tempfile
@@ -205,6 +206,163 @@ def _remove_comment_content_types(data: bytes) -> tuple[bytes, int]:
     if removed:
         return ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True), removed
     return data, 0
+
+
+
+def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
+    """Fail-closed scan for unresolved revisions and native comments in a baseline DOCX."""
+    source = Path(input_file).expanduser().resolve()
+    if not source.is_file() or source.suffix.casefold() != ".docx":
+        raise WorkingViewError(f"Baseline source must be an existing DOCX: {source}")
+    counts = {
+        "insertions": 0, "deletions": 0, "move_from": 0, "move_to": 0,
+        "formatting_changes": 0, "comments": 0, "comment_anchors": 0,
+    }
+    issues: list[dict[str, Any]] = []
+    try:
+        with zipfile.ZipFile(source, "r") as archive:
+            bad = archive.testzip()
+            if bad:
+                raise WorkingViewError(f"Baseline DOCX has a ZIP CRC error in {bad}.")
+            for part in sorted(name for name in archive.namelist() if name.startswith("word/") and name.endswith(".xml")):
+                try:
+                    root = ET.fromstring(archive.read(part), parser=_xml_parser())
+                except ET.XMLSyntaxError as exc:
+                    raise WorkingViewError(f"Cannot inspect baseline Word part {part}: {exc}") from exc
+                paragraph_indices = {id(node): index for index, node in enumerate(root.findall(".//w:p", {"w": W}))}
+                for node in root.iter():
+                    if not isinstance(node.tag, str) or ET.QName(node).namespace != W:
+                        continue
+                    local = ET.QName(node).localname
+                    category = None
+                    if local == "ins":
+                        category = "insertions"
+                    elif local == "del":
+                        category = "deletions"
+                    elif local in {"moveFrom", "moveFromRangeStart", "moveFromRangeEnd"}:
+                        category = "move_from"
+                    elif local in {"moveTo", "moveToRangeStart", "moveToRangeEnd"}:
+                        category = "move_to"
+                    elif local.endswith("Change"):
+                        category = "formatting_changes"
+                    elif local == "comment":
+                        category = "comments"
+                    elif local in {"commentRangeStart", "commentRangeEnd", "commentReference"}:
+                        category = "comment_anchors"
+                    if category is None:
+                        continue
+                    counts[category] += 1
+                    paragraph = node if local == "p" else next(
+                        (ancestor for ancestor in node.iterancestors() if ancestor.tag == _qn("p")),
+                        None,
+                    )
+                    paragraph_index = paragraph_indices.get(id(paragraph)) if paragraph is not None else None
+                    text_value = "".join(item.text or "" for item in node.iter() if isinstance(item.tag, str) and item.tag in {_qn("t"), _qn("delText")}).strip()
+                    issues.append({
+                        "category": category,
+                        "element": local,
+                        "part": part,
+                        "paragraph_index": paragraph_index,
+                        "element_id": node.get(_qn("id")),
+                        "author": node.get(_qn("author")),
+                        "text_excerpt": text_value[:240],
+                    })
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise WorkingViewError(f"Cannot inspect baseline DOCX {source}: {exc}") from exc
+    blocking = {key: value for key, value in counts.items() if value}
+    return {
+        "file": str(source),
+        "source_sha256": _sha256(source.read_bytes()),
+        "clean": not blocking,
+        "counts": counts,
+        "blocking_counts": blocking,
+        "issues": issues,
+    }
+
+
+def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
+    """Physically remove native Word comment parts, relationships and anchors from a DOCX payload."""
+    if not isinstance(payload, (bytes, bytearray)) or not payload:
+        raise WorkingViewError("Marked DOCX payload must be non-empty bytes.")
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            bad = archive.testzip()
+            if bad:
+                raise WorkingViewError(f"Prepared DOCX has a ZIP CRC error in {bad}.")
+            package = {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise WorkingViewError(f"Cannot read prepared DOCX package: {exc}") from exc
+    removed_parts = sorted(name for name in package if name.casefold() in _COMMENT_PARTS)
+    for name in removed_parts:
+        del package[name]
+    anchor_counts = 0
+    relationship_counts = 0
+    content_type_counts = 0
+    for name, data in list(package.items()):
+        if name.endswith(".rels"):
+            root = ET.fromstring(data, parser=_xml_parser())
+            for child in list(root):
+                if not isinstance(child.tag, str):
+                    continue
+                rel_type = child.get("Type", "").casefold()
+                if "/comments" in rel_type or "/people" in rel_type:
+                    root.remove(child)
+                    relationship_counts += 1
+            if relationship_counts:
+                package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            continue
+        if name == "[Content_Types].xml":
+            root = ET.fromstring(data, parser=_xml_parser())
+            for child in list(root):
+                part_name = child.get("PartName", "").lstrip("/").casefold()
+                if part_name in _COMMENT_PARTS:
+                    root.remove(child)
+                    content_type_counts += 1
+            package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            continue
+        if not name.startswith("word/") or not name.endswith(".xml"):
+            continue
+        root = ET.fromstring(data, parser=_xml_parser())
+        for node in list(root.iter()):
+            if isinstance(node.tag, str) and node.tag in {
+                _qn("commentRangeStart"), _qn("commentRangeEnd"), _qn("commentReference")
+            }:
+                parent = node.getparent()
+                if parent is not None:
+                    _remove_child(parent, node)
+                    anchor_counts += 1
+        if anchor_counts:
+            package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in package.items():
+            archive.writestr(name, data)
+    cleaned = output.getvalue()
+    with zipfile.ZipFile(io.BytesIO(cleaned), "r") as archive:
+        names = set(archive.namelist())
+        if any(name.casefold() in _COMMENT_PARTS for name in names):
+            raise WorkingViewError("Comment package parts remain after Marked DOCX cleanup.")
+        for name in names:
+            if not name.startswith("word/") or not name.endswith(".xml"):
+                continue
+            root = ET.fromstring(archive.read(name), parser=_xml_parser())
+            residual = [ET.QName(node).localname for node in root.iter() if isinstance(node.tag, str) and node.tag in {
+                _qn("commentRangeStart"), _qn("commentRangeEnd"), _qn("commentReference")
+            }]
+            if residual:
+                raise WorkingViewError(f"Comment anchors remain in {name}: {', '.join(residual)}")
+        for name in names:
+            if name.endswith(".rels"):
+                root = ET.fromstring(archive.read(name), parser=_xml_parser())
+                if any("/comments" in child.get("Type", "").casefold() or "/people" in child.get("Type", "").casefold() for child in root):
+                    raise WorkingViewError(f"Comment relationships remain in {name}.")
+    return cleaned, {
+        "removed_comment_parts": removed_parts,
+        "removed_comment_anchors": anchor_counts,
+        "removed_comment_relationships": relationship_counts,
+        "removed_content_type_entries": content_type_counts,
+        "validation": "passed",
+    }
 
 
 def create_working_clean_view(

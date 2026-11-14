@@ -598,6 +598,14 @@ def build_document_identity_manifest(
                 "Rebuild the workspace inventory before generating identities."
             )
 
+        if role in {"Manuscript", "SI"}:
+            from .working_view import inspect_clean_baseline
+            baseline = inspect_clean_baseline(source_path)
+            if not baseline["clean"]:
+                raise DocxIdentityError(
+                    f"Baseline for {role} is not clean; unresolved Word revisions/comments: "
+                    f"{baseline['blocking_counts']}. Supply a clean baseline DOCX before identity registration."
+                )
         parsed, descriptors = _read_docx(source_path)
         _validate_inventory_paragraphs(row, descriptors, role=role)
         previous = prior_documents.get(role)
