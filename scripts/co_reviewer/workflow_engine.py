@@ -1150,6 +1150,34 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if "fingerprint" in event and not _is_sha256(event.get("fingerprint")):
             errors.append(f"{prefix}.fingerprint must be a lowercase SHA-256 digest.")
 
+    for task in tasks:
+        if not isinstance(task, Mapping) or task.get("status") != "ready":
+            continue
+        task_id = task.get("task_id")
+        authorization_events = [
+            event for event in events
+            if isinstance(event, Mapping)
+            and event.get("task_id") == task_id
+            and event.get("event_type") == "status_transition"
+            and event.get("to_status") == "ready"
+            and event.get("from_status") in {"planned", "blocked", "recheck_required"}
+            and isinstance(event.get("actor"), str)
+            and event.get("actor", "").strip()
+        ]
+        if not authorization_events:
+            errors.append(
+                f"Task {task_id} is ready without an explicit author-authorization event."
+            )
+            continue
+        expected_fingerprint = workflow_scope_fingerprint(task)
+        if not any(
+            event.get("fingerprint") == expected_fingerprint
+            for event in authorization_events
+        ):
+            errors.append(
+                f"Task {task_id} ready authorization fingerprint does not match its current task scope."
+            )
+
     return list(dict.fromkeys(errors))
 
 
