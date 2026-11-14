@@ -82,6 +82,7 @@ CLI commands now include:
 - \`export-revision-plan\`
 - \`confirm-response-units\`
 - \`record-response-locations\`
+- \`supersede-patch\`
 - \`complete-response-units\`
 
 The location commands consume an externally produced map. They do not yet generate the Word COM/PDF pagination or line mapping themselves.
@@ -93,9 +94,9 @@ The location commands consume an externally produced map. They do not yet genera
 - New identity tests: 12.
 - New Workflow Engine tests: 17.
 - Decision-plan integration additions: 3.
-- New RevisionLedger/ResponseUnit model tests: 15.
-- New CLI integration tests: 7.
-- **Expected current inventory: 135 test methods.** This is a source inventory count, not an executed-test or pass claim.
+- New RevisionLedger/ResponseUnit model tests: 19.
+- New CLI integration tests: 8.
+- **Expected current inventory: 140 test methods.** This is a source inventory count, not an executed-test or pass claim.
 
 The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
@@ -104,7 +105,7 @@ Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip
 ## Remaining roadmap — in priority order
 
 1. **Complete parser-backed identity migration:** generate object registry records from real DOCX parts, match objects across revisions, normalize actual citation systems and retire paragraph-index scheduling keys.
-2. **Complete the execution state machine:** add patch supersession/rebase and conflict resolution, Working Clean View, ledger-backed workflow transition commands and explicit dependency-aware patch batches. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
+2. **Complete the execution state machine:** integrate Patch batches directly with the Workflow Engine DAG, add Working Clean View and explicit conflict/rebase handling across multiple tasks. Patch supersession and replay prevention now have a first controlled implementation. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
 3. **Build the final-location engine:** Word COM pagination, PDF export and evidence-backed page/line mapping. ResponseUnits already have a consumer contract but still need the actual producer.
 4. **End-to-end acceptance:** run all tests on Windows, then separately validate synthetic Word GUI/save-round-trip, multi-document iterative patching and final Response Letter consistency.
 
