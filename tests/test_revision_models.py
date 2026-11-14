@@ -484,6 +484,50 @@ class RevisionModelsTests(unittest.TestCase):
                 )],
             )
 
+    def test_manual_locator_records_table_without_fabricating_word_line_numbers(self):
+        unit = ResponseUnit(
+            response_unit_id="RU-MANUAL-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify Table S2.",
+            response_text="We clarified the table in the Supplementary Information.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-001"],
+            disposition="revised",
+            location_requirement="manual_required",
+            resolution_reason="Table-cell location is not suitable for automatic body-line mapping.",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="semantic-manual-001",
+        )
+        location = ResponseLocation(
+            document="SI",
+            output_file=str(self.marked_docx),
+            pdf_file=str(self.pdf_path),
+            page=None,
+            line_start=None,
+            line_end=None,
+            pdf_sha256=self.pdf_sha256,
+            location_map_id="manual-map-001",
+            mapping_fingerprint=HASH_A,
+            output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+            locator_id="manual:OP-001",
+            source_clean_sha256=self.clean_sha256,
+            mapping_method="manual",
+            locator_text="Table S2, Supplementary Information",
+        )
+        unit.record_final_locations(
+            HASH_A,
+            [location],
+            location_map_file=str(self.map_path),
+            location_map_file_sha256=self.map_sha256,
+        )
+        self.assertEqual(location.display_text, "Table S2, Supplementary Information")
+        unit.mark_completed(STAMP)
+        self.assertEqual(unit.status, "completed")
+        self.assertEqual(unit.validate_location_evidence(), [])
+
     def test_revision_ledger_rejects_reviewer_facing_plan_drift(self):
         patch = Patch(
             patch_id="T1",
