@@ -409,13 +409,125 @@ def _refresh_builtin_fields(document: Any) -> dict[str, int]:
     return updated
 
 
+def _audit_sequence_fields(document: Any) -> dict[str, Any]:
+    """Check native SEQ Figure/Table fields after Word has refreshed them.
+
+    Simple numeric sequences are checked for 1..N continuity. Chapter-reset,
+    explicit-reset and non-numeric schemes are surfaced for manual review rather
+    than being guessed or silently treated as continuous.
+    """
+    detected: dict[str, list[dict[str, Any]]] = {"Figure": [], "Table": []}
+    unsupported: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    try:
+        fields = document.Fields
+        count = int(fields.Count)
+    except Exception:
+        try:
+            fields = document.StoryRanges.Item(1).Fields
+            count = int(fields.Count)
+        except Exception as exc:
+            return {
+                "status": "manual_review",
+                "detected": detected,
+                "issues": [],
+                "manual_review": [{"reason": f"Word main-story Fields collection is unavailable: {exc}"}],
+            }
+
+    for index in range(1, count + 1):
+        try:
+            field = fields.Item(index)
+            code = str(field.Code.Text or "").strip()
+            match = re.match(r'^SEQ\s+(?:"([^"]+)"|(\S+))', code, re.IGNORECASE)
+            if not match:
+                continue
+            sequence_name = (match.group(1) or match.group(2)).casefold()
+            if sequence_name not in {"figure", "table"}:
+                continue
+            switches = {
+                token.casefold()
+                for token in re.findall(r"\\([A-Za-z]+)", code)
+            }
+            if "c" in switches:
+                # The Word \c switch repeats the current number and is not
+                # another caption sequence item.
+                continue
+            if switches.intersection({"s", "r"}):
+                unsupported.append({
+                    "sequence": sequence_name.title(),
+                    "field_index": index,
+                    "code": code,
+                    "reason": "Chapter-reset (\\s) or explicit-reset (\\r) numbering needs manual sequence review.",
+                })
+                continue
+            value_text = str(field.Result.Text or "").strip()
+            if not re.fullmatch(r"\d+", value_text):
+                unsupported.append({
+                    "sequence": sequence_name.title(),
+                    "field_index": index,
+                    "code": code,
+                    "result": value_text,
+                    "reason": "The refreshed SEQ result is not a plain integer.",
+                })
+                continue
+            detected[sequence_name.title()].append({
+                "field_index": index,
+                "value": int(value_text),
+                "code": code,
+            })
+        except Exception as exc:
+            unsupported.append({
+                "field_index": index,
+                "reason": f"Word COM could not inspect this field: {exc}",
+            })
+
+    for sequence_name, records in detected.items():
+        if not records:
+            continue
+        values = [record["value"] for record in records]
+        expected = list(range(1, len(values) + 1))
+        if values != expected:
+            issues.append({
+                "sequence": sequence_name,
+                "observed": values,
+                "expected": expected,
+                "field_indices": [record["field_index"] for record in records],
+                "reason": "Native Word SEQ values contain a gap, duplicate or unexpected starting number.",
+            })
+
+    missing_native_sequences = [
+        name for name, records in detected.items() if not records
+    ]
+    manual_review = list(unsupported)
+    if missing_native_sequences:
+        manual_review.append({
+            "reason": "No simple native numeric SEQ field was detected for: "
+            + ", ".join(missing_native_sequences)
+            + ". Manually typed captions or nonstandard numbering cannot be certified automatically."
+        })
+    if issues:
+        status = "fail"
+    elif manual_review:
+        status = "manual_review"
+    elif any(detected.values()):
+        status = "pass"
+    else:
+        status = "manual_review"
+    return {
+        "status": status,
+        "detected": detected,
+        "issues": issues,
+        "manual_review": manual_review,
+    }
+
+
 def _export_one_document(
     word: Any,
     source_docx: Path,
     output_docx: Path,
     output_pdf: Path,
     jobs: Sequence[MappingJob],
-) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, int], int]:
+) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, int], int, dict[str, Any]]:
     if output_docx.exists() or output_pdf.exists():
         raise FileExistsError(
             f"Refusing to overwrite Word/PDF output for {source_docx.stem}."
@@ -443,6 +555,12 @@ def _export_one_document(
             numbering.StartingNumber = 1
         refreshed_fields = _refresh_builtin_fields(document)
         document.Repaginate()
+        sequence_audit = _audit_sequence_fields(document)
+        if sequence_audit["status"] == "fail":
+            raise WordPdfMappingError(
+                f"Word-native Figure/Table sequence continuity check failed for {source_docx}: "
+                f"{sequence_audit['issues']}"
+            )
         document.SaveAs2(
             FileName=str(output_docx),
             FileFormat=16,
@@ -479,7 +597,7 @@ def _export_one_document(
             )
         if output_docx.stat().st_size == 0 or output_pdf.stat().st_size == 0:
             raise WordPdfMappingError("Word produced an empty final DOCX or PDF.")
-        return positions, refreshed_fields, word_page_count
+        return positions, refreshed_fields, word_page_count, sequence_audit
     except WordPdfMappingError:
         raise
     except Exception as exc:
@@ -507,6 +625,7 @@ def _reusable_role_mapping(
     output_hashes: set[str] = set()
     pdf_hashes: set[str] = set()
     role_page_counts: set[int] = set()
+    role_sequence_audits: list[dict[str, Any]] = []
     for job in jobs:
         unit = units_by_id[job.response_unit_id]
         matches = [
@@ -531,6 +650,10 @@ def _reusable_role_mapping(
         if not isinstance(role_page_count, int) or isinstance(role_page_count, bool) or role_page_count < 1:
             return None
         role_page_counts.add(role_page_count)
+        prior_sequence_audit = role_rows[0].get("sequence_audit")
+        if not isinstance(prior_sequence_audit, dict) or prior_sequence_audit.get("status") not in {"pass", "manual_review"}:
+            return None
+        role_sequence_audits.append(prior_sequence_audit)
         location = matches[0]
         output_path = Path(location.output_file).expanduser().resolve()
         pdf_path = Path(location.pdf_file).expanduser().resolve()
@@ -557,6 +680,7 @@ def _reusable_role_mapping(
         "pdf_file": pdf_file,
         "pdf_sha256": next(iter(pdf_hashes)),
         "word_page_count": next(iter(role_page_counts)),
+        "sequence_audit": role_sequence_audits[0],
         "reused": True,
         "refreshed_fields": {"SEQ": 0, "REF": 0, "PAGE": 0, "PAGEREF": 0},
     }
@@ -648,7 +772,7 @@ def generate_word_pdf_location_map(
                 source_docx = Path(ledger_document.working_clean_file).expanduser().resolve()
                 output_docx = out_dir / f"{safe_names[role]}.final-clean.docx"
                 output_pdf = out_dir / f"{safe_names[role]}.final-clean.pdf"
-                positions, refreshed_fields, word_page_count = _export_one_document(
+                positions, refreshed_fields, word_page_count, sequence_audit = _export_one_document(
                     word, source_docx, output_docx, jobs_by_role[role]
                 )
                 positions_by_role[role] = positions
@@ -660,6 +784,7 @@ def generate_word_pdf_location_map(
                     "pdf_file": str(output_pdf),
                     "pdf_sha256": sha256_file(output_pdf),
                     "word_page_count": word_page_count,
+                    "sequence_audit": sequence_audit,
                     "reused": False,
                     "refreshed_fields": refreshed_fields,
                 }
