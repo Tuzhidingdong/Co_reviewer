@@ -1562,8 +1562,26 @@ class RevisionLedger:
                 if list(target.get("source_comment_ids", [])) != list(operation.source_comment_ids):
                     raise RevisionModelError(f"Preflight source_comment_ids changed for PatchOperation {operation.operation_id}.")
                 phrase = target.get("location_phrase")
-                if not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 255:
-                    raise RevisionModelError(f"Preflight did not generate a valid unique location_phrase for PatchOperation {operation.operation_id}.")
+                operation_units = [
+                    unit for unit in self.response_units
+                    if operation.operation_id in unit.linked_operation_ids
+                ]
+                requires_automatic_locator = (
+                    not operation_units
+                    or any(unit.location_requirement != "manual_required" for unit in operation_units)
+                )
+                if requires_automatic_locator:
+                    if not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 255:
+                        raise RevisionModelError(
+                            f"Preflight did not generate a valid unique location_phrase for "
+                            f"automatically mapped PatchOperation {operation.operation_id}."
+                        )
+                elif phrase is not None and (
+                    not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 255
+                ):
+                    raise RevisionModelError(
+                        f"Manual-only PatchOperation {operation.operation_id} has an invalid optional location_phrase."
+                    )
                 updated_operations.append(replace(
                     operation,
                     source_sha256=source_hash,
