@@ -932,7 +932,7 @@ class RevisionLedger:
                     errors.append(f"ResponseUnit {unit.response_unit_id} is not declared by PatchOperation {operation_id}.")
                 if patch_id not in unit.linked_patch_ids:
                     errors.append(f"ResponseUnit {unit.response_unit_id} links operation {operation_id} without its parent Patch {patch_id}.")
-            if unit.disposition == "revised" and unit.status in {"verified", "location_mapped", "completed"} and not unit.linked_operation_ids:
+            if unit.disposition == "revised" and (unit.linked_patch_ids or unit.status in {"verified", "location_mapped", "completed"}) and not unit.linked_operation_ids:
                 errors.append(f"ResponseUnit {unit.response_unit_id} is marked revised but has no exact linked PatchOperation IDs.")
             if unit.disposition in {"reply_only", "no_change", "clarification_needed"} and (unit.linked_patch_ids or unit.linked_operation_ids):
                 errors.append(
@@ -2236,7 +2236,7 @@ def build_revision_ledger(
                 linked_ops = [op for op in operation_records if comment_id in op.source_comment_ids]
                 spec = specs_by_comment.get(comment_id)
                 if spec is None:
-                    if linked_ops or (task_id not in selected_ids and task.get("patch_operations")):
+                    if linked_ops:
                         disposition, location_requirement, resolution_reason = "revised", "required", ""
                     elif task.get("task_type") == "response_only":
                         disposition, location_requirement = "reply_only", "not_required"

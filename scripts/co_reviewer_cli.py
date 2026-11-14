@@ -506,18 +506,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         _canonical_artifact_path(inp): str(Path(inp).expanduser().resolve())
         for inp, _ in grouped
     }
-    # Defend the formal Preflight entry point independently of the optional import audit.
-    # Reviewer comments are allowed in the Reviewer file, never in Manuscript/SI baselines.
-    for (input_file, _output_file), edits in grouped.items():
-        manuscript_roles = {edit.get("document") for edit in edits} & {"Manuscript", "SI"}
-        if manuscript_roles:
-            baseline = inspect_clean_baseline(input_file)
-            if not baseline["clean"]:
-                raise ValueError(
-                    "Preflight blocked: source baseline contains unresolved Word revisions/comments "
-                    f"for {', '.join(sorted(manuscript_roles))}: {baseline['blocking_counts']}. "
-                    f"Inspect the exact issue list and provide a clean baseline: {baseline['issues'][:20]}"
-                )
+    # Initial Manuscript/SI baselines are gated at document import/identity registration.
+    # Do not re-run that gate here: an incremental batch may legitimately use a prior
+    # Co_Reviewer Marked DOCX as its source, and accepted_view_docx_bytes resolves its
+    # earlier Track Changes before preparing the next operation.
     source_hashes_before = {
         key: sha256_file(path) for key, path in source_paths.items()
     }

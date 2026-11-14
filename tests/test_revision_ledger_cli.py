@@ -632,6 +632,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             response_text="We revised T1.",
             linked_task_ids=["T1"],
             linked_patch_ids=["T1"],
+            linked_operation_ids=["T1-OP1"],
         )
         response2 = ResponseUnit(
             response_unit_id="RU-T2-C-T2",
@@ -640,9 +641,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             comment_text="Please revise T2.",
             response_text="We revised T2.",
             linked_task_ids=["T2"],
-            status="verified",
-            semantic_review_confirmed=True,
-            verification_report_id="SEM-T2",
+            status="draft",
         )
         timestamp = "2026-11-14T12:00:00+08:00"
         prior_document = RevisionDocument(
