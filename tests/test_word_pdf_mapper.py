@@ -16,6 +16,7 @@ from co_reviewer.revision_models import (
     ResponseUnit,
     RevisionDocument,
     RevisionLedger,
+    RevisionModelError,
 )
 from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,

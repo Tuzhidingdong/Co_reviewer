@@ -1662,8 +1662,17 @@ def cmd_map_response_locations(args):
     )
     if ledger_path == location_map_path:
         raise ValueError("Location map must not overwrite the RevisionLedger.")
+    if location_map_path.suffix.casefold() != ".json":
+        raise ValueError("Location map output must use a .json extension.")
+    if location_map_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite an existing location map: {location_map_path}"
+        )
 
+    ledger_sha256_before = sha256_file(ledger_path)
     ledger = _load_revision_ledger(ledger_path)
+    if sha256_file(ledger_path) != ledger_sha256_before:
+        raise ValueError("RevisionLedger changed while it was being loaded; retry from the latest ledger.")
     from co_reviewer.word_pdf_mapper import generate_word_pdf_location_map
 
     location_map = generate_word_pdf_location_map(
@@ -1671,15 +1680,17 @@ def cmd_map_response_locations(args):
         ledger_path=ledger_path,
         output_dir=output_dir,
     )
+    if location_map.get("revision_ledger_sha256") != ledger_sha256_before:
+        raise ValueError("RevisionLedger changed before Word/PDF mapping began; refusing stale mapping.")
+    if sha256_file(ledger_path) != ledger_sha256_before:
+        raise ValueError("RevisionLedger changed during Word/PDF mapping; generated outputs were not attached.")
     location_map_path.parent.mkdir(parents=True, exist_ok=True)
-    if location_map_path.exists():
-        raise FileExistsError(
-            f"Refusing to overwrite an existing location map: {location_map_path}"
-        )
     write_json_atomic(location_map_path, location_map)
     location_map["location_map_file"] = str(location_map_path)
     location_map["location_map_file_sha256"] = sha256_file(location_map_path)
     ledger.record_response_locations(location_map, actor=args.actor)
+    if sha256_file(ledger_path) != ledger_sha256_before:
+        raise ValueError("RevisionLedger changed before location evidence could be recorded; refusing to overwrite it.")
     write_json_atomic(ledger_path, ledger.to_dict())
 
     mapped = sum(
