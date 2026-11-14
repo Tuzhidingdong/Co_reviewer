@@ -634,12 +634,18 @@ class RevisionLedger:
     events: list[RevisionEvent] = field(default_factory=list)
     schema_version: str = "0.5.1"
     workflow_ledger_fingerprint: str | None = None
+    workflow_task_fingerprints: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _text(self.revision_round_id, "revision_round_id")
         if self.schema_version != "0.5.1":
             raise RevisionModelError("RevisionLedger schema_version must be '0.5.1'.")
         _sha256(self.workflow_ledger_fingerprint, "workflow_ledger_fingerprint", optional=True)
+        if not isinstance(self.workflow_task_fingerprints, dict):
+            raise RevisionModelError("workflow_task_fingerprints must be an object.")
+        for task_id, fingerprint in self.workflow_task_fingerprints.items():
+            _text(task_id, "workflow_task_fingerprints task ID")
+            _sha256(fingerprint, f"workflow_task_fingerprints[{task_id}]")
         self.validate_or_raise()
 
     def validate(self) -> list[str]:
@@ -1447,6 +1453,7 @@ class RevisionLedger:
             "schema_version": self.schema_version,
             "revision_round_id": self.revision_round_id,
             "workflow_ledger_fingerprint": self.workflow_ledger_fingerprint,
+            "workflow_task_fingerprints": dict(self.workflow_task_fingerprints),
             "documents": [item.to_dict() for item in self.documents],
             "patches": [item.to_dict() for item in self.patches],
             "response_units": [item.to_dict() for item in self.response_units],
@@ -1460,6 +1467,23 @@ class RevisionLedger:
         if self.revision_round_id != addition.revision_round_id:
             raise RevisionModelError(
                 "Cannot merge Patches from different revision rounds."
+            )
+        previous_task_fingerprints = self.workflow_task_fingerprints
+        incoming_task_fingerprints = addition.workflow_task_fingerprints
+        missing_tasks = set(previous_task_fingerprints) - set(incoming_task_fingerprints)
+        if missing_tasks:
+            raise RevisionModelError(
+                "New Workflow Ledger removed task(s) from this revision round: "
+                + ", ".join(sorted(missing_tasks))
+            )
+        changed_tasks = [
+            task_id for task_id, previous_fingerprint in previous_task_fingerprints.items()
+            if incoming_task_fingerprints.get(task_id) != previous_fingerprint
+        ]
+        if changed_tasks:
+            raise RevisionModelError(
+                "Workflow task scope changed after its RevisionLedger batch was created: "
+                + ", ".join(sorted(changed_tasks))
             )
         existing_patch_ids = {patch.patch_id for patch in self.patches}
         duplicate_patches = existing_patch_ids & {
@@ -1571,6 +1595,7 @@ class RevisionLedger:
             known_event_ids.add(event.event_id)
             self.events.append(event)
         self.workflow_ledger_fingerprint = addition.workflow_ledger_fingerprint
+        self.workflow_task_fingerprints = dict(incoming_task_fingerprints)
         self.validate_or_raise()
 
     def validate_or_raise(self) -> None:
@@ -1595,7 +1620,11 @@ def build_revision_ledger(
     """
     if not isinstance(workflow_ledger, Mapping):
         raise RevisionModelError("workflow_ledger must be an object.")
-    from .workflow_engine import select_ready_tasks, validate_workflow_ledger
+    from .workflow_engine import (
+        select_ready_tasks,
+        validate_workflow_ledger,
+        workflow_scope_fingerprint,
+    )
     workflow_errors = validate_workflow_ledger(workflow_ledger)
     if workflow_errors:
         raise RevisionModelError(
@@ -1763,6 +1792,11 @@ def build_revision_ledger(
         patches=patches,
         response_units=response_units,
         workflow_ledger_fingerprint=_fingerprint(workflow_ledger),
+        workflow_task_fingerprints={
+            task["task_id"]: workflow_scope_fingerprint(task)
+            for task in task_rows
+            if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
+        },
     )
     ledger.validate_or_raise()
     return ledger
@@ -1907,4 +1941,5 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
         events=events,
         schema_version=data.get("schema_version", "0.5.1"),
         workflow_ledger_fingerprint=data.get("workflow_ledger_fingerprint"),
+        workflow_task_fingerprints=dict(data.get("workflow_task_fingerprints", {})),
     )
