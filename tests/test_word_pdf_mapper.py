@@ -20,11 +20,12 @@ from co_reviewer.revision_models import (
 )
 from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,
-    _normalise_pdf_text,
+    _read_word_position,
+    _reusable_role_mapping,
     _validate_mapping_phrase,
     assert_location_map_matches_ledger,
-    _read_word_position,
     build_mapping_jobs,
+    build_unique_location_phrase,
 )
 
 
@@ -36,20 +37,25 @@ class WordPdfMapperContractTests(unittest.TestCase):
         self.marked_docx = self.root / "marked.docx"
         self.clean_docx = self.root / "working_clean.docx"
         self.pdf = self.root / "final.pdf"
+        self.map_file = self.root / "location_map.json"
         self.input_docx.write_bytes(b"input docx")
         self.marked_docx.write_bytes(b"marked docx")
         self.clean_docx.write_bytes(b"accepted-changes clean view")
         self.pdf.write_bytes(b"%PDF-1.4 synthetic")
+        self.map_file.write_text('{"map":"synthetic"}', encoding="utf-8")
         self.operation = PatchOperation.from_mapping({
             "operation_id": "OP-1",
             "document": "Manuscript",
             "input_file": str(self.input_docx),
             "output_file": str(self.marked_docx),
             "part": "word/document.xml",
+            "p_idx": 0,
             "find": "old phrase",
             "replace": "new phrase",
             "source_sha256": sha256_file(self.input_docx),
             "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
+            "location_phrase": "new phrase",
         })
         self.patch = Patch(
             patch_id="P1",
@@ -90,16 +96,34 @@ class WordPdfMapperContractTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _unit(self, *, status="verified", operation_id="OP-1"):
+        return ResponseUnit(
+            response_unit_id="RU-T1-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please revise this sentence.",
+            response_text="We revised the sentence.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=[operation_id] if operation_id else [],
+            disposition="revised",
+            location_requirement="required",
+            status=status,
+            semantic_review_confirmed=status == "verified",
+            verification_report_id="SEM-1" if status == "verified" else None,
+        )
+
     def _ledger(self, *, unit_status="verified", patch_status="verified", operation=None):
+        selected_operation = operation or self.operation
         patch = self.patch
-        if operation is not None:
+        if selected_operation is not self.operation or patch_status != "verified":
             patch = Patch(
                 patch_id="P1",
                 task_id="T1",
                 reviewer="Reviewer 1",
                 comment="Please revise this sentence.",
                 proposed_response="We revised the sentence.",
-                operations=[operation],
+                operations=[selected_operation],
                 status=patch_status,
                 preflight_fingerprint="a" * 64 if patch_status in {"preflighted", "approved", "applied", "verified"} else None,
                 preflight_report_id="PF-1" if patch_status in {"preflighted", "approved", "applied", "verified"} else None,
@@ -108,6 +132,131 @@ class WordPdfMapperContractTests(unittest.TestCase):
                 verification_report_id="VF-1" if patch_status == "verified" else None,
                 verified_output_hashes=[{"path": str(self.marked_docx), "sha256": sha256_file(self.marked_docx)}] if patch_status == "verified" else [],
             )
+        return RevisionLedger(
+            revision_round_id="round-1",
+            documents=[self.document],
+            patches=[patch],
+            response_units=[self._unit(status=unit_status)],
+        )
+
+    def test_mapping_jobs_bind_exact_operation_to_current_clean_role(self):
+        jobs = build_mapping_jobs(self._ledger())
+        self.assertEqual(len(jobs["Manuscript"]), 1)
+        job = jobs["Manuscript"][0]
+        self.assertEqual(job.phrase, "new phrase")
+        self.assertEqual(job.source_clean_docx, str(self.clean_docx.resolve()))
+        self.assertEqual((job.patch_id, job.operation_id, job.locator_id), ("P1", "OP-1", "OP-1"))
+
+    def test_unconfirmed_response_unit_is_excluded_not_guessed(self):
+        jobs = build_mapping_jobs(self._ledger(unit_status="draft"))
+        self.assertEqual(jobs, {})
+
+    def test_mapping_refuses_patch_that_is_not_verified(self):
+        with self.assertRaisesRegex(WordPdfMappingError, "not verified"):
+            build_mapping_jobs(self._ledger(patch_status="planned"))
+
+    def test_delete_only_preflight_anchor_uses_four_words_on_each_side(self):
+        final_paragraphs = [
+            "Introductory words before the left flank alpha beta gamma delta right side one two three four continues."
+        ]
+        boundary = final_paragraphs[0].index(" right side")
+        phrase = build_unique_location_phrase(final_paragraphs, 0, boundary, boundary)
+        self.assertLessEqual(len(phrase), 255)
+        self.assertIn("alpha beta gamma delta", phrase)
+        self.assertIn("right side one two three four", phrase)
+        deletion = PatchOperation.from_mapping({
+            **self.operation.to_dict(),
+            "replace": "",
+            "location_phrase": phrase,
+        })
+        jobs = build_mapping_jobs(self._ledger(operation=deletion))
+        self.assertEqual(jobs["Manuscript"][0].phrase, phrase)
+
+    def test_location_phrase_expands_until_unique(self):
+        paragraphs = [
+            "The same phrase has an earlier occurrence in the document.",
+            "Before context one two three the target sentence includes unique words after it.",
+            "A different paragraph closes the document.",
+        ]
+        phrase = build_unique_location_phrase(paragraphs, 1, 30, 49)
+        self.assertIn("Before context", phrase)
+        self.assertIn("unique words", phrase)
+        matches = sum(paragraph.count(phrase) for paragraph in paragraphs)
+        self.assertEqual(matches, 1)
+
+    def test_non_body_word_parts_remain_fail_closed(self):
+        header = PatchOperation.from_mapping({
+            **self.operation.to_dict(),
+            "part": "word/header1.xml",
+        })
+        with self.assertRaisesRegex(WordPdfMappingError, "main-body paragraphs"):
+            build_mapping_jobs(self._ledger(operation=header))
+
+    def test_no_change_requires_existing_anchor_but_reply_only_is_skipped(self):
+        no_change = ResponseUnit(
+            response_unit_id="RU-T2-C2",
+            reviewer="Reviewer 2",
+            comment_id="C2",
+            comment_text="The original method description is already clear.",
+            response_text="We respectfully note that the method is already described.",
+            disposition="no_change",
+            location_requirement="existing_anchor_required",
+            resolution_reason="The confirmed paragraph already contains the requested method detail.",
+            anchor_evidence_id="E-ANCHOR",
+            anchor_document="Manuscript",
+            anchor_part="word/document.xml",
+            anchor_p_idx=0,
+            anchor_source_excerpt="Existing confirmed anchor excerpt",
+            location_phrase="Existing confirmed anchor excerpt",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-C2",
+        )
+        reply_only = ResponseUnit(
+            response_unit_id="RU-T3-C3",
+            reviewer="Reviewer 3",
+            comment_id="C3",
+            comment_text="Please explain the rationale.",
+            response_text="We have explained the rationale in the response.",
+            disposition="reply_only",
+            location_requirement="not_required",
+            resolution_reason="Pure theoretical explanation without a claim about a manuscript passage.",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-C3",
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-mixed",
+            documents=[self.document],
+            patches=[self.patch],
+            response_units=[self._unit(), no_change, reply_only],
+        )
+        jobs = build_mapping_jobs(ledger)
+        role_jobs = jobs["Manuscript"]
+        self.assertEqual(
+            {(job.response_unit_id, job.locator_id) for job in role_jobs},
+            {("RU-T1-C1", "OP-1"), ("RU-T2-C2", "anchor:E-ANCHOR")},
+        )
+        self.assertNotIn("RU-T3-C3", {job.response_unit_id for job in role_jobs})
+
+    def test_role_reuse_requires_every_locator_and_matching_docx_pdf_hashes(self):
+        source_clean_hash = sha256_file(self.clean_docx)
+        output_sha = sha256_file(self.marked_docx)
+        pdf_sha = sha256_file(self.pdf)
+        location = ResponseLocation(
+            document="Manuscript",
+            output_file=str(self.marked_docx),
+            pdf_file=str(self.pdf),
+            page=2,
+            line_start=8,
+            line_end=10,
+            pdf_sha256=pdf_sha,
+            location_map_id="map-1",
+            mapping_fingerprint="c" * 64,
+            output_sha256=output_sha,
+            locator_id="OP-1",
+            source_clean_sha256=source_clean_hash,
+        )
         unit = ResponseUnit(
             response_unit_id="RU-T1-C1",
             reviewer="Reviewer 1",
@@ -116,48 +265,33 @@ class WordPdfMapperContractTests(unittest.TestCase):
             response_text="We revised the sentence.",
             linked_task_ids=["T1"],
             linked_patch_ids=["P1"],
-            status=unit_status,
-            semantic_review_confirmed=unit_status == "verified",
-            verification_report_id="SEM-1" if unit_status == "verified" else None,
+            linked_operation_ids=["OP-1"],
+            disposition="revised",
+            location_requirement="required",
+            status="location_mapped",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-1",
+            location_map_fingerprint="c" * 64,
+            location_map_file=str(self.map_file),
+            location_map_file_sha256=sha256_file(self.map_file),
+            final_locations=[location],
         )
-        return RevisionLedger(
-            revision_round_id="round-1",
-            documents=[self.document],
-            patches=[patch],
-            response_units=[unit],
+        from co_reviewer.word_pdf_mapper import MappingJob
+        job = MappingJob("RU-T1-C1", "OP-1", "P1", "OP-1", "Manuscript", "new phrase", str(self.clean_docx))
+        reused = _reusable_role_mapping(
+            "Manuscript", [job], {unit.response_unit_id: unit}, source_clean_hash
         )
+        self.assertIsNotNone(reused)
+        self.assertTrue(reused[1]["reused"])
+        self.assertEqual(reused[0][job.key], (2, 8, 10))
 
-    def test_mapping_jobs_bind_verified_patch_to_current_clean_view(self):
-        jobs = build_mapping_jobs(self._ledger())
-        self.assertEqual(len(jobs["Manuscript"]), 1)
-        job = jobs["Manuscript"][0]
-        self.assertEqual(job.phrase, "new phrase")
-        self.assertEqual(job.source_clean_docx, str(self.clean_docx.resolve()))
-        self.assertEqual((job.patch_id, job.operation_id), ("P1", "OP-1"))
+        second_job = MappingJob("RU-T2-C2", "OP-2", "P2", "OP-2", "Manuscript", "other phrase", str(self.clean_docx))
+        incomplete = _reusable_role_mapping(
+            "Manuscript", [job, second_job], {unit.response_unit_id: unit}, source_clean_hash
+        )
+        self.assertIsNone(incomplete)
 
-    def test_mapping_refuses_response_unit_without_semantic_confirmation(self):
-        with self.assertRaisesRegex(WordPdfMappingError, "semantic review"):
-            build_mapping_jobs(self._ledger(unit_status="draft"))
-
-    def test_mapping_refuses_patch_that_is_not_verified(self):
-        with self.assertRaisesRegex(WordPdfMappingError, "not verified"):
-            build_mapping_jobs(self._ledger(patch_status="planned", operation=self.operation))
-
-    def test_mapping_refuses_deletions_and_non_body_word_parts(self):
-        deletion = PatchOperation.from_mapping({
-            **self.operation.to_dict(),
-            "replace": "",
-        })
-        with self.assertRaisesRegex(WordPdfMappingError, "non-empty surviving text"):
-            build_mapping_jobs(self._ledger(operation=deletion))
-        header = PatchOperation.from_mapping({
-            **self.operation.to_dict(),
-            "part": "word/header1.xml",
-        })
-        with self.assertRaisesRegex(WordPdfMappingError, "main document body"):
-            build_mapping_jobs(self._ledger(operation=header))
-
-    def test_word_position_uses_last_character_line_number_constant(self):
+    def test_word_position_uses_continuous_line_number_information(self):
         class FakeRange:
             def __init__(self, values):
                 self.values = values
@@ -174,65 +308,51 @@ class WordPdfMapperContractTests(unittest.TestCase):
                 return FakeRange(values)
 
         self.assertEqual(
-            _read_word_position(FakeDocument(), 20, 25, label="P1/OP1"),
+            _read_word_position(FakeDocument(), 20, 25, label="RU-1/OP-1"),
             (2, 17, 19, 2),
         )
 
     def test_word_position_refuses_table_cell_line_numbers(self):
         class FakeRange:
-            def __init__(self, in_table):
-                self.in_table = in_table
             def Information(self, code):
                 if code == 12:
-                    return self.in_table
+                    return True
                 return 2 if code == 3 else 7
 
         class FakeDocument:
             def Range(self, start, end):
-                return FakeRange(True)
+                return FakeRange()
 
         with self.assertRaisesRegex(WordPdfMappingError, "inside a table"):
-            _read_word_position(FakeDocument(), 5, 10, label="P1/OP1")
+            _read_word_position(FakeDocument(), 5, 10, label="RU-1/OP-1")
 
-    def test_word_find_phrase_limit_and_pdf_text_normalisation(self):
+    def test_word_find_phrase_limit_and_single_paragraph_requirement(self):
         with self.assertRaisesRegex(WordPdfMappingError, "255 characters"):
             _validate_mapping_phrase("x" * 256)
         with self.assertRaisesRegex(WordPdfMappingError, "single-paragraph"):
             _validate_mapping_phrase("first line\nsecond line")
-        self.assertEqual(
-            _normalise_pdf_text("Alpha\u00a0 beta\nGAMMA"),
-            "alpha beta gamma",
-        )
 
     def test_response_location_rejects_final_docx_changed_after_mapping(self):
         output_hash = sha256_file(self.clean_docx)
-        location = ResponseLocation(
-            document="Manuscript",
-            output_file=str(self.clean_docx),
-            pdf_file=str(self.pdf),
-            page=1,
-            line_start=3,
-            line_end=4,
-            pdf_sha256=sha256_file(self.pdf),
-            location_map_id="map-1",
-            mapping_fingerprint="c" * 64,
-            output_sha256=output_hash,
-        )
+        location_kwargs = {
+            "document": "Manuscript",
+            "output_file": str(self.clean_docx),
+            "pdf_file": str(self.pdf),
+            "page": 1,
+            "line_start": 3,
+            "line_end": 4,
+            "pdf_sha256": sha256_file(self.pdf),
+            "location_map_id": "map-1",
+            "mapping_fingerprint": "c" * 64,
+            "output_sha256": output_hash,
+            "locator_id": "OP-1",
+            "source_clean_sha256": sha256_file(self.input_docx),
+        }
+        location = ResponseLocation(**location_kwargs)
         self.assertEqual(location.output_sha256, output_hash)
         self.clean_docx.write_bytes(b"changed after mapping")
         with self.assertRaisesRegex(RevisionModelError, "DOCX changed"):
-            ResponseLocation(
-                document="Manuscript",
-                output_file=str(self.clean_docx),
-                pdf_file=str(self.pdf),
-                page=1,
-                line_start=3,
-                line_end=4,
-                pdf_sha256=sha256_file(self.pdf),
-                location_map_id="map-1",
-                mapping_fingerprint="c" * 64,
-                output_sha256=output_hash,
-            )
+            ResponseLocation(**location_kwargs)
 
     def test_location_map_must_match_current_revision_ledger_hash(self):
         ledger_path = self.root / "revision_ledger.json"
