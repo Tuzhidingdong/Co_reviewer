@@ -237,6 +237,7 @@ class WordPdfMapperContractTests(unittest.TestCase):
         operation = PatchOperation.from_mapping({
             **self.operation.to_dict(),
             "part": "word/header1.xml",
+            "source_comment_ids": ["C1", "C3"],
         })
         patch = Patch(
             patch_id="P1",
@@ -289,20 +290,61 @@ class WordPdfMapperContractTests(unittest.TestCase):
             semantic_review_confirmed=True,
             verification_report_id="SEM-ANCHOR",
         )
+        auto_unit = ResponseUnit(
+            response_unit_id="RU-AUTO-C3",
+            reviewer="Reviewer 3",
+            comment_id="C3",
+            comment_text="Please revise this sentence.",
+            response_text="We revised this sentence.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-1"],
+            disposition="revised",
+            location_requirement="required",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-AUTO",
+        )
         ledger = RevisionLedger(
             revision_round_id="round-manual-cli",
             documents=[self.document],
             patches=[patch],
-            response_units=[unit, no_change],
+            response_units=[unit, no_change, auto_unit],
         )
         ledger_path = self.root / "revision_ledger.json"
         word_map_path = self.root / "word_location_map.json"
         input_path = self.root / "manual_locations.json"
         output_path = self.root / "manual_location_map.json"
         cli.write_json_atomic(ledger_path, ledger.to_dict())
+        map_fingerprint = "c" * 64
+        map_id = "word-pdf-mixed-001"
         cli.write_json_atomic(word_map_path, {
             "generator": "co-reviewer-word-pdf-mapper-v1",
+            "location_map_id": map_id,
             "revision_ledger_sha256": sha256_file(ledger_path),
+            "response_units": [{
+                "response_unit_id": "RU-AUTO-C3",
+                "location_map_fingerprint": map_fingerprint,
+                "final_locations": [{
+                    "document": "Manuscript",
+                    "output_file": str(self.marked_docx),
+                    "output_sha256": sha256_file(self.marked_docx),
+                    "pdf_file": str(self.pdf),
+                    "pdf_sha256": sha256_file(self.pdf),
+                    "page": 1,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "target_sha256": hashlib.sha256(b"new phrase").hexdigest(),
+                    "patch_id": "P1",
+                    "operation_id": "OP-1",
+                    "locator_id": "OP-1",
+                    "source_clean_sha256": sha256_file(self.clean_docx),
+                    "location_map_id": map_id,
+                    "mapping_fingerprint": map_fingerprint,
+                    "mapping_method": "word_com",
+                    "locator_text": None,
+                }],
+            }],
             "documents": [{
                 "document": "Manuscript",
                 "source_working_clean_sha256": sha256_file(self.clean_docx),
@@ -334,6 +376,12 @@ class WordPdfMapperContractTests(unittest.TestCase):
                 },
             ]
         })
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_record_response_locations(SimpleNamespace(
+                ledger=str(ledger_path),
+                location_map=str(word_map_path),
+                actor="Synthetic Author",
+            )), 0)
         args = SimpleNamespace(
             ledger=str(ledger_path),
             word_map=str(word_map_path),
