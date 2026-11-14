@@ -549,7 +549,7 @@ def build_workflow_schedule(tasks: Any) -> WorkflowSchedule:
 
 
 def select_ready_tasks(tasks: Any) -> list[str]:
-    """Return explicitly-ready tasks whose dependencies are verified or completed."""
+    """Return one deterministic, dependency-safe and target-conflict-free batch."""
     errors = validate_workflow_tasks(tasks)
     if errors:
         raise WorkflowValidationError(
@@ -567,8 +567,28 @@ def select_ready_tasks(tasks: Any) -> list[str]:
             sequence = task.get("sequence")
             sequence = sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else 0
             candidates.append((sequence, task_id))
-    return [task_id for _, task_id in sorted(candidates)]
+    candidates.sort()
 
+    schedule = build_workflow_schedule(tasks)
+    component_of = {
+        group_id: component_index
+        for component_index, component in enumerate(schedule.target_group_components)
+        for group_id in component
+    }
+    reserved_components: set[int] = set()
+    selected: list[str] = []
+
+    for _, task_id in candidates:
+        task_groups, _ = _string_list(
+            rows[task_id].get("target_groups", []), "target_groups", task_id
+        )
+        locks = {component_of[group] for group in task_groups if group in component_of}
+        if locks & reserved_components:
+            continue
+        selected.append(task_id)
+        reserved_components.update(locks)
+
+    return selected
 
 def transition_task(
     task: Mapping[str, Any],
