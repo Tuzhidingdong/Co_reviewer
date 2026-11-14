@@ -802,6 +802,14 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Preflight fingerprint mismatch for Patch {patch_id}."
                 )
+            previous_fingerprint = patch.preflight_fingerprint
+            previous_approval = patch.approval_fingerprint
+            approval_is_still_valid = (
+                patch.status == "approved"
+                and previous_fingerprint == fingerprint
+                and previous_approval == plan_item.get("approval_fingerprint")
+                and plan_item.get("status") == "approved"
+            )
             targets = plan_item.get("targets", [])
             if len(targets) != len(patch.operations):
                 raise RevisionModelError(f"Preflight target count mismatch for Patch {patch_id}.")
@@ -814,7 +822,11 @@ class RevisionLedger:
             patch.operations = updated_operations
             patch.preflight_fingerprint = fingerprint
             patch.preflight_report_id = report_id
-            patch.status = "preflighted"
+            if approval_is_still_valid:
+                patch.status = "approved"
+            else:
+                patch.approval_fingerprint = None
+                patch.status = "preflighted"
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
                 subject_id=patch_id,
@@ -853,6 +865,10 @@ class RevisionLedger:
             item = plan_by_id.get(patch_id)
             if patch is None or not isinstance(item, Mapping):
                 raise RevisionModelError(f"Approval refers to unknown Patch {patch_id}.")
+            if patch.status not in {"preflighted", "approved"}:
+                raise RevisionModelError(
+                    f"Patch {patch_id} must be preflighted before approval; current state is {patch.status}."
+                )
             if item.get("status") != "approved":
                 raise RevisionModelError(f"Legacy revision item {patch_id} is not approved.")
             preflight_fp = _sha256(item.get("preflight_fingerprint"), "preflight_fingerprint")
@@ -907,14 +923,26 @@ class RevisionLedger:
                     )
                 approval_fingerprint = legacy_item.get("approval_fingerprint")
                 _sha256(approval_fingerprint, "approval_fingerprint")
-                patch.approval_fingerprint = approval_fingerprint
+                preflight_fingerprint = _sha256(
+                    legacy_item.get("preflight_fingerprint"), "preflight_fingerprint"
+                )
+                if (
+                    patch.status != "approved"
+                    or patch.approval_fingerprint != approval_fingerprint
+                    or patch.preflight_fingerprint != preflight_fingerprint
+                ):
+                    raise RevisionModelError(
+                        f"Apply evidence for Patch {patch_id} does not match its preflight/approval ledger state."
+                    )
                 patch.status = "applied"
+                patch.preflight_report_id = patch.preflight_report_id or "preflight-recorded"
                 if report.get("output_file"):
                     report_id = str(report.get("report_id") or report.get("output_file"))
                     patch.apply_report_ids.append(report_id)
                     self.events.append(RevisionEvent(
                         event_id=str(uuid.uuid4()),
-                        patch_id=patch_id,
+                        subject_id=patch_id,
+                        subject_type="patch",
                         event_type="patch_applied",
                         timestamp_utc=now,
                         actor=actor,
@@ -954,6 +982,10 @@ class RevisionLedger:
             patch.preflight_fingerprint = _sha256(
                 item.get("preflight_fingerprint"), "preflight_fingerprint"
             )
+            if patch.status != "applied":
+                raise RevisionModelError(
+                    f"Patch {patch.patch_id} must be applied before verification; current state is {patch.status}."
+                )
             patch.status = "verified"
             patch.verification_report_id = verification_report_id
             patch.verified_output_hashes = copy.deepcopy(
