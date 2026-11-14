@@ -1585,6 +1585,7 @@ def build_revision_ledger(
     document_paths: Mapping[str, Mapping[str, str]] | None = None,
     reviewer_comments_by_id: Mapping[str, str] | None = None,
     reviewer_by_task: Mapping[str, str] | None = None,
+    selected_task_ids: Sequence[str] | None = None,
 ) -> RevisionLedger:
     """Build explicit Patch and ResponseUnit records from a Workflow Ledger.
 
@@ -1594,6 +1595,13 @@ def build_revision_ledger(
     """
     if not isinstance(workflow_ledger, Mapping):
         raise RevisionModelError("workflow_ledger must be an object.")
+    from .workflow_engine import select_ready_tasks, validate_workflow_ledger
+    workflow_errors = validate_workflow_ledger(workflow_ledger)
+    if workflow_errors:
+        raise RevisionModelError(
+            "Cannot build Patches from an invalid Workflow Ledger:\n- "
+            + "\n- ".join(workflow_errors)
+        )
     round_id = _text(workflow_ledger.get("revision_round_id"), "revision_round_id")
     task_rows = workflow_ledger.get("tasks")
     if not isinstance(task_rows, list):
@@ -1601,6 +1609,24 @@ def build_revision_ledger(
     reviewer_comments_by_id = reviewer_comments_by_id or {}
     reviewer_by_task = reviewer_by_task or {}
     document_paths = document_paths or {}
+
+    scheduler_ready_batch = set(select_ready_tasks(task_rows))
+    if selected_task_ids is None:
+        selected_ids = scheduler_ready_batch
+    else:
+        if not isinstance(selected_task_ids, (list, tuple)):
+            raise RevisionModelError("selected_task_ids must be an array.")
+        if any(not isinstance(item, str) or not item.strip() for item in selected_task_ids):
+            raise RevisionModelError("selected_task_ids must contain non-empty task IDs.")
+        if len(selected_task_ids) != len(set(selected_task_ids)):
+            raise RevisionModelError("selected_task_ids contains duplicates.")
+        selected_ids = set(selected_task_ids)
+    unavailable = selected_ids - scheduler_ready_batch
+    if unavailable:
+        raise RevisionModelError(
+            "Patch batch includes tasks outside the current conflict-free ready batch: "
+            + ", ".join(sorted(unavailable))
+        )
 
     patches: list[Patch] = []
     response_units: list[ResponseUnit] = []
@@ -1629,6 +1655,14 @@ def build_revision_ledger(
         raw_operations = task.get("patch_operations", [])
         if not isinstance(raw_operations, list):
             raise RevisionModelError(f"Task {task_id} patch_operations must be an array.")
+        # Keep ResponseUnits for all tasks, but create executable Patches only
+        # for the selected, author-approved, conflict-free ready batch.
+        if task_id not in selected_ids:
+            raw_operations = []
+        elif raw_operations and task.get("status") != "ready":
+            raise RevisionModelError(
+                f"Task {task_id} has Patch operations but is not in ready state."
+            )
         operation_records: list[PatchOperation] = []
         for index, raw in enumerate(raw_operations):
             if not isinstance(raw, Mapping):
