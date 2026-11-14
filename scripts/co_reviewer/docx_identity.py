@@ -97,34 +97,43 @@ def _paragraph_formatting(paragraph: ET._Element) -> dict[str, Any]:
         ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "widowControl",
          "numPr", "tabs", "spacing", "ind", "jc", "outlineLvl", "textDirection"),
     )
-    runs: list[dict[str, Any]] = []
+    spans: list[dict[str, Any]] = []
+    offset = 0
     for run in paragraph.findall(".//w:r", NS):
-        rpr = run.find("w:rPr", NS)
-        if rpr is None:
-            runs.append({})
-            continue
-        runs.append(_element_signature(
-            rpr,
+        run_text = visible_text(run)
+        properties = _element_signature(
+            run.find("w:rPr", NS),
             ("rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
              "strike", "dstrike", "color", "spacing", "position", "sz", "szCs",
              "highlight", "u", "vertAlign", "rtl", "lang", "shd"),
-        ))
-    return {"paragraph": para_props, "runs": runs}
+        )
+        end = offset + len(run_text)
+        if end > offset:
+            if spans and spans[-1]["end"] == offset and spans[-1]["format"] == properties:
+                spans[-1]["end"] = end
+            else:
+                spans.append({"start": offset, "end": end, "format": properties})
+        offset = end
+    return {"paragraph": para_props, "spans": spans}
 
 
 def _paragraph_structure(paragraph: ET._Element) -> list[str]:
     result: list[str] = []
 
-    def walk(node: ET._Element, *, is_root: bool = False) -> None:
+    def walk(node: ET._Element) -> None:
         for child in list(node):
-            if child.tag in {qn("pPr"), qn("rPr")}:
+            if child.tag in {
+                qn("pPr"), qn("rPr"), qn("t"), qn("delText"), qn("instrText"),
+            }:
                 continue
-            if child.tag in {qn("t"), qn("delText"), qn("instrText")}:
-                continue
-            result.append(_local(child))
+            # Run boundaries are formatting implementation details, not
+            # paragraph structure. Preserve semantic children such as drawings,
+            # hyperlinks, bookmarks, field markers and footnote references.
+            if child.tag != qn("r"):
+                result.append(_local(child))
             walk(child)
 
-    walk(paragraph, is_root=True)
+    walk(paragraph)
     return result
 
 
@@ -762,6 +771,10 @@ def validate_manifest_sources(
                 parent_object_id=row.get("parent_object_id"),
                 location_hint=row.get("location_hint"),
             )
+            if record.object_type == "table_cell_paragraph" and not record.parent_object_id:
+                errors.append(
+                    f"Identity manifest table-cell paragraph {record.object_id} has no parent table object."
+                )
             object_ids.add((record.document_id, record.revision_id, record.object_id))
         except (IdentityValidationError, TypeError, ValueError) as exc:
             errors.append(f"Identity manifest objects[{index}] is invalid: {exc}")

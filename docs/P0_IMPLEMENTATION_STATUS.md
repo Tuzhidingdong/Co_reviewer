@@ -112,7 +112,7 @@ Install the optional Windows dependencies with `pip install -e ".[word-pdf]"`. T
 ## Regression inventory and validation status
 
 - The preserved v0.3 regression baseline contains 76 original test methods.
-- The current tracked `tests/*.py` source inventory contains **170 test methods**.
+- The current tracked `tests/*.py` source inventory contains **172 test methods**.
 - This is a source inventory count only. It is not an executed-test count, a CI result or a pass claim. Recalculate it whenever tests are added or removed.
 
 The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.

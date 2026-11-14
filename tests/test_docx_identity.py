@@ -20,6 +20,7 @@ from co_reviewer.docx_identity import (
     validate_manifest_sources,
 )
 from co_reviewer.identity import sha256_file
+from co_reviewer_cli import build_parser
 
 
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
@@ -206,6 +207,27 @@ class DocxIdentityRegistryTests(unittest.TestCase):
             [],
         )
 
+    def test_formatting_identity_ignores_run_splitting_when_style_is_equal(self):
+        first_path = self.root / "single-run.docx"
+        first_doc = Document()
+        first_doc.add_paragraph("Same visible text.")
+        first_doc.save(first_path)
+
+        second_path = self.root / "split-runs.docx"
+        second_doc = Document()
+        paragraph = second_doc.add_paragraph()
+        paragraph.add_run("Same ")
+        paragraph.add_run("visible ")
+        paragraph.add_run("text.")
+        second_doc.save(second_path)
+
+        first_manifest, _ = build_document_identity_manifest(_inventory(first_path))
+        second_manifest, _ = build_document_identity_manifest(_inventory(second_path))
+        first_dims = first_manifest["documents"][0]["dimensions"]
+        second_dims = second_manifest["documents"][0]["dimensions"]
+        self.assertEqual(first_dims["structure_sha256"], second_dims["structure_sha256"])
+        self.assertEqual(first_dims["formatting_sha256"], second_dims["formatting_sha256"])
+
     def test_format_only_change_does_not_change_content_or_structure_identity(self):
         from docx.shared import Pt
 
@@ -230,6 +252,23 @@ class DocxIdentityRegistryTests(unittest.TestCase):
         path.write_bytes(path.read_bytes() + b"changed")
         with self.assertRaisesRegex(DocxIdentityError, "hash is stale"):
             build_document_identity_manifest(report)
+
+    def test_cli_refuses_to_write_identity_manifest_over_source_docx(self):
+        from argparse import Namespace
+        from co_reviewer_cli import cmd_build_document_identity
+        from docx import Document
+
+        source = self._docx("protected.docx", ["Do not overwrite this file."])
+        inventory_path = self.root / "inventory.json"
+        inventory_path.write_text(json.dumps(_inventory(source)), encoding="utf-8")
+        original = source.read_bytes()
+        with self.assertRaisesRegex(ValueError, "source DOCX"):
+            cmd_build_document_identity(Namespace(
+                inventory=str(inventory_path),
+                out=str(source),
+                previous_manifest=None,
+            ))
+        self.assertEqual(source.read_bytes(), original)
 
     def test_target_para_id_mismatch_fails_closed(self):
         path = self._docx(
