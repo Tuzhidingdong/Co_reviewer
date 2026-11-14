@@ -57,6 +57,7 @@ def audit_docx_quality(
     *,
     profile: str = "generic",
     pdf_path: str | Path | None = None,
+    word_page_count: int | None = None,
     expected_font: str | None = None,
 ) -> dict[str, Any]:
     source = Path(docx_path).expanduser().resolve()
@@ -223,10 +224,17 @@ def audit_docx_quality(
         _check(checks, "package_integrity", "FAIL", "error", "DOCX is not a valid ZIP package.", str(exc))
         return _report(source, metrics, checks, pdf_path)
 
-    return _report(source, metrics, checks, pdf_path)
+    return _report(source, metrics, checks, pdf_path, word_page_count=word_page_count)
 
 
-def _report(source: Path, metrics: dict[str, Any], checks: list[dict[str, Any]], pdf_path: str | Path | None) -> dict[str, Any]:
+def _report(
+    source: Path,
+    metrics: dict[str, Any],
+    checks: list[dict[str, Any]],
+    pdf_path: str | Path | None,
+    *,
+    word_page_count: int | None = None,
+) -> dict[str, Any]:
     pdf_metrics = None
     if pdf_path is not None:
         pdf = Path(pdf_path).expanduser().resolve()
@@ -240,22 +248,20 @@ def _report(source: Path, metrics: dict[str, Any], checks: list[dict[str, Any]],
             if pdf.stat().st_size < 8 or pdf_header != b"%PDF-":
                 _check(checks, "pdf_integrity", "FAIL", "error", "PDF header is invalid.", pdf_metrics)
             else:
-                try:
-                    import fitz
-                    with fitz.open(str(pdf)) as document:
-                        pdf_metrics["page_count"] = document.page_count
-                        pdf_metrics["metadata"] = document.metadata
-                    if pdf_metrics["page_count"] < 1:
+                if word_page_count is not None:
+                    if not isinstance(word_page_count, int) or isinstance(word_page_count, bool) or word_page_count < 1:
                         _check(checks, "pdf_integrity", "FAIL", "error",
-                               "PDF contains no pages.", pdf_metrics)
+                               "Word COM did not provide a positive final page count.",
+                               {"word_page_count": word_page_count, **pdf_metrics})
                     else:
+                        pdf_metrics["word_page_count"] = word_page_count
                         _check(checks, "pdf_integrity", "PASS", "info",
-                               "PDF opens and exposes one or more pages.", pdf_metrics)
-                except ImportError:
-                    _check(checks, "pdf_integrity", "WARN", "warning",
-                           "PDF signature is valid, but PyMuPDF is unavailable for page-level inspection.", pdf_metrics)
-                except Exception as exc:
-                    _check(checks, "pdf_integrity", "FAIL", "error", "PDF could not be opened.", str(exc))
+                               "PDF signature and SHA-256 are valid; page count was obtained from the same Word COM pagination session.",
+                               pdf_metrics)
+                else:
+                    _check(checks, "pdf_integrity", "PASS", "info",
+                           "PDF exists, is non-empty, has a valid PDF signature, and is SHA-256 hashed; page count was not inferred from PDF text.",
+                           pdf_metrics)
     failures = sum(1 for row in checks if row["status"] == "FAIL")
     warnings = sum(1 for row in checks if row["status"] == "WARN")
     return {

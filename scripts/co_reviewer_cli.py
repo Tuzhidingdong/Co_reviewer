@@ -2228,6 +2228,7 @@ def cmd_map_response_locations(args):
             document_output["output_file"],
             profile="word-final-clean",
             pdf_path=document_output["pdf_file"],
+            word_page_count=document_output.get("word_page_count"),
         )
         if report["status"] == "FAIL":
             raise ValueError(

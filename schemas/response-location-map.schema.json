@@ -32,7 +32,8 @@
           "output_file",
           "output_sha256",
           "pdf_file",
-          "pdf_sha256"
+          "pdf_sha256",
+          "word_page_count"
         ],
         "properties": {
           "document": { "type": "string", "minLength": 1 },
@@ -42,6 +43,7 @@
           "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
           "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
           "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "word_page_count": { "type": "integer", "minimum": 1 },
           "reused": { "type": "boolean" },
           "refreshed_fields": {
             "type": "object",

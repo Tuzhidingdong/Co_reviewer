@@ -415,7 +415,7 @@ def _export_one_document(
     output_docx: Path,
     output_pdf: Path,
     jobs: Sequence[MappingJob],
-) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, int]]:
+) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, int], int]:
     if output_docx.exists() or output_pdf.exists():
         raise FileExistsError(
             f"Refusing to overwrite Word/PDF output for {source_docx.stem}."
@@ -449,8 +449,11 @@ def _export_one_document(
             AddToRecentFiles=False,
         )
         document.Repaginate()
+        word_page_count = int(document.ComputeStatistics(2))
+        if word_page_count < 1:
+            raise WordPdfMappingError("Word COM returned an invalid document page count after repagination.")
 
-        positions: dict[tuple[str, str], tuple[int, int, int]] = {}
+        positions: dict[tuple[str, str], tuple[int, int, int]] = {
         unique_jobs: dict[tuple[str, str], MappingJob] = {}
         for job in jobs:
             unique_jobs.setdefault(job.key, job)
@@ -458,6 +461,10 @@ def _export_one_document(
             page, line_start, line_end, _ = _find_unique_phrase(
                 document, job.phrase, label=job.label
             )
+            if page > word_page_count:
+                raise WordPdfMappingError(
+                    f"{job.label} resolved to page {page}, beyond Word's final page count {word_page_count}."
+                )
             positions[key] = (page, line_start, line_end)
 
         document.ExportAsFixedFormat(
@@ -472,7 +479,7 @@ def _export_one_document(
             )
         if output_docx.stat().st_size == 0 or output_pdf.stat().st_size == 0:
             raise WordPdfMappingError("Word produced an empty final DOCX or PDF.")
-        return positions, refreshed_fields
+        return positions, refreshed_fields, word_page_count
     except WordPdfMappingError:
         raise
     except Exception as exc:
@@ -499,6 +506,7 @@ def _reusable_role_mapping(
     pdf_files: set[str] = set()
     output_hashes: set[str] = set()
     pdf_hashes: set[str] = set()
+    role_page_counts: set[int] = set()
     for job in jobs:
         unit = units_by_id[job.response_unit_id]
         matches = [
@@ -509,6 +517,20 @@ def _reusable_role_mapping(
         ]
         if len(matches) != 1:
             return None
+        map_file = Path(unit.location_map_file).expanduser().resolve() if unit.location_map_file else None
+        if map_file is None or not map_file.is_file():
+            return None
+        try:
+            prior_map = json.loads(map_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        role_rows = [row for row in prior_map.get("documents", []) if row.get("document") == role]
+        if len(role_rows) != 1:
+            return None
+        role_page_count = role_rows[0].get("word_page_count")
+        if not isinstance(role_page_count, int) or isinstance(role_page_count, bool) or role_page_count < 1:
+            return None
+        role_page_counts.add(role_page_count)
         location = matches[0]
         output_path = Path(location.output_file).expanduser().resolve()
         pdf_path = Path(location.pdf_file).expanduser().resolve()
@@ -525,7 +547,7 @@ def _reusable_role_mapping(
         output_hashes.add(location.output_sha256)
         pdf_hashes.add(location.pdf_sha256)
         positions[job.key] = (location.page, location.line_start, location.line_end)
-    if len(output_files) != 1 or len(pdf_files) != 1 or len(output_hashes) != 1 or len(pdf_hashes) != 1:
+    if len(output_files) != 1 or len(pdf_files) != 1 or len(output_hashes) != 1 or len(pdf_hashes) != 1 or len(role_page_counts) != 1:
         return None
     output_file = next(iter(output_files))
     pdf_file = next(iter(pdf_files))
@@ -534,6 +556,7 @@ def _reusable_role_mapping(
         "output_sha256": next(iter(output_hashes)),
         "pdf_file": pdf_file,
         "pdf_sha256": next(iter(pdf_hashes)),
+        "word_page_count": next(iter(role_page_counts)),
         "reused": True,
         "refreshed_fields": {"SEQ": 0, "REF": 0, "PAGE": 0, "PAGEREF": 0},
     }
@@ -625,8 +648,8 @@ def generate_word_pdf_location_map(
                 source_docx = Path(ledger_document.working_clean_file).expanduser().resolve()
                 output_docx = out_dir / f"{safe_names[role]}.final-clean.docx"
                 output_pdf = out_dir / f"{safe_names[role]}.final-clean.pdf"
-                positions, refreshed_fields = _export_one_document(
-                    word, source_docx, output_docx, output_pdf, jobs_by_role[role]
+                positions, refreshed_fields, word_page_count = _export_one_document(
+                    word, source_docx, output_docx, jobs_by_role[role]
                 )
                 positions_by_role[role] = positions
                 document_outputs[role] = {
@@ -636,6 +659,7 @@ def generate_word_pdf_location_map(
                     "output_sha256": sha256_file(output_docx),
                     "pdf_file": str(output_pdf),
                     "pdf_sha256": sha256_file(output_pdf),
+                    "word_page_count": word_page_count,
                     "reused": False,
                     "refreshed_fields": refreshed_fields,
                 }
