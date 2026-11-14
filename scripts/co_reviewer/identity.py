@@ -207,6 +207,8 @@ class DocumentIdentity:
             "formatting_sha256", "citation_sha256",
         ):
             _require_sha256(getattr(self, field_name), field_name)
+        if self.identity_version != "0.5.1":
+            raise IdentityValidationError("identity_version must be '0.5.1'.")
         if not isinstance(self.citation_profile, CitationProfile):
             raise IdentityValidationError("citation_profile must be a CitationProfile.")
 
