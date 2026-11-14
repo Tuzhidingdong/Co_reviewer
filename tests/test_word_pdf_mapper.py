@@ -245,11 +245,29 @@ class WordPdfMapperContractTests(unittest.TestCase):
             semantic_review_confirmed=True,
             verification_report_id="SEM-MANUAL",
         )
+        no_change = ResponseUnit(
+            response_unit_id="RU-MANUAL-ANCHOR",
+            reviewer="Reviewer 2",
+            comment_id="C2",
+            comment_text="The method is already described in Table 2.",
+            response_text="We refer the reviewer to the existing table.",
+            disposition="no_change",
+            location_requirement="manual_required",
+            resolution_reason="The confirmed existing anchor is a table cell and requires an explicit locator.",
+            anchor_evidence_id="E-ANCHOR-2",
+            anchor_document="Manuscript",
+            anchor_part="word/document.xml",
+            anchor_p_idx=0,
+            anchor_source_excerpt="Existing table description",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-ANCHOR",
+        )
         ledger = RevisionLedger(
             revision_round_id="round-manual-cli",
             documents=[self.document],
             patches=[patch],
-            response_units=[unit],
+            response_units=[unit, no_change],
         )
         ledger_path = self.root / "revision_ledger.json"
         word_map_path = self.root / "word_location_map.json"
@@ -277,11 +295,18 @@ class WordPdfMapperContractTests(unittest.TestCase):
             "quality_reports": [],
         })
         cli.write_json_atomic(input_path, {
-            "response_units": [{
-                "response_unit_id": "RU-MANUAL-C1",
-                "operation_id": "OP-1",
-                "locator_text": "Table S2, Supplementary Information",
-            }]
+            "response_units": [
+                {
+                    "response_unit_id": "RU-MANUAL-C1",
+                    "operation_id": "OP-1",
+                    "locator_text": "Table S2, Supplementary Information",
+                },
+                {
+                    "response_unit_id": "RU-MANUAL-ANCHOR",
+                    "locator_id": "anchor:E-ANCHOR-2",
+                    "locator_text": "Table 2, Method description",
+                },
+            ]
         })
         args = SimpleNamespace(
             ledger=str(ledger_path),
@@ -299,6 +324,14 @@ class WordPdfMapperContractTests(unittest.TestCase):
         self.assertEqual(
             mapped.final_locations[0].display_text,
             "Table S2, Supplementary Information",
+        )
+        self.assertEqual(updated.response_units[1].status, "location_mapped")
+        self.assertEqual(updated.response_units[1].final_locations[0].locator_id, "manual:anchor:E-ANCHOR-2")
+        self.assertEqual(updated.response_units[1].final_locations[0].mapping_method, "manual")
+        self.assertIsNone(updated.response_units[1].final_locations[0].page)
+        self.assertEqual(
+            updated.response_units[1].final_locations[0].display_text,
+            "Table 2, Method description",
         )
         self.assertTrue(output_path.is_file())
 
