@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from co_reviewer.workflow_engine import (
+    build_workflow_schedule,
     validate_workflow_tasks,
     workflow_tasks_from_decision_plan,
 )
@@ -379,8 +380,15 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             print(f"- {error}")
         return 2
+    workflow_schedule = build_workflow_schedule(
+        workflow_tasks_from_decision_plan(plan["tasks"])
+    )
     print(f"[VALID] {len(plan['tasks'])} pending task(s); user approval remains required.")
-    print("[GUARD] Evidence locations/excerpts, comment IDs, source hashes and dependency graph passed.")
+    print("[GUARD] Evidence locations/excerpts, comment IDs, source hashes and task dependency graph passed.")
+    print(
+        f"[SCHEDULE] {len(workflow_schedule.task_order)} task(s); "
+        f"{len(workflow_schedule.target_group_components)} target-group component(s)."
+    )
     print("[NOTE] This validates structure and provenance, not scientific correctness or the semantic quality of the proposed decisions.")
     return 0
 
