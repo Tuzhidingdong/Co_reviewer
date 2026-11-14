@@ -51,6 +51,10 @@ class RevisionModelsTests(unittest.TestCase):
         self.pdf_bytes = b"%PDF-1.4\nsynthetic final-layout artifact\n%%EOF"
         self.pdf_path.write_bytes(self.pdf_bytes)
         self.pdf_sha256 = hashlib.sha256(self.pdf_bytes).hexdigest()
+        self.map_path = self.root / "location-map-source.json"
+        self.map_bytes = b'{"location_map_id":"fixture-map","source":"synthetic"}'
+        self.map_path.write_bytes(self.map_bytes)
+        self.map_sha256 = hashlib.sha256(self.map_bytes).hexdigest()
 
     def tearDown(self):
         self.temp.cleanup()
@@ -258,6 +262,8 @@ class RevisionModelsTests(unittest.TestCase):
             semantic_review_confirmed=True,
             verification_report_id="semantic-001",
             location_map_fingerprint=HASH_A,
+            location_map_file=str(self.map_path),
+            location_map_file_sha256=self.map_sha256,
             final_locations=[ResponseLocation(
                 document="Manuscript",
                 output_file="Manuscript_revised.docx",
@@ -398,7 +404,12 @@ class RevisionModelsTests(unittest.TestCase):
             location_map_id="map-002",
             mapping_fingerprint=HASH_A,
         )
-        unit.record_final_locations(HASH_A, [location])
+        unit.record_final_locations(
+            HASH_A,
+            [location],
+            location_map_file=str(self.map_path),
+            location_map_file_sha256=self.map_sha256,
+        )
         ledger.complete_response_units(
             ["RU-1"],
             ready_for_submission_confirmed=True,
