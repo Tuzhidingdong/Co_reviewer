@@ -29,7 +29,7 @@ Matching policy is deliberately conservative:
 2. When no unique native ID exists, a unique exact object fingerprint may preserve the ID across moves and formatting-independent changes.
 3. Duplicate or ambiguous candidates receive new IDs; no paragraph-index guess is used to claim continuity.
 
-The match report reports native-ID matches, exact-fingerprint matches, new objects and ambiguities. Paragraph indices remain advisory location hints.
+The match report reports native-ID matches, exact-fingerprint matches, new objects and ambiguities. Paragraph indices remain advisory location hints. Workflow Ledger validation also requires each DocumentIdentity source hash to match the source_files hash for the same role.
 
 ## Build the Workflow Ledger with stable targets
 

@@ -38,20 +38,19 @@ A change to the task scope (targets, evidence, proposed action, dependencies or 
 
 ## Response-only and DOCX execution boundary
 
-task_type=response_only is a valid Workflow Ledger task and has no document target group. It stays in the unified review lifecycle and can later be linked to a ResponseUnit.
+task_type=response_only is a valid Workflow Ledger task and has no document target group. It stays in the unified review lifecycle and is materialized as a ResponseUnit without a fake DOCX Patch.
 
-The legacy revision_plan.schema.json and validate_plan() remain DOCX-edit-only. They continue to require non-empty targets; response-only tasks must not be passed to that executor. A later adapter will emit DOCX revision items only for mutating tasks and keep response-only items in the ledger/response pipeline.
+The legacy revision_plan.schema.json and validate_plan() remain DOCX-edit-only. They continue to require non-empty targets; response-only tasks remain in the RevisionLedger/ResponseUnit pipeline and are never passed to the DOCX writer.
 
 ## Current anchor and migration limits
 
-The identity layer now defines five distinct document dimensions: exact source bytes, normalized visible content, document structure, formatting state and citation state. A CitationProfile records the explicit citation mode, style label, numbering scope, examples, reference labels, detection method and optional evidence fingerprint. These dimensions are independent; a content edit need not be mistaken for a formatting or citation edit.
+The identity layer defines five distinct document dimensions: exact source bytes, normalized visible content, document structure, formatting state and citation state. A CitationProfile records the explicit citation mode, style label, numbering scope, examples, reference labels, detection method and optional evidence fingerprint. These dimensions are independent; a content edit need not be mistaken for a formatting or citation edit.
 
-Persistent object IDs are represented by DocumentObjectIdentity records and are kept separate from location hints such as paragraph indexes. TargetRef binds a task to a document revision, object ID, object fingerprint, Word part and optional character offsets. The Workflow Ledger can persist document identities and an object registry; it validates that each TargetRef resolves to the matching registered object and revision.
+Persistent object IDs are represented by DocumentObjectIdentity records and are kept separate from location hints such as paragraph indexes. The parser-backed `build-document-identity` command reads actual DOCX WordprocessingML, validates every Inventory paragraph anchor against DOCX text and native `w14:paraId`, then creates document dimensions and the object registry. A unique native `paraId` or a unique exact fingerprint may preserve an object ID across revisions; duplicate/ambiguous matches receive new IDs instead of guessed continuity.
 
-When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback remains only for older decision plans without the optional parser-backed identity manifest. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
+TargetRef binds a task to a document revision, object ID, object fingerprint, Word part and optional character offsets checked against parser-derived visible-text length. Supplying `--identity-manifest` to `validate_decision_plan.py` converts plan anchors into stable TargetRefs and schedules by `document_id|object=object_id`. The legacy `document|part|p_idx` group remains only as a compatibility path when no identity manifest is supplied. Workflow Ledger validation binds each DocumentIdentity source hash to the same role's `source_files` hash.
 
-The Workflow Engine is used by decision-plan validation, ledger creation/validation, ready-batch materialization and execution synchronization. `build-revision-ledger` converts only the current conflict-free ready batch into typed Patches; those Patches are then bridged to the legacy DOCX writer with fresh preflight and explicit approval. After verified changes, same-target peers and downstream tasks are invalidated before the next batch can be authorized. The CLI remains the controlled execution bridge rather than silently applying work.
-
+The Workflow Engine is used by decision-plan validation, ledger creation/validation, ready-batch materialization and execution synchronization. `build-revision-ledger` converts only the current conflict-free ready batch into typed Patches; those Patches are bridged to the legacy DOCX writer with fresh preflight and explicit approval. After verified changes, same-target peers and downstream tasks are invalidated before the next batch can be authorized. A reapproved task is rebased from the previous verified DOCX output, creates a new superseding Patch ID, and retains prior execution history. The CLI remains the controlled execution bridge rather than silently applying work.
 
 ## Patch execution bridge
 
