@@ -66,6 +66,10 @@ def _fingerprint(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _canonical_path(value: str) -> str:
+    return str(Path(value).expanduser().resolve()).casefold()
+
+
 def _safe_docx_path(value: Any, field_name: str) -> str:
     path = _text(value, field_name)
     if Path(path).suffix.casefold() != ".docx":
@@ -933,6 +937,122 @@ class RevisionLedger:
             "approved": False,
             "revision_items": items,
         }
+
+    def supersede_patch(
+        self,
+        previous_patch_id: str,
+        replacement: Patch,
+        *,
+        actor: str,
+        reason: str,
+    ) -> None:
+        """Supersede one Patch without erasing its execution history.
+
+        For a Patch that has already been applied, the replacement must start
+        from the previous Patch's output DOCX for every affected document.
+        Linked ResponseUnits are reopened for semantic review and remapping.
+        """
+        previous_patch_id = _text(previous_patch_id, "previous_patch_id")
+        _text(actor, "actor")
+        reason = _text(reason, "reason")
+        if not isinstance(replacement, Patch):
+            raise RevisionModelError("replacement must be a Patch.")
+        by_id = {patch.patch_id: patch for patch in self.patches}
+        previous = by_id.get(previous_patch_id)
+        if previous is None:
+            raise RevisionModelError(f"Unknown Patch to supersede: {previous_patch_id}.")
+        if replacement.patch_id in by_id:
+            raise RevisionModelError(f"Replacement Patch ID already exists: {replacement.patch_id}.")
+        if replacement.status != "planned":
+            raise RevisionModelError("A replacement Patch must start in planned state.")
+        if replacement.supersedes_patch_id != previous_patch_id:
+            raise RevisionModelError(
+                "Replacement Patch supersedes_patch_id must identify the selected predecessor."
+            )
+        if replacement.task_id != previous.task_id:
+            raise RevisionModelError("Replacement Patch must remain within the same workflow task.")
+        if previous.status in {"superseded", "blocked"}:
+            raise RevisionModelError(
+                f"Patch {previous_patch_id} is already {previous.status} and cannot be superseded."
+            )
+        if any(
+            patch.supersedes_patch_id == previous_patch_id
+            for patch in self.patches
+        ):
+            raise RevisionModelError(
+                f"Patch {previous_patch_id} already has a replacement; branching supersession is not allowed."
+            )
+
+        if previous.status in {"applied", "verified"}:
+            previous_outputs: dict[str, set[str]] = {}
+            for operation in previous.operations:
+                previous_outputs.setdefault(operation.document, set()).add(
+                    _canonical_path(operation.output_file)
+                )
+            for operation in replacement.operations:
+                allowed_inputs = previous_outputs.get(operation.document, set())
+                if _canonical_path(operation.input_file) not in allowed_inputs:
+                    raise RevisionModelError(
+                        f"Replacement operation {operation.operation_id} must use the prior Patch output "
+                        f"as its input for {operation.document}."
+                    )
+
+        now = datetime.now(timezone.utc).isoformat()
+        previous.status = "superseded"
+        self.patches.append(replacement)
+        self.events.append(RevisionEvent(
+            event_id=str(uuid.uuid4()),
+            subject_id=previous_patch_id,
+            subject_type="patch",
+            event_type="patch_superseded",
+            timestamp_utc=now,
+            actor=actor,
+            details={
+                "replacement_patch_id": replacement.patch_id,
+                "reason": reason,
+                "previous_status": (
+                    "applied" if previous.apply_report_ids else
+                    "verified" if previous.verification_report_id else
+                    "preflighted" if previous.preflight_report_id else
+                    "planned"
+                ),
+            },
+        ))
+        for unit in self.response_units:
+            if previous_patch_id not in unit.linked_patch_ids:
+                continue
+            unit.linked_patch_ids = [
+                replacement.patch_id if patch_id == previous_patch_id else patch_id
+                for patch_id in unit.linked_patch_ids
+            ]
+            unit.linked_patch_ids = list(dict.fromkeys(unit.linked_patch_ids))
+            unit.linked_targets = [{
+                "document": operation.document,
+                "location": operation.location,
+                "output_file": operation.output_file,
+            } for operation in replacement.operations]
+            unit.status = "draft"
+            unit.semantic_review_confirmed = False
+            unit.verification_report_id = None
+            unit.location_map_fingerprint = None
+            unit.location_map_file = None
+            unit.location_map_file_sha256 = None
+            unit.final_locations = []
+            unit.completed_at_utc = None
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=unit.response_unit_id,
+                subject_type="response_unit",
+                event_type="response_reopened_after_patch_supersession",
+                timestamp_utc=now,
+                actor=actor,
+                details={
+                    "previous_patch_id": previous_patch_id,
+                    "replacement_patch_id": replacement.patch_id,
+                    "reason": reason,
+                },
+            ))
+        self.validate_or_raise()
 
     def record_legacy_preflight(
         self,
