@@ -647,7 +647,10 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "find": target["find"], "replace": target["replace"],
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
-                "document": target["document"], "location": target.get("location", "")
+                "document": target["document"], "location": target.get("location", ""),
+                "operation_id": target.get("operation_id"),
+                "source_comment_ids": list(target.get("source_comment_ids", [])),
+                "location_phrase": target.get("location_phrase"),
             }
             if "p_idx" in target: edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
