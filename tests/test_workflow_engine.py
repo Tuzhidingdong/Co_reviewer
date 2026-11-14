@@ -273,10 +273,18 @@ class WorkflowEngineTests(unittest.TestCase):
             original_fingerprint,
             workflow_scope_fingerprint(second["tasks"][0]),
         )
-        self.assertEqual(
-            second["tasks"][0]["source_versions"][1]["sha256"],
-            "d" * 64,
+        updated_manuscript_source = next(
+            row for row in second["tasks"][0]["source_versions"]
+            if row["role"] == "Manuscript"
         )
+        self.assertEqual(updated_manuscript_source["sha256"], "d" * 64)
+
+        tampered = json.loads(json.dumps(first))
+        tampered["tasks"][0]["source_versions"][0]["sha256"] = "e" * 64
+        self.assertTrue(any(
+            "is not present in the Workflow Ledger source_files" in error
+            for error in validate_workflow_ledger(tampered)
+        ))
 
     def test_targetref_revision_change_invalidates_task_scope_fingerprint(self):
         task = _task("T1", [], "planned", ["doc-stable|object=para-01"])
