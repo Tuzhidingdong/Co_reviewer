@@ -212,14 +212,45 @@ def _remove_comment_content_types(data: bytes) -> tuple[bytes, int]:
 
 
 
+def _is_comment_part_name(name: str) -> bool:
+    lowered = name.casefold()
+    return (
+        lowered in _COMMENT_PARTS
+        or (lowered.startswith("word/comments") and lowered.endswith(".xml"))
+    )
+
+
+def _comment_metadata_in_relationships(data: bytes, part: str) -> list[dict[str, str]]:
+    try:
+        root = ET.fromstring(data, parser=_xml_parser())
+    except ET.XMLSyntaxError as exc:
+        raise WorkingViewError(f"Cannot inspect comment relationships in {part}: {exc}") from exc
+    return [
+        {
+            "part": part,
+            "id": child.get("Id", ""),
+            "type": child.get("Type", ""),
+            "target": child.get("Target", ""),
+        }
+        for child in root
+        if isinstance(child.tag, str)
+        and (
+            "/comments" in child.get("Type", "").casefold()
+            or "/people" in child.get("Type", "").casefold()
+        )
+    ]
+
+
 def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
-    """Fail-closed scan for unresolved revisions and native comments in a baseline DOCX."""
+    """Fail-closed scan for unresolved revisions and all native Word comment metadata."""
     source = Path(input_file).expanduser().resolve()
     if not source.is_file() or source.suffix.casefold() != ".docx":
         raise WorkingViewError(f"Baseline source must be an existing DOCX: {source}")
     counts = {
         "insertions": 0, "deletions": 0, "move_from": 0, "move_to": 0,
         "formatting_changes": 0, "comments": 0, "comment_anchors": 0,
+        "comment_parts": 0, "comment_relationships": 0,
+        "comment_content_type_entries": 0,
     }
     issues: list[dict[str, Any]] = []
     try:
@@ -227,7 +258,39 @@ def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
             bad = archive.testzip()
             if bad:
                 raise WorkingViewError(f"Baseline DOCX has a ZIP CRC error in {bad}.")
-            for part in sorted(name for name in archive.namelist() if name.startswith("word/") and name.endswith(".xml")):
+            names = set(archive.namelist())
+            for part in sorted(name for name in names if _is_comment_part_name(name)):
+                counts["comment_parts"] += 1
+                issues.append({
+                    "category": "comment_parts", "element": Path(part).name,
+                    "part": part, "paragraph_index": None, "element_id": None,
+                    "author": None, "text_excerpt": "",
+                })
+            for part in sorted(name for name in names if name.endswith(".rels")):
+                for relationship in _comment_metadata_in_relationships(archive.read(part), part):
+                    counts["comment_relationships"] += 1
+                    issues.append({
+                        "category": "comment_relationships", "element": "Relationship",
+                        "part": part, "paragraph_index": None,
+                        "element_id": relationship["id"], "author": None,
+                        "text_excerpt": (
+                            f'{relationship["type"]} -> {relationship["target"]}'
+                        )[:240],
+                    })
+            content_types = ET.fromstring(
+                archive.read("[Content_Types].xml"), parser=_xml_parser()
+            )
+            for child in content_types:
+                part_name = child.get("PartName", "").lstrip("/")
+                if _is_comment_part_name(part_name):
+                    counts["comment_content_type_entries"] += 1
+                    issues.append({
+                        "category": "comment_content_type_entries",
+                        "element": "Override", "part": "[Content_Types].xml",
+                        "paragraph_index": None,
+                        "element_id": part_name, "author": None, "text_excerpt": "",
+                    })
+            for part in sorted(name for name in names if name.startswith("word/") and name.endswith(".xml")):
                 try:
                     root = ET.fromstring(archive.read(part), parser=_xml_parser())
                 except ET.XMLSyntaxError as exc:
@@ -297,7 +360,7 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
             package = {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
     except (OSError, zipfile.BadZipFile) as exc:
         raise WorkingViewError(f"Cannot read prepared DOCX package: {exc}") from exc
-    removed_parts = sorted(name for name in package if name.casefold() in _COMMENT_PARTS)
+    removed_parts = sorted(name for name in package if _is_comment_part_name(name))
     for name in removed_parts:
         del package[name]
     anchor_counts = 0
@@ -365,6 +428,12 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
                 root = ET.fromstring(archive.read(name), parser=_xml_parser())
                 if any("/comments" in child.get("Type", "").casefold() or "/people" in child.get("Type", "").casefold() for child in root):
                     raise WorkingViewError(f"Comment relationships remain in {name}.")
+        types_root = ET.fromstring(archive.read("[Content_Types].xml"), parser=_xml_parser())
+        if any(
+            _is_comment_part_name(child.get("PartName", "").lstrip("/"))
+            for child in types_root
+        ):
+            raise WorkingViewError("Comment content-type overrides remain after Marked DOCX cleanup.")
     return cleaned, {
         "removed_comment_parts": removed_parts,
         "removed_comment_anchors": anchor_counts,
@@ -510,7 +579,7 @@ def create_working_clean_view(
             "Working Clean View still contains revision markup: " + ", ".join(residual)
         )
     residual_comment_parts = [
-        name for name in package if name.casefold() in _COMMENT_PARTS
+        name for name in package if _is_comment_part_name(name)
     ]
     residual_comment_relationships: list[str] = []
     for name, data in package.items():
@@ -526,10 +595,20 @@ def create_working_clean_view(
             for child in rel_root
         ):
             residual_comment_relationships.append(name)
-    if residual_comment_parts or residual_comment_relationships:
+    try:
+        content_types_root = ET.fromstring(package["[Content_Types].xml"], parser=_xml_parser())
+    except ET.XMLSyntaxError as exc:
+        raise WorkingViewError(f"Cannot validate comment content types: {exc}") from exc
+    residual_comment_content_types = [
+        child.get("PartName", "")
+        for child in content_types_root
+        if _is_comment_part_name(child.get("PartName", "").lstrip("/"))
+    ]
+    if residual_comment_parts or residual_comment_relationships or residual_comment_content_types:
         raise WorkingViewError(
             "Working Clean View still contains Word comment package metadata: "
-            f"parts={residual_comment_parts}, relationships={residual_comment_relationships}"
+            f"parts={residual_comment_parts}, relationships={residual_comment_relationships}, "
+            f"content_types={residual_comment_content_types}"
         )
 
     fd, temp_name = tempfile.mkstemp(
