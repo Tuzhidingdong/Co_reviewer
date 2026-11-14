@@ -331,6 +331,57 @@ class RevisionModelsTests(unittest.TestCase):
         with self.assertRaisesRegex(RevisionModelError, "no traceable reviewer comment"):
             build_revision_ledger(workflow, document_paths={})
 
+    def test_manual_only_operation_can_pass_preflight_without_body_locator_phrase(self):
+        operation = replace(
+            _operation(),
+            part="word/header1.xml",
+            location_phrase=None,
+        )
+        patch = Patch(
+            patch_id="T1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please revise the header.",
+            proposed_response="We revised the header.",
+            operations=[operation],
+        )
+        unit = ResponseUnit(
+            response_unit_id="RU-T1-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please revise the header.",
+            response_text="We revised the header.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["T1"],
+            linked_operation_ids=[operation.operation_id],
+            disposition="revised",
+            location_requirement="manual_required",
+        )
+        ledger = RevisionLedger("round-manual-preflight", patches=[patch], response_units=[unit])
+        legacy_item = {
+            "id": "T1",
+            "reviewer": patch.reviewer,
+            "comment": patch.comment,
+            "proposed_response": patch.proposed_response,
+            "status": "planned",
+            "targets": [operation.to_legacy_target()],
+        }
+        legacy_item["targets"][0]["source_sha256"] = HASH_A
+        legacy_item["preflight_fingerprint"] = revision_targets_fingerprint(legacy_item)
+        ledger.record_legacy_preflight(
+            {
+                "preflight_items": [{
+                    "revision_item_id": "T1",
+                    "preflight_fingerprint": legacy_item["preflight_fingerprint"],
+                }]
+            },
+            {"revision_items": [legacy_item]},
+            report_id="preflight-manual",
+        )
+        self.assertEqual(patch.status, "preflighted")
+        self.assertIsNone(patch.operations[0].location_phrase)
+        self.assertEqual(patch.operations[0].part, "word/header1.xml")
+
     def test_apply_and_verification_reports_update_revision_ledger(self):
         operation = _operation()
         patch = Patch(
