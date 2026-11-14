@@ -62,7 +62,20 @@ The generated Workflow Ledger is the round's control plane. It preserves the pen
 
 Every Patch operation must be fully specified and supported by its evidence IDs. Never infer replacement text from a reviewer comment alone, silently choose between ambiguous targets, or modify a source DOCX. If a target is unresolved, keep its task blocked or pending clarification and do not add an executable Patch.
 
-The exact operations and proposed response become part of the author-approval fingerprint. Finish preparing them before asking the author to authorize the task. Then authorize only the selected, fully prepared tasks:
+Reviewer attribution is separate from task identity. Populate reviewer_map.json so each source comment ID retains its actual reviewer label. For a task combining comments from different reviewers, use this nested form:
+
+    {
+      "T1": {
+        "comment_ids": {
+          "1": "Reviewer 1",
+          "2": "Reviewer 2"
+        }
+      }
+    }
+
+The RevisionLedger will label the Patch with the distinct reviewers involved and each ResponseUnit with the reviewer attached to its own comment ID. Do not let one task-level reviewer label overwrite the identities of comments from other reviewers. Without an explicit map, the builder uses the generic label "Reviewer".
+
+The exact operations, proposed response and reviewer attribution become part of the author-approval fingerprint. Finish preparing them before asking the author to authorize the task. Then authorize only the selected, fully prepared tasks:
 
     python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 T2 --plan-approved --actor "Human Author"
 
@@ -72,7 +85,7 @@ Use the actual task IDs. This command is the explicit transition from planned to
 
 Build the typed Patch/ResponseUnit records from the current conflict-free ready batch:
 
-    python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --out revision_ledger.json
+    python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --reviewer-map reviewer_map.json --out revision_ledger.json
 
 The scheduler selects only ready tasks that do not conflict on target groups and whose dependencies are satisfied. Use --task-ids only to select a subset of that ready batch; it cannot bypass a dependency or conflict. When later batches become ready, run the command again against the same Workflow Ledger and RevisionLedger paths so the new batch is merged without erasing prior Patch history.
 
