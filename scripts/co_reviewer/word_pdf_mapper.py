@@ -225,7 +225,6 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
                 raise WordPdfMappingError(
                     f"No current RevisionDocument is registered for existing anchor role {role!r}."
                 )
-            phrase = _validate_mapping_phrase(unit.location_phrase)
             clean_path = document.working_clean_file
             if not clean_path or not document.working_clean_sha256:
                 raise WordPdfMappingError(
@@ -234,6 +233,22 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
             source = Path(clean_path).expanduser().resolve()
             if not source.is_file() or sha256_file(source) != document.working_clean_sha256:
                 raise WordPdfMappingError(f"Working Clean View is missing or stale: {source}")
+            if unit.location_requirement == "manual_required":
+                if not unit.anchor_evidence_id or not unit.anchor_part or unit.anchor_p_idx is None:
+                    raise WordPdfMappingError(
+                        f"Manual no-change ResponseUnit {unit.response_unit_id} lost its confirmed Clean anchor evidence."
+                    )
+                # Word still exports this role's current final DOCX/PDF. The
+                # anchor is verified in the current Clean part separately;
+                # page/line is entered explicitly by the author.
+                jobs.setdefault(role, [])
+                continue
+            phrase = _validate_mapping_phrase(unit.location_phrase)
+            if unit.anchor_part != "word/document.xml":
+                raise WordPdfMappingError(
+                    f"Existing anchor {unit.response_unit_id} is in {unit.anchor_part}; "
+                    "set manual_required for an explicit non-body locator."
+                )
             locator_id = f"anchor:{unit.anchor_evidence_id}"
             jobs.setdefault(role, []).append(MappingJob(
                 response_unit_id=unit.response_unit_id,
