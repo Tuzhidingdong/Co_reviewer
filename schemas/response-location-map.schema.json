@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Co_Reviewer Word/PDF Response Location Map",
-  "description": "Location evidence produced from Microsoft Word COM pagination and verified against an exported PDF.",
+  "description": "Location evidence and continuous line positions produced by Microsoft Word COM. The exported PDF is retained and SHA-256 bound; no PDF text extraction is used to derive page or line values.",
   "type": "object",
   "required": [
     "schema_version",
@@ -22,7 +22,7 @@
     "line_numbering_policy": { "const": "continuous-per-document-v1" },
     "documents": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {
         "type": "object",
         "required": [
@@ -42,6 +42,17 @@
           "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
           "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
           "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "reused": { "type": "boolean" },
+          "refreshed_fields": {
+            "type": "object",
+            "properties": {
+              "SEQ": { "type": "integer", "minimum": 0 },
+              "REF": { "type": "integer", "minimum": 0 },
+              "PAGE": { "type": "integer", "minimum": 0 },
+              "PAGEREF": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
           "quality_report_file": { "type": "string", "minLength": 1 },
           "quality_report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
         },
@@ -64,7 +75,7 @@
     },
     "response_units": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {
         "type": "object",
         "required": ["response_unit_id", "location_map_fingerprint", "final_locations"],
@@ -88,6 +99,8 @@
                 "target_sha256",
                 "patch_id",
                 "operation_id",
+                "locator_id",
+                "source_clean_sha256",
                 "location_map_id",
                 "mapping_fingerprint"
               ],
@@ -101,8 +114,10 @@
                 "line_start": { "type": "integer", "minimum": 1 },
                 "line_end": { "type": "integer", "minimum": 1 },
                 "target_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "patch_id": { "type": "string", "minLength": 1 },
-                "operation_id": { "type": "string", "minLength": 1 },
+                "patch_id": { "type": ["string", "null"] },
+                "operation_id": { "type": ["string", "null"] },
+                "locator_id": { "type": "string", "minLength": 1 },
+                "source_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
                 "location_map_id": { "type": "string", "minLength": 1 },
                 "mapping_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
               },
@@ -112,7 +127,20 @@
         },
         "additionalProperties": false
       }
-    }
+    },
+    "skipped_response_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["response_unit_id", "reason"],
+        "properties": {
+          "response_unit_id": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "document_refresh_policy": { "type": "string", "minLength": 1 }
   },
   "additionalProperties": false
 }

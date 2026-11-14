@@ -152,6 +152,39 @@
           "type": "array",
           "items": { "$ref": "revision-ledger.schema.json#/$defs/patchOperation" }
         },
+        "response_unit_specs": {
+          "type": "array",
+          "description": "Explicit per-reviewer-comment disposition. no_change must name confirmed source anchor evidence; it is never inferred from a missing Patch.",
+          "items": {
+            "type": "object",
+            "required": ["comment_id", "disposition", "location_requirement"],
+            "properties": {
+              "comment_id": { "type": ["string", "integer"] },
+              "disposition": { "enum": ["revised", "reply_only", "no_change", "clarification_needed"] },
+              "location_requirement": { "enum": ["required", "existing_anchor_required", "not_required", "manual_required"] },
+              "resolution_reason": { "type": "string" },
+              "anchor_evidence_id": { "type": "string", "minLength": 1 }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "disposition": { "const": "no_change" } }, "required": ["disposition"] },
+                "then": {
+                  "required": ["anchor_evidence_id"],
+                  "properties": { "location_requirement": { "const": "existing_anchor_required" } }
+                }
+              },
+              {
+                "if": { "properties": { "disposition": { "const": "reply_only" } }, "required": ["disposition"] },
+                "then": { "properties": { "location_requirement": { "const": "not_required" } } }
+              },
+              {
+                "if": { "properties": { "disposition": { "const": "clarification_needed" } }, "required": ["disposition"] },
+                "then": { "properties": { "location_requirement": { "not": { "const": "not_required" } } } }
+              }
+            ],
+            "additionalProperties": false
+          }
+        },
         "dependencies": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },

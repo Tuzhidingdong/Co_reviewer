@@ -70,7 +70,8 @@
         "part",
         "find",
         "replace",
-        "evidence_ids"
+        "evidence_ids",
+        "source_comment_ids"
       ],
       "properties": {
         "operation_id": {
@@ -125,6 +126,13 @@
           },
           "uniqueItems": true
         },
+        "source_comment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "location_phrase": { "type": ["string", "null"], "maxLength": 255 },
         "target_ref": {
           "oneOf": [
             {
@@ -416,7 +424,9 @@
         "line_end",
         "pdf_sha256",
         "location_map_id",
-        "mapping_fingerprint"
+        "mapping_fingerprint",
+        "locator_id",
+        "source_clean_sha256"
       ],
       "properties": {
         "document": {
@@ -455,6 +465,8 @@
           "type": ["string", "null"],
           "pattern": "^[a-f0-9]{64}$"
         },
+        "locator_id": { "type": "string", "minLength": 1 },
+        "source_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "pdf_file": {
           "type": "string",
           "minLength": 1,
@@ -499,6 +511,10 @@
         "linked_task_ids",
         "linked_patch_ids",
         "linked_targets",
+        "linked_operation_ids",
+        "disposition",
+        "location_requirement",
+        "resolution_reason",
         "status",
         "semantic_review_confirmed",
         "final_locations"
@@ -537,6 +553,19 @@
           },
           "uniqueItems": true
         },
+        "linked_operation_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "disposition": { "enum": ["revised", "reply_only", "no_change", "clarification_needed"] },
+        "location_requirement": { "enum": ["required", "existing_anchor_required", "not_required", "manual_required"] },
+        "resolution_reason": { "type": "string" },
+        "anchor_evidence_id": { "type": ["string", "null"] },
+        "anchor_document": { "type": ["string", "null"] },
+        "anchor_part": { "type": ["string", "null"] },
+        "anchor_p_idx": { "type": ["integer", "null"], "minimum": 0 },
+        "location_phrase": { "type": ["string", "null"], "maxLength": 255 },
         "linked_targets": {
           "type": "array",
           "items": {
@@ -631,9 +660,7 @@
           },
           "then": {
             "required": [
-              "verification_report_id",
-              "location_map_file",
-              "location_map_file_sha256"
+              "verification_report_id"
             ],
             "properties": {
               "semantic_review_confirmed": {
@@ -677,19 +704,50 @@
         },
         {
           "if": {
-            "required": [
-              "status"
-            ],
+            "required": ["status"],
+            "properties": { "status": { "const": "completed" } }
+          },
+          "then": { "required": ["completed_at_utc"] }
+        },
+        {
+          "if": {
+            "required": ["disposition"],
+            "properties": { "disposition": { "const": "no_change" } }
+          },
+          "then": {
+            "required": ["anchor_evidence_id", "anchor_document", "anchor_part", "anchor_p_idx"],
+            "properties": { "location_requirement": { "const": "existing_anchor_required" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["disposition"],
+            "properties": { "disposition": { "const": "reply_only" } }
+          },
+          "then": { "properties": { "location_requirement": { "const": "not_required" } } }
+        },
+        {
+          "if": {
+            "required": ["disposition"],
+            "properties": { "disposition": { "const": "clarification_needed" } }
+          },
+          "then": { "properties": { "status": { "const": "blocked" } } }
+        },
+        {
+          "if": {
+            "required": ["status", "location_requirement"],
             "properties": {
-              "status": {
-                "const": "completed"
-              }
+              "status": { "enum": ["location_mapped", "completed"] },
+              "location_requirement": { "const": "not_required" }
             }
           },
           "then": {
-            "required": [
-              "completed_at_utc"
-            ]
+            "properties": {
+              "final_locations": { "maxItems": 0 },
+              "location_map_fingerprint": { "type": "null" },
+              "location_map_file": { "type": "null" },
+              "location_map_file_sha256": { "type": "null" }
+            }
           }
         }
       ],
