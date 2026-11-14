@@ -383,10 +383,7 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "output_sha256": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": "string",
           "pattern": "^[a-f0-9]{64}$"
         },
         "working_clean_file": {
@@ -425,6 +422,7 @@
         "pdf_sha256",
         "location_map_id",
         "mapping_fingerprint",
+        "output_sha256",
         "locator_id",
         "source_clean_sha256"
       ],
