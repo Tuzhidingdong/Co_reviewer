@@ -76,6 +76,7 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "source_comment_ids", "target_documents", "evidence", "proposed_action",
     "targets", "dependencies", "target_groups", "readiness",
     "unresolved_questions", "confidence", "requires_user_approval",
+    "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids",
 )
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -1072,6 +1073,43 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         } if isinstance(raw_groups, (list, tuple)) else set()
         if target_refs and not expected_groups.issubset(group_set):
             errors.append(f"Task {task_id} target_groups omit one or more stable TargetRefs.")
+        raw_patch_operations = task.get("patch_operations", [])
+        if not isinstance(raw_patch_operations, list):
+            errors.append(f"Task {task_id} patch_operations must be an array.")
+            raw_patch_operations = []
+        if task_type == "response_only" and raw_patch_operations:
+            errors.append(f"Response-only task {task_id} cannot contain DOCX patch operations.")
+        if raw_patch_operations:
+            from .revision_models import PatchOperation, RevisionModelError
+            operation_ids: set[str] = set()
+            for operation_index, raw_operation in enumerate(raw_patch_operations):
+                prefix = f"Task {task_id} patch_operations[{operation_index}]"
+                try:
+                    operation = PatchOperation.from_mapping(
+                        raw_operation,
+                        fallback_id=f"{task_id}-OP{operation_index + 1:03d}",
+                    )
+                    if operation.operation_id in operation_ids:
+                        errors.append(f"{prefix} duplicates operation_id.")
+                    operation_ids.add(operation.operation_id)
+                    if operation.document not in {
+                        target.get("document")
+                        for target in task.get("targets", [])
+                        if isinstance(target, Mapping)
+                    }:
+                        errors.append(
+                            f"{prefix} document role is not represented in the task's evidence-linked targets."
+                        )
+                    if operation.evidence_ids:
+                        known_evidence_ids = {
+                            row.get("evidence_id")
+                            for row in task.get("evidence", [])
+                            if isinstance(row, Mapping)
+                        }
+                        if not set(operation.evidence_ids).issubset(known_evidence_ids):
+                            errors.append(f"{prefix} refers to unknown task evidence IDs.")
+                except (RevisionModelError, TypeError, ValueError) as exc:
+                    errors.append(f"{prefix} is invalid: {exc}")
         if task_type == "response_only" and (
             task.get("target_groups") != [] or target_refs
         ):
