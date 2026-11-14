@@ -211,7 +211,7 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
     for unit in ledger.response_units:
         if unit.disposition == "clarification_needed" or unit.status == "blocked":
             continue
-        if unit.location_requirement in {"not_required", "manual_required"}:
+        if unit.location_requirement == "not_required":
             continue
         if not unit.semantic_review_confirmed or unit.status not in {"verified", "location_mapped", "completed"}:
             continue
@@ -244,7 +244,7 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
             ))
             continue
 
-        if unit.disposition != "revised" or unit.location_requirement != "required":
+        if unit.disposition != "revised" or unit.location_requirement not in {"required", "manual_required"}:
             continue
         if not unit.linked_operation_ids:
             raise WordPdfMappingError(
@@ -271,6 +271,24 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
                     f"Patch {patch.patch_id} is {patch.status}, not verified; "
                     f"mapping for {unit.response_unit_id} is blocked."
                 )
+            if unit.location_requirement == "manual_required":
+                document = documents_by_role.get(operation.document)
+                if document is None:
+                    raise WordPdfMappingError(
+                        f"No current RevisionDocument is registered for role {operation.document!r}."
+                    )
+                clean_path = document.working_clean_file
+                if not clean_path or not document.working_clean_sha256:
+                    raise WordPdfMappingError(
+                        f"{operation.document} has no hash-bound Working Clean View for manual location export."
+                    )
+                source = Path(clean_path).expanduser().resolve()
+                if not source.is_file() or sha256_file(source) != document.working_clean_sha256:
+                    raise WordPdfMappingError(f"Working Clean View is missing or stale: {source}")
+                # An empty role job list still asks Word to produce the final DOCX/PDF;
+                # the author then records the non-body/table locator explicitly.
+                jobs.setdefault(operation.document, [])
+                continue
             if operation.part != "word/document.xml":
                 raise WordPdfMappingError(
                     f"Patch {patch.patch_id}/{operation_id} targets {operation.part}; "
@@ -825,6 +843,8 @@ def generate_word_pdf_location_map(
                 "operation_id": job.operation_id,
                 "locator_id": job.locator_id,
                 "source_clean_sha256": ledger_document.working_clean_sha256,
+                "mapping_method": "word_com",
+                "locator_text": None,
             })
 
     location_map_id = "word-pdf-" + uuid.uuid4().hex
