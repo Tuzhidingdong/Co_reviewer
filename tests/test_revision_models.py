@@ -697,6 +697,101 @@ class RevisionModelsTests(unittest.TestCase):
         with self.assertRaisesRegex(RevisionModelError, "cover exactly its DOCX outputs"):
             RevisionLedger("round-partial-output-hash", patches=[patch])
 
+    def test_incremental_batch_merge_preserves_history_and_reopens_changed_response(self):
+        first_patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="We clarified the statement.",
+            operations=[_operation(operation_id="P1-OP")],
+        )
+        response = ResponseUnit(
+            response_unit_id="RU-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify.",
+            response_text="We clarified the statement.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="response-review-1",
+        )
+        round_ledger = RevisionLedger(
+            "round-incremental",
+            patches=[first_patch],
+            response_units=[response],
+            workflow_ledger_fingerprint=HASH_A,
+            workflow_task_fingerprints={"T1": HASH_B},
+        )
+        second_patch = Patch(
+            patch_id="P2",
+            task_id="T2",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="We clarified the statement with the dependent result.",
+            operations=[_operation(
+                operation_id="P2-OP",
+                input_file="Manuscript_r1.docx",
+                output_file="Manuscript_r2.docx",
+            )],
+        )
+        incoming_response = ResponseUnit(
+            response_unit_id="RU-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify.",
+            response_text="We clarified the statement with the dependent result.",
+            linked_task_ids=["T1", "T2"],
+            linked_patch_ids=["P2"],
+            linked_targets=[{
+                "document": "Manuscript",
+                "location": "Updated Results",
+                "output_file": "Manuscript_r2.docx",
+            }],
+            status="draft",
+        )
+        addition = RevisionLedger(
+            "round-incremental",
+            patches=[second_patch],
+            response_units=[incoming_response],
+            workflow_ledger_fingerprint=HASH_C,
+            workflow_task_fingerprints={"T1": HASH_B, "T2": HASH_A},
+        )
+        round_ledger.merge_batch(addition)
+        self.assertEqual(
+            [patch.patch_id for patch in round_ledger.patches],
+            ["P1", "P2"],
+        )
+        self.assertEqual(round_ledger.patches[0].status, "planned")
+        self.assertEqual(response.linked_patch_ids, ["P1", "P2"])
+        self.assertEqual(response.status, "draft")
+        self.assertFalse(response.semantic_review_confirmed)
+        self.assertIsNone(response.verification_report_id)
+        self.assertEqual(
+            round_ledger.workflow_task_fingerprints,
+            {"T1": HASH_B, "T2": HASH_A},
+        )
+        self.assertEqual(round_ledger.workflow_ledger_fingerprint, HASH_C)
+
+    def test_incremental_batch_merge_rejects_changed_prior_task_scope(self):
+        existing = RevisionLedger(
+            "round-no-drift",
+            patches=[],
+            workflow_ledger_fingerprint=HASH_A,
+            workflow_task_fingerprints={"T1": HASH_B},
+        )
+        incoming = RevisionLedger(
+            "round-no-drift",
+            patches=[],
+            workflow_ledger_fingerprint=HASH_C,
+            workflow_task_fingerprints={"T1": HASH_C, "T2": HASH_A},
+        )
+        with self.assertRaisesRegex(RevisionModelError, "Workflow task scope changed"):
+            existing.merge_batch(incoming)
+        self.assertEqual(existing.workflow_task_fingerprints, {"T1": HASH_B})
+
     def test_revision_ledger_round_trips_without_losing_patch_lineage(self):
         patch = Patch(
             patch_id="P2",
