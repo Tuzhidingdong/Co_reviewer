@@ -238,6 +238,16 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         workflow_path = self.root / "workflow_ledger.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_authorize_workflow_tasks(Namespace(
+                workflow_ledger=str(workflow_path),
+                ids=["T2"],
+                actor="Human Author",
+                plan_approved=True,
+            )), 0)
+        authorized_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(authorized_workflow["tasks"][0]["status"], "ready")
+        self.assertEqual(len(authorized_workflow["events"]), 1)
+        with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_build_revision_ledger(Namespace(
                 workflow_ledger=str(workflow_path),
                 document_paths=None,
@@ -444,6 +454,22 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(completed.response_units[0].status, "completed")
         self.assertEqual(len(completed.events), 3)
+
+    def test_workflow_task_authorization_parser_requires_explicit_plan_approval(self):
+        parser = cli.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args([
+                "approve-workflow-tasks",
+                "--workflow-ledger", str(self.root / "workflow.json"),
+                "--ids", "T1",
+            ])
+        parsed = parser.parse_args([
+            "approve-workflow-tasks",
+            "--workflow-ledger", str(self.root / "workflow.json"),
+            "--ids", "T1",
+            "--plan-approved",
+        ])
+        self.assertTrue(parsed.plan_approved)
 
     def test_response_parser_requires_exactly_one_input(self):
         parser = cli.build_parser()
