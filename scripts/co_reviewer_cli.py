@@ -3051,7 +3051,7 @@ def build_parser():
     mrloc = sub.add_parser("record-manual-response-locations", help="Record explicit author-confirmed table or non-body locators against Word-exported final DOCX/PDF files.")
     mrloc.add_argument("--ledger", required=True)
     mrloc.add_argument("--word-map", required=True, help="Word COM map produced by map-response-locations; its role outputs must match the current Working Clean hashes.")
-    mrloc.add_argument("--input", required=True, help="JSON entries with response_unit_id, operation_id, locator_text and optional page/line_start/line_end.")
+    mrloc.add_argument("--input", required=True, help="JSON entries with response_unit_id, operation_id (revised) or locator_id=anchor:<evidence_id> (no_change), locator_text and optional page/line_start/line_end.")
     mrloc.add_argument("--out", required=True, help="New manual-location map JSON path; existing files are never overwritten.")
     mrloc.add_argument("--actor", default="Human Author")
     mrloc.set_defaults(func=cmd_record_manual_response_locations)
