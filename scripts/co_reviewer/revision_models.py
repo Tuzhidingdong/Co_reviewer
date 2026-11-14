@@ -1073,10 +1073,15 @@ class RevisionLedger:
                 "Legacy revision plan contains Patch IDs that are unknown, superseded "
                 "or blocked in the RevisionLedger: " + ", ".join(sorted(unexpected))
             )
-        for patch_id, expected_item in expected.items():
-            actual_item = actual.get(patch_id)
-            if not isinstance(actual_item, Mapping):
-                raise RevisionModelError(f"Legacy revision plan item {patch_id} is invalid.")
+        # A legacy plan is a single executable batch, not a serialization of
+        # every active Patch in the round. Validate every item it contains while
+        # allowing already-applied/verified Patches to remain only in the ledger.
+        for patch_id, actual_item in actual.items():
+            expected_item = expected.get(patch_id)
+            if not isinstance(expected_item, Mapping) or not isinstance(actual_item, Mapping):
+                raise RevisionModelError(
+                    f"Legacy revision plan item {patch_id} is unknown, blocked, superseded or invalid."
+                )
             for field_name in ("reviewer", "comment", "proposed_response"):
                 if actual_item.get(field_name, "") != expected_item[field_name]:
                     raise RevisionModelError(
@@ -1726,13 +1731,22 @@ class RevisionLedger:
                 continue
             current = self.response_units[index]
             if (
-                current.reviewer != incoming.reviewer
-                or current.comment_id != incoming.comment_id
+                current.comment_id != incoming.comment_id
                 or current.comment_text != incoming.comment_text
+                or (
+                    current.reviewer != incoming.reviewer
+                    and current.reviewer != "Reviewer"
+                    and incoming.reviewer != "Reviewer"
+                )
             ):
                 raise RevisionModelError(
                     f"ResponseUnit {incoming.response_unit_id} no longer matches its original reviewer comment."
                 )
+            # "Reviewer" is the deliberate no-map fallback, not a real identity.
+            # Upgrade it when an explicit label arrives, and never let a later
+            # fallback overwrite a reviewer label already recorded in this round.
+            if current.reviewer == "Reviewer" and incoming.reviewer != "Reviewer":
+                current.reviewer = incoming.reviewer
             linked_patches = list(dict.fromkeys(
                 current.linked_patch_ids + incoming.linked_patch_ids
             ))
