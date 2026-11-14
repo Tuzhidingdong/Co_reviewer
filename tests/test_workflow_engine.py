@@ -176,6 +176,15 @@ class WorkflowEngineTests(unittest.TestCase):
         tasks[0] = _verified(_task("A"))
         self.assertEqual(select_ready_tasks(tasks), ["B", "C"])
 
+    def test_ready_batch_never_selects_two_tasks_on_the_same_target_group(self):
+        tasks = [
+            _task("A", [], "ready", ["shared"], 1),
+            _task("B", [], "ready", ["shared"], 2),
+            _task("C", [], "ready", ["independent"], 3),
+            _task("D", [], "ready", [], 4),
+        ]
+        self.assertEqual(select_ready_tasks(tasks), ["A", "C", "D"])
+
     def test_lifecycle_requires_preflight_human_approval_and_semantic_review(self):
         task = _task("T1")
         with self.assertRaisesRegex(WorkflowValidationError, "ready -> applied"):
