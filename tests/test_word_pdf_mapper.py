@@ -207,6 +207,32 @@ class WordPdfMapperContractTests(unittest.TestCase):
         jobs = build_mapping_jobs(ledger)
         self.assertEqual(jobs, {"Manuscript": []})
 
+    def test_manual_required_no_change_anchor_exports_role_without_auto_page_line_job(self):
+        unit = ResponseUnit(
+            response_unit_id="RU-MANUAL-NOCHANGE",
+            reviewer="Reviewer 2",
+            comment_id="C2",
+            comment_text="The table already contains this explanation.",
+            response_text="We refer to the existing Table 2 description.",
+            disposition="no_change",
+            location_requirement="manual_required",
+            resolution_reason="The confirmed anchor is inside a table cell.",
+            anchor_evidence_id="E-ANCHOR-2",
+            anchor_document="Manuscript",
+            anchor_part="word/document.xml",
+            anchor_p_idx=0,
+            anchor_source_excerpt="Existing table description",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-NOCHANGE",
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-manual-nochange",
+            documents=[self.document],
+            response_units=[unit],
+        )
+        self.assertEqual(build_mapping_jobs(ledger), {"Manuscript": []})
+
     def test_manual_location_cli_records_operation_bound_table_locator(self):
         operation = PatchOperation.from_mapping({
             **self.operation.to_dict(),
