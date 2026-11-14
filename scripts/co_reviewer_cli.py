@@ -909,6 +909,14 @@ def render_response_letter(plan: dict[str, Any]) -> str:
         response = str(item.get("proposed_response", "")).strip()
         if status == "verified":
             lines.extend(["**Response**", "", response or "[Response text required; not generated automatically.]", ""])
+        elif status == "location_pending":
+            lines.extend([
+                "**Proposed response — SEMANTIC REVIEWED; FINAL PDF PAGE/LINE MAPPING PENDING**", "",
+                response or "[Response text required; Co_Reviewer will not invent a reply.]",
+                "",
+                "> Semantic review is recorded. Do not submit until final PDF page and line locations are mapped.",
+                ""
+            ])
         else:
             lines.extend([
                 f"**Proposed response — DRAFT ({status}; not yet verified)**", "",
