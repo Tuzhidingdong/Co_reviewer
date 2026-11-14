@@ -671,7 +671,8 @@ class RevisionModelsTests(unittest.TestCase):
                 "location_map_fingerprint": HASH_A,
                 "final_locations": [{
                     "document": "Manuscript",
-                    "output_file": "Manuscript_revised.docx",
+                    "output_file": str(self.marked_docx),
+                    "output_sha256": hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
                     "pdf_file": str(self.pdf_path),
                     "page": 3,
                     "line_start": 12,
@@ -681,6 +682,8 @@ class RevisionModelsTests(unittest.TestCase):
                     "mapping_fingerprint": HASH_A,
                     "locator_id": "anchor:E-ANCHOR",
                     "source_clean_sha256": self.clean_sha256,
+                    "mapping_method": "word_com",
+                    "locator_text": None,
                 }],
             }],
         }
