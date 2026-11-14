@@ -803,6 +803,9 @@ class RevisionLedger:
         patch_ids = [item.patch_id for item in self.patches]
         if len(patch_ids) != len(set(patch_ids)):
             errors.append("RevisionLedger contains duplicate patch_id values.")
+        all_operation_ids = [operation.operation_id for patch in self.patches for operation in patch.operations]
+        if len(all_operation_ids) != len(set(all_operation_ids)):
+            errors.append("RevisionLedger contains duplicate PatchOperation operation_id values.")
         response_ids = [item.response_unit_id for item in self.response_units]
         if len(response_ids) != len(set(response_ids)):
             errors.append("RevisionLedger contains duplicate response_unit_id values.")
@@ -898,6 +901,7 @@ class RevisionLedger:
             for patch in self.patches
             for operation in patch.operations
         }
+        documents_by_role = {document.role: document for document in self.documents}
         for unit in self.response_units:
             for operation_id in unit.linked_operation_ids:
                 owner = operation_owners.get(operation_id)
@@ -915,6 +919,25 @@ class RevisionLedger:
                 f"ResponseUnit {unit.response_unit_id}: {error}"
                 for error in unit.validate_location_evidence()
             )
+            if unit.status in {"location_mapped", "completed"}:
+                expected_locator_ids = set(unit.linked_operation_ids)
+                if unit.disposition == "no_change" and unit.anchor_evidence_id:
+                    expected_locator_ids = {f"anchor:{unit.anchor_evidence_id}"}
+                actual_locator_ids = {location.locator_id for location in unit.final_locations if location.locator_id}
+                if expected_locator_ids and expected_locator_ids - actual_locator_ids:
+                    errors.append(
+                        f"ResponseUnit {unit.response_unit_id} is missing mapped locator(s): "
+                        + ", ".join(sorted(expected_locator_ids - actual_locator_ids))
+                    )
+                for location in unit.final_locations:
+                    current_document = documents_by_role.get(location.document)
+                    if current_document is None:
+                        errors.append(f"ResponseUnit {unit.response_unit_id} maps unknown document role {location.document}.")
+                    elif location.source_clean_sha256 != current_document.working_clean_sha256:
+                        errors.append(
+                            f"ResponseUnit {unit.response_unit_id} has stale page/line positions for {location.document}; "
+                            "the current Working Clean hash changed and that whole document role must be remapped."
+                        )
             unknown = set(unit.linked_patch_ids) - known_patches
             if unknown:
                 errors.append(
@@ -1019,6 +1042,8 @@ class RevisionLedger:
                     location_map_id=row.get("location_map_id"),
                     mapping_fingerprint=row.get("mapping_fingerprint"),
                     output_sha256=row.get("output_sha256"),
+                    locator_id=row.get("locator_id"),
+                    source_clean_sha256=row.get("source_clean_sha256"),
                 )
                 for row in raw_locations if isinstance(row, Mapping)
             ]
@@ -1194,7 +1219,7 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Legacy revision plan target count differs for patch {patch_id}."
                 )
-            fields = ("document", "input_file", "output_file", "part", "p_idx", "find", "replace", "location")
+            fields = ("document", "input_file", "output_file", "part", "p_idx", "find", "replace", "location", "operation_id", "source_comment_ids", "location_phrase")
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
                 if not isinstance(actual_target, Mapping) or any(
                     actual_target.get(field) != expected_target.get(field)
@@ -1403,7 +1428,14 @@ class RevisionLedger:
                 source_hash = _sha256(
                     target.get("source_sha256"), "source_sha256"
                 )
-                updated_operations.append(replace(operation, source_sha256=source_hash))
+                if target.get("operation_id") != operation.operation_id:
+                    raise RevisionModelError(f"Preflight operation ID mismatch for Patch {patch_id}.")
+                if list(target.get("source_comment_ids", [])) != list(operation.source_comment_ids):
+                    raise RevisionModelError(f"Preflight source_comment_ids changed for PatchOperation {operation.operation_id}.")
+                phrase = target.get("location_phrase")
+                if not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 255:
+                    raise RevisionModelError(f"Preflight did not generate a valid unique location_phrase for PatchOperation {operation.operation_id}.")
+                updated_operations.append(replace(operation, source_sha256=source_hash, location_phrase=phrase))
             patch.operations = updated_operations
             patch.preflight_fingerprint = fingerprint
             patch.preflight_report_id = report_id
@@ -2373,6 +2405,10 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             )
             for item in row.get("final_locations", [])
         ]
+        legacy_unattributed = (
+            "disposition" not in row
+            or ("linked_patch_ids" in row and row.get("linked_patch_ids") and not row.get("linked_operation_ids"))
+        )
         response_units.append(ResponseUnit(
             response_unit_id=row.get("response_unit_id"),
             reviewer=row.get("reviewer"),
@@ -2391,8 +2427,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             anchor_part=row.get("anchor_part"),
             anchor_p_idx=row.get("anchor_p_idx"),
             location_phrase=row.get("location_phrase"),
-            status=("blocked" if row.get("disposition") is None and not row.get("linked_patch_ids") else row.get("status", "draft")),
-            semantic_review_confirmed=row.get("semantic_review_confirmed", False),
+            status=("blocked" if legacy_unattributed else row.get("status", "draft")),
+            semantic_review_confirmed=(False if legacy_unattributed else row.get("semantic_review_confirmed", False)),
             verification_report_id=row.get("verification_report_id"),
             location_map_fingerprint=row.get("location_map_fingerprint"),
             location_map_file=row.get("location_map_file"),
