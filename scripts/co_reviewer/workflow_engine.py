@@ -1045,7 +1045,12 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                 )
             except (IdentityValidationError, TypeError, ValueError) as exc:
                 errors.append(f"{prefix} is invalid: {exc}")
-        if target_refs and not expected_groups.issubset(set(task.get("target_groups", []))):
+        raw_groups = task.get("target_groups", [])
+        group_set = {
+            value for value in raw_groups
+            if isinstance(value, str)
+        } if isinstance(raw_groups, (list, tuple)) else set()
+        if target_refs and not expected_groups.issubset(group_set):
             errors.append(f"Task {task_id} target_groups omit one or more stable TargetRefs.")
         if task_type == "response_only" and (
             task.get("target_groups") != [] or target_refs
@@ -1060,7 +1065,8 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         events = []
     known_task_ids = {
         task.get("task_id")
-        for task in tasks if isinstance(task, Mapping)
+        for task in tasks
+        if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
     }
     seen_event_ids: set[str] = set()
     for index, event in enumerate(events):
