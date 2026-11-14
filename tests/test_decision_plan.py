@@ -162,6 +162,92 @@ class DecisionPlanValidationTests(unittest.TestCase):
             self.assertTrue(audit_path.is_file())
             self.assertTrue(inventory_path.is_file())
 
+    def test_identity_manifest_promotes_stable_targetrefs_into_workflow_ledger(self):
+        from docx import Document
+        from co_reviewer.docx_identity import build_document_identity_manifest
+        from co_reviewer.identity import sha256_file
+
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "Manuscript.docx"
+            document = Document()
+            document.add_paragraph("The selected sample is ZB-01 and must remain consistent.")
+            document.save(source)
+            inventory[0]["file"] = str(source)
+            inventory[0]["source_sha256"] = sha256_file(source)
+            plan["source_files"][0]["file"] = str(source)
+            plan["source_files"][0]["sha256"] = sha256_file(source)
+            audit["source_files"][0]["file"] = str(source)
+            audit["source_files"][0]["sha256"] = sha256_file(source)
+            identity_manifest, _ = build_document_identity_manifest(inventory)
+            identity_path = root / "identity.json"
+            identity_path.write_text(json.dumps(identity_manifest), encoding="utf-8")
+            plan_path = root / "plan.json"
+            audit_path = root / "audit.json"
+            inventory_path = root / "inventory.json"
+            ledger_path = root / "ledger.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+            args = [
+                "--plan", str(plan_path),
+                "--audit", str(audit_path),
+                "--inventory", str(inventory_path),
+                "--identity-manifest", str(identity_path),
+                "--workflow-ledger-out", str(ledger_path),
+                "--revision-round-id", "round-stable-refs",
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 0)
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(ledger["documents"]), 2)
+            self.assertGreaterEqual(len(ledger["object_registry"]), 1)
+            self.assertEqual(
+                ledger["tasks"][0]["target_refs"][0]["object_type"],
+                "body_paragraph",
+            )
+            self.assertIn("|object=", ledger["tasks"][0]["target_groups"][0])
+
+    def test_identity_manifest_with_stale_source_hash_is_rejected(self):
+        from docx import Document
+        from co_reviewer.docx_identity import build_document_identity_manifest
+        from co_reviewer.identity import sha256_file
+
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "Manuscript.docx"
+            document = Document()
+            document.add_paragraph("The selected sample is ZB-01 and must remain consistent.")
+            document.save(source)
+            inventory[0]["file"] = str(source)
+            inventory[0]["source_sha256"] = sha256_file(source)
+            plan["source_files"][0]["file"] = str(source)
+            plan["source_files"][0]["sha256"] = sha256_file(source)
+            audit["source_files"][0]["file"] = str(source)
+            audit["source_files"][0]["sha256"] = sha256_file(source)
+            identity_manifest, _ = build_document_identity_manifest(inventory)
+            identity_manifest["documents"][0]["source_sha256"] = "0" * 64
+            identity_path = root / "identity.json"
+            identity_path.write_text(json.dumps(identity_manifest), encoding="utf-8")
+            plan_path = root / "plan.json"
+            audit_path = root / "audit.json"
+            inventory_path = root / "inventory.json"
+            ledger_path = root / "ledger.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            args = [
+                "--plan", str(plan_path),
+                "--audit", str(audit_path),
+                "--inventory", str(inventory_path),
+                "--identity-manifest", str(identity_path),
+                "--workflow-ledger-out", str(ledger_path),
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 2)
+            self.assertFalse(ledger_path.exists())
+
     def test_unknown_source_comment_id_is_rejected(self):
         plan, audit, inventory = fixture()
         plan["tasks"][0]["source_comment_ids"] = ["999"]

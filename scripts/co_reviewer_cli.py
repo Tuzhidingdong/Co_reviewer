@@ -1652,6 +1652,50 @@ def cmd_confirm_response_units(args):
     return 0
 
 
+def cmd_build_document_identity(args):
+    from co_reviewer.docx_identity import build_document_identity_manifest
+
+    inventory_path = Path(args.inventory).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    previous_path = (
+        Path(args.previous_manifest).expanduser().resolve()
+        if args.previous_manifest else None
+    )
+    protected_inputs = {inventory_path}
+    if previous_path:
+        protected_inputs.add(previous_path)
+    if output_path in protected_inputs:
+        raise ValueError("Identity manifest output must not overwrite an input file.")
+    if output_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite an existing identity manifest: {output_path}"
+        )
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    previous = (
+        json.loads(previous_path.read_text(encoding="utf-8"))
+        if previous_path else None
+    )
+    manifest, report = build_document_identity_manifest(
+        inventory,
+        previous_manifest=previous,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(output_path, manifest)
+    totals = report["totals"]
+    print(
+        f"[IDENTITY] {totals['documents']} document(s); {totals['objects']} object(s)."
+    )
+    print(
+        "[MATCH] "
+        f"native paraId={totals['matched_native_id']}; "
+        f"unique exact fingerprint={totals['matched_exact_fingerprint']}; "
+        f"new={totals['new_objects']}; "
+        f"ambiguous={totals['ambiguous_matches']}."
+    )
+    print(f"[OK] Identity manifest: {output_path}")
+    return 0
+
+
 def cmd_map_response_locations(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
     output_dir = Path(args.out_dir).expanduser().resolve()
@@ -2175,6 +2219,11 @@ def build_parser():
     cru.add_argument("--actor", default="Human Author")
     cru.add_argument("--semantic-review-confirmed", action="store_true", required=True)
     cru.set_defaults(func=cmd_confirm_response_units)
+    ident = sub.add_parser("build-document-identity", help="Parse source DOCX files into a persistent identity manifest; optionally match objects against a previous round.")
+    ident.add_argument("--inventory", required=True, help="Hash-bound workspace_inventory.json from inspect/audit.")
+    ident.add_argument("--previous-manifest", help="Optional prior identity manifest used for conservative object-ID reuse.")
+    ident.add_argument("--out", default="document_identity_manifest.json")
+    ident.set_defaults(func=cmd_build_document_identity)
     mloc = sub.add_parser("map-response-locations", help="Use Microsoft Word COM to paginate final Clean DOCX files, export PDFs and map verified Patch text to final page/line locations.")
     mloc.add_argument("--ledger", required=True)
     mloc.add_argument("--out-dir", required=True, help="New or empty directory for Word-final Clean DOCX and PDF artifacts.")

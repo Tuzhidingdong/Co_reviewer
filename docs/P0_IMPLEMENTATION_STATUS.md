@@ -121,7 +121,7 @@ Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip
 
 ## Remaining roadmap — in priority order
 
-1. **Complete parser-backed identity migration:** generate object registry records from real DOCX parts, match objects across revisions, normalize actual citation systems and retire paragraph-index scheduling keys.
+1. **Expand parser-backed identity coverage:** real DOCX parsing now creates document/object identities, reuses unique native paraIds and unique exact fingerprints across revisions, and converts plan targets to stable TargetRefs. Remaining acceptance: validate citation heuristics and broaden cross-version matching/complex object types; retain p_idx only as a location hint.
 2. **Complete the execution state machine:** integrate Patch batches directly with the Workflow Engine DAG and add cross-task conflict/rebase handling. Working Clean View and first-generation Patch supersession/replay prevention are now implemented. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
 3. **Validate the final-location producer on Windows:** the Word COM/PDF producer now exists; next acceptance must confirm Word pagination, continuous line numbers, PDF page correspondence and unchanged source files on the user's installed Word version.
 4. **End-to-end acceptance:** run all tests on Windows, then separately validate synthetic Word GUI/save-round-trip, multi-document iterative patching and final Response Letter consistency.

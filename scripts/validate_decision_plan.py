@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from co_reviewer.docx_identity import (
+    build_target_refs_by_task,
+    validate_manifest_sources,
+)
 from co_reviewer.workflow_engine import (
     build_workflow_ledger,
     build_workflow_schedule,
@@ -370,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--audit", required=True, help="review_audit_report.json used for this decision round")
     parser.add_argument("--inventory", required=True, help="workspace_inventory.json used for this decision round")
     parser.add_argument(
+        "--identity-manifest",
+        help="Optional parser-backed identity manifest; converts decision-plan p_idx/paraId anchors into stable TargetRefs.",
+    )
+    parser.add_argument(
         "--workflow-ledger-out",
         help="Optional path to persist the v0.5.1 Workflow Ledger JSON.",
     )
@@ -384,17 +392,32 @@ def main(argv: list[str] | None = None) -> int:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
         audit = json.loads(Path(args.audit).read_text(encoding="utf-8")) if args.audit else None
         inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8")) if args.inventory else None
+        identity_manifest = (
+            json.loads(Path(args.identity_manifest).read_text(encoding="utf-8"))
+            if args.identity_manifest else None
+        )
     except (OSError, json.JSONDecodeError) as exc:
         print(f"[INVALID] Cannot read decision-plan inputs: {exc}", file=sys.stderr)
         return 2
     errors = validate_decision_plan(plan, audit=audit, inventory=inventory)
+    target_refs_by_task: dict[str, list[dict[str, Any]]] = {}
+    if identity_manifest is not None:
+        errors.extend(validate_manifest_sources(identity_manifest, plan))
+        if not errors:
+            target_refs_by_task, target_errors = build_target_refs_by_task(
+                plan.get("tasks", []), identity_manifest
+            )
+            errors.extend(target_errors)
     if errors:
         print("[INVALID] Decision plan failed structural/provenance checks:")
         for error in errors:
             print(f"- {error}")
         return 2
     workflow_schedule = build_workflow_schedule(
-        workflow_tasks_from_decision_plan(plan["tasks"])
+        workflow_tasks_from_decision_plan(
+            plan["tasks"],
+            target_refs_by_task=target_refs_by_task if identity_manifest is not None else None,
+        )
     )
     print(f"[VALID] {len(plan['tasks'])} pending task(s); user approval remains required.")
     print("[GUARD] Evidence locations/excerpts, comment IDs, source hashes and task dependency graph passed.")
@@ -402,11 +425,17 @@ def main(argv: list[str] | None = None) -> int:
         f"[SCHEDULE] {len(workflow_schedule.task_order)} task(s); "
         f"{len(workflow_schedule.target_group_components)} target-group component(s)."
     )
+    if identity_manifest is not None:
+        print(
+            "[IDENTITY] Stable TargetRefs mapped: "
+            + str(sum(len(rows) for rows in target_refs_by_task.values()))
+        )
     if args.workflow_ledger_out:
         output_path = Path(args.workflow_ledger_out).expanduser().resolve()
         source_paths = {
             Path(value).expanduser().resolve()
-            for value in (args.plan, args.audit, args.inventory)
+            for value in (args.plan, args.audit, args.inventory, args.identity_manifest)
+            if value
         }
         if output_path in source_paths:
             print("[INVALID] Workflow Ledger output must not overwrite a plan, audit or inventory input.", file=sys.stderr)
@@ -423,6 +452,17 @@ def main(argv: list[str] | None = None) -> int:
                 plan,
                 revision_round_id=round_id,
                 created_at_utc=datetime.now(timezone.utc).isoformat(),
+                document_identities=(
+                    identity_manifest.get("documents", [])
+                    if identity_manifest is not None else None
+                ),
+                object_registry=(
+                    identity_manifest.get("objects", [])
+                    if identity_manifest is not None else None
+                ),
+                target_refs_by_task=(
+                    target_refs_by_task if identity_manifest is not None else None
+                ),
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(
