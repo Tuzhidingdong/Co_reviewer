@@ -103,6 +103,12 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(patch.operations[0].find, "old phrase")
         self.assertEqual(patch.operations[0].replace, "revised phrase")
 
+    def test_patch_operation_requires_explicit_source_comment_attribution(self):
+        payload = _operation().to_dict()
+        payload["source_comment_ids"] = []
+        with self.assertRaisesRegex(RevisionModelError, "requires at least one exact source_comment_id"):
+            PatchOperation.from_mapping(payload)
+
     def test_patch_refuses_inferred_or_missing_find_replace(self):
         with self.assertRaises(RevisionModelError):
             PatchOperation.from_mapping({
@@ -433,7 +439,7 @@ class RevisionModelsTests(unittest.TestCase):
             location_map_file_sha256=self.map_sha256,
             final_locations=[ResponseLocation(
                 document="Manuscript",
-                output_file="Manuscript_revised.docx",
+                output_file=str(self.marked_docx),
                 pdf_file=str(self.pdf_path),
                 page=3,
                 line_start=12,
@@ -441,6 +447,9 @@ class RevisionModelsTests(unittest.TestCase):
                 pdf_sha256=self.pdf_sha256,
                 location_map_id="map-001",
                 mapping_fingerprint=HASH_A,
+                output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+                locator_id="OP-001",
+                source_clean_sha256=self.clean_sha256,
             )],
         )
         draft_plan = response_units_to_legacy_plan([unit])
@@ -461,7 +470,7 @@ class RevisionModelsTests(unittest.TestCase):
                 location_map_fingerprint=HASH_A,
                 final_locations=[ResponseLocation(
                     document="Manuscript",
-                    output_file="Revised.docx",
+                    output_file=str(self.clean_docx),
                     pdf_file=str(self.pdf_path),
                     page=1,
                     line_start=1,
@@ -469,6 +478,9 @@ class RevisionModelsTests(unittest.TestCase):
                     pdf_sha256=self.pdf_sha256,
                     location_map_id="map-001",
                     mapping_fingerprint=HASH_A,
+                    output_sha256=self.clean_sha256,
+                    locator_id="OP-002",
+                    source_clean_sha256=self.clean_sha256,
                 )],
             )
 
@@ -510,7 +522,7 @@ class RevisionModelsTests(unittest.TestCase):
             location_map_file_sha256=self.map_sha256,
             final_locations=[ResponseLocation(
                 document="Manuscript",
-                output_file="Manuscript_revised.docx",
+                output_file=str(self.marked_docx),
                 pdf_file=str(self.pdf_path),
                 page=1,
                 line_start=1,
@@ -518,6 +530,7 @@ class RevisionModelsTests(unittest.TestCase):
                 pdf_sha256=self.pdf_sha256,
                 location_map_id="fixture-map",
                 mapping_fingerprint=HASH_A,
+                output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
                 locator_id="anchor:E-STALE-ANCHOR",
                 source_clean_sha256=self.clean_sha256,
             )],
@@ -633,7 +646,7 @@ class RevisionModelsTests(unittest.TestCase):
         ledger = RevisionLedger("round-response-patch", documents=[self.document], patches=[patch], response_units=[unit])
         location = ResponseLocation(
             document="Manuscript",
-            output_file="Manuscript_revised.docx",
+            output_file=str(self.marked_docx),
             pdf_file=str(self.pdf_path),
             page=2,
             line_start=4,
@@ -641,6 +654,7 @@ class RevisionModelsTests(unittest.TestCase):
             pdf_sha256=self.pdf_sha256,
             location_map_id="map-002",
             mapping_fingerprint=HASH_A,
+            output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
             locator_id="OP-001",
             source_clean_sha256=self.clean_sha256,
         )
