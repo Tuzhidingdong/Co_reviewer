@@ -383,7 +383,10 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "output_sha256": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
         "working_clean_file": {
