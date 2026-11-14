@@ -264,6 +264,79 @@ class WorkingCleanViewTests(unittest.TestCase):
         self.assertEqual(report["validation"], "passed")
         self.assertEqual(report["removed_comment_parts"], ["word/comments.xml"])
 
+    def test_removes_extended_comment_parts_relationships_and_content_types_case_insensitively(self):
+        make_docx(self.original, [[("Keep this sentence.", False)]])
+        with zipfile.ZipFile(self.original, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+
+        comment_parts = {
+            "word/commentsExtended.xml": b'<w15:commentsEx xmlns:w15="urn:synthetic:w15"/>',
+            "word/commentsIds.xml": b'<w16cid:commentsIds xmlns:w16cid="urn:synthetic:w16cid"/>',
+            "word/commentsExtensible.xml": b'<w16cex:commentsExtensible xmlns:w16cex="urn:synthetic:w16cex"/>',
+            "word/people.xml": b'<w15:people xmlns:w15="urn:synthetic:w15"/>',
+        }
+        package.update(comment_parts)
+        rel_root = ET.fromstring(package["word/_rels/document.xml.rels"])
+        rel_types = {
+            "commentsExtended": "http://schemas.microsoft.com/office/word/2018/wordml/commentsExtended",
+            "commentsIds": "http://schemas.microsoft.com/office/word/2016/wordml/commentsIds",
+            "commentsExtensible": "http://schemas.microsoft.com/office/word/2018/wordml/commentsExtensible",
+            "people": "http://schemas.microsoft.com/office/word/2018/wordml/people",
+        }
+        for index, (part_name, relationship_type) in enumerate(rel_types.items(), 20):
+            ET.SubElement(rel_root, "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship", {
+                "Id": f"rId{index}",
+                "Type": relationship_type,
+                "Target": f"{part_name}.xml",
+            })
+        package["word/_rels/document.xml.rels"] = ET.tostring(
+            rel_root, encoding="utf-8", xml_declaration=True
+        )
+
+        content_root = ET.fromstring(package["[Content_Types].xml"])
+        for part_path in comment_parts:
+            ET.SubElement(content_root, "{http://schemas.openxmlformats.org/package/2006/content-types}Override", {
+                "PartName": f"/{part_path}",
+                "ContentType": "application/xml",
+            })
+        package["[Content_Types].xml"] = ET.tostring(
+            content_root, encoding="utf-8", xml_declaration=True
+        )
+
+        with zipfile.ZipFile(self.marked, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        create_working_clean_view(self.marked, self.clean)
+        cleaned, strip_report = strip_docx_comments_bytes(self.marked.read_bytes())
+        for payload in (self.clean.read_bytes(), cleaned):
+            with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+                names = {name.casefold() for name in archive.namelist()}
+                self.assertFalse(any(name in {
+                    "word/commentsextended.xml",
+                    "word/commentsids.xml",
+                    "word/commentsextensible.xml",
+                    "word/people.xml",
+                } for name in names))
+                rel_root = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+                self.assertFalse(any(
+                    "/comments" in child.attrib.get("Type", "").casefold()
+                    or "/people" in child.attrib.get("Type", "").casefold()
+                    for child in rel_root
+                ))
+                types_root = ET.fromstring(archive.read("[Content_Types].xml"))
+                self.assertFalse(any(
+                    child.attrib.get("PartName", "").casefold() in {
+                        "/word/commentsextended.xml",
+                        "/word/commentsids.xml",
+                        "/word/commentsextensible.xml",
+                        "/word/people.xml",
+                    }
+                    for child in types_root
+                ))
+        self.assertEqual(strip_report["validation"], "passed")
+        self.assertEqual(len(strip_report["removed_comment_parts"]), 4)
+
     def test_refuses_unsupported_tracked_table_structure_instead_of_guessing(self):
         make_docx(self.original, [[("Table content remains.", False)]])
         with zipfile.ZipFile(self.original, "r") as archive:
