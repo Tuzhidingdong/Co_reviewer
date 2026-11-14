@@ -947,6 +947,53 @@ class RevisionLedger:
             ))
         self.validate_or_raise()
 
+    def invalidate_response_units_for_tasks(
+        self,
+        task_ids: Sequence[str],
+        *,
+        actor: str,
+        reason: str,
+    ) -> list[str]:
+        """Reopen linked ResponseUnits and clear stale semantic/location evidence."""
+        selected = set(task_ids)
+        if not selected:
+            return []
+        _text(actor, "actor")
+        _text(reason, "reason")
+        now = datetime.now(timezone.utc).isoformat()
+        reopened: list[str] = []
+        for unit in self.response_units:
+            affected = selected.intersection(unit.linked_task_ids)
+            if not affected:
+                continue
+            previous_status = unit.status
+            unit.status = "draft"
+            unit.semantic_review_confirmed = False
+            unit.verification_report_id = None
+            unit.location_map_fingerprint = None
+            unit.location_map_file = None
+            unit.location_map_file_sha256 = None
+            unit.final_locations = []
+            unit.completed_at_utc = None
+            unit.linked_targets = []
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=unit.response_unit_id,
+                subject_type="response_unit",
+                event_type="response_reopened_after_workflow_invalidation",
+                timestamp_utc=now,
+                actor=actor,
+                details={
+                    "invalidated_task_ids": sorted(affected),
+                    "previous_status": previous_status,
+                    "reason": reason,
+                },
+            ))
+            reopened.append(unit.response_unit_id)
+        self.validate_or_raise()
+        return reopened
+
+
     def complete_response_units(
         self,
         response_unit_ids: Sequence[str],

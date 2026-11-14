@@ -738,6 +738,74 @@ def transition_task(
         )
     return updated
 
+def invalidate_affected_tasks(
+    tasks: Any,
+    changed_task_ids: Sequence[str],
+    reason: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Invalidate same-target conflict peers and all transitive dependents."""
+    if not isinstance(reason, str) or not reason.strip():
+        raise WorkflowValidationError("A non-empty invalidation reason is required.")
+    errors = validate_workflow_tasks(tasks)
+    if errors:
+        raise WorkflowValidationError("Workflow validation failed:\n- " + "\n- ".join(errors))
+    if not isinstance(changed_task_ids, (list, tuple, set)) or not changed_task_ids:
+        raise WorkflowValidationError("changed_task_ids must contain at least one task ID.")
+
+    rows = copy.deepcopy([dict(task) for task in tasks])
+    by_id = {task["task_id"]: task for task in rows}
+    changed = set(changed_task_ids)
+    unknown = changed - set(by_id)
+    if unknown:
+        raise WorkflowValidationError("Unknown changed task(s): " + ", ".join(sorted(unknown)))
+
+    schedule = build_workflow_schedule(rows)
+    component_of = {
+        group_id: index
+        for index, component in enumerate(schedule.target_group_components)
+        for group_id in component
+    }
+    changed_components: set[int] = set()
+    for task_id in changed:
+        groups, _ = _string_list(by_id[task_id].get("target_groups", []), "target_groups", task_id)
+        changed_components.update(
+            component_of[group] for group in groups if group in component_of
+        )
+
+    conflicting: set[str] = set()
+    for task_id, task in by_id.items():
+        if task_id in changed:
+            continue
+        groups, _ = _string_list(task.get("target_groups", []), "target_groups", task_id)
+        if any(component_of.get(group) in changed_components for group in groups):
+            conflicting.add(task_id)
+
+    dependents: dict[str, list[str]] = defaultdict(list)
+    for task in rows:
+        for dependency in task.get("dependencies", []):
+            dependents[dependency].append(task["task_id"])
+
+    impacted = set(conflicting)
+    queue = deque([*changed, *conflicting])
+    visited = set(changed)
+    while queue:
+        source_id = queue.popleft()
+        for dependent_id in dependents.get(source_id, []):
+            if dependent_id in visited:
+                continue
+            visited.add(dependent_id)
+            impacted.add(dependent_id)
+            queue.append(dependent_id)
+
+    for task_id in impacted:
+        task = by_id[task_id]
+        if task.get("status") != "recheck_required":
+            task["recheck_from"] = task.get("status", "identified")
+        task["status"] = "recheck_required"
+        task["invalidation_reason"] = reason.strip()
+    return rows, sorted(impacted)
+
+
 def invalidate_downstream(
     tasks: Any,
     changed_task_id: str,

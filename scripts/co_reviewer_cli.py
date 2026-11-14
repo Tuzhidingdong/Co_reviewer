@@ -1295,6 +1295,7 @@ def cmd_authorize_workflow_tasks(args):
 
 def cmd_sync_workflow_ledger(args):
     from co_reviewer.workflow_engine import (
+        invalidate_affected_tasks,
         transition_task,
         validate_workflow_ledger,
         workflow_scope_fingerprint,
@@ -1445,6 +1446,45 @@ def cmd_sync_workflow_ledger(args):
             })
         synchronized.append(task_id)
 
+    invalidated: list[str] = []
+    reopened_units: list[str] = []
+    if synchronized:
+        reason = (
+            "A verified Patch changed a target-conflict component or upstream dependency. "
+            "Rebuild exact operations against the latest document output and obtain fresh approval."
+        )
+        previous_tasks = {
+            task.get("task_id"): task
+            for task in workflow.get("tasks", [])
+            if isinstance(task, dict)
+        }
+        updated_tasks, invalidated = invalidate_affected_tasks(
+            workflow.get("tasks", []), synchronized, reason
+        )
+        workflow["tasks"] = updated_tasks
+        current_tasks = {
+            task.get("task_id"): task
+            for task in updated_tasks if isinstance(task, dict)
+        }
+        for task_id in invalidated:
+            current = current_tasks[task_id]
+            workflow.setdefault("events", []).append({
+                "event_id": str(uuid.uuid4()),
+                "task_id": task_id,
+                "timestamp_utc": now,
+                "event_type": "invalidation",
+                "from_status": previous_tasks[task_id].get("status", "identified"),
+                "to_status": "recheck_required",
+                "reason": current.get("invalidation_reason", reason),
+                "actor": "Co_Reviewer Workflow Engine",
+                "fingerprint": workflow_scope_fingerprint(current),
+            })
+        reopened_units = revision_ledger.invalidate_response_units_for_tasks(
+            invalidated,
+            actor="Co_Reviewer Workflow Engine",
+            reason=reason,
+        )
+
     errors = validate_workflow_ledger(workflow)
     if errors:
         raise ValueError(
@@ -1467,6 +1507,10 @@ def cmd_sync_workflow_ledger(args):
         "[WORKFLOW VERIFIED] "
         + (", ".join(synchronized) if synchronized else "No newly verified Patch tasks to synchronize.")
     )
+    if invalidated:
+        print("[RECHECK REQUIRED] " + ", ".join(invalidated))
+    if reopened_units:
+        print("[RESPONSE REOPENED] " + ", ".join(reopened_units))
     print(f"[OK] Workflow Ledger: {workflow_path}")
     print(f"[OK] RevisionLedger: {revision_path}")
     return 0
