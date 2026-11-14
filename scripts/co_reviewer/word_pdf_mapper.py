@@ -571,7 +571,7 @@ def _export_one_document(
         if word_page_count < 1:
             raise WordPdfMappingError("Word COM returned an invalid document page count after repagination.")
 
-        positions: dict[tuple[str, str], tuple[int, int, int]] = {
+        positions: dict[tuple[str, str], tuple[int, int, int]] = {}
         unique_jobs: dict[tuple[str, str], MappingJob] = {}
         for job in jobs:
             unique_jobs.setdefault(job.key, job)
