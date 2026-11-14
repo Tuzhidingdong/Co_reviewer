@@ -87,6 +87,18 @@ def make_run(source: ET.Element, text: str, deleted: bool = False) -> ET.Element
 # WordprocessingML run-property order (ECMA-376). New properties are inserted
 # at their schema position so Word does not need to repair our XML.
 
+# WordprocessingML run-property order (ECMA-376). New properties are inserted
+# at their schema position so Word does not need to repair our XML.
+_RUN_PROPERTY_ORDER = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
+    "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "noProof",
+    "snapToGrid", "vanish", "webHidden", "color", "spacing", "w", "kern",
+    "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd",
+    "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
+    "specVanish", "oMath", "rPrChange",
+)
+
+
 def _set_run_property(run: ET.Element, name: str, value: str | None) -> None:
     """Replace one w:rPr property and keep the WordprocessingML property order."""
     rpr = run.find("w:rPr", NS)
