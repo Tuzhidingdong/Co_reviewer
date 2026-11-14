@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from validate_decision_plan import validate_decision_plan
+from co_reviewer.workflow_engine import workflow_tasks_from_decision_plan
 
 
 HASH_M = "a" * 64
@@ -102,6 +103,21 @@ class DecisionPlanValidationTests(unittest.TestCase):
     def test_valid_pending_plan_passes_provenance_and_approval_checks(self):
         plan, audit, inventory = fixture()
         self.assertEqual(validate_decision_plan(plan, audit, inventory), [])
+
+    def test_response_only_task_remains_in_workflow_without_docx_targets(self):
+        plan, audit, inventory = fixture()
+        task = plan["tasks"][0]
+        task["task_type"] = "response_only"
+        task["target_documents"] = []
+        task["targets"] = []
+        task["proposed_action"] = (
+            "Prepare the author response using the cited evidence without editing a DOCX."
+        )
+
+        self.assertEqual(validate_decision_plan(plan, audit, inventory), [])
+        workflow_tasks = workflow_tasks_from_decision_plan(plan["tasks"])
+        self.assertEqual(workflow_tasks[0]["task_type"], "response_only")
+        self.assertEqual(workflow_tasks[0]["target_groups"], [])
 
     def test_unknown_source_comment_id_is_rejected(self):
         plan, audit, inventory = fixture()
