@@ -12,6 +12,13 @@ from xml.etree import ElementTree as ET
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
+_COMMENT_PARTS = {
+    "word/comments.xml",
+    "word/commentsextended.xml",
+    "word/commentsids.xml",
+    "word/commentsextensible.xml",
+    "word/people.xml",
+}
 PROFILES = {"generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"}
 PLACEHOLDER_RE = re.compile(
     r"(\[\[(?:TODO|TBD|XX|REF|FIG|TABLE)[^\]]*\]\]|\[(?:TODO|TBD|XX|REF|INSERT[^\]]*)\]|"
@@ -132,8 +139,34 @@ def audit_docx_quality(
                 sum(len(root.findall(f".//w:{local}", NS)) for root in text_roots)
                 for local in ("commentRangeStart", "commentRangeEnd", "commentReference")
             )
+            comment_package_parts = sorted(
+                name for name in names
+                if name.casefold() in _COMMENT_PARTS
+                or (name.casefold().startswith("word/comments") and name.casefold().endswith(".xml"))
+            )
+            comment_relationships: list[dict[str, str]] = []
+            relationship_scan_errors: list[dict[str, str]] = []
+            for relationship_part in sorted(name for name in names if name.endswith(".rels")):
+                try:
+                    relationship_root = ET.fromstring(archive.read(relationship_part))
+                except ET.ParseError as exc:
+                    relationship_scan_errors.append({
+                        "part": relationship_part, "error": str(exc)
+                    })
+                    continue
+                for relationship in relationship_root:
+                    relationship_type = relationship.attrib.get("Type", "").casefold()
+                    if "/comments" in relationship_type or "/people" in relationship_type:
+                        comment_relationships.append({
+                            "part": relationship_part,
+                            "type": relationship.attrib.get("Type", ""),
+                            "target": relationship.attrib.get("Target", ""),
+                        })
             metrics["comment_count"] = comments_count
             metrics["comment_anchor_count"] = comment_anchor_count
+            metrics["comment_package_parts"] = comment_package_parts
+            metrics["comment_relationships"] = comment_relationships
+            metrics["comment_relationship_scan_errors"] = relationship_scan_errors
             placeholders = sorted(set(match.group(0) for match in PLACEHOLDER_RE.finditer(all_text)))
             metrics["placeholder_tokens"] = placeholders
             placeholder_failure = bool(placeholders) and profile == "word-final-clean"
@@ -154,15 +187,24 @@ def audit_docx_quality(
                 _check(checks, "tracked_revision_inventory", "PASS", "info",
                        "Tracked revision elements were inventoried for Marked output.",
                        tracked)
-            has_comments = bool(comments_count or comment_anchor_count)
+            has_comments = bool(
+                comments_count or comment_anchor_count or comment_package_parts
+                or comment_relationships or relationship_scan_errors
+            )
             comments_failure = has_comments and profile in {"clean-manuscript", "word-final-clean", "response-letter"}
             _check(
                 checks, "comments",
                 "FAIL" if comments_failure else ("WARN" if has_comments else "PASS"),
                 "error" if comments_failure else ("warning" if has_comments else "info"),
-                "Word comments or comment anchors remain in the document package." if has_comments
-                else "No Word comments or comment anchors were detected.",
-                {"comments": comments_count, "anchors": comment_anchor_count},
+                "Word comments, comment package parts, relationships or anchors remain in the document package."
+                if has_comments else "No Word comments, comment package parts, relationships or anchors were detected.",
+                {
+                    "comments": comments_count,
+                    "anchors": comment_anchor_count,
+                    "package_parts": comment_package_parts,
+                    "relationships": comment_relationships,
+                    "relationship_scan_errors": relationship_scan_errors,
+                },
             )
 
             styles = roots.get("word/styles.xml")
