@@ -16,7 +16,10 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 import co_reviewer_cli as cli
 from co_reviewer.identity import sha256_file
 from docx import Document
+from co_reviewer.identity import canonical_fingerprint, sha256_file
+from co_reviewer.workflow_engine import select_ready_tasks, validate_workflow_ledger, workflow_scope_fingerprint
 from co_reviewer.revision_models import (
+    RevisionEvent,
     Patch,
     PatchOperation,
     ResponseUnit,
@@ -454,6 +457,183 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(completed.response_units[0].status, "completed")
         self.assertEqual(len(completed.events), 3)
+
+    def test_verified_patch_sync_unlocks_dependent_task_and_incremental_batch_merges(self):
+        source = self.root / "Manuscript.docx"
+        marked = self.root / "Manuscript_r1.docx"
+        final_docx = self.root / "Manuscript_r2.docx"
+        source.write_bytes(b"source docx bytes")
+        marked.write_bytes(b"marked revision one")
+        final_docx.write_bytes(b"marked revision two")
+        source_hash = sha256_file(source)
+        marked_hash = sha256_file(marked)
+
+        def make_task(task_id, status, dependency, input_path, output_path, p_idx):
+            return {
+                "task_id": task_id,
+                "sequence": 1 if task_id == "T1" else 2,
+                "stage": "revision",
+                "task_type": "local_revision",
+                "title": f"Revise {task_id}",
+                "source_comment_ids": [f"C-{task_id}"],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": f"E-{task_id}",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_comment_id": f"C-{task_id}",
+                    "source_excerpt": f"Please revise {task_id}.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": f"Revise the text for {task_id}.",
+                "proposed_response": f"We revised {task_id}.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": p_idx,
+                    "action": "replace",
+                    "evidence_ids": [f"E-{task_id}"],
+                }],
+                "dependencies": [dependency] if dependency else [],
+                "target_groups": [f"Manuscript|word/document.xml|p_idx={p_idx}"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "requires_user_approval": True,
+                "status": status,
+                "patch_id": task_id,
+                "patch_operations": [{
+                    "operation_id": f"{task_id}-OP1",
+                    "document": "Manuscript",
+                    "input_file": str(input_path),
+                    "output_file": str(output_path),
+                    "part": "word/document.xml",
+                    "p_idx": p_idx,
+                    "find": f"old text {task_id}",
+                    "replace": f"new text {task_id}",
+                    "evidence_ids": [f"E-{task_id}"],
+                }],
+            }
+
+        task1 = make_task("T1", "ready", None, source, marked, 1)
+        task2 = make_task("T2", "planned", "T1", marked, final_docx, 2)
+        workflow = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-dag-sync",
+            "source_files": [{
+                "role": "Manuscript",
+                "file": str(source),
+                "sha256": source_hash,
+            }],
+            "documents": [],
+            "object_registry": [],
+            "tasks": [task1, task2],
+            "events": [{
+                "event_id": "EV-T1-READY",
+                "task_id": "T1",
+                "timestamp_utc": "2026-11-14T12:00:00+08:00",
+                "event_type": "status_transition",
+                "from_status": "planned",
+                "to_status": "ready",
+                "reason": "Author approved T1.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(task1),
+            }],
+        }
+        self.assertEqual(validate_workflow_ledger(workflow), [])
+        workflow_path = self.root / "workflow_ledger.json"
+        workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+
+        patch1 = Patch(
+            patch_id="T1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please revise T1.",
+            proposed_response="We revised T1.",
+            operations=[PatchOperation.from_mapping({
+                **task1["patch_operations"][0],
+                "source_sha256": source_hash,
+            })],
+            status="verified",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="preflight-T1",
+            approval_fingerprint="b" * 64,
+            apply_report_ids=["apply-T1"],
+            verification_report_id="verify-T1",
+            verified_output_hashes=[{
+                "path": str(marked),
+                "sha256": marked_hash,
+            }],
+        )
+        response1 = ResponseUnit(
+            response_unit_id="RU-T1-C-T1",
+            reviewer="Reviewer 1",
+            comment_id="C-T1",
+            comment_text="Please revise T1.",
+            response_text="We revised T1.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["T1"],
+        )
+        timestamp = "2026-11-14T12:00:00+08:00"
+        revision = RevisionLedger(
+            revision_round_id="round-dag-sync",
+            patches=[patch1],
+            response_units=[response1],
+            events=[
+                RevisionEvent("EV-PF", "T1", "patch", "preflight", timestamp, "Preflight"),
+                RevisionEvent("EV-AP", "T1", "patch", "approval", timestamp, "Human Author"),
+                RevisionEvent("EV-DO", "T1", "patch", "patch_applied", timestamp, "DOCX Writer"),
+                RevisionEvent("EV-VE", "T1", "patch", "verification", timestamp, "Human Author"),
+            ],
+            workflow_ledger_fingerprint=canonical_fingerprint(workflow),
+            workflow_task_fingerprints={
+                "T1": workflow_scope_fingerprint(task1),
+                "T2": workflow_scope_fingerprint(task2),
+            },
+        )
+        revision_path = self.root / "revision_ledger.json"
+        cli.write_json_atomic(revision_path, revision.to_dict())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_sync_workflow_ledger(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+            )), 0)
+        synced = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(synced["tasks"][0]["status"], "verified")
+        self.assertEqual(synced["tasks"][1]["status"], "planned")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_authorize_workflow_tasks(Namespace(
+                workflow_ledger=str(workflow_path),
+                ids=["T2"],
+                actor="Human Author",
+                plan_approved=True,
+            )), 0)
+        authorized = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(authorized["tasks"][1]["status"], "ready")
+        self.assertEqual(select_ready_tasks(authorized["tasks"]), ["T2"])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_build_revision_ledger(Namespace(
+                workflow_ledger=str(workflow_path),
+                document_paths=None,
+                reviewer_comments=None,
+                reviewer_map=None,
+                task_ids=["T2"],
+                out=str(revision_path),
+            )), 0)
+        merged = revision_ledger_from_mapping(
+            json.loads(revision_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(
+            {patch.patch_id: patch.status for patch in merged.patches},
+            {"T1": "verified", "T2": "planned"},
+        )
+        self.assertEqual(merged.revision_round_id, "round-dag-sync")
+        self.assertEqual(merged.workflow_task_fingerprints["T1"], workflow_scope_fingerprint(task1))
 
     def test_workflow_task_authorization_parser_requires_explicit_plan_approval(self):
         parser = cli.build_parser()
