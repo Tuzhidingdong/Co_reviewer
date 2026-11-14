@@ -164,7 +164,11 @@ def _state_evidence_errors(
     ):
         errors.append(f"Task {task_id} in blocked state requires block_reason.")
     if status == "recheck_required":
-        if task.get("recheck_from") not in WORKFLOW_STATUSES - {"recheck_required"}:
+        recheck_from = task.get("recheck_from")
+        if (
+            not isinstance(recheck_from, str)
+            or recheck_from not in WORKFLOW_STATUSES - {"recheck_required"}
+        ):
             errors.append(f"Task {task_id} in recheck_required state needs a valid recheck_from.")
         if not (
             isinstance(task.get("invalidation_reason"), str)
@@ -333,7 +337,8 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
             errors.append(f"Task {task_id} sequence must be a non-negative integer.")
         if not isinstance(task.get("stage", "revision"), str):
             errors.append(f"Task {task_id} stage must be a string.")
-        errors.extend(_state_evidence_errors(task_id, task, status))
+        if isinstance(status, str) and status in WORKFLOW_STATUSES:
+            errors.extend(_state_evidence_errors(task_id, task, status))
 
     for task_id, deps in dependencies.items():
         for dependency in deps:
