@@ -2375,8 +2375,28 @@ def build_revision_ledger(
                     anchor_para_id = anchor_source_excerpt = None
                     if disposition == "no_change":
                         anchor = evidence_by_id.get(str(anchor_evidence_id))
-                        if not isinstance(anchor, Mapping) or anchor.get("match_status") != "confirmed" or anchor.get("document") not in {"Manuscript", "SI"} or anchor.get("part") != "word/document.xml" or not isinstance(anchor.get("p_idx"), int):
-                            raise RevisionModelError(f"no_change ResponseUnit {comment_id} requires confirmed Manuscript/SI body-paragraph anchor evidence.")
+                        anchor_part_value = anchor.get("part") if isinstance(anchor, Mapping) else None
+                        supported_anchor_part = (
+                            anchor_part_value == "word/document.xml"
+                            or (
+                                isinstance(anchor_part_value, str)
+                                and re.fullmatch(r"word/(?:header|footer)\\d+\\.xml", anchor_part_value) is not None
+                            )
+                        )
+                        if (
+                            not isinstance(anchor, Mapping)
+                            or anchor.get("match_status") != "confirmed"
+                            or anchor.get("document") not in {"Manuscript", "SI"}
+                            or not supported_anchor_part
+                            or not isinstance(anchor.get("p_idx"), int)
+                        ):
+                            raise RevisionModelError(
+                                f"no_change ResponseUnit {comment_id} requires confirmed Manuscript/SI paragraph anchor evidence in document.xml/header/footer."
+                            )
+                        if anchor_part_value != "word/document.xml" and location_requirement != "manual_required":
+                            raise RevisionModelError(
+                                f"no_change ResponseUnit {comment_id} anchor is in {anchor_part_value}; use manual_required for non-body anchors."
+                            )
                         anchor_document, anchor_part, anchor_p_idx = anchor.get("document"), anchor.get("part"), anchor.get("p_idx")
                         anchor_para_id = anchor.get("para_id")
                         anchor_source_excerpt = anchor.get("source_excerpt")
@@ -2386,8 +2406,8 @@ def build_revision_ledger(
                     raise RevisionModelError(f"revised ResponseUnit {comment_id} has no PatchOperation with source_comment_ids including that comment.")
                 if disposition == "reply_only" and location_requirement != "not_required":
                     raise RevisionModelError(f"reply_only ResponseUnit {comment_id} must use not_required location policy.")
-                if disposition == "no_change" and location_requirement != "existing_anchor_required":
-                    raise RevisionModelError(f"no_change ResponseUnit {comment_id} must use existing_anchor_required location policy.")
+                if disposition == "no_change" and location_requirement not in {"existing_anchor_required", "manual_required"}:
+                    raise RevisionModelError(f"no_change ResponseUnit {comment_id} must use existing_anchor_required or manual_required location policy.")
                 if disposition == "revised" and location_requirement not in {"required", "manual_required"}:
                     raise RevisionModelError(f"revised ResponseUnit {comment_id} must use required or manual_required location policy.")
                 if disposition == "clarification_needed" and location_requirement == "not_required":
@@ -2430,7 +2450,9 @@ def build_revision_ledger(
             operations_by_role.setdefault(operation.document, operation)
     anchor_roles = {
         unit.anchor_document for unit in response_units
-        if unit.location_requirement == "existing_anchor_required" and unit.anchor_document
+        if unit.disposition == "no_change"
+        and unit.location_requirement in {"existing_anchor_required", "manual_required"}
+        and unit.anchor_document
     }
     registered_roles = set(operations_by_role) | anchor_roles
 
