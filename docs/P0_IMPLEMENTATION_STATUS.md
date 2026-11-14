@@ -63,7 +63,20 @@ Added \`scripts/co_reviewer/revision_models.py\` and \`schemas/revision-ledger.s
 - With \`--revision-ledger\`, preflight, approval, apply and verified confirmation are synchronized back to the new ledger, including fingerprints and events.
 - The old CLI entry points and schema remain compatible for users who do not opt into the new ledger.
 
-The bridge does not yet implement full patch supersession/rebase, a Working Clean View or a complete multi-stage workflow CLI. Those remain explicit next-stage tasks.
+Patch supersession now has a controlled implementation: it records predecessor/successor lineage, preserves old execution history, requires replacements of applied/verified Patches to start from the predecessor's output DOCX, and reopens linked ResponseUnits. Executed Patches cannot be silently re-exported as fresh pending work. Direct DAG-to-Patch dispatch and cross-task conflict/rebase remain next-stage tasks.
+
+### P0-07 — Working Clean View projection
+
+Added \`scripts/co_reviewer/working_view.py\` and the \`create-working-clean-views\` CLI command:
+
+- Creates a separate DOCX derivative from each Marked DOCX in the RevisionLedger.
+- Accepts \`w:ins\`/\`w:moveTo\` content and rejects \`w:del\`/\`w:moveFrom\` content.
+- Removes revision-property snapshots and comment anchors/parts in the derivative.
+- Refuses unsupported table-structure revision markers rather than guessing.
+- Does not overwrite or mutate the source or Marked DOCX.
+- Persists the Working Clean View path, Marked source hash, output hash and policy fingerprint in the RevisionLedger; subsequent ledger validation rechecks both files.
+
+This is an internal accepted-changes projection for downstream task analysis. It is not the final publication Clean Manuscript and does not replace Word GUI/save-round-trip and final layout validation.
 
 ### P0-06 — ResponseUnit lifecycle and final-location evidence
 
@@ -83,6 +96,7 @@ CLI commands now include:
 - \`confirm-response-units\`
 - \`record-response-locations\`
 - \`supersede-patch\`
+- \`create-working-clean-views\`
 - \`complete-response-units\`
 
 The location commands consume an externally produced map. They do not yet generate the Word COM/PDF pagination or line mapping themselves.
@@ -95,8 +109,9 @@ The location commands consume an externally produced map. They do not yet genera
 - New Workflow Engine tests: 17.
 - Decision-plan integration additions: 3.
 - New RevisionLedger/ResponseUnit model tests: 19.
-- New CLI integration tests: 8.
-- **Expected current inventory: 140 test methods.** This is a source inventory count, not an executed-test or pass claim.
+- New CLI integration tests: 9.
+- New Working Clean View tests: 4.
+- **Expected current inventory: 145 test methods.** This is a source inventory count, not an executed-test or pass claim.
 
 The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
@@ -105,7 +120,7 @@ Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip
 ## Remaining roadmap — in priority order
 
 1. **Complete parser-backed identity migration:** generate object registry records from real DOCX parts, match objects across revisions, normalize actual citation systems and retire paragraph-index scheduling keys.
-2. **Complete the execution state machine:** integrate Patch batches directly with the Workflow Engine DAG, add Working Clean View and explicit conflict/rebase handling across multiple tasks. Patch supersession and replay prevention now have a first controlled implementation. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
+2. **Complete the execution state machine:** integrate Patch batches directly with the Workflow Engine DAG and add cross-task conflict/rebase handling. Working Clean View and first-generation Patch supersession/replay prevention are now implemented. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
 3. **Build the final-location engine:** Word COM pagination, PDF export and evidence-backed page/line mapping. ResponseUnits already have a consumer contract but still need the actual producer.
 4. **End-to-end acceptance:** run all tests on Windows, then separately validate synthetic Word GUI/save-round-trip, multi-document iterative patching and final Response Letter consistency.
 
