@@ -8,10 +8,13 @@ import json
 import re
 import sys
 import unicodedata
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from co_reviewer.workflow_engine import (
+    build_workflow_ledger,
     build_workflow_schedule,
     validate_workflow_tasks,
     workflow_tasks_from_decision_plan,
@@ -366,7 +369,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan", required=True, help="Pending revision_decision_plan.json")
     parser.add_argument("--audit", required=True, help="review_audit_report.json used for this decision round")
     parser.add_argument("--inventory", required=True, help="workspace_inventory.json used for this decision round")
+    parser.add_argument(
+        "--workflow-ledger-out",
+        help="Optional path to persist the v0.5.1 Workflow Ledger JSON.",
+    )
+    parser.add_argument(
+        "--revision-round-id",
+        help="Optional stable round ID; generated when ledger output is requested and omitted.",
+    )
     args = parser.parse_args(argv)
+    if args.revision_round_id and not args.workflow_ledger_out:
+        parser.error("--revision-round-id requires --workflow-ledger-out")
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
         audit = json.loads(Path(args.audit).read_text(encoding="utf-8")) if args.audit else None
@@ -389,6 +402,38 @@ def main(argv: list[str] | None = None) -> int:
         f"[SCHEDULE] {len(workflow_schedule.task_order)} task(s); "
         f"{len(workflow_schedule.target_group_components)} target-group component(s)."
     )
+    if args.workflow_ledger_out:
+        output_path = Path(args.workflow_ledger_out).expanduser().resolve()
+        source_paths = {
+            Path(value).expanduser().resolve()
+            for value in (args.plan, args.audit, args.inventory)
+        }
+        if output_path in source_paths:
+            print("[INVALID] Workflow Ledger output must not overwrite a plan, audit or inventory input.", file=sys.stderr)
+            return 2
+        if output_path.exists():
+            print(f"[INVALID] Workflow Ledger output already exists; choose a new path: {output_path}", file=sys.stderr)
+            return 2
+        round_id = args.revision_round_id or (
+            "round-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + "-" + uuid.uuid4().hex[:8]
+        )
+        try:
+            ledger = build_workflow_ledger(
+                plan,
+                revision_round_id=round_id,
+                created_at_utc=datetime.now(timezone.utc).isoformat(),
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(ledger, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[INVALID] Cannot write Workflow Ledger: {exc}", file=sys.stderr)
+            return 2
+        print(f"[LEDGER] Persisted Workflow Ledger: {output_path}")
+        print(f"[LEDGER] Revision round ID: {round_id}")
     print("[NOTE] This validates structure and provenance, not scientific correctness or the semantic quality of the proposed decisions.")
     return 0
 
