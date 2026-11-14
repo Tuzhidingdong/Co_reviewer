@@ -855,6 +855,8 @@ def response_units_to_legacy_plan(
         patch_statuses = {item.status for item in linked_patches}
         status = (
             "verified" if final_is_mapped
+            else "location_pending" if unit.status == "verified"
+            else "blocked" if unit.status == "blocked"
             else "applied" if patch_statuses & {"applied", "verified"}
             else "planned"
         )
