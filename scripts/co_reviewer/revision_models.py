@@ -1064,8 +1064,11 @@ class RevisionLedger:
                     raise RevisionModelError(
                         f"Apply evidence for Patch {patch_id} does not match its preflight/approval ledger state."
                     )
+                if not patch.preflight_report_id:
+                    raise RevisionModelError(
+                        f"Patch {patch_id} has no recorded preflight report; refusing to record apply."
+                    )
                 patch.status = "applied"
-                patch.preflight_report_id = patch.preflight_report_id or "preflight-recorded"
                 if report.get("output_file"):
                     report_id = str(report.get("report_id") or report.get("output_file"))
                     patch.apply_report_ids.append(report_id)
