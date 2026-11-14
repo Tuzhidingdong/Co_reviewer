@@ -31,6 +31,10 @@ from co_reviewer.document_engine import (
     next_revision_id, safe_part, prepare_document, write_prepared_document,
     apply_document, RevisionDocumentEngine,
 )
+from co_reviewer.identity import (
+    sha256_file, revision_targets_fingerprint, revision_item_fingerprint,
+    revision_verification_fingerprint, DocumentIdentityAndHash,
+)
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -331,37 +335,6 @@ _RUN_PROPERTY_ORDER = (
 )
 
 
-def revision_targets_fingerprint(item: dict[str, Any]) -> str:
-    """Fingerprint the exact target anchors and source DOCX versions checked by preflight."""
-    payload = {"targets": item.get("targets", [])}
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def revision_item_fingerprint(item: dict[str, Any]) -> str:
-    """Fingerprint the exact reviewer-facing approval scope, excluding lifecycle metadata."""
-    payload = {
-        "id": item.get("id"),
-        "reviewer": item.get("reviewer"),
-        "comment": item.get("comment"),
-        "proposed_response": item.get("proposed_response", ""),
-        "targets": item.get("targets", []),
-    }
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-def revision_verification_fingerprint(item: dict[str, Any]) -> str:
-    """Fingerprint the approved scope and exact output versions acknowledged as verified."""
-    payload = {
-        "approval_fingerprint": item.get("approval_fingerprint"),
-        "verified_output_hashes": item.get("verified_output_hashes", []),
-        "semantic_review_confirmed": item.get("semantic_review_confirmed"),
-        "verified_at_utc": item.get("verified_at_utc"),
-    }
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True) -> list[str]:
     errors = []
     if not isinstance(plan, dict): return ["Plan must be a JSON object."]
@@ -471,14 +444,6 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 if recorded_paths != expected_paths:
                     errors.append(f"{at}.verified_output_hashes must cover exactly the linked DOCX outputs.")
     return errors
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).expanduser().open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
 
 def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") -> dict[str, Any]:
     """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
