@@ -144,6 +144,14 @@
             "additionalProperties": false
           }
         },
+        "patch_id": { "type": "string", "minLength": 1 },
+        "supersedes_patch_id": { "type": "string", "minLength": 1 },
+        "reviewer": { "type": "string", "minLength": 1 },
+        "proposed_response": { "type": "string" },
+        "patch_operations": {
+          "type": "array",
+          "items": { "$ref": "revision-ledger.schema.json#/$defs/patchOperation" }
+        },
         "dependencies": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
