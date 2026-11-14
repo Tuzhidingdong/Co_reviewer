@@ -36,6 +36,8 @@ from co_reviewer.identity import (
     revision_verification_fingerprint, DocumentIdentityAndHash,
 )
 from co_reviewer.revision_models import (
+    Patch,
+    PatchOperation,
     RevisionLedger,
     RevisionModelError,
     build_revision_ledger,
@@ -1299,6 +1301,48 @@ def cmd_complete_response_units(args):
     return 0
 
 
+def cmd_supersede_patch(args):
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    replacement_path = Path(args.replacement_patch).expanduser().resolve()
+    if ledger_path == replacement_path:
+        raise ValueError("Replacement Patch input must not overwrite the RevisionLedger.")
+    ledger = _load_revision_ledger(ledger_path)
+    data = json.loads(replacement_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Replacement Patch JSON root must be an object.")
+    raw_operations = data.get("operations")
+    if not isinstance(raw_operations, list) or not raw_operations:
+        raise ValueError("Replacement Patch must supply an explicit non-empty operations array.")
+    replacement = Patch(
+        patch_id=data.get("patch_id"),
+        task_id=data.get("task_id"),
+        reviewer=data.get("reviewer"),
+        comment=data.get("comment"),
+        proposed_response=data.get("proposed_response", ""),
+        operations=[
+            PatchOperation.from_mapping(
+                row, fallback_id=f"{data.get('patch_id', 'PATCH')}-OP{index + 1:03d}"
+            )
+            for index, row in enumerate(raw_operations)
+        ],
+        status="planned",
+        supersedes_patch_id=data.get("supersedes_patch_id"),
+    )
+    ledger.supersede_patch(
+        args.previous_patch_id,
+        replacement,
+        actor=args.actor,
+        reason=args.reason,
+    )
+    write_json_atomic(ledger_path, ledger.to_dict())
+    print(
+        f"[SUPERSEDED] {args.previous_patch_id} → {replacement.patch_id}; "
+        "linked ResponseUnits reopened for semantic review and new PDF line mapping."
+    )
+    print(f"[OK] RevisionLedger: {ledger_path}")
+    return 0
+
+
 def cmd_export_revision_plan(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
     output_path = Path(args.out).expanduser().resolve()
@@ -1659,7 +1703,14 @@ def build_parser():
     bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label.")
     bl.add_argument("--out", default="revision_ledger.json")
     bl.set_defaults(func=cmd_build_revision_ledger)
-    ex = sub.add_parser("export-revision-plan", help="Export pending Patch operations to the legacy DOCX plan format.")
+    sp = sub.add_parser("supersede-patch", help="Replace a Patch while reopening linked ResponseUnits.")
+    sp.add_argument("--ledger", required=True)
+    sp.add_argument("--previous-patch-id", required=True)
+    sp.add_argument("--replacement-patch", required=True, help="JSON with patch_id, task_id, reviewer, comment, proposed_response, supersedes_patch_id and exact operations.")
+    sp.add_argument("--actor", default="Human Author")
+    sp.add_argument("--reason", required=True)
+    sp.set_defaults(func=cmd_supersede_patch)
+    ex = sub.add_parser("export-revision-plan", help="Export new planned Patch operations to the legacy DOCX plan format.")
     ex.add_argument("--ledger", required=True)
     ex.add_argument("--out", default="revision_plan.json")
     ex.set_defaults(func=cmd_export_revision_plan)
