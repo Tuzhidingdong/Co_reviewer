@@ -7,7 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from validate_decision_plan import validate_decision_plan
-from co_reviewer.workflow_engine import workflow_tasks_from_decision_plan
+from co_reviewer.workflow_engine import (
+    build_workflow_ledger,
+    validate_workflow_ledger,
+    workflow_tasks_from_decision_plan,
+)
 
 
 HASH_M = "a" * 64
@@ -118,6 +122,15 @@ class DecisionPlanValidationTests(unittest.TestCase):
         workflow_tasks = workflow_tasks_from_decision_plan(plan["tasks"])
         self.assertEqual(workflow_tasks[0]["task_type"], "response_only")
         self.assertEqual(workflow_tasks[0]["target_groups"], [])
+
+    def test_valid_decision_plan_can_be_promoted_to_workflow_ledger(self):
+        plan, audit, inventory = fixture()
+        ledger = build_workflow_ledger(
+            plan, "round-fixture-001", "2026-11-14T12:00:00+08:00"
+        )
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+        self.assertEqual(ledger["source_files"], plan["source_files"])
+        self.assertEqual(ledger["tasks"][0]["evidence"], plan["tasks"][0]["evidence"])
 
     def test_unknown_source_comment_id_is_rejected(self):
         plan, audit, inventory = fixture()
