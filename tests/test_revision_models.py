@@ -852,6 +852,32 @@ class RevisionModelsTests(unittest.TestCase):
         )
         self.assertEqual(round_ledger.workflow_ledger_fingerprint, HASH_C)
 
+    def test_incremental_batch_merge_rejects_conflicting_duplicate_patch_ids(self):
+        existing_patch = Patch(
+            patch_id="P-DUP",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Original comment.",
+            proposed_response="Original response.",
+            operations=[_operation(operation_id="P-DUP-OP")],
+        )
+        conflicting_patch = Patch(
+            patch_id="P-DUP",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Changed comment.",
+            proposed_response="Conflicting response.",
+            operations=[_operation(operation_id="P-DUP-OP")],
+        )
+        existing = RevisionLedger("round-duplicate-id", patches=[existing_patch])
+        addition = RevisionLedger("round-duplicate-id", patches=[conflicting_patch])
+
+        with self.assertRaisesRegex(RevisionModelError, "already exist with different contents"):
+            existing.merge_batch(addition)
+
+        self.assertEqual(existing.patches, [existing_patch])
+        self.assertEqual(existing.patches[0].comment, "Original comment.")
+
     def test_incremental_batch_merge_rejects_changed_prior_task_scope(self):
         existing = RevisionLedger(
             "round-no-drift",

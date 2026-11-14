@@ -1592,15 +1592,13 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Task {task_id} scope refresh has no replacement Patch or ResponseUnit evidence."
                 )
-        existing_patch_ids = {patch.patch_id for patch in self.patches}
+        existing_patch_by_id = {patch.patch_id: patch for patch in self.patches}
         incoming_patch_by_id = {patch.patch_id: patch for patch in addition.patches}
-        duplicate_patches = existing_patch_ids & set(incoming_patch_by_id)
+        duplicate_patches = set(existing_patch_by_id) & set(incoming_patch_by_id)
         conflicting_duplicates = [
             patch_id for patch_id in duplicate_patches
-            if patch_by_id := next(
-                (item for item in self.patches if item.patch_id == patch_id), None
-            )
-            if patch_by_id.to_dict() != incoming_patch_by_id[patch_id].to_dict()
+            if existing_patch_by_id[patch_id].to_dict()
+            != incoming_patch_by_id[patch_id].to_dict()
         ]
         if conflicting_duplicates:
             raise RevisionModelError(
