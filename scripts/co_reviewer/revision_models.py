@@ -1020,6 +1020,18 @@ class RevisionLedger:
                 "previous_status": previous_status,
             },
         ))
+        self.events.append(RevisionEvent(
+            event_id=str(uuid.uuid4()),
+            subject_id=replacement.patch_id,
+            subject_type="patch",
+            event_type="patch_created_as_replacement",
+            timestamp_utc=now,
+            actor=actor,
+            details={
+                "supersedes_patch_id": previous_patch_id,
+                "reason": reason,
+            },
+        ))
         for unit in self.response_units:
             if previous_patch_id not in unit.linked_patch_ids:
                 continue
@@ -1299,6 +1311,23 @@ class RevisionLedger:
             if not patch.verified_output_hashes:
                 raise RevisionModelError(
                     f"Verified patch {patch.patch_id} has no sealed output hashes."
+                )
+            expected_outputs = {
+                _canonical_path(operation.output_file)
+                for operation in patch.operations
+            }
+            actual_outputs: set[str] = set()
+            for hash_entry in patch.verified_output_hashes:
+                if not isinstance(hash_entry, Mapping):
+                    raise RevisionModelError(
+                        f"Verified Patch {patch.patch_id} contains a malformed output hash record."
+                    )
+                path_value = _text(hash_entry.get("path"), "verified_output_hashes.path")
+                _sha256(hash_entry.get("sha256"), "verified_output_hashes.sha256")
+                actual_outputs.add(_canonical_path(path_value))
+            if actual_outputs != expected_outputs or len(actual_outputs) != len(patch.verified_output_hashes):
+                raise RevisionModelError(
+                    f"Verified output hashes for Patch {patch.patch_id} must cover exactly its DOCX outputs."
                 )
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
