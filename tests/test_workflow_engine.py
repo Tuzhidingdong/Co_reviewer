@@ -5,6 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from co_reviewer.identity import (
+    TargetRef,
+    build_document_identity,
+    build_object_identity,
+)
 from co_reviewer.workflow_engine import (
     WorkflowValidationError,
     build_workflow_ledger,
@@ -327,6 +332,115 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(ledger["tasks"][0]["task_type"], "response_only")
         self.assertEqual(ledger["tasks"][0]["target_groups"], [])
         self.assertEqual(validate_workflow_ledger(ledger), [])
+
+    def test_ledger_persists_stable_targetrefs_and_schedules_by_object_id(self):
+        document = build_document_identity(
+            role="Manuscript",
+            source_sha256=INPUT_HASH,
+            visible_text="The sample was heated.",
+            structure={"paragraphs": 1},
+            formatting={"style": "Normal"},
+            citation_state={},
+            document_id="doc-stable",
+        )
+        object_record = build_object_identity(
+            document=document,
+            object_id="para-stable-01",
+            object_type="body_paragraph",
+            part="word/document.xml",
+            object_payload={"text": "The sample was heated."},
+            location_hint={"p_idx": 4},
+        )
+        target_ref = TargetRef.from_object(object_record)
+        plan = {
+            "source_files": [{
+                "role": "Manuscript",
+                "file": "Manuscript.docx",
+                "sha256": INPUT_HASH,
+            }],
+            "tasks": [{
+                "task_id": "T1",
+                "sequence": 1,
+                "title": "Revise the sample condition",
+                "task_type": "local_revision",
+                "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 4,
+                    "source_excerpt": "The sample was heated.",
+                    "evidence_type": "paragraph",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Clarify the sample heating condition.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 4,
+                    "action": "replace",
+                    "evidence_ids": ["E1"],
+                }],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        ledger = build_workflow_ledger(
+            plan,
+            "round-targetref-001",
+            STAMP,
+            document_identities=[document],
+            object_registry=[object_record],
+            target_refs_by_task={"T1": [target_ref]},
+        )
+        task = ledger["tasks"][0]
+        self.assertEqual(task["target_refs"][0]["object_id"], "para-stable-01")
+        self.assertEqual(
+            task["target_groups"],
+            ["doc-stable|object=para-stable-01"],
+        )
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+
+    def test_ledger_rejects_targetref_not_registered_to_document_revision(self):
+        document = build_document_identity(
+            role="Manuscript",
+            source_sha256=INPUT_HASH,
+            visible_text="Text.",
+            structure={},
+            formatting={},
+            citation_state={},
+            document_id="doc-stable",
+        )
+        object_record = build_object_identity(
+            document=document,
+            object_id="para-01",
+            object_type="body_paragraph",
+            part="word/document.xml",
+            object_payload={"text": "Text."},
+        )
+        wrong_ref = dict(TargetRef.from_object(object_record).to_dict())
+        wrong_ref["object_fingerprint"] = OUTPUT_HASH
+        ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-bad-targetref",
+            "created_at_utc": STAMP,
+            "source_files": [],
+            "documents": [document.to_dict()],
+            "object_registry": [object_record.to_dict()],
+            "tasks": [{
+                **_task("T1", status="planned", groups=["doc-stable|object=para-01"]),
+                "task_type": "local_revision",
+                "target_refs": [wrong_ref],
+            }],
+            "events": [],
+        }
+        errors = validate_workflow_ledger(ledger)
+        self.assertTrue(any("does not match the registered object fingerprint" in error for error in errors))
 
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
