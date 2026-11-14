@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -198,6 +199,23 @@ class DocumentIdentityModuleBoundaryTests(unittest.TestCase):
             hash_structure({"unsupported": object()})
         with self.assertRaises(IdentityValidationError):
             CitationProfile(mode={"not": "a mode"})
+
+    def test_identity_schema_declares_five_dimensions_target_refs_and_citation_modes(self):
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "document-identity.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        dimensions = schema["$defs"]["documentIdentity"]["properties"]["dimensions"]["required"]
+        self.assertEqual(set(dimensions), {
+            "content_sha256", "structure_sha256",
+            "formatting_sha256", "citation_sha256",
+        })
+        self.assertIn(
+            "numeric_superscript",
+            schema["$defs"]["citationProfile"]["properties"]["mode"]["enum"],
+        )
+        target_ref = schema["$defs"]["targetRef"]
+        self.assertIn("start_offset", target_ref["properties"])
+        self.assertIn("end_offset", target_ref["properties"])
+        self.assertEqual(len(target_ref["allOf"]), 2)
 
     def test_verification_fingerprint_tracks_exact_output_hashes(self):
         item = {
