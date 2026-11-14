@@ -36,13 +36,7 @@ The command writes:
 - `review_audit_report.json/.md`: exact and candidate cross-document matches plus classified figure/table references, subpanels/ranges, internal collisions and cross-document caption groups.
 - `review_decision_queue.json`: a bounded packet conforming to `schemas/review-decision.schema.json`; it includes each native anchor once and at most 8 context excerpts (1,200 characters each).
 
-For the complete decision stage, analyse all queue items plus the workspace-level audit together. Split compound reviewer requests into atomic tasks, merge overlapping tasks while retaining all source comment IDs, and add global consistency tasks that are not anchored to one comment. Generate `revision_decision_plan.md/.json` using `schemas/revision-decision-plan.schema.json`; every task remains pending and requires author approval. Validate provenance and task dependencies with:
-
-```powershell
-python scripts/validate_decision_plan.py --plan revision_decision_plan.json --audit review_audit_report.json --inventory workspace_inventory.json
-```
-
-The validator checks structure/provenance/dependency integrity, not scientific correctness. Do not create an executable revision plan or enter preflight/approval/apply until the author accepts the decision scope.
+For the complete decision stage, analyse all queue items plus the workspace-level audit together. Split compound reviewer requests into atomic tasks, merge overlapping tasks while retaining all source comment IDs, and add global consistency tasks that are not anchored to one comment. Draft one `revision_decision_plan.json` conforming to `schemas/revision-decision-plan.schema.json`; every task remains pending and requires author approval. The validator checks provenance and dependency integrity, not scientific correctness. Present the proposed dispositions and targets to the author first; only after the author accepts that scope should the Workflow Ledger be created and the execution tasks prepared.
 
 Each DOCX inventory is cached by its SHA-256 and parser cache-schema version. The first run parses the files; a later run with unchanged source bytes reports cache hits and performs matching/numbering over the cached JSON without reopening the DOCX. If one input changes, only that input is reparsed. Use `--refresh-cache` to force a fresh parse. The cache directory is local and ignored by Git.
 
