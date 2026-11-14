@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .identity import TargetRef
+from .identity import TargetRef, revision_item_fingerprint
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _PATCH_ACTIONS = frozenset({"replace"})
@@ -875,6 +875,8 @@ class RevisionLedger:
             approval_fp = _sha256(item.get("approval_fingerprint"), "approval_fingerprint")
             if preflight_fp != patch.preflight_fingerprint:
                 raise RevisionModelError(f"Patch {patch_id} preflight fingerprint changed before approval.")
+            if approval_fp != revision_item_fingerprint(dict(item)):
+                raise RevisionModelError(f"Patch {patch_id} approval fingerprint is stale or invalid.")
             patch.approval_fingerprint = approval_fp
             patch.status = "approved"
             self.events.append(RevisionEvent(
