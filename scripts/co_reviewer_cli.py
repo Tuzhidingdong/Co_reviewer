@@ -544,6 +544,12 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             operation_id = result.get("operation_id")
             if operation_id not in targets_by_operation:
                 raise ValueError(f"Prepared target has unknown operation_id {operation_id!r}.")
+            target = targets_by_operation[operation_id]
+            if target.get("part", "word/document.xml") != "word/document.xml":
+                # Header/footer and other non-body parts are kept eligible for
+                # exact revision application, but their locators are entered
+                # through the explicit manual_required pathway.
+                continue
             paragraph_index = result.get("p_idx")
             if not isinstance(paragraph_index, int) or not 0 <= paragraph_index < len(paragraph_texts):
                 raise ValueError(f"Preflight could not resolve paragraph index for {operation_id}.")
