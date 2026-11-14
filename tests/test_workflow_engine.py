@@ -7,10 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.workflow_engine import (
     WorkflowValidationError,
+    build_workflow_ledger,
     build_workflow_schedule,
     invalidate_downstream,
     select_ready_tasks,
     transition_task,
+    validate_workflow_ledger,
     validate_workflow_tasks,
     workflow_tasks_from_decision_plan,
 )
@@ -282,6 +284,49 @@ class WorkflowEngineTests(unittest.TestCase):
             "verification_fingerprint" in condition.get("then", {}).get("required", [])
             for condition in task_schema["allOf"]
         ))
+
+    def test_persistent_workflow_ledger_builds_and_validates(self):
+        decision_plan = {
+            "source_files": [{
+                "role": "Manuscript",
+                "file": "Manuscript.docx",
+                "sha256": INPUT_HASH,
+            }],
+            "tasks": [{
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "response_only",
+                "title": "Prepare response",
+                "source_comment_ids": ["C1"],
+                "target_documents": [],
+                "evidence": [{
+                    "evidence_id": "E1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "Please clarify.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                    "source_comment_id": "C1",
+                }],
+                "proposed_action": "Draft a response using the cited comment.",
+                "targets": [],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.9,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        ledger = build_workflow_ledger(
+            decision_plan, "round-2026-11-14-001", STAMP
+        )
+        self.assertEqual(ledger["schema_version"], "0.5.1")
+        self.assertEqual(ledger["tasks"][0]["status"], "planned")
+        self.assertEqual(ledger["tasks"][0]["task_type"], "response_only")
+        self.assertEqual(ledger["tasks"][0]["target_groups"], [])
+        self.assertEqual(validate_workflow_ledger(ledger), [])
 
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
