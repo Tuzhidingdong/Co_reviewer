@@ -2160,9 +2160,18 @@ def cmd_build_document_identity(args):
         inventory.get("documents", [])
         if isinstance(inventory, dict) else inventory
     )
+    from co_reviewer.working_view import inspect_clean_baseline
     for row in inventory_rows if isinstance(inventory_rows, list) else []:
         if isinstance(row, dict) and isinstance(row.get("file"), str):
             protected_inputs.add(Path(row["file"]).expanduser().resolve())
+            if row.get("role") in {"Manuscript", "SI"}:
+                baseline = inspect_clean_baseline(row["file"])
+                if not baseline["clean"]:
+                    raise ValueError(
+                        f"Initial {row['role']} baseline is not clean; document identity registration is blocked. "
+                        f"Unresolved Word markup: {baseline['blocking_counts']}. "
+                        "Resolve existing Track Changes and comments before starting this review round."
+                    )
     if output_path in protected_inputs:
         raise ValueError("Identity manifest output must not overwrite an inventory or source DOCX file.")
     if output_path.exists():
