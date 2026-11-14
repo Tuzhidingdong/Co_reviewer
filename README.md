@@ -61,6 +61,8 @@ Preserve reviewer identity per comment. When one task combines comments from dif
       }
     }
 
+Prepare the complete reviewer map before the first batch when possible. Across later batches, the RevisionLedger preserves previously recorded reviewer identities when a generic fallback is used; it permits upgrading a generic placeholder to an explicit label but rejects conflicting explicit reassignment.
+
 Then authorize only the selected, fully prepared task scopes and build the conflict-free Patch batch:
 
     python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
