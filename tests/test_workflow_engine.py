@@ -210,6 +210,28 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(validate_workflow_tasks([completed]), [])
         self.assertEqual(task["status"], "ready")
 
+    def test_targetref_revision_change_invalidates_task_scope_fingerprint(self):
+        task = _task("T1", [], "planned", ["doc-stable|object=para-01"])
+        task["targets"] = [{
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 3,
+            "action": "replace",
+        }]
+        task["target_refs"] = [{
+            "document_id": "doc-stable",
+            "revision_id": "revision-1",
+            "object_id": "para-01",
+            "object_type": "body_paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": INPUT_HASH,
+            "location_hint": {"p_idx": 3},
+        }]
+        first = workflow_scope_fingerprint(task)
+        task["target_refs"][0]["revision_id"] = "revision-2"
+        second = workflow_scope_fingerprint(task)
+        self.assertNotEqual(first, second)
+
     def test_scope_change_invalidates_preflight_and_approval_fingerprints(self):
         approved = _approved(_task("T1"))
         tampered = dict(approved)

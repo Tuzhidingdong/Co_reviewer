@@ -74,7 +74,7 @@ class WorkflowSchedule:
 _SCOPE_FINGERPRINT_FIELDS = (
     "task_id", "sequence", "stage", "task_type", "title",
     "source_comment_ids", "target_documents", "evidence", "proposed_action",
-    "targets", "dependencies", "target_groups", "readiness",
+    "targets", "target_refs", "dependencies", "target_groups", "readiness",
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids",
