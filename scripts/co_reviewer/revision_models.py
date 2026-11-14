@@ -1619,30 +1619,96 @@ class RevisionLedger:
                 self.documents.append(incoming)
                 continue
             current = self.documents[index]
-            if current.revision_id != incoming.revision_id:
-                raise RevisionModelError(
-                    f"Document {incoming.document_id} changed source revision within one review round."
-                )
-            if (
+            current_input = _canonical_path(current.input_file)
+            incoming_input = _canonical_path(incoming.input_file)
+            current_output = _canonical_path(current.output_file)
+            revision_changed = current.revision_id != incoming.revision_id
+            input_changed = current_input != incoming_input
+            output_changed = _canonical_path(current.output_file) != _canonical_path(incoming.output_file)
+
+            if revision_changed or input_changed:
+                if incoming_input != current_output:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} rebase input must be the previous "
+                        f"RevisionDocument output: {current.output_file}."
+                    )
+                predecessor_hashes: list[str] = []
+                for previous_patch in self.patches:
+                    if previous_patch.status not in {"verified", "superseded"}:
+                        continue
+                    if not any(
+                        operation.document == current.role
+                        and _canonical_path(operation.output_file) == current_output
+                        for operation in previous_patch.operations
+                    ):
+                        continue
+                    predecessor_hashes.extend(
+                        entry["sha256"]
+                        for entry in previous_patch.verified_output_hashes
+                        if isinstance(entry, Mapping)
+                        and isinstance(entry.get("path"), str)
+                        and _canonical_path(entry["path"]) == current_output
+                        and isinstance(entry.get("sha256"), str)
+                    )
+                if current.output_sha256:
+                    predecessor_hashes.append(current.output_sha256)
+                if not predecessor_hashes:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} cannot advance revisions without "
+                        "a verified SHA-256 for the previous DOCX output."
+                    )
+                if len(set(predecessor_hashes)) != 1:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} has conflicting verified hashes "
+                        "for its previous output."
+                    )
+                expected_input_hash = predecessor_hashes[0]
+                if incoming.source_sha256 and incoming.source_sha256 != expected_input_hash:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} new source identity does not match "
+                        "the previous verified DOCX output."
+                    )
+                input_path = Path(incoming.input_file).expanduser().resolve()
+                if input_path.is_file():
+                    try:
+                        actual_input_hash = sha256_file(input_path)
+                    except OSError as exc:
+                        raise RevisionModelError(
+                            f"Cannot hash rebased input DOCX {input_path}: {exc}"
+                        ) from exc
+                    if actual_input_hash != expected_input_hash:
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} rebased input file changed "
+                            "after the predecessor Patch was verified."
+                        )
+            elif (
                 current.source_sha256
                 and incoming.source_sha256
                 and current.source_sha256 != incoming.source_sha256
             ):
                 raise RevisionModelError(
-                    f"Document {incoming.document_id} source SHA-256 changed within one review round."
+                    f"Document {incoming.document_id} source SHA-256 changed without an "
+                    "advancing verified output/rebase."
                 )
-            output_changed = current.output_file != incoming.output_file
+
             self.documents[index] = replace(
                 current,
+                revision_id=incoming.revision_id,
+                input_file=incoming.input_file,
+                source_sha256=(
+                    incoming.source_sha256
+                    if incoming.source_sha256 is not None
+                    else (current.source_sha256 if not revision_changed else None)
+                ),
                 output_file=incoming.output_file,
                 output_sha256=(
                     incoming.output_sha256
                     if incoming.output_sha256 is not None
                     else (None if output_changed else current.output_sha256)
                 ),
-                working_clean_file=None if output_changed else current.working_clean_file,
-                working_clean_sha256=None if output_changed else current.working_clean_sha256,
-                working_view_fingerprint=None if output_changed else current.working_view_fingerprint,
+                working_clean_file=None if output_changed or input_changed else current.working_clean_file,
+                working_clean_sha256=None if output_changed or input_changed else current.working_clean_sha256,
+                working_view_fingerprint=None if output_changed or input_changed else current.working_view_fingerprint,
             )
 
         unit_index = {

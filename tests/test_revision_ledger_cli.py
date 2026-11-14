@@ -16,7 +16,12 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 import co_reviewer_cli as cli
 from co_reviewer.identity import sha256_file
 from docx import Document
-from co_reviewer.identity import canonical_fingerprint, sha256_file
+from co_reviewer.identity import (
+    CitationProfile,
+    build_document_identity,
+    canonical_fingerprint,
+    sha256_file,
+)
 from co_reviewer.workflow_engine import select_ready_tasks, validate_workflow_ledger, workflow_scope_fingerprint
 from co_reviewer.revision_models import (
     RevisionEvent,
@@ -25,6 +30,7 @@ from co_reviewer.revision_models import (
     ResponseUnit,
     RevisionDocument,
     RevisionLedger,
+    RevisionModelError,
     revision_ledger_from_mapping,
     response_units_to_legacy_plan,
 )
@@ -730,6 +736,26 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             }
 
         old_task = task(source, revision_one)
+        initial_identity = build_document_identity(
+            role="Manuscript",
+            source_sha256=sha256_file(source),
+            visible_text="Original manuscript source.",
+            structure=["paragraph"],
+            formatting=[{}],
+            citation_state={"mode": "unknown"},
+            citation_profile=CitationProfile(),
+            document_id="doc-manuscript",
+        )
+        updated_identity = build_document_identity(
+            role="Manuscript",
+            source_sha256=sha256_file(revision_one),
+            visible_text="Verified first revision.",
+            structure=["paragraph"],
+            formatting=[{}],
+            citation_state={"mode": "unknown"},
+            citation_profile=CitationProfile(),
+            document_id="doc-manuscript",
+        )
         old_workflow = {
             "schema_version": "0.5.1",
             "revision_round_id": "round-rebase",
@@ -738,7 +764,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "file": str(source),
                 "sha256": sha256_file(source),
             }],
-            "documents": [],
+            "documents": [initial_identity.to_dict()],
             "object_registry": [],
             "tasks": [old_task],
             "events": [{
@@ -782,8 +808,18 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             linked_patch_ids=["T1"],
         )
         timestamp = "2026-11-14T12:00:00+08:00"
+        prior_document = RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id=initial_identity.revision_id,
+            role="Manuscript",
+            input_file=str(source),
+            output_file=str(revision_one),
+            source_sha256=sha256_file(source),
+            output_sha256=sha256_file(revision_one),
+        )
         prior_ledger = RevisionLedger(
             revision_round_id="round-rebase",
+            documents=[prior_document],
             patches=[prior_patch],
             response_units=[prior_unit],
             events=[
@@ -805,6 +841,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         new_task = task(revision_one, revision_two)
         new_workflow = {
             **old_workflow,
+            "documents": [updated_identity.to_dict()],
             "tasks": [new_task],
             "events": [{
                 "event_id": "EV-T1-READY-2",
@@ -843,11 +880,73 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(unit.linked_patch_ids, ["T1-r2"])
         self.assertEqual(unit.status, "draft")
         self.assertFalse(unit.semantic_review_confirmed)
-        self.assertEqual(
-            merged.documents[0].revision_id,
-            prior_ledger.documents[0].revision_id if prior_ledger.documents else
-            merged.documents[0].revision_id,
+        self.assertEqual(merged.documents[0].document_id, "doc-manuscript")
+        self.assertEqual(merged.documents[0].revision_id, updated_identity.revision_id)
+        self.assertEqual(merged.documents[0].input_file, str(revision_one))
+        self.assertEqual(merged.documents[0].output_file, str(revision_two))
+        self.assertEqual(merged.documents[0].source_sha256, sha256_file(revision_one))
+
+    def test_same_round_document_revision_cannot_skip_previous_verified_output(self):
+        source = self.root / "before.docx"
+        r1 = self.root / "verified_r1.docx"
+        r2 = self.root / "candidate_r2.docx"
+        source.write_bytes(b"before")
+        r1.write_bytes(b"verified")
+        r2.write_bytes(b"candidate")
+        old_document = RevisionDocument(
+            document_id="doc-1",
+            revision_id="rev-1",
+            role="Manuscript",
+            input_file=str(source),
+            output_file=str(r1),
+            source_sha256=sha256_file(source),
+            output_sha256=sha256_file(r1),
         )
+        old_operation = PatchOperation.from_mapping({
+            "operation_id": "OLD-OP",
+            "document": "Manuscript",
+            "input_file": str(source),
+            "output_file": str(r1),
+            "part": "word/document.xml",
+            "find": "old",
+            "replace": "verified",
+            "source_sha256": sha256_file(source),
+            "evidence_ids": ["E1"],
+        })
+        old_patch = Patch(
+            patch_id="OLD",
+            task_id="T1",
+            reviewer="Reviewer",
+            comment="Revise.",
+            proposed_response="Revised.",
+            operations=[old_operation],
+            status="verified",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="PF",
+            approval_fingerprint="b" * 64,
+            apply_report_ids=["AP"],
+            verification_report_id="VF",
+            verified_output_hashes=[{"path": str(r1), "sha256": sha256_file(r1)}],
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-skip-check",
+            documents=[old_document],
+            patches=[old_patch],
+        )
+        incoming_document = RevisionDocument(
+            document_id="doc-1",
+            revision_id="rev-2",
+            role="Manuscript",
+            input_file=str(source),
+            output_file=str(r2),
+            source_sha256=sha256_file(source),
+        )
+        incoming = RevisionLedger(
+            revision_round_id="round-skip-check",
+            documents=[incoming_document],
+        )
+        with self.assertRaisesRegex(RevisionModelError, "rebase input must be the previous"):
+            ledger.merge_batch(incoming)
 
     def test_workflow_task_authorization_parser_requires_explicit_plan_approval(self):
         parser = cli.build_parser()
