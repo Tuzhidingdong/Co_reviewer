@@ -814,6 +814,146 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
     return adapted
 
 
+_WORKFLOW_TASK_TYPES = frozenset({
+    "local_revision",
+    "cross_document_consistency",
+    "global_numbering",
+    "content_placement_decision",
+    "response_only",
+    "author_decision",
+    "evidence_request",
+    "other",
+})
+_WORKFLOW_EVENT_TYPES = frozenset({
+    "status_transition",
+    "preflight",
+    "approval",
+    "patch_applied",
+    "verification",
+    "invalidation",
+    "location_mapping",
+})
+
+
+def validate_workflow_ledger(ledger: Any) -> list[str]:
+    """Validate the persisted review-round ledger and all of its task records."""
+    if not isinstance(ledger, Mapping):
+        return ["Workflow ledger must be an object."]
+    errors: list[str] = []
+    if ledger.get("schema_version") != "0.5.1":
+        errors.append("Workflow ledger schema_version must be '0.5.1'.")
+    round_id = ledger.get("revision_round_id")
+    if not isinstance(round_id, str) or not round_id.strip():
+        errors.append("Workflow ledger revision_round_id must be a non-empty string.")
+    if "created_at_utc" in ledger and not _is_aware_timestamp(ledger.get("created_at_utc")):
+        errors.append("Workflow ledger created_at_utc must be timezone-aware.")
+
+    sources = ledger.get("source_files", [])
+    if not isinstance(sources, list):
+        errors.append("Workflow ledger source_files must be an array.")
+        sources = []
+    seen_sources: set[tuple[str, str]] = set()
+    for index, source in enumerate(sources):
+        prefix = f"Workflow ledger source_files[{index}]"
+        if not isinstance(source, Mapping):
+            errors.append(f"{prefix} must be an object.")
+            continue
+        role, file_path, digest = (
+            source.get("role"), source.get("file"), source.get("sha256")
+        )
+        if role not in {"Reviewers", "Manuscript", "SI"}:
+            errors.append(f"{prefix}.role is unsupported.")
+        if not isinstance(file_path, str) or not file_path.strip():
+            errors.append(f"{prefix}.file must be non-empty.")
+        if not _is_sha256(digest):
+            errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest.")
+        if isinstance(role, str) and isinstance(file_path, str):
+            source_key = (role, file_path)
+            if source_key in seen_sources:
+                errors.append(f"{prefix} duplicates source {role}/{file_path}.")
+            seen_sources.add(source_key)
+
+    tasks = ledger.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        errors.append("Workflow ledger tasks must be a non-empty array.")
+        tasks = []
+    for index, task in enumerate(tasks):
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("task_id", f"index {index}")
+        task_type = task.get("task_type")
+        if not isinstance(task_type, str) or task_type not in _WORKFLOW_TASK_TYPES:
+            errors.append(f"Task {task_id} has unsupported task_type {task_type!r}.")
+        if not isinstance(task.get("target_groups"), (list, tuple)):
+            errors.append(f"Task {task_id} target_groups must be an array.")
+        if task_type == "response_only" and task.get("target_groups") != []:
+            errors.append(f"Response-only task {task_id} cannot have document target groups.")
+
+    errors.extend(validate_workflow_tasks(tasks))
+
+    events = ledger.get("events", [])
+    if not isinstance(events, list):
+        errors.append("Workflow ledger events must be an array.")
+        events = []
+    known_task_ids = {
+        task.get("task_id")
+        for task in tasks if isinstance(task, Mapping)
+    }
+    seen_event_ids: set[str] = set()
+    for index, event in enumerate(events):
+        prefix = f"Workflow ledger events[{index}]"
+        if not isinstance(event, Mapping):
+            errors.append(f"{prefix} must be an object.")
+            continue
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id.strip():
+            errors.append(f"{prefix}.event_id must be non-empty.")
+        elif event_id in seen_event_ids:
+            errors.append(f"{prefix} duplicates event_id {event_id}.")
+        else:
+            seen_event_ids.add(event_id)
+        if event.get("task_id") not in known_task_ids:
+            errors.append(f"{prefix}.task_id refers to an unknown task.")
+        if not _is_aware_timestamp(event.get("timestamp_utc")):
+            errors.append(f"{prefix}.timestamp_utc must be timezone-aware.")
+        if event.get("event_type") not in _WORKFLOW_EVENT_TYPES:
+            errors.append(f"{prefix}.event_type is unsupported.")
+        if "fingerprint" in event and not _is_sha256(event.get("fingerprint")):
+            errors.append(f"{prefix}.fingerprint must be a lowercase SHA-256 digest.")
+
+    return list(dict.fromkeys(errors))
+
+
+def build_workflow_ledger(
+    decision_plan: Mapping[str, Any],
+    revision_round_id: str,
+    created_at_utc: str,
+) -> dict[str, Any]:
+    """Create a durable Workflow Ledger from a validated decision-plan payload."""
+    if not isinstance(decision_plan, Mapping):
+        raise WorkflowValidationError("Decision plan must be an object.")
+    if not isinstance(revision_round_id, str) or not revision_round_id.strip():
+        raise WorkflowValidationError("revision_round_id must be non-empty.")
+    if not _is_aware_timestamp(created_at_utc):
+        raise WorkflowValidationError("created_at_utc must be timezone-aware.")
+    tasks = workflow_tasks_from_decision_plan(decision_plan.get("tasks"))
+    ledger = {
+        "schema_version": "0.5.1",
+        "revision_round_id": revision_round_id.strip(),
+        "created_at_utc": created_at_utc,
+        "source_files": copy.deepcopy(decision_plan.get("source_files", [])),
+        "tasks": tasks,
+        "events": [],
+    }
+    errors = validate_workflow_ledger(ledger)
+    if errors:
+        raise WorkflowValidationError(
+            "Workflow ledger validation failed:\n- " + "\n- ".join(errors)
+        )
+    build_workflow_schedule(tasks)
+    return ledger
+
+
 class WorkflowEngine:
     """Stable namespace facade for the workflow engine public API."""
 
@@ -823,3 +963,5 @@ class WorkflowEngine:
     transition_task = staticmethod(transition_task)
     invalidate_downstream = staticmethod(invalidate_downstream)
     from_decision_plan = staticmethod(workflow_tasks_from_decision_plan)
+    build_ledger = staticmethod(build_workflow_ledger)
+    validate_ledger = staticmethod(validate_workflow_ledger)
