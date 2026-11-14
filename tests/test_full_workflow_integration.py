@@ -527,6 +527,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
             0,
         )
         response_text = response_path.read_text(encoding="utf-8")
+        self.assertIn("Reviewer 1 — RU-T1-1", response_text)
         self.assertIn("SEMANTIC REVIEWED; FINAL PDF PAGE/LINE MAPPING PENDING", response_text)
         self.assertNotIn("**Response**", response_text)
         self.assertEqual(
