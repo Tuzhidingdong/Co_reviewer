@@ -45,25 +45,8 @@ jobs:
             $errors | ForEach-Object { Write-Error $_ }
             exit 1
           }
-      - name: Compile all Python modules and tests
-        run: python -m compileall -q scripts tests
-      - name: Unit tests
-        run: python -m unittest discover -s tests -v
-      - name: CLI help
-        run: python scripts/co_reviewer_cli.py --help
-      - name: Cached review audit CLI help
-        run: python scripts/co_reviewer_cli.py audit --help
-      - name: Pending decision-plan validator CLI help
-        run: python scripts/validate_decision_plan.py --help
-      - name: Source preflight CLI help
-        run: python scripts/co_reviewer_cli.py preflight-plan --help
-      - name: Verified-state confirmation CLI help
-        run: python scripts/co_reviewer_cli.py confirm-verified --help
-      - name: Usage audit CLI help
-        run: python scripts/co_reviewer_cli.py audit-usage --help
-      - name: Usage event CLI help
-        run: python scripts/co_reviewer_cli.py record-usage-event --help
-      - name: Usage estimation CLI help
-        run: python scripts/co_reviewer_cli.py estimate-usage --help
-      - name: DOCX quality audit CLI help
-        run: python scripts/co_reviewer_cli.py audit-docx-quality --help
+      - name: Run PowerShell quality-check script
+        shell: pwsh
+        run: |
+          $python = (Get-Command python -CommandType Application).Source
+          ./scripts/run_quality_checks.ps1 -PythonExe $python
