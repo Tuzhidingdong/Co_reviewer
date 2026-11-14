@@ -35,6 +35,13 @@ from co_reviewer.identity import (
     sha256_file, revision_targets_fingerprint, revision_item_fingerprint,
     revision_verification_fingerprint, DocumentIdentityAndHash,
 )
+from co_reviewer.revision_models import (
+    RevisionLedger,
+    RevisionModelError,
+    build_revision_ledger,
+    revision_ledger_from_mapping,
+    response_units_to_legacy_plan,
+)
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -1140,11 +1147,83 @@ def validate_apply_artifact_paths(
                     )
 
 
+
+
+def _load_revision_ledger(path: str | Path) -> RevisionLedger:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    return revision_ledger_from_mapping(payload)
+
+
+def cmd_build_revision_ledger(args):
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path == workflow_path:
+        raise ValueError("RevisionLedger output must not overwrite the Workflow Ledger.")
+    if output_path.exists():
+        raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
+
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    document_paths = (
+        json.loads(Path(args.document_paths).read_text(encoding="utf-8"))
+        if args.document_paths else {}
+    )
+    reviewer_comments = (
+        json.loads(Path(args.reviewer_comments).read_text(encoding="utf-8"))
+        if args.reviewer_comments else {}
+    )
+    reviewer_map = (
+        json.loads(Path(args.reviewer_map).read_text(encoding="utf-8"))
+        if args.reviewer_map else {}
+    )
+    if not isinstance(document_paths, dict):
+        raise ValueError("--document-paths must contain a JSON object.")
+    if not isinstance(reviewer_comments, dict):
+        raise ValueError("--reviewer-comments must contain a JSON object.")
+    if not isinstance(reviewer_map, dict):
+        raise ValueError("--reviewer-map must contain a JSON object.")
+
+    ledger = build_revision_ledger(
+        workflow,
+        document_paths=document_paths,
+        reviewer_comments_by_id=reviewer_comments,
+        reviewer_by_task=reviewer_map,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(output_path, ledger.to_dict())
+    print(f"[LEDGER] {len(ledger.patches)} Patch record(s); {len(ledger.response_units)} ResponseUnit(s).")
+    print(f"[OK] RevisionLedger: {output_path}")
+    return 0
+
+
+def cmd_export_revision_plan(args):
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path == ledger_path:
+        raise ValueError("Legacy revision plan output must not overwrite the RevisionLedger.")
+    if output_path.exists():
+        raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
+    ledger = _load_revision_ledger(ledger_path)
+    plan = ledger.to_legacy_revision_plan()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(output_path, plan)
+    print(f"[EXPORT] {len(plan['revision_items'])} pending Patch(es) exported.")
+    print("[GUARD] The plan is unapproved; preflight and explicit approve-plan are still required.")
+    print(f"[OK] Legacy revision plan: {output_path}")
+    return 0
+
+
 def cmd_apply(args):
     plan_path = Path(args.plan)
     report_path = Path(args.report)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     validate_apply_artifact_paths(plan, plan_path, report_path)
+    revision_ledger = None
+    if getattr(args, "revision_ledger", None):
+        ledger_path = Path(args.revision_ledger).expanduser().resolve()
+        if ledger_path in {plan_path.expanduser().resolve(), report_path.expanduser().resolve()}:
+            raise ValueError("RevisionLedger path must be distinct from plan/report paths.")
+        revision_ledger = _load_revision_ledger(ledger_path)
+        revision_ledger.assert_legacy_plan_matches(plan)
 
     # Keep an append-only report history across incremental revision iterations.
     # Load and validate it before writing any new DOCX output files.
@@ -1169,6 +1248,10 @@ def cmd_apply(args):
         if item.get("status") == "approved" and item.get("id") in applied_ids:
             item["status"] = "applied"
     write_json_atomic(plan_path, plan)
+    if revision_ledger is not None:
+        revision_ledger.record_legacy_apply_reports(reports, plan)
+        write_json_atomic(args.revision_ledger, revision_ledger.to_dict())
+        print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     for r in reports: print(f"[DONE] {r['output_file']}: {r['edits_applied']}/{r['edits_requested']} edits")
     print(f"[STATE] Plan updated: {len(applied_ids)} revision item(s) marked applied.")
     print(f"[OK] report: {args.report}")
@@ -1220,6 +1303,16 @@ def cmd_confirm_verified(args):
     if not isinstance(plan, dict) or not isinstance(plan.get("revision_items"), list):
         raise ValueError("Plan must contain a revision_items array.")
     validate_apply_artifact_paths(plan, plan_path, args.apply_report)
+    revision_ledger = None
+    if getattr(args, "revision_ledger", None):
+        ledger_path = Path(args.revision_ledger).expanduser().resolve()
+        if ledger_path in {
+            plan_path.expanduser().resolve(),
+            Path(args.apply_report).expanduser().resolve(),
+        }:
+            raise ValueError("RevisionLedger path must be distinct from plan/apply-report paths.")
+        revision_ledger = _load_revision_ledger(ledger_path)
+        revision_ledger.assert_legacy_plan_matches(plan)
     errors = validate_plan(plan, require_approval=False)
     if errors:
         raise ValueError("Cannot verify an invalid revision plan:\n- " + "\n- ".join(errors))
@@ -1298,6 +1391,19 @@ def cmd_confirm_verified(args):
     if errors:
         raise ValueError("Verification confirmation failed validation:\n- " + "\n- ".join(errors))
     write_json_atomic(plan_path, plan)
+    if revision_ledger is not None:
+        verification_id = (
+            "confirm-verified:"
+            + Path(args.apply_report).name
+            + ":"
+            + datetime.now(timezone.utc).isoformat()
+        )
+        revision_ledger.record_legacy_verified_items(
+            plan,
+            verification_report_id=verification_id,
+        )
+        write_json_atomic(args.revision_ledger, revision_ledger.to_dict())
+        print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     print(f"[VERIFIED] {len(requested)} revision item(s): {', '.join(requested)}")
     print("[GUARD] Exact Track Changes were rechecked; current output DOCX hashes are sealed.")
     print("[HUMAN] Semantic review acknowledgement was recorded; the CLI does not judge scientific correctness.")
@@ -1321,10 +1427,16 @@ def cmd_status(args):
     return 0
 
 def cmd_response(args):
-    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    errors = validate_plan(plan, require_approval=False)
-    if errors:
-        raise ValueError("Cannot render response letter from invalid plan:\n- " + "\n- ".join(errors))
+    if getattr(args, "revision_ledger", None):
+        ledger = _load_revision_ledger(args.revision_ledger)
+        if not ledger.response_units:
+            raise ValueError("RevisionLedger does not contain ResponseUnit records.")
+        plan = response_units_to_legacy_plan(ledger.response_units, ledger.patches)
+    else:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+        errors = validate_plan(plan, require_approval=False)
+        if errors:
+            raise ValueError("Cannot render response letter from invalid plan:\n- " + "\n- ".join(errors))
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(render_response_letter(plan), encoding="utf-8")
@@ -1334,10 +1446,16 @@ def cmd_response(args):
     return 0
 
 def cmd_response_docx(args):
-    plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    errors = validate_plan(plan, require_approval=False)
-    if errors:
-        raise ValueError("Cannot render response letter from invalid plan:\n- " + "\n- ".join(errors))
+    if getattr(args, "revision_ledger", None):
+        ledger = _load_revision_ledger(args.revision_ledger)
+        if not ledger.response_units:
+            raise ValueError("RevisionLedger does not contain ResponseUnit records.")
+        plan = response_units_to_legacy_plan(ledger.response_units, ledger.patches)
+    else:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+        errors = validate_plan(plan, require_approval=False)
+        if errors:
+            raise ValueError("Cannot render response letter from invalid plan:\n- " + "\n- ".join(errors))
     try:
         from response_letter_docx import render_response_docx
     except ImportError as exc:
@@ -1389,18 +1507,22 @@ def build_parser():
     ap.set_defaults(func=cmd_approve_plan)
     a = sub.add_parser("apply", help="Apply an approved plan to separate DOCX output files.")
     a.add_argument("--plan", required=True); a.add_argument("--author", default="Co_Reviewer")
-    a.add_argument("--report", default="revision_apply_report.json"); a.set_defaults(func=cmd_apply)
+    a.add_argument("--report", default="revision_apply_report.json")
+    a.add_argument("--revision-ledger", help="Synchronize Patch state/events into a v0.5.1 RevisionLedger after apply.")
+    a.set_defaults(func=cmd_apply)
     vfy = sub.add_parser("verify", help="Verify actual Word Track Changes against the approved plan.")
     vfy.add_argument("--plan", required=True)
     vfy.add_argument("--apply-report", default="revision_apply_report.json")
     vfy.add_argument("--out", default="revision_verification.json")
     vfy.set_defaults(func=cmd_verify)
     rsp = sub.add_parser("render-response", help="Render a conservative Response Letter draft from revision items.")
-    rsp.add_argument("--plan", required=True)
+    rsp.add_argument("--plan", help="Legacy revision plan; not needed with --revision-ledger.")
+    rsp.add_argument("--revision-ledger", help="Render ResponseUnits from a v0.5.1 RevisionLedger.")
     rsp.add_argument("--out", default="Response_to_Reviewers.md")
     rsp.set_defaults(func=cmd_response)
     rspdocx = sub.add_parser("render-response-docx", help="Render the revision plan as a formatted Word Response Letter.")
-    rspdocx.add_argument("--plan", required=True)
+    rspdocx.add_argument("--plan", help="Legacy revision plan; not needed with --revision-ledger.")
+    rspdocx.add_argument("--revision-ledger", help="Render ResponseUnits from a v0.5.1 RevisionLedger.")
     rspdocx.add_argument("--out", default="Response_to_Reviewers.docx")
     rspdocx.add_argument("--manuscript-title", default="")
     rspdocx.add_argument("--author", default="")
@@ -1408,10 +1530,22 @@ def build_parser():
     cv = sub.add_parser("confirm-verified", help="Confirm selected items after exact DOCX verification and semantic review.")
     cv.add_argument("--plan", required=True)
     cv.add_argument("--apply-report", default="revision_apply_report.json")
+    cv.add_argument("--revision-ledger", help="Synchronize verified Patch state/events into the RevisionLedger.")
     cv.add_argument("--ids", nargs="+", required=True, help="Applied revision item IDs to confirm.")
     cv.add_argument("--semantic-review-confirmed", action="store_true", required=True,
                     help="Required acknowledgement that scientific meaning and cross-document consistency were reviewed.")
     cv.set_defaults(func=cmd_confirm_verified)
+    bl = sub.add_parser("build-revision-ledger", help="Build typed Patches and ResponseUnits from a Workflow Ledger.")
+    bl.add_argument("--workflow-ledger", required=True)
+    bl.add_argument("--document-paths", help="Optional JSON map of document role to input_file/output_file.")
+    bl.add_argument("--reviewer-comments", help="Optional JSON map of comment ID to exact reviewer comment text.")
+    bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label.")
+    bl.add_argument("--out", default="revision_ledger.json")
+    bl.set_defaults(func=cmd_build_revision_ledger)
+    ex = sub.add_parser("export-revision-plan", help="Export pending Patch operations to the legacy DOCX plan format.")
+    ex.add_argument("--ledger", required=True)
+    ex.add_argument("--out", default="revision_plan.json")
+    ex.set_defaults(func=cmd_export_revision_plan)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)
