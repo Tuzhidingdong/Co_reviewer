@@ -547,11 +547,11 @@ class ResponseUnit:
             _sha256(self.location_map_fingerprint, "location_map_fingerprint")
         if self.location_map_file_sha256 is not None:
             _sha256(self.location_map_file_sha256, "location_map_file_sha256")
-        if self.status in {"location_mapped", "completed"} and self.location_requirement == "not_required":
+        if self.status == "location_mapped" and self.location_requirement == "not_required":
             raise RevisionModelError("A not_required ResponseUnit cannot carry a Word/PDF location state.")
         if self.status in {"location_mapped", "completed"} and self.location_requirement == "manual_required":
             raise RevisionModelError("manual_required ResponseUnits need an explicit manual locator.")
-        if self.status in {"location_mapped", "completed"}:
+        if self.status in {"location_mapped", "completed"} and self.location_requirement != "not_required":
             if not self.semantic_review_confirmed:
                 raise RevisionModelError("Location-mapped ResponseUnit requires semantic review.")
             if not self.final_locations:
@@ -572,7 +572,9 @@ class ResponseUnit:
             if actual_map_hash != self.location_map_file_sha256:
                 raise RevisionModelError(f"Location map file changed after mapping: {map_path}")
         if self.status == "completed" and self.location_requirement == "not_required":
-            if self.final_locations or self.location_map_file or self.location_map_fingerprint:
+            if self.disposition != "reply_only" or not self.semantic_review_confirmed:
+                raise RevisionModelError("Only a semantically reviewed reply_only ResponseUnit can complete without location evidence.")
+            if self.final_locations or self.location_map_file or self.location_map_fingerprint or self.location_map_file_sha256:
                 raise RevisionModelError("not_required completed ResponseUnits cannot carry fabricated location evidence.")
         if self.status == "completed":
             if not self.completed_at_utc:
@@ -580,6 +582,8 @@ class ResponseUnit:
             _aware_timestamp(self.completed_at_utc, "completed_at_utc")
 
     def validate_location_evidence(self) -> list[str]:
+        if self.location_requirement == "not_required":
+            return []
         if self.status not in {"location_mapped", "completed"}:
             return []
         errors: list[str] = []
@@ -2348,7 +2352,11 @@ def response_units_to_legacy_plan(
         )
         patch_statuses = {item.status for item in linked_patches}
         status = (
-            "verified" if final_is_mapped
+            "verified" if final_is_mapped or (
+                unit.location_requirement == "not_required"
+                and unit.semantic_review_confirmed
+                and unit.status in {"verified", "completed"}
+            )
             else "location_pending" if unit.status == "verified"
             else "blocked" if unit.status == "blocked"
             else "applied" if patch_statuses & {"applied", "verified"}
