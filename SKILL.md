@@ -80,21 +80,21 @@ The RevisionLedger is the durable execution record for the round. It holds docum
 
 Export the newly planned Patch operations to the existing Word-native revision engine format:
 
-    python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --out edits_plan.json
+    python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --out edits_plan_batch_01.json
 
-This legacy-shaped edits_plan.json is an adapter payload for the existing Track Changes writer, not a replacement for the Workflow Ledger or RevisionLedger. Do not maintain a separate manually edited revision plan as a competing source of truth.
+This legacy-shaped edits_plan_batch_01.json is an adapter payload for the existing Track Changes writer, not a replacement for the Workflow Ledger or RevisionLedger. Do not maintain a separate manually edited revision plan as a competing source of truth. The export command refuses to overwrite an existing file, so use a new unique plan/report filename for every later batch (for example, edits_plan_batch_02.json). Reuse the same Workflow Ledger and RevisionLedger paths to preserve round history.
 
 ### Stage 3 — Preflight and approve the exact Patch batch
 
 Before approval, run the no-write source preflight and synchronize its evidence into the RevisionLedger:
 
-    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan.json --out preflight_report.json --revision-ledger revision_ledger.json
+    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report.json --revision-ledger revision_ledger.json
 
 Present the preflight result, exact target operations, input/output paths and source hashes to the author. A failed or ambiguous target blocks the batch. If an input source or Patch operand changes after preflight, rebuild/re-authorize the affected scope and rerun preflight; do not reuse stale approval.
 
 After the author approves the exact preflighted Patch IDs, record that approval in both the plan and RevisionLedger:
 
-    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan.json --ids T1 T2 --revision-ledger revision_ledger.json --actor "Human Author"
+    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan_batch_01.json --ids T1 T2 --revision-ledger revision_ledger.json --actor "Human Author"
 
 This is a second, narrower gate: approve-workflow-tasks authorizes the prepared task scope, while approve-plan binds approval to the exact preflighted Patch operations and source versions. Both are required. Do not apply a Patch that has not passed both gates.
 
@@ -102,7 +102,7 @@ This is a second, narrower gate: approve-workflow-tasks authorizes the prepared 
 
 Apply only the approved Patch batch to separate Marked DOCX outputs:
 
-    python scripts/co_reviewer_cli.py apply --plan edits_plan.json --author "Author Name" --report revision_apply_report.json --revision-ledger revision_ledger.json
+    python scripts/co_reviewer_cli.py apply --plan edits_plan_batch_01.json --author "Author Name" --report revision_apply_report.json --revision-ledger revision_ledger.json
 
 Inputs are immutable. Write revised copies to distinct output paths. The legacy Word writer remains the only document-writing implementation. Every textual change in a Marked Manuscript or SI must be represented by native Word Track Changes: removed text inside w:del/w:delText, and added text inside w:ins/w:t. Font color is not a substitute.
 
@@ -112,13 +112,13 @@ Never directly rewrite a paragraph/run with python-docx, replace XML text nodes,
 
 Run mechanical verification against the actual apply report:
 
-    python scripts/co_reviewer_cli.py verify --plan edits_plan.json --apply-report revision_apply_report.json --out revision_verification.json
+    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --out revision_verification.json
 
 This checks exact revision IDs and deleted/inserted text, whole-document untracked-text integrity, and supported native subscript/superscript formatting. It does not judge scientific correctness.
 
 Only after mechanical verification and human semantic review of the revised Manuscript/SI pass, seal the verified Patch outputs:
 
-    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan.json --apply-report revision_apply_report.json --ids T1 T2 --semantic-review-confirmed --revision-ledger revision_ledger.json
+    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --ids T1 T2 --semantic-review-confirmed --revision-ledger revision_ledger.json
 
 Then synchronize Patch lifecycle evidence back to the dependency graph:
 
