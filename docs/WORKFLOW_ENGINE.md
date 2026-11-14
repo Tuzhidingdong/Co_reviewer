@@ -21,7 +21,11 @@ The v0.5.1 Workflow Ledger is the common lifecycle layer between those concerns.
 | completed | Linked output and response obligations are complete | Any upstream change forces recheck |
 | recheck_required | A prior decision or result may be stale | Re-evaluate and re-approve as needed |
 
-The engine enforces transition order. It does not claim that a state label proves scientific correctness: evidence grounding, deterministic checks and human semantic review remain separate acceptance gates.
+The engine enforces transition order and state evidence. Moving to \`preflighted\` requires a source/input SHA-256 fingerprint, report ID and timezone-aware timestamp. Moving to \`approved\` requires an explicit human-confirmation record, approver and timestamp; the approval fingerprint binds that record to the exact task scope and preflight. Applying requires an output fingerprint and execution report. Verification requires a report and explicit semantic-review confirmation. Completion requires a separate completion record.
+
+These fingerprints are integrity checks, not cryptographic proof of a person's identity. A production UI/CLI adapter must only set \`human_approval_confirmed\` from a direct user action and must retain the corresponding event/audit record. The engine does not claim that a state label proves scientific correctness: evidence grounding, deterministic checks and human semantic review remain separate acceptance gates.
+
+A change to the task scope (targets, evidence, proposed action, dependencies or target groups) invalidates the existing preflight/approval fingerprints. Upstream changes move every dependent task to \`recheck_required\`; returning from that state clears previous execution/approval/verification evidence so it cannot be reused silently.
 
 ## Scheduling rules
 
