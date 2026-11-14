@@ -469,6 +469,15 @@ class RevisionLedger:
             errors.append("RevisionLedger contains duplicate response_unit_id values.")
         known_patches = set(patch_ids)
         for patch in self.patches:
+            if patch.status in {"approved", "applied", "verified"} and not _SHA256_RE.fullmatch(
+                patch.approval_fingerprint or ""
+            ):
+                errors.append(f"Patch {patch.patch_id} in {patch.status} state lacks a valid approval fingerprint.")
+            if patch.status == "verified":
+                if not patch.verification_report_id:
+                    errors.append(f"Verified patch {patch.patch_id} lacks verification_report_id.")
+                if not patch.verified_output_hashes:
+                    errors.append(f"Verified patch {patch.patch_id} lacks verified_output_hashes.")
             if patch.supersedes_patch_id and patch.supersedes_patch_id not in known_patches:
                 errors.append(
                     f"Patch {patch.patch_id} supersedes unknown patch {patch.supersedes_patch_id}."
@@ -508,9 +517,20 @@ class RevisionLedger:
         }
 
     def record_legacy_apply_reports(
-        self, reports: Sequence[Mapping[str, Any]], *, actor: str = "Co_Reviewer"
+        self,
+        reports: Sequence[Mapping[str, Any]],
+        revision_plan: Mapping[str, Any],
+        *,
+        actor: str = "Co_Reviewer",
     ) -> None:
         by_id = {patch.patch_id: patch for patch in self.patches}
+        plan_items = revision_plan.get("revision_items", [])
+        if not isinstance(plan_items, list):
+            raise RevisionModelError("Legacy revision plan must contain revision_items.")
+        plan_by_id = {
+            item.get("id"): item
+            for item in plan_items if isinstance(item, Mapping)
+        }
         now = datetime.now(timezone.utc).isoformat()
         for report in reports:
             if not isinstance(report, Mapping):
@@ -524,6 +544,14 @@ class RevisionLedger:
                 patch = by_id.get(patch_id)
                 if patch is None:
                     continue
+                legacy_item = plan_by_id.get(patch_id)
+                if not isinstance(legacy_item, Mapping):
+                    raise RevisionModelError(
+                        f"Applied patch {patch_id} is missing from the legacy revision plan."
+                    )
+                approval_fingerprint = legacy_item.get("approval_fingerprint")
+                _sha256(approval_fingerprint, "approval_fingerprint")
+                patch.approval_fingerprint = approval_fingerprint
                 patch.status = "applied"
                 if report.get("output_file"):
                     report_id = str(report.get("report_id") or report.get("output_file"))
@@ -564,11 +592,18 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Legacy item {patch.patch_id} lacks semantic-review confirmation."
                 )
+            patch.approval_fingerprint = _sha256(
+                item.get("approval_fingerprint"), "approval_fingerprint"
+            )
             patch.status = "verified"
             patch.verification_report_id = verification_report_id
             patch.verified_output_hashes = copy.deepcopy(
                 item.get("verified_output_hashes", [])
             )
+            if not patch.verified_output_hashes:
+                raise RevisionModelError(
+                    f"Verified patch {patch.patch_id} has no sealed output hashes."
+                )
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
                 patch_id=patch.patch_id,
@@ -664,12 +699,12 @@ def build_revision_ledger(
                 )
             )
 
+        patch_id = str(task.get("patch_id") or task_id)
         if operation_records:
             if not comment_text:
                 raise RevisionModelError(
                     f"Task {task_id} has executable patch operations but no traceable reviewer comment text."
                 )
-            patch_id = str(task.get("patch_id") or task_id)
             patches.append(Patch(
                 patch_id=patch_id,
                 task_id=task_id,
@@ -709,7 +744,7 @@ def build_revision_ledger(
                     comment_text=specific_comment,
                     response_text=str(task.get("proposed_response") or ""),
                     linked_task_ids=[task_id],
-                    linked_patch_ids=[task_id] if operation_records else [],
+                    linked_patch_ids=[patch_id] if operation_records else [],
                     linked_targets=linked_targets,
                     status="draft",
                 ))
@@ -763,3 +798,94 @@ def response_units_to_legacy_plan(
             "targets": targets,
         })
     return {"revision_items": revision_items}
+
+
+
+def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
+    """Rehydrate and validate a RevisionLedger JSON object."""
+    if not isinstance(data, Mapping):
+        raise RevisionModelError("RevisionLedger root must be an object.")
+
+    documents = [
+        RevisionDocument(
+            document_id=row.get("document_id"),
+            revision_id=row.get("revision_id"),
+            role=row.get("role"),
+            input_file=row.get("input_file"),
+            output_file=row.get("output_file"),
+            source_sha256=row.get("source_sha256"),
+            output_sha256=row.get("output_sha256"),
+        )
+        for row in data.get("documents", [])
+    ]
+    patches = []
+    for row in data.get("patches", []):
+        operations = [
+            PatchOperation.from_mapping(item)
+            for item in row.get("operations", [])
+        ]
+        patches.append(Patch(
+            patch_id=row.get("patch_id"),
+            task_id=row.get("task_id"),
+            reviewer=row.get("reviewer"),
+            comment=row.get("comment"),
+            proposed_response=row.get("proposed_response", ""),
+            operations=operations,
+            status=row.get("status", "planned"),
+            supersedes_patch_id=row.get("supersedes_patch_id"),
+            approval_fingerprint=row.get("approval_fingerprint"),
+            apply_report_ids=list(row.get("apply_report_ids", [])),
+            verification_report_id=row.get("verification_report_id"),
+            verified_output_hashes=copy.deepcopy(row.get("verified_output_hashes", [])),
+        ))
+    response_units = []
+    for row in data.get("response_units", []):
+        locations = [
+            ResponseLocation(
+                document=item.get("document"),
+                output_file=item.get("output_file"),
+                page=item.get("page"),
+                line_start=item.get("line_start"),
+                line_end=item.get("line_end"),
+                pdf_sha256=item.get("pdf_sha256"),
+                location_map_id=item.get("location_map_id"),
+                mapping_fingerprint=item.get("mapping_fingerprint"),
+            )
+            for item in row.get("final_locations", [])
+        ]
+        response_units.append(ResponseUnit(
+            response_unit_id=row.get("response_unit_id"),
+            reviewer=row.get("reviewer"),
+            comment_id=str(row.get("comment_id")),
+            comment_text=row.get("comment_text"),
+            response_text=row.get("response_text", ""),
+            linked_task_ids=list(row.get("linked_task_ids", [])),
+            linked_patch_ids=list(row.get("linked_patch_ids", [])),
+            linked_targets=copy.deepcopy(row.get("linked_targets", [])),
+            status=row.get("status", "draft"),
+            semantic_review_confirmed=row.get("semantic_review_confirmed", False),
+            verification_report_id=row.get("verification_report_id"),
+            location_map_fingerprint=row.get("location_map_fingerprint"),
+            final_locations=locations,
+            completed_at_utc=row.get("completed_at_utc"),
+        ))
+    events = [
+        RevisionEvent(
+            event_id=row.get("event_id"),
+            patch_id=row.get("patch_id"),
+            event_type=row.get("event_type"),
+            timestamp_utc=row.get("timestamp_utc"),
+            actor=row.get("actor"),
+            details=copy.deepcopy(row.get("details", {})),
+        )
+        for row in data.get("events", [])
+    ]
+    return RevisionLedger(
+        revision_round_id=data.get("revision_round_id"),
+        documents=documents,
+        patches=patches,
+        response_units=response_units,
+        events=events,
+        schema_version=data.get("schema_version", "0.5.1"),
+        workflow_ledger_fingerprint=data.get("workflow_ledger_fingerprint"),
+    )
