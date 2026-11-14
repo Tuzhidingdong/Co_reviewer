@@ -1626,6 +1626,7 @@ class RevisionLedger:
             input_changed = current_input != incoming_input
             output_changed = _canonical_path(current.output_file) != _canonical_path(incoming.output_file)
 
+            advanced_source_hash: str | None = None
             if revision_changed or input_changed:
                 if incoming_input != current_output:
                     raise RevisionModelError(
@@ -1668,19 +1669,23 @@ class RevisionLedger:
                         f"Document {incoming.document_id} new source identity does not match "
                         "the previous verified DOCX output."
                     )
+                advanced_source_hash = expected_input_hash
                 input_path = Path(incoming.input_file).expanduser().resolve()
-                if input_path.is_file():
-                    try:
-                        actual_input_hash = sha256_file(input_path)
-                    except OSError as exc:
-                        raise RevisionModelError(
-                            f"Cannot hash rebased input DOCX {input_path}: {exc}"
-                        ) from exc
-                    if actual_input_hash != expected_input_hash:
-                        raise RevisionModelError(
-                            f"Document {incoming.document_id} rebased input file changed "
-                            "after the predecessor Patch was verified."
-                        )
+                if not input_path.is_file():
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} rebased input DOCX does not exist: {input_path}."
+                    )
+                try:
+                    actual_input_hash = sha256_file(input_path)
+                except OSError as exc:
+                    raise RevisionModelError(
+                        f"Cannot hash rebased input DOCX {input_path}: {exc}"
+                    ) from exc
+                if actual_input_hash != expected_input_hash:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} rebased input file changed "
+                        "after the predecessor Patch was verified."
+                    )
             elif (
                 current.source_sha256
                 and incoming.source_sha256
@@ -1698,7 +1703,7 @@ class RevisionLedger:
                 source_sha256=(
                     incoming.source_sha256
                     if incoming.source_sha256 is not None
-                    else (current.source_sha256 if not revision_changed else None)
+                    else (advanced_source_hash or current.source_sha256)
                 ),
                 output_file=incoming.output_file,
                 output_sha256=(
