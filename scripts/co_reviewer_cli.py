@@ -15,6 +15,7 @@ import unicodedata
 import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from lxml import etree as ET
@@ -36,6 +37,7 @@ from co_reviewer.identity import (
     revision_verification_fingerprint, DocumentIdentityAndHash,
 )
 from co_reviewer.revision_models import (
+    RevisionEvent,
     Patch,
     PatchOperation,
     RevisionLedger,
@@ -44,6 +46,7 @@ from co_reviewer.revision_models import (
     revision_ledger_from_mapping,
     response_units_to_legacy_plan,
 )
+from co_reviewer.working_view import WorkingViewError, create_working_clean_view
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -1245,6 +1248,89 @@ def cmd_build_revision_ledger(args):
     return 0
 
 
+def cmd_create_working_clean_views(args):
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    ledger = _load_revision_ledger(ledger_path)
+    if not ledger.documents:
+        raise ValueError("RevisionLedger contains no RevisionDocument records.")
+
+    plans = []
+    reserved = {ledger_path}
+    for document in ledger.documents:
+        marked_path = Path(document.output_file).expanduser().resolve()
+        input_path = Path(document.input_file).expanduser().resolve()
+        if not marked_path.is_file():
+            raise FileNotFoundError(
+                f"Marked DOCX for {document.role} does not exist: {marked_path}"
+            )
+        clean_path = marked_path.with_name(
+            f"{marked_path.stem}{args.suffix}{marked_path.suffix}"
+        )
+        if clean_path in reserved or clean_path in {marked_path, input_path}:
+            raise ValueError(
+                f"Working Clean View path collides with another artifact: {clean_path}"
+            )
+        if clean_path.exists():
+            raise FileExistsError(
+                f"Working Clean View already exists; refusing to overwrite: {clean_path}"
+            )
+        reserved.add(clean_path)
+        plans.append((document, marked_path, clean_path))
+
+    created: list[Path] = []
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        for index, (document, marked_path, clean_path) in enumerate(plans):
+            report = create_working_clean_view(marked_path, clean_path)
+            created.append(clean_path)
+            if document.output_sha256 and document.output_sha256 != report["source_sha256"]:
+                raise ValueError(
+                    f"Marked DOCX for {document.role} changed since its last recorded output hash."
+                )
+            ledger.documents[index] = replace(
+                document,
+                output_sha256=report["source_sha256"],
+                working_clean_file=report["output_file"],
+                working_clean_sha256=report["output_sha256"],
+                working_view_fingerprint=report["working_view_fingerprint"],
+            )
+            for patch in ledger.patches:
+                if any(operation.document == document.role for operation in patch.operations):
+                    ledger.events.append(RevisionEvent(
+                        event_id=str(uuid.uuid4()),
+                        subject_id=patch.patch_id,
+                        subject_type="patch",
+                        event_type="working_clean_view_created",
+                        timestamp_utc=now,
+                        actor=args.actor,
+                        details={
+                            "document": document.role,
+                            "marked_file": report["source_file"],
+                            "marked_sha256": report["source_sha256"],
+                            "working_clean_file": report["output_file"],
+                            "working_clean_sha256": report["output_sha256"],
+                            "working_view_fingerprint": report["working_view_fingerprint"],
+                            "projection_policy": "accept-insertions-reject-deletions-v1",
+                        },
+                    ))
+        ledger.validate_or_raise()
+        write_json_atomic(ledger_path, ledger.to_dict())
+    except Exception:
+        for path in created:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    print(f"[WORKING CLEAN VIEW] Created {len(created)} immutable projection(s).")
+    for _, _, path in plans:
+        print(f"[VIEW] {path}")
+    print(f"[OK] RevisionLedger updated: {ledger_path}")
+    print("[GUARD] Source and Marked DOCX files were not modified; Word final-layout acceptance is separate.")
+    return 0
+
+
 def cmd_confirm_response_units(args):
     if not getattr(args, "semantic_review_confirmed", False):
         raise ValueError(
@@ -1714,6 +1800,11 @@ def build_parser():
     ex.add_argument("--ledger", required=True)
     ex.add_argument("--out", default="revision_plan.json")
     ex.set_defaults(func=cmd_export_revision_plan)
+    wcv = sub.add_parser("create-working-clean-views", help="Create read-only accepted-changes projections from Marked DOCX outputs.")
+    wcv.add_argument("--ledger", required=True)
+    wcv.add_argument("--suffix", default=".working_clean")
+    wcv.add_argument("--actor", default="Co_Reviewer Working View")
+    wcv.set_defaults(func=cmd_create_working_clean_views)
     cru = sub.add_parser("confirm-response-units", help="Record explicit semantic review of response text.")
     cru.add_argument("--ledger", required=True)
     cru.add_argument("--ids", nargs="+", required=True)
