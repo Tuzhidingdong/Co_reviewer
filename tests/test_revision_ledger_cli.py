@@ -33,6 +33,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.input = self.root / "Manuscript.docx"
         self.output = self.root / "Manuscript_revised.docx"
         self.plan_path = self.root / "revision_plan.json"
+        self.preflight_path = self.root / "preflight_report.json"
         self.report_path = self.root / "apply_report.json"
         self.ledger_path = self.root / "revision_ledger.json"
 
@@ -87,14 +88,34 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         cli.write_json_atomic(self.ledger_path, ledger.to_dict())
 
         plan = ledger.to_legacy_revision_plan()
-        preflight = cli.preflight_plan(plan)
-        self.assertTrue(preflight["passed"])
         cli.write_json_atomic(self.plan_path, plan)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_preflight(Namespace(
+                plan=str(self.plan_path),
+                out=str(self.preflight_path),
+                author="RevisionLedger preflight",
+                revision_ledger=str(self.ledger_path),
+            )), 0)
+        preflight = json.loads(self.preflight_path.read_text(encoding="utf-8"))
+        self.assertTrue(preflight["passed"])
+        preflighted = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(preflighted.patches[0].status, "preflighted")
+        self.assertEqual(len(preflighted.events), 1)
 
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_approve_plan(Namespace(
-                plan=str(self.plan_path), ids=["T1"]
+                plan=str(self.plan_path),
+                ids=["T1"],
+                revision_ledger=str(self.ledger_path),
+                actor="Human Author",
             )), 0)
+        approved = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(approved.patches[0].status, "approved")
+        self.assertEqual(len(approved.events), 2)
 
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_apply(Namespace(
@@ -108,7 +129,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             json.loads(self.ledger_path.read_text(encoding="utf-8"))
         )
         self.assertEqual(applied_ledger.patches[0].status, "applied")
-        self.assertEqual(len(applied_ledger.events), 1)
+        self.assertEqual(len(applied_ledger.events), 3)
         self.assertTrue(self.output.is_file())
 
         with contextlib.redirect_stdout(io.StringIO()):
@@ -125,7 +146,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(verified_ledger.patches[0].status, "verified")
         self.assertEqual(len(verified_ledger.patches[0].verified_output_hashes), 1)
-        self.assertEqual(len(verified_ledger.events), 2)
+        self.assertEqual(len(verified_ledger.events), 4)
         self.assertEqual(verified_ledger.response_units[0].status, "draft")
 
     def test_response_unit_renderer_uses_revision_ledger_and_keeps_draft_label(self):
@@ -211,6 +232,22 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(len(saved.patches), 1)
         self.assertEqual(saved.patches[0].operations[0].find, "old phrase")
         self.assertEqual(len(saved.response_units), 1)
+
+    def test_preflight_and_approval_parsers_accept_revision_ledger(self):
+        parser = cli.build_parser()
+        parsed_preflight = parser.parse_args([
+            "preflight-plan",
+            "--plan", str(self.plan_path),
+            "--revision-ledger", str(self.ledger_path),
+        ])
+        self.assertEqual(parsed_preflight.revision_ledger, str(self.ledger_path))
+        parsed_approval = parser.parse_args([
+            "approve-plan",
+            "--plan", str(self.plan_path),
+            "--ids", "T1",
+            "--revision-ledger", str(self.ledger_path),
+        ])
+        self.assertEqual(parsed_approval.revision_ledger, str(self.ledger_path))
 
     def test_response_parser_requires_exactly_one_input(self):
         parser = cli.build_parser()
