@@ -1453,6 +1453,126 @@ class RevisionLedger:
             "events": [item.to_dict() for item in self.events],
         }
 
+    def merge_batch(self, addition: "RevisionLedger") -> None:
+        """Append a new ready-batch result to the same review-round ledger."""
+        if not isinstance(addition, RevisionLedger):
+            raise RevisionModelError("addition must be a RevisionLedger.")
+        if self.revision_round_id != addition.revision_round_id:
+            raise RevisionModelError(
+                "Cannot merge Patches from different revision rounds."
+            )
+        existing_patch_ids = {patch.patch_id for patch in self.patches}
+        duplicate_patches = existing_patch_ids & {
+            patch.patch_id for patch in addition.patches
+        }
+        if duplicate_patches:
+            raise RevisionModelError(
+                "Patch IDs already exist in the RevisionLedger: "
+                + ", ".join(sorted(duplicate_patches))
+            )
+
+        document_index = {
+            document.document_id: index
+            for index, document in enumerate(self.documents)
+        }
+        for incoming in addition.documents:
+            index = document_index.get(incoming.document_id)
+            if index is None:
+                document_index[incoming.document_id] = len(self.documents)
+                self.documents.append(incoming)
+                continue
+            current = self.documents[index]
+            if current.revision_id != incoming.revision_id:
+                raise RevisionModelError(
+                    f"Document {incoming.document_id} changed source revision within one review round."
+                )
+            if (
+                current.source_sha256
+                and incoming.source_sha256
+                and current.source_sha256 != incoming.source_sha256
+            ):
+                raise RevisionModelError(
+                    f"Document {incoming.document_id} source SHA-256 changed within one review round."
+                )
+            output_changed = current.output_file != incoming.output_file
+            self.documents[index] = replace(
+                current,
+                output_file=incoming.output_file,
+                output_sha256=(
+                    incoming.output_sha256
+                    if incoming.output_sha256 is not None
+                    else (None if output_changed else current.output_sha256)
+                ),
+                working_clean_file=None if output_changed else current.working_clean_file,
+                working_clean_sha256=None if output_changed else current.working_clean_sha256,
+                working_view_fingerprint=None if output_changed else current.working_view_fingerprint,
+            )
+
+        unit_index = {
+            unit.response_unit_id: index
+            for index, unit in enumerate(self.response_units)
+        }
+        for incoming in addition.response_units:
+            index = unit_index.get(incoming.response_unit_id)
+            if index is None:
+                unit_index[incoming.response_unit_id] = len(self.response_units)
+                self.response_units.append(incoming)
+                continue
+            current = self.response_units[index]
+            if (
+                current.reviewer != incoming.reviewer
+                or current.comment_id != incoming.comment_id
+                or current.comment_text != incoming.comment_text
+            ):
+                raise RevisionModelError(
+                    f"ResponseUnit {incoming.response_unit_id} no longer matches its original reviewer comment."
+                )
+            linked_patches = list(dict.fromkeys(
+                current.linked_patch_ids + incoming.linked_patch_ids
+            ))
+            linked_tasks = list(dict.fromkeys(
+                current.linked_task_ids + incoming.linked_task_ids
+            ))
+            linked_targets = list(current.linked_targets)
+            for target in incoming.linked_targets:
+                if target not in linked_targets:
+                    linked_targets.append(target)
+            response_text_changed = (
+                bool(incoming.response_text)
+                and incoming.response_text != current.response_text
+            )
+            relationship_changed = (
+                linked_patches != current.linked_patch_ids
+                or linked_tasks != current.linked_task_ids
+                or linked_targets != current.linked_targets
+            )
+            current.linked_patch_ids = linked_patches
+            current.linked_task_ids = linked_tasks
+            current.linked_targets = linked_targets
+            if response_text_changed:
+                current.response_text = incoming.response_text
+            if response_text_changed or relationship_changed:
+                current.status = "draft"
+                current.semantic_review_confirmed = False
+                current.verification_report_id = None
+                current.location_map_fingerprint = None
+                current.location_map_file = None
+                current.location_map_file_sha256 = None
+                current.final_locations = []
+                current.completed_at_utc = None
+
+        self.patches.extend(addition.patches)
+        known_event_ids = {event.event_id for event in self.events}
+        for event in addition.events:
+            if event.event_id in known_event_ids:
+                raise RevisionModelError(
+                    f"RevisionEvent ID already exists: {event.event_id}."
+                )
+            known_event_ids.add(event.event_id)
+            self.events.append(event)
+        self.workflow_ledger_fingerprint = addition.workflow_ledger_fingerprint
+        self.validate_or_raise()
+
     def validate_or_raise(self) -> None:
         errors = self.validate()
         if errors:
