@@ -496,6 +496,46 @@ class RevisionLedger:
                 errors.append(f"RevisionEvent {event.event_id} refers to unknown patch.")
         return errors
 
+    def assert_legacy_plan_matches(self, revision_plan: Mapping[str, Any]) -> None:
+        """Reject plan/ledger drift before handing the plan to the DOCX writer."""
+        if not isinstance(revision_plan, Mapping):
+            raise RevisionModelError("Legacy revision plan must be an object.")
+        rows = revision_plan.get("revision_items")
+        if not isinstance(rows, list):
+            raise RevisionModelError("Legacy revision plan must contain revision_items.")
+        expected = {
+            patch.patch_id: [
+                operation.to_legacy_target()
+                for operation in patch.operations
+            ]
+            for patch in self.patches
+            if patch.status not in {"superseded", "blocked"}
+        }
+        actual = {
+            item.get("id"): item.get("targets")
+            for item in rows if isinstance(item, Mapping)
+        }
+        if set(actual) != set(expected):
+            raise RevisionModelError(
+                "Legacy revision plan patch IDs differ from RevisionLedger; "
+                "refusing to apply a plan with missing or extra patches."
+            )
+        for patch_id, expected_targets in expected.items():
+            actual_targets = actual.get(patch_id)
+            if not isinstance(actual_targets, list) or len(actual_targets) != len(expected_targets):
+                raise RevisionModelError(
+                    f"Legacy revision plan target count differs for patch {patch_id}."
+                )
+            fields = ("document", "input_file", "output_file", "part", "p_idx", "find", "replace", "location")
+            for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
+                if not isinstance(actual_target, Mapping) or any(
+                    actual_target.get(field) != expected_target.get(field)
+                    for field in fields
+                ):
+                    raise RevisionModelError(
+                        f"Legacy revision plan target {index + 1} differs from Patch {patch_id}."
+                    )
+
     def to_legacy_revision_plan(self) -> dict[str, Any]:
         """Bridge exact patches into the existing preflight/approve/apply CLI.
 
@@ -637,7 +677,7 @@ class RevisionLedger:
 def build_revision_ledger(
     workflow_ledger: Mapping[str, Any],
     *,
-    document_paths: Mapping[str, Mapping[str, str]],
+    document_paths: Mapping[str, Mapping[str, str]] | None = None,
     reviewer_comments_by_id: Mapping[str, str] | None = None,
     reviewer_by_task: Mapping[str, str] | None = None,
 ) -> RevisionLedger:
@@ -655,6 +695,7 @@ def build_revision_ledger(
         raise RevisionModelError("Workflow Ledger tasks must be an array.")
     reviewer_comments_by_id = reviewer_comments_by_id or {}
     reviewer_by_task = reviewer_by_task or {}
+    document_paths = document_paths or {}
 
     patches: list[Patch] = []
     response_units: list[ResponseUnit] = []
@@ -749,9 +790,37 @@ def build_revision_ledger(
                     status="draft",
                 ))
 
+    identities_by_role: dict[str, list[Mapping[str, Any]]] = {}
+    for identity in workflow_ledger.get("documents", []):
+        if isinstance(identity, Mapping) and isinstance(identity.get("role"), str):
+            identities_by_role.setdefault(identity["role"], []).append(identity)
+
+    operations_by_role: dict[str, PatchOperation] = {}
+    for patch in patches:
+        for operation in patch.operations:
+            operations_by_role.setdefault(operation.document, operation)
+
+    document_records: list[RevisionDocument] = []
+    for role, first_operation in operations_by_role.items():
+        identity_rows = identities_by_role.get(role, [])
+        identity = identity_rows[0] if identity_rows else {}
+        paths = document_paths.get(role, {})
+        document_records.append(RevisionDocument(
+            document_id=str(identity.get("document_id") or role),
+            revision_id=str(identity.get("revision_id") or _fingerprint({
+                "role": role,
+                "input_file": first_operation.input_file,
+                "source_sha256": first_operation.source_sha256,
+            })),
+            role=role,
+            input_file=paths.get("input_file", first_operation.input_file),
+            output_file=paths.get("output_file", first_operation.output_file),
+            source_sha256=identity.get("source_sha256") or first_operation.source_sha256,
+        ))
+
     ledger = RevisionLedger(
         revision_round_id=round_id,
-        documents=[],
+        documents=document_records,
         patches=patches,
         response_units=response_units,
         workflow_ledger_fingerprint=_fingerprint(workflow_ledger),
