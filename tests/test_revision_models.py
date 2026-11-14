@@ -422,8 +422,12 @@ class RevisionModelsTests(unittest.TestCase):
             preflight_fingerprint=HASH_A,
             preflight_report_id="preflight-001",
             approval_fingerprint=HASH_A,
+            apply_report_ids=["apply-P1"],
             verification_report_id="verify-001",
-            verified_output_hashes=[{"path": "revised.docx", "sha256": HASH_B}],
+            verified_output_hashes=[{
+                "path": "Manuscript_revised.docx",
+                "sha256": HASH_B,
+            }],
         )
         unit = ResponseUnit(
             response_unit_id="RU-1",
@@ -598,7 +602,7 @@ class RevisionModelsTests(unittest.TestCase):
     def test_revision_ledger_round_trips_without_losing_patch_lineage(self):
         patch = Patch(
             patch_id="P2",
-            task_id="T2",
+            task_id="T1",
             reviewer="Reviewer 2",
             comment="Update the wording.",
             proposed_response="Updated.",
