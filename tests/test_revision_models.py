@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.identity import revision_item_fingerprint, revision_targets_fingerprint
+from co_reviewer.workflow_engine import workflow_scope_fingerprint
 from co_reviewer.revision_models import (
     Patch,
     PatchOperation,
@@ -117,16 +118,38 @@ class RevisionModelsTests(unittest.TestCase):
 
     def test_response_only_task_does_not_generate_fake_patch(self):
         workflow = {
+            "schema_version": "0.5.1",
             "revision_round_id": "round-response",
+            "source_files": [],
+            "documents": [],
+            "object_registry": [],
+            "events": [],
             "tasks": [{
                 "task_id": "R1",
+                "sequence": 1,
+                "stage": "response",
                 "task_type": "response_only",
+                "title": "Explain the mechanism",
                 "source_comment_ids": ["C1"],
+                "target_documents": [],
                 "evidence": [{
-                    "evidence_type": "reviewer_comment",
+                    "evidence_id": "E1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
                     "source_comment_id": "C1",
                     "source_excerpt": "Please explain the mechanism.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
                 }],
+                "targets": [],
+                "dependencies": [],
+                "target_groups": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "requires_user_approval": True,
+                "status": "planned",
                 "patch_operations": [],
                 "proposed_response": "The mechanism is described in the revised discussion.",
             }],
@@ -138,21 +161,59 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(ledger.response_units[0].linked_patch_ids, [])
 
     def test_build_revision_ledger_requires_traceable_reviewer_comment(self):
+        task = {
+            "task_id": "T1",
+            "sequence": 1,
+            "stage": "revision",
+            "task_type": "local_revision",
+            "title": "Clarify a statement",
+            "source_comment_ids": ["C1"],
+            "target_documents": ["Manuscript"],
+            "evidence": [],
+            "proposed_action": "Clarify the text.",
+            "targets": [{
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "action": "replace",
+                "evidence_ids": [],
+            }],
+            "dependencies": [],
+            "target_groups": ["Manuscript|word/document.xml|p_idx=0"],
+            "readiness": "ready_for_author_approval",
+            "unresolved_questions": [],
+            "confidence": 0.9,
+            "requires_user_approval": True,
+            "status": "ready",
+            "patch_operations": [{
+                "operation_id": "T1-OP1",
+                "document": "Manuscript",
+                "input_file": "Manuscript.docx",
+                "output_file": "Revised.docx",
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "old",
+                "replace": "new",
+                "evidence_ids": [],
+            }],
+        }
         workflow = {
+            "schema_version": "0.5.1",
             "revision_round_id": "round-no-comment",
-            "tasks": [{
+            "source_files": [],
+            "documents": [],
+            "object_registry": [],
+            "tasks": [task],
+            "events": [{
+                "event_id": "EV-T1-READY",
                 "task_id": "T1",
-                "task_type": "local_revision",
-                "source_comment_ids": ["C1"],
-                "evidence": [],
-                "patch_operations": [{
-                    "document": "Manuscript",
-                    "input_file": "Manuscript.docx",
-                    "output_file": "Revised.docx",
-                    "part": "word/document.xml",
-                    "find": "old",
-                    "replace": "new",
-                }],
+                "timestamp_utc": STAMP,
+                "event_type": "status_transition",
+                "from_status": "planned",
+                "to_status": "ready",
+                "reason": "Author approved the task plan.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(task),
             }],
         }
         with self.assertRaisesRegex(RevisionModelError, "no traceable reviewer comment"):
