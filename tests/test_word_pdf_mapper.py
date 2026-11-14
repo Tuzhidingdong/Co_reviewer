@@ -258,6 +258,7 @@ class WordPdfMapperContractTests(unittest.TestCase):
         cli.write_json_atomic(ledger_path, ledger.to_dict())
         cli.write_json_atomic(word_map_path, {
             "generator": "co-reviewer-word-pdf-mapper-v1",
+            "revision_ledger_sha256": sha256_file(ledger_path),
             "documents": [{
                 "document": "Manuscript",
                 "source_working_clean_sha256": sha256_file(self.clean_docx),
