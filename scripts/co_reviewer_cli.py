@@ -2326,11 +2326,17 @@ def cmd_record_manual_response_locations(args):
     output_rows = word_map.get("documents")
     if not isinstance(output_rows, list):
         raise ValueError("Word location map is missing its documents array.")
-    word_outputs = {
-        row.get("document"): row
-        for row in output_rows
-        if isinstance(row, dict) and isinstance(row.get("document"), str)
-    }
+    word_outputs: dict[str, dict[str, Any]] = {}
+    for row in output_rows:
+        if not isinstance(row, dict) or not isinstance(row.get("document"), str):
+            raise ValueError("Word map document rows must have a document role.")
+        role = row["document"]
+        if role in word_outputs:
+            raise ValueError(f"Word map contains duplicate document role {role}.")
+        audit = row.get("sequence_audit")
+        if not isinstance(audit, dict) or audit.get("status") == "fail":
+            raise ValueError(f"Word map has no successful/manual-review sequence audit for {role}.")
+        word_outputs[role] = row
     operation_owners = {
         operation.operation_id: (patch, operation)
         for patch in ledger.patches
@@ -2396,8 +2402,14 @@ def cmd_record_manual_response_locations(args):
 
             source = submitted[operation_id]
             locator_text = source.get("locator_text")
-            if not isinstance(locator_text, str) or not locator_text.strip():
-                raise ValueError(f"Manual locator text is required for {unit_id}/{operation_id}.")
+            if (
+                not isinstance(locator_text, str)
+                or not locator_text.strip()
+                or any(character in locator_text for character in "\\r\\n\\t")
+            ):
+                raise ValueError(
+                    f"Manual locator text for {unit_id}/{operation_id} must be non-empty and single-line."
+                )
             page = source.get("page")
             line_start = source.get("line_start")
             line_end = source.get("line_end")
