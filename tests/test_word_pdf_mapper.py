@@ -22,6 +22,7 @@ from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,
     _normalise_pdf_text,
     _validate_mapping_phrase,
+    assert_location_map_matches_ledger,
     _read_word_position,
     build_mapping_jobs,
 )
@@ -231,6 +232,30 @@ class WordPdfMapperContractTests(unittest.TestCase):
                 location_map_id="map-1",
                 mapping_fingerprint="c" * 64,
                 output_sha256=output_hash,
+            )
+
+    def test_location_map_must_match_current_revision_ledger_hash(self):
+        ledger_path = self.root / "revision_ledger.json"
+        ledger_path.write_text('{"revision_round_id":"round-1"}', encoding="utf-8")
+        expected = sha256_file(ledger_path)
+        self.assertEqual(
+            assert_location_map_matches_ledger(
+                {"revision_ledger_sha256": expected}, ledger_path
+            ),
+            expected,
+        )
+        ledger_path.write_text('{"revision_round_id":"round-2"}', encoding="utf-8")
+        with self.assertRaisesRegex(WordPdfMappingError, "different RevisionLedger version"):
+            assert_location_map_matches_ledger(
+                {"revision_ledger_sha256": expected}, ledger_path
+            )
+
+    def test_location_map_requires_a_valid_ledger_hash(self):
+        ledger_path = self.root / "revision_ledger.json"
+        ledger_path.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(WordPdfMappingError, "valid revision_ledger_sha256"):
+            assert_location_map_matches_ledger(
+                {"revision_ledger_sha256": "not-a-hash"}, ledger_path
             )
 
     def test_word_pdf_mapper_cli_is_registered(self):
