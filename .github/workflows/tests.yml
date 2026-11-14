@@ -45,8 +45,8 @@ jobs:
             $errors | ForEach-Object { Write-Error $_ }
             exit 1
           }
-      - name: Run PowerShell quality-check script
-        shell: pwsh
+      - name: Run PowerShell 5.1 quality-check script
+        shell: powershell
         run: |
           $python = (Get-Command python -CommandType Application).Source
           ./scripts/run_quality_checks.ps1 -PythonExe $python
