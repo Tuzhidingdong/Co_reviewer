@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import unicodedata
+import uuid
 import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
