@@ -731,7 +731,7 @@ def invalidate_downstream(
 
     rows = copy.deepcopy([dict(task) for task in tasks])
     by_id = {task["task_id"]: task for task in rows}
-    if changed_task_id not in by_id:
+    if not isinstance(changed_task_id, str) or changed_task_id not in by_id:
         raise WorkflowValidationError(f"Unknown changed workflow task: {changed_task_id}.")
 
     dependents: dict[str, list[str]] = defaultdict(list)
@@ -861,7 +861,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         role, file_path, digest = (
             source.get("role"), source.get("file"), source.get("sha256")
         )
-        if role not in {"Reviewers", "Manuscript", "SI"}:
+        if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
             errors.append(f"{prefix}.role is unsupported.")
         if not isinstance(file_path, str) or not file_path.strip():
             errors.append(f"{prefix}.file must be non-empty.")
@@ -912,11 +912,13 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             errors.append(f"{prefix} duplicates event_id {event_id}.")
         else:
             seen_event_ids.add(event_id)
-        if event.get("task_id") not in known_task_ids:
+        event_task_id = event.get("task_id")
+        if not isinstance(event_task_id, str) or event_task_id not in known_task_ids:
             errors.append(f"{prefix}.task_id refers to an unknown task.")
         if not _is_aware_timestamp(event.get("timestamp_utc")):
             errors.append(f"{prefix}.timestamp_utc must be timezone-aware.")
-        if event.get("event_type") not in _WORKFLOW_EVENT_TYPES:
+        event_type = event.get("event_type")
+        if not isinstance(event_type, str) or event_type not in _WORKFLOW_EVENT_TYPES:
             errors.append(f"{prefix}.event_type is unsupported.")
         if "fingerprint" in event and not _is_sha256(event.get("fingerprint")):
             errors.append(f"{prefix}.fingerprint must be a lowercase SHA-256 digest.")
