@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -130,6 +131,16 @@ class WorkflowEngineTests(unittest.TestCase):
             "targets": [{"action": {"bad": "type"}, "document": "Manuscript", "part": "word/document.xml", "p_idx": 0}],
         }])
         self.assertEqual(adapted[0]["target_groups"], [])
+
+    def test_workflow_ledger_schema_is_present_and_separates_response_only(self):
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-ledger.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        task_schema = schema["$defs"]["workflowTask"]
+        self.assertIn("response_only", task_schema["properties"]["task_type"]["enum"])
+        self.assertEqual(
+            task_schema["allOf"][0]["then"]["properties"]["target_groups"]["maxItems"],
+            0,
+        )
 
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
