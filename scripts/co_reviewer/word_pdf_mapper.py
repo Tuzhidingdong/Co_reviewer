@@ -42,6 +42,30 @@ def _fingerprint(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def assert_location_map_matches_ledger(
+    location_map: Mapping[str, Any],
+    ledger_path: str | Path,
+) -> str:
+    """Reject a location map generated from any other RevisionLedger version."""
+    if not isinstance(location_map, Mapping):
+        raise WordPdfMappingError("Location map must be an object.")
+    ledger_file = Path(ledger_path).expanduser().resolve()
+    if not ledger_file.is_file():
+        raise WordPdfMappingError(f"RevisionLedger file does not exist: {ledger_file}")
+    expected = location_map.get("revision_ledger_sha256")
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise WordPdfMappingError(
+            "Location map is missing a valid revision_ledger_sha256 binding."
+        )
+    actual = sha256_file(ledger_file)
+    if actual != expected:
+        raise WordPdfMappingError(
+            "Location map was generated from a different RevisionLedger version; "
+            "regenerate the Word/PDF mapping from the current ledger."
+        )
+    return actual
+
+
 def _normalise_pdf_text(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).replace("\u00ad", "")
     value = value.replace("\u00a0", " ")
