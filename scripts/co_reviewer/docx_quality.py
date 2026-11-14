@@ -144,6 +144,13 @@ def audit_docx_quality(
                 if name.casefold() in _COMMENT_PARTS
                 or (name.casefold().startswith("word/comments") and name.casefold().endswith(".xml"))
             )
+            content_types_root = ET.fromstring(archive.read("[Content_Types].xml"))
+            comment_content_type_entries = sorted(
+                child.attrib.get("PartName", "")
+                for child in content_types_root
+                if child.attrib.get("PartName", "").lstrip("/").casefold() in _COMMENT_PARTS
+                or child.attrib.get("PartName", "").lstrip("/").casefold().startswith("word/comments")
+            )
             comment_relationships: list[dict[str, str]] = []
             relationship_scan_errors: list[dict[str, str]] = []
             for relationship_part in sorted(name for name in names if name.endswith(".rels")):
@@ -165,6 +172,7 @@ def audit_docx_quality(
             metrics["comment_count"] = comments_count
             metrics["comment_anchor_count"] = comment_anchor_count
             metrics["comment_package_parts"] = comment_package_parts
+            metrics["comment_content_type_entries"] = comment_content_type_entries
             metrics["comment_relationships"] = comment_relationships
             metrics["comment_relationship_scan_errors"] = relationship_scan_errors
             placeholders = sorted(set(match.group(0) for match in PLACEHOLDER_RE.finditer(all_text)))
@@ -189,7 +197,7 @@ def audit_docx_quality(
                        tracked)
             has_comments = bool(
                 comments_count or comment_anchor_count or comment_package_parts
-                or comment_relationships or relationship_scan_errors
+                or comment_content_type_entries or comment_relationships or relationship_scan_errors
             )
             comments_failure = has_comments and profile in {"clean-manuscript", "word-final-clean", "response-letter"}
             _check(
@@ -202,6 +210,7 @@ def audit_docx_quality(
                     "comments": comments_count,
                     "anchors": comment_anchor_count,
                     "package_parts": comment_package_parts,
+                    "content_type_entries": comment_content_type_entries,
                     "relationships": comment_relationships,
                     "relationship_scan_errors": relationship_scan_errors,
                 },
