@@ -984,6 +984,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         errors.append("Workflow ledger source_files must be an array.")
         sources = []
     seen_sources: set[tuple[str, str]] = set()
+    source_hashes_by_role: dict[str, set[str]] = defaultdict(set)
     for index, source in enumerate(sources):
         prefix = f"Workflow ledger source_files[{index}]"
         if not isinstance(source, Mapping):
@@ -1003,6 +1004,8 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             if source_key in seen_sources:
                 errors.append(f"{prefix} duplicates source {role}/{file_path}.")
             seen_sources.add(source_key)
+        if isinstance(role, str) and _is_sha256(digest):
+            source_hashes_by_role[role].add(digest)
 
     documents = ledger.get("documents", [])
     if not isinstance(documents, list):
@@ -1045,6 +1048,17 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             if key in document_versions:
                 errors.append(f"{prefix} duplicates document revision {key}.")
             document_versions[key] = identity
+            source_digests = source_hashes_by_role.get(identity.role, set())
+            if len(source_digests) == 1 and identity.source_sha256 not in source_digests:
+                errors.append(
+                    f"{prefix} source_sha256 does not match the Workflow Ledger source_files "
+                    f"entry for role {identity.role}."
+                )
+            elif len(source_digests) > 1:
+                errors.append(
+                    f"{prefix} role {identity.role} has multiple source-file hashes; "
+                    "the identity manifest cannot be bound unambiguously to one logical document."
+                )
         except (IdentityValidationError, TypeError, ValueError) as exc:
             errors.append(f"{prefix} is invalid: {exc}")
 

@@ -343,6 +343,60 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(ledger["tasks"][0]["target_groups"], [])
         self.assertEqual(validate_workflow_ledger(ledger), [])
 
+    def test_workflow_ledger_rejects_document_identity_source_hash_mismatch(self):
+        document = build_document_identity(
+            role="Manuscript",
+            source_sha256=OUTPUT_HASH,
+            visible_text="Identity parsed from a different DOCX.",
+            structure={"paragraphs": 1},
+            formatting={"style": "Normal"},
+            citation_state={},
+            document_id="doc-wrong-source",
+        )
+        ledger = build_workflow_ledger(
+            {
+                "source_files": [{
+                    "role": "Manuscript",
+                    "file": "Manuscript.docx",
+                    "sha256": INPUT_HASH,
+                }],
+                "tasks": [{
+                    "task_id": "T1",
+                    "sequence": 1,
+                    "task_type": "response_only",
+                    "title": "Prepare response",
+                    "source_comment_ids": ["C1"],
+                    "target_documents": [],
+                    "evidence": [{
+                        "evidence_id": "E1",
+                        "document": "Reviewers",
+                        "part": "word/comments.xml",
+                        "p_idx": 0,
+                        "source_excerpt": "Please clarify.",
+                        "evidence_type": "reviewer_comment",
+                        "match_status": "confirmed",
+                        "source_comment_id": "C1",
+                    }],
+                    "proposed_action": "Draft a response.",
+                    "targets": [],
+                    "dependencies": [],
+                    "readiness": "ready_for_author_approval",
+                    "unresolved_questions": [],
+                    "confidence": 0.9,
+                    "status": "pending",
+                    "requires_user_approval": True,
+                }],
+            },
+            "round-identity-hash-mismatch",
+            STAMP,
+            document_identities=[document],
+        )
+        errors = validate_workflow_ledger(ledger)
+        self.assertTrue(any(
+            "source_sha256 does not match" in error
+            for error in errors
+        ))
+
     def test_ledger_persists_stable_targetrefs_and_schedules_by_object_id(self):
         document = build_document_identity(
             role="Manuscript",

@@ -841,6 +841,11 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         new_task = task(revision_one, revision_two)
         new_workflow = {
             **old_workflow,
+            "source_files": [{
+                "role": "Manuscript",
+                "file": str(revision_one),
+                "sha256": sha256_file(revision_one),
+            }],
             "documents": [updated_identity.to_dict()],
             "tasks": [new_task],
             "events": [{
