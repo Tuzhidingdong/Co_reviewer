@@ -424,7 +424,9 @@
         "mapping_fingerprint",
         "output_sha256",
         "locator_id",
-        "source_clean_sha256"
+        "source_clean_sha256",
+        "mapping_method",
+        "locator_text"
       ],
       "properties": {
         "document": {
@@ -436,15 +438,15 @@
           "minLength": 1
         },
         "page": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "line_start": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "line_end": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "pdf_sha256": {
@@ -460,11 +462,13 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "output_sha256": {
-          "type": ["string", "null"],
+          "type": "string",
           "pattern": "^[a-f0-9]{64}$"
         },
         "locator_id": { "type": "string", "minLength": 1 },
         "source_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mapping_method": { "enum": ["word_com", "manual"] },
+        "locator_text": { "type": ["string", "null"] },
         "pdf_file": {
           "type": "string",
           "minLength": 1,
@@ -472,6 +476,29 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": ["mapping_method"],
+            "properties": { "mapping_method": { "const": "word_com" } }
+          },
+          "then": {
+            "properties": {
+              "page": { "type": "integer", "minimum": 1 },
+              "line_start": { "type": "integer", "minimum": 1 },
+              "line_end": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["mapping_method"],
+            "properties": { "mapping_method": { "const": "manual" } }
+          },
+          "then": {
+            "required": ["locator_text"],
+            "properties": { "locator_text": { "type": "string", "minLength": 1 } }
+          }
+        },
         {
           "if": {
             "required": [
