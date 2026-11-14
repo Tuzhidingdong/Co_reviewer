@@ -746,15 +746,20 @@ class RevisionLedger:
         if not isinstance(rows, list):
             raise RevisionModelError("Legacy revision plan must contain revision_items.")
         expected = {
-            patch.patch_id: [
-                operation.to_legacy_target()
-                for operation in patch.operations
-            ]
+            patch.patch_id: {
+                "reviewer": patch.reviewer,
+                "comment": patch.comment,
+                "proposed_response": patch.proposed_response,
+                "targets": [
+                    operation.to_legacy_target()
+                    for operation in patch.operations
+                ],
+            }
             for patch in self.patches
             if patch.status not in {"superseded", "blocked"}
         }
         actual = {
-            item.get("id"): item.get("targets")
+            item.get("id"): item
             for item in rows if isinstance(item, Mapping)
         }
         if set(actual) != set(expected):
@@ -762,8 +767,18 @@ class RevisionLedger:
                 "Legacy revision plan patch IDs differ from RevisionLedger; "
                 "refusing to apply a plan with missing or extra patches."
             )
-        for patch_id, expected_targets in expected.items():
-            actual_targets = actual.get(patch_id)
+        for patch_id, expected_item in expected.items():
+            actual_item = actual.get(patch_id)
+            if not isinstance(actual_item, Mapping):
+                raise RevisionModelError(f"Legacy revision plan item {patch_id} is invalid.")
+            for field_name in ("reviewer", "comment", "proposed_response"):
+                if actual_item.get(field_name, "") != expected_item[field_name]:
+                    raise RevisionModelError(
+                        f"Legacy revision plan {field_name} differs from Patch {patch_id}; "
+                        "refusing to apply a drifted reviewer-facing scope."
+                    )
+            expected_targets = expected_item["targets"]
+            actual_targets = actual_item.get("targets")
             if not isinstance(actual_targets, list) or len(actual_targets) != len(expected_targets):
                 raise RevisionModelError(
                     f"Legacy revision plan target count differs for patch {patch_id}."
@@ -842,6 +857,7 @@ class RevisionLedger:
                 patch.status == "approved"
                 and previous_fingerprint == fingerprint
                 and previous_approval == plan_item.get("approval_fingerprint")
+                and previous_approval == revision_item_fingerprint(dict(plan_item))
                 and plan_item.get("status") == "approved"
             )
             targets = plan_item.get("targets", [])
@@ -1012,12 +1028,19 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Legacy item {patch.patch_id} lacks semantic-review confirmation."
                 )
-            patch.approval_fingerprint = _sha256(
+            item_approval_fingerprint = _sha256(
                 item.get("approval_fingerprint"), "approval_fingerprint"
             )
-            patch.preflight_fingerprint = _sha256(
+            item_preflight_fingerprint = _sha256(
                 item.get("preflight_fingerprint"), "preflight_fingerprint"
             )
+            if (
+                item_approval_fingerprint != patch.approval_fingerprint
+                or item_preflight_fingerprint != patch.preflight_fingerprint
+            ):
+                raise RevisionModelError(
+                    f"Verification seals for Patch {patch.patch_id} do not match the RevisionLedger."
+                )
             if patch.status != "applied":
                 raise RevisionModelError(
                     f"Patch {patch.patch_id} must be applied before verification; current state is {patch.status}."
