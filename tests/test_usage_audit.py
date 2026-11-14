@@ -160,6 +160,28 @@ class UsageAuditTests(unittest.TestCase):
         self.assertEqual(blocked["estimated_events"], 0)
         self.assertEqual(blocked["unpriced_event_ids"], [event["event_id"]])
 
+    def test_cli_refuses_to_overwrite_usage_ledger_and_pricing_inputs(self):
+        parser = cli.build_parser()
+        audit_args = parser.parse_args([
+            "audit-usage", "--ledger", str(self.ledger), "--out", str(self.ledger),
+        ])
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            cli.cmd_audit_usage(audit_args)
+
+        pricing = self.root / "pricing.json"
+        estimate_args = parser.parse_args([
+            "estimate-usage", "--ledger", str(self.ledger),
+            "--pricing", str(pricing), "--out", str(pricing),
+        ])
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            cli.cmd_estimate_usage(estimate_args)
+
+        record_args = parser.parse_args([
+            "record-usage-event", "--ledger", str(self.ledger), "--event", str(self.ledger),
+        ])
+        with self.assertRaisesRegex(ValueError, "different files"):
+            cli.cmd_record_usage_event(record_args)
+
     def test_usage_cli_commands_and_parse_instrumentation_flag_are_registered(self):
         parser = cli.build_parser()
         parsed = parser.parse_args(["audit-usage", "--ledger", str(self.ledger)])

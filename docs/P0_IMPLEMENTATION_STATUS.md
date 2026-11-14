@@ -132,10 +132,10 @@ Added `scripts/co_reviewer/docx_quality.py`, report schema and `audit-docx-quali
 ## Regression inventory and validation status
 
 - The preserved v0.3 regression baseline contains 76 original test methods.
-- The current tracked `tests/*.py` source inventory contains **197 unique test methods**.
+- The current tracked `tests/*.py` source inventory contains **199 unique test methods**.
 - This is a source inventory count only. It is not an executed-test count, a CI result or a pass claim. Recalculate it whenever tests are added or removed.
 
-The P1 follow-on branch adds 17 test methods; its full Windows run remains pending after implementation. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
+The P1 follow-on branch adds 19 test methods; its full Windows run remains pending after implementation. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
 Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip, COM pagination and final PDF line extraction remain unaccepted.
 

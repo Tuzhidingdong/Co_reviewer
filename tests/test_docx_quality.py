@@ -94,6 +94,23 @@ class DocxQualityTests(unittest.TestCase):
         report = audit_docx_quality(corrupt)
         self.assertEqual(report["status"], "FAIL")
 
+    def test_quality_report_cannot_overwrite_docx_or_pdf_inputs(self):
+        parser = cli.build_parser()
+        same_docx = str(self.root / "input.docx")
+        args = parser.parse_args([
+            "audit-docx-quality", "--docx", same_docx, "--out", same_docx,
+        ])
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            cli.cmd_audit_docx_quality(args)
+
+        same_pdf = str(self.root / "input.pdf")
+        args = parser.parse_args([
+            "audit-docx-quality", "--docx", str(self.root / "source.docx"),
+            "--pdf", same_pdf, "--out", same_pdf,
+        ])
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            cli.cmd_audit_docx_quality(args)
+
     def test_quality_cli_command_is_registered(self):
         parsed = cli.build_parser().parse_args([
             "audit-docx-quality", "--docx", "sample.docx",

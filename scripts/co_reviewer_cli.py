@@ -948,6 +948,11 @@ def _inspect_selected_files(args):
     selected = [(role, path) for role, path in files if path]
     if not selected:
         raise ValueError("Provide at least one of --rev, --man or --si.")
+    usage_ledger = getattr(args, "usage_ledger", None)
+    if usage_ledger:
+        validate_inspection_artifact_paths(
+            [path for _, path in selected], [usage_ledger]
+        )
     cache_dir = getattr(args, "cache_dir", ".co-reviewer-cache")
     refresh = bool(getattr(args, "refresh_cache", False))
     reports = []
@@ -1034,22 +1039,34 @@ def cmd_audit(args):
     return 1 if count_errors else 0
 
 def cmd_record_usage_event(args):
-    payload = json.loads(Path(args.event).read_text(encoding="utf-8"))
+    event_path = Path(args.event).expanduser().resolve()
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    if event_path == ledger_path:
+        raise ValueError("Usage event input and append-only ledger must be different files.")
+    payload = json.loads(event_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Usage event input must be one JSON object.")
-    event = record_usage_event(args.ledger, payload)
+    event = record_usage_event(ledger_path, payload)
     print(f"[OK] Usage event {event['event_id']} appended to {Path(args.ledger).resolve()}")
     return 0
 
 
 def cmd_audit_usage(args):
-    events, errors = read_usage_events(args.ledger)
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    protected_inputs = {ledger_path}
+    if args.pricing:
+        pricing_path = Path(args.pricing).expanduser().resolve()
+        protected_inputs.add(pricing_path)
+    output_path = Path(args.out).expanduser().resolve() if args.out else None
+    if output_path and output_path in protected_inputs:
+        raise ValueError("Usage audit report must not overwrite its ledger or pricing input.")
+    events, errors = read_usage_events(ledger_path)
     report = build_usage_report(events, errors)
     if args.pricing:
-        pricing = json.loads(Path(args.pricing).read_text(encoding="utf-8"))
+        pricing = json.loads(pricing_path.read_text(encoding="utf-8"))
         report["cost_estimate"] = estimate_usage_cost(events, pricing)
-    if args.out:
-        write_json_atomic(args.out, report)
+    if output_path:
+        write_json_atomic(output_path, report)
         print(f"[OK] Usage audit: {Path(args.out).resolve()}")
     docs = report["documents"]
     print(
@@ -1063,11 +1080,16 @@ def cmd_audit_usage(args):
 
 
 def cmd_estimate_usage(args):
-    events, errors = read_usage_events(args.ledger)
-    pricing = json.loads(Path(args.pricing).read_text(encoding="utf-8"))
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    pricing_path = Path(args.pricing).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path in {ledger_path, pricing_path}:
+        raise ValueError("Usage estimate output must not overwrite its ledger or pricing input.")
+    events, errors = read_usage_events(ledger_path)
+    pricing = json.loads(pricing_path.read_text(encoding="utf-8"))
     estimate = estimate_usage_cost(events, pricing)
     estimate["invalid_ledger_lines"] = errors
-    write_json_atomic(args.out, estimate)
+    write_json_atomic(output_path, estimate)
     print(
         f"[COST ESTIMATE] {estimate['estimated_events']} event(s) priced; "
         f"{len(estimate['unpriced_event_ids'])} unpriced; total={estimate['total_estimated_cost']} "
@@ -1078,12 +1100,18 @@ def cmd_estimate_usage(args):
 
 
 def cmd_audit_docx_quality(args):
+    protected_inputs = {Path(args.docx).expanduser().resolve()}
+    if args.pdf:
+        protected_inputs.add(Path(args.pdf).expanduser().resolve())
+    output_path = Path(args.out).expanduser().resolve() if args.out else None
+    if output_path and output_path in protected_inputs:
+        raise ValueError("DOCX quality report must not overwrite its DOCX or PDF input.")
     report = audit_docx_quality(
         args.docx, profile=args.profile, pdf_path=args.pdf,
         expected_font=args.expected_font,
     )
-    if args.out:
-        write_json_atomic(args.out, report)
+    if output_path:
+        write_json_atomic(output_path, report)
         print(f"[OK] DOCX quality report: {Path(args.out).resolve()}")
     print(
         f"[DOCX QUALITY] {report['status']}; "
@@ -2411,7 +2439,11 @@ def cmd_response_docx(args):
         from response_letter_docx import render_response_docx
     except ImportError as exc:
         raise ValueError("DOCX response output requires python-docx; install project requirements.") from exc
-    quality_path = Path(args.quality_report).expanduser().resolve() if args.quality_report else Path(args.out).expanduser().resolve().with_suffix(".quality.json")
+    output_path = Path(args.out).expanduser().resolve()
+    quality_path = Path(args.quality_report).expanduser().resolve() if args.quality_report else output_path.with_suffix(".quality.json")
+    source_path = Path(args.revision_ledger or args.plan).expanduser().resolve()
+    if quality_path in {output_path, source_path}:
+        raise ValueError("DOCX quality report must be distinct from the Response Letter and its input plan/ledger.")
     if quality_path.exists():
         raise FileExistsError(f"Refusing to overwrite an existing DOCX quality report: {quality_path}")
     output = render_response_docx(
