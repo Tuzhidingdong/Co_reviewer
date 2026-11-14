@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from validate_decision_plan import validate_decision_plan
+from validate_decision_plan import main as validate_decision_plan_main, validate_decision_plan
 from co_reviewer.workflow_engine import (
     build_workflow_ledger,
     validate_workflow_ledger,
@@ -131,6 +131,35 @@ class DecisionPlanValidationTests(unittest.TestCase):
         self.assertEqual(validate_workflow_ledger(ledger), [])
         self.assertEqual(ledger["source_files"], plan["source_files"])
         self.assertEqual(ledger["tasks"][0]["evidence"], plan["tasks"][0]["evidence"])
+
+    def test_cli_can_persist_validated_workflow_ledger_without_overwriting_inputs(self):
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            plan_path = root / "plan.json"
+            audit_path = root / "audit.json"
+            inventory_path = root / "inventory.json"
+            ledger_path = root / "nested" / "workflow-ledger.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+            args = [
+                "--plan", str(plan_path),
+                "--audit", str(audit_path),
+                "--inventory", str(inventory_path),
+                "--workflow-ledger-out", str(ledger_path),
+                "--revision-round-id", "round-cli-test",
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 0)
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(ledger["revision_round_id"], "round-cli-test")
+            self.assertEqual(ledger["tasks"][0]["task_id"], "T1")
+
+            self.assertEqual(validate_decision_plan_main(args), 2)
+            self.assertTrue(plan_path.is_file())
+            self.assertTrue(audit_path.is_file())
+            self.assertTrue(inventory_path.is_file())
 
     def test_unknown_source_comment_id_is_rejected(self):
         plan, audit, inventory = fixture()
