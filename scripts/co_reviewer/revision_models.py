@@ -520,6 +520,11 @@ class ResponseUnit:
                 raise RevisionModelError("ResponseUnit location_phrase must be a single-line phrase of at most 255 characters.")
         if self.disposition == "reply_only" and self.location_requirement != "not_required":
             raise RevisionModelError("reply_only ResponseUnits must use location_requirement=not_required.")
+        if self.disposition in {"reply_only", "no_change", "clarification_needed"} and (self.linked_patch_ids or self.linked_operation_ids):
+            raise RevisionModelError(
+                f"{self.disposition} ResponseUnits cannot claim Patch or PatchOperation links; "
+                "only disposition=revised may carry executable operations."
+            )
         if self.disposition == "no_change":
             if self.location_requirement != "existing_anchor_required":
                 raise RevisionModelError("no_change ResponseUnits must use existing_anchor_required.")
@@ -929,6 +934,11 @@ class RevisionLedger:
                     errors.append(f"ResponseUnit {unit.response_unit_id} links operation {operation_id} without its parent Patch {patch_id}.")
             if unit.disposition == "revised" and unit.status in {"verified", "location_mapped", "completed"} and not unit.linked_operation_ids:
                 errors.append(f"ResponseUnit {unit.response_unit_id} is marked revised but has no exact linked PatchOperation IDs.")
+            if unit.disposition in {"reply_only", "no_change", "clarification_needed"} and (unit.linked_patch_ids or unit.linked_operation_ids):
+                errors.append(
+                    f"ResponseUnit {unit.response_unit_id} has executable Patch links but its disposition is {unit.disposition}; "
+                    "reclassify explicitly instead of silently skipping the operations."
+                )
             errors.extend(
                 f"ResponseUnit {unit.response_unit_id}: {error}"
                 for error in unit.validate_location_evidence()
