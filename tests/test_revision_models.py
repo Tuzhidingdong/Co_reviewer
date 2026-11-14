@@ -293,7 +293,7 @@ class RevisionModelsTests(unittest.TestCase):
                     page=1,
                     line_start=1,
                     line_end=1,
-                    pdf_sha256=HASH_B,
+                    pdf_sha256=self.pdf_sha256,
                     location_map_id="map-001",
                     mapping_fingerprint=HASH_A,
                 )],
@@ -394,7 +394,7 @@ class RevisionModelsTests(unittest.TestCase):
             page=2,
             line_start=4,
             line_end=5,
-            pdf_sha256=HASH_B,
+            pdf_sha256=self.pdf_sha256,
             location_map_id="map-002",
             mapping_fingerprint=HASH_A,
         )
