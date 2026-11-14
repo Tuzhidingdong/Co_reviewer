@@ -746,7 +746,9 @@
           },
           "then": {
             "required": ["anchor_evidence_id", "anchor_document", "anchor_part", "anchor_p_idx", "anchor_source_excerpt"],
-            "properties": { "location_requirement": { "const": "existing_anchor_required" } }
+            "properties": {
+              "location_requirement": { "enum": ["existing_anchor_required", "manual_required"] }
+            }
           }
         },
         {
@@ -777,7 +779,7 @@
         {
           "if": {
             "required": ["disposition"],
-            "properties": { "disposition": { "enum": ["no_change", "reply_only", "clarification_needed"] } }
+            "properties": { "disposition": { "enum": ["reply_only", "clarification_needed"] } }
           },
           "then": {
             "properties": {
