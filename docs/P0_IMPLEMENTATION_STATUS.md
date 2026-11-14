@@ -63,7 +63,7 @@ Added \`scripts/co_reviewer/revision_models.py\` and \`schemas/revision-ledger.s
 - With \`--revision-ledger\`, preflight, approval, apply and verified confirmation are synchronized back to the new ledger, including fingerprints and events.
 - The old CLI entry points and schema remain compatible for users who do not opt into the new ledger.
 
-Patch supersession now has a controlled implementation: it records predecessor/successor lineage, preserves old execution history, requires replacements of applied/verified Patches to start from the predecessor's output DOCX, and reopens linked ResponseUnits. Executed Patches cannot be silently re-exported as fresh pending work. Direct DAG-to-Patch dispatch and cross-task conflict/rebase remain next-stage tasks.
+Patch supersession now has a controlled implementation: it records predecessor/successor lineage, preserves old execution history, requires replacements of applied/verified Patches to start from the predecessor's output DOCX, and reopens linked ResponseUnits. Executed Patches cannot be silently re-exported as fresh pending work. Ready DAG batches now materialize directly into typed Patches. Verified changes invalidate same-target peers and downstream tasks, and linked ResponseUnits are reopened; remaining acceptance is to exercise multi-round Patch supersession/rebase against actual updated DOCX files.
 
 ### P0-07 — Working Clean View projection
 

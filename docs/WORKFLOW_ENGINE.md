@@ -31,9 +31,10 @@ A change to the task scope (targets, evidence, proposed action, dependencies or 
 
 1. The task DAG is authoritative. Unknown dependencies and task-level cycles are rejected.
 2. A task can be selected only when it is explicitly ready and every dependency is verified or completed. One returned batch is target-conflict-free: at most one task may reserve a target-group conflict component, while tasks without document targets can proceed independently.
-3. Target groups are derived from the document objects a task may change. The quotient graph maps task dependencies onto target groups.
+3. Target groups are derived from stable document objects when TargetRefs exist; the legacy document/part/p_idx locator remains a compatibility fallback. The quotient graph maps task dependencies onto target groups.
 4. When that quotient graph contains a cycle although the task DAG is acyclic, its strongly connected target groups are condensed into one lock/review component. The task-level order inside that component remains authoritative.
-5. If an upstream task changes, every transitive dependent task moves to recheck_required. The prior state is retained in recheck_from; the engine does not silently preserve a downstream approval or verification.
+5. After a Patch is verified and synchronized, every other task in the same target-conflict component and every transitive dependent task moves to `recheck_required`. Its previous status is retained in `recheck_from`; old approvals and verification are not reused.
+6. ResponseUnits linked to invalidated tasks reopen as drafts. Semantic confirmation, final location map and PDF page/line references are cleared; their responses must be reviewed again against the updated document output.
 
 ## Response-only and DOCX execution boundary
 
@@ -49,7 +50,7 @@ Persistent object IDs are represented by DocumentObjectIdentity records and are 
 
 When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
 
-The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. Typed Patch/RevisionLedger records are connected to the legacy DOCX writer through a compatibility adapter: preflight, human approval, apply and verified confirmation are synchronized back to the ledger. The dependency scheduler is not yet the sole execution dispatcher; the CLI currently provides the controlled bridge. Direct DAG-to-Patch dispatch, Word COM pagination and the PDF location-map producer remain later integration stages.
+The Workflow Engine is used by decision-plan validation, ledger creation/validation, ready-batch materialization and execution synchronization. `build-revision-ledger` converts only the current conflict-free ready batch into typed Patches; those Patches are then bridged to the legacy DOCX writer with fresh preflight and explicit approval. After verified changes, same-target peers and downstream tasks are invalidated before the next batch can be authorized. The CLI remains the controlled execution bridge rather than silently applying work.
 
 
 ## Patch execution bridge

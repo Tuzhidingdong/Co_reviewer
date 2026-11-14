@@ -518,7 +518,8 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             }
 
         task1 = make_task("T1", "ready", None, source, marked, 1)
-        task2 = make_task("T2", "planned", "T1", marked, final_docx, 2)
+        task2 = make_task("T2", "ready", None, marked, final_docx, 1)
+        task2["target_groups"] = list(task1["target_groups"])
         workflow = {
             "schema_version": "0.5.1",
             "revision_round_id": "round-dag-sync",
@@ -540,9 +541,20 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "reason": "Author approved T1.",
                 "actor": "Human Author",
                 "fingerprint": workflow_scope_fingerprint(task1),
+            }, {
+                "event_id": "EV-T2-READY",
+                "task_id": "T2",
+                "timestamp_utc": "2026-11-14T12:00:00+08:00",
+                "event_type": "status_transition",
+                "from_status": "planned",
+                "to_status": "ready",
+                "reason": "Author approved T2.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(task2),
             }],
         }
         self.assertEqual(validate_workflow_ledger(workflow), [])
+        self.assertEqual(select_ready_tasks(workflow["tasks"]), ["T1"])
         workflow_path = self.root / "workflow_ledger.json"
         workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
 
@@ -576,11 +588,22 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             linked_task_ids=["T1"],
             linked_patch_ids=["T1"],
         )
+        response2 = ResponseUnit(
+            response_unit_id="RU-T2-C-T2",
+            reviewer="Reviewer 1",
+            comment_id="C-T2",
+            comment_text="Please revise T2.",
+            response_text="We revised T2.",
+            linked_task_ids=["T2"],
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-T2",
+        )
         timestamp = "2026-11-14T12:00:00+08:00"
         revision = RevisionLedger(
             revision_round_id="round-dag-sync",
             patches=[patch1],
-            response_units=[response1],
+            response_units=[response1, response2],
             events=[
                 RevisionEvent("EV-PF", "T1", "patch", "preflight", timestamp, "Preflight"),
                 RevisionEvent("EV-AP", "T1", "patch", "approval", timestamp, "Human Author"),
@@ -603,7 +626,21 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             )), 0)
         synced = json.loads(workflow_path.read_text(encoding="utf-8"))
         self.assertEqual(synced["tasks"][0]["status"], "verified")
-        self.assertEqual(synced["tasks"][1]["status"], "planned")
+        self.assertEqual(synced["tasks"][1]["status"], "recheck_required")
+        self.assertTrue(any(
+            event["event_type"] == "invalidation" and event["task_id"] == "T2"
+            for event in synced["events"]
+        ))
+        revision_after_sync = revision_ledger_from_mapping(
+            json.loads(revision_path.read_text(encoding="utf-8"))
+        )
+        reopened = next(
+            unit for unit in revision_after_sync.response_units
+            if unit.response_unit_id == "RU-T2-C-T2"
+        )
+        self.assertEqual(reopened.status, "draft")
+        self.assertFalse(reopened.semantic_review_confirmed)
+        self.assertIsNone(reopened.verification_report_id)
 
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_authorize_workflow_tasks(Namespace(
