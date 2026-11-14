@@ -20,6 +20,8 @@ permissions:
 jobs:
   test:
     runs-on: windows-latest
+    env:
+      PYTHONPATH: scripts
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -61,5 +63,7 @@ jobs:
         run: python scripts/co_reviewer_cli.py audit-usage --help
       - name: Usage event CLI help
         run: python scripts/co_reviewer_cli.py record-usage-event --help
+      - name: Usage estimation CLI help
+        run: python scripts/co_reviewer_cli.py estimate-usage --help
       - name: DOCX quality audit CLI help
         run: python scripts/co_reviewer_cli.py audit-docx-quality --help

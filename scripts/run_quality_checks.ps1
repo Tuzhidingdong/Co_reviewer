@@ -25,6 +25,15 @@ if (-not $PythonCommand) {
     throw "Python executable was not found: $PythonExe"
 }
 
+$OriginalPythonPath = $env:PYTHONPATH
+$ScriptsPath = Join-Path $RepoRoot "scripts"
+if ([string]::IsNullOrWhiteSpace($OriginalPythonPath)) {
+    $env:PYTHONPATH = $ScriptsPath
+}
+else {
+    $env:PYTHONPATH = "$ScriptsPath$([IO.Path]::PathSeparator)$OriginalPythonPath"
+}
+
 function Invoke-QualityCheck {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -66,6 +75,7 @@ try {
     Invoke-QualityCheck -Name "Check Response Letter DOCX command" -PythonArgs @("scripts/co_reviewer_cli.py", "render-response-docx", "--help")
     Invoke-QualityCheck -Name "Check usage audit command" -PythonArgs @("scripts/co_reviewer_cli.py", "audit-usage", "--help")
     Invoke-QualityCheck -Name "Check usage event command" -PythonArgs @("scripts/co_reviewer_cli.py", "record-usage-event", "--help")
+    Invoke-QualityCheck -Name "Check usage estimation command" -PythonArgs @("scripts/co_reviewer_cli.py", "estimate-usage", "--help")
     Invoke-QualityCheck -Name "Check DOCX quality audit command" -PythonArgs @("scripts/co_reviewer_cli.py", "audit-docx-quality", "--help")
     Invoke-QualityCheck -Name "Check revision status command" -PythonArgs @("scripts/co_reviewer_cli.py", "status", "--help")
     Invoke-QualityCheck -Name "Check approval command" -PythonArgs @("scripts/co_reviewer_cli.py", "approve-plan", "--help")
@@ -78,5 +88,6 @@ try {
     Write-Host "Microsoft Word opening/Track Changes compatibility still requires a separate visual acceptance."
 }
 finally {
+    $env:PYTHONPATH = $OriginalPythonPath
     Pop-Location
 }
