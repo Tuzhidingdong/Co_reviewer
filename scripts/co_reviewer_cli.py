@@ -967,6 +967,7 @@ def _inspect_selected_files(args):
         usage_ledger = getattr(args, "usage_ledger", None)
         if usage_ledger:
             paragraphs = result.get("paragraphs", [])
+            parse_succeeded = not result.get("errors")
             record_usage_event(usage_ledger, {
                 "event_type": "document_read",
                 "stage": "parse_inventory",
@@ -977,8 +978,10 @@ def _inspect_selected_files(args):
                     "source_sha256": result.get("source_sha256"),
                     "cache_status": cache_status,
                     "parsed": cache_status == "miss",
-                    "full_text_extracted": cache_status == "miss",
-                    "paragraphs": len(paragraphs),
+                    "parse_succeeded": parse_succeeded,
+                    "parse_error_count": len(result.get("errors", [])),
+                    "full_text_extracted": cache_status == "miss" and parse_succeeded,
+                    "paragraphs": int(result.get("paragraph_count", len(paragraphs))),
                     "characters": sum(
                         len(str(row.get("text") or "")) for row in paragraphs
                         if isinstance(row, dict)

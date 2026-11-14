@@ -147,6 +147,13 @@
         "parsed": {
           "type": "boolean"
         },
+        "parse_succeeded": {
+          "type": "boolean"
+        },
+        "parse_error_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "full_text_extracted": {
           "type": "boolean"
         },
@@ -166,6 +173,12 @@
             "full_text",
             "unknown"
           ]
+        },
+        "measurement_scope": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
         },
         "role": {
           "type": "string"
