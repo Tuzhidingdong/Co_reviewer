@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -191,6 +191,8 @@ class Patch:
     operations: list[PatchOperation]
     status: str = "planned"
     supersedes_patch_id: str | None = None
+    preflight_fingerprint: str | None = None
+    preflight_report_id: str | None = None
     approval_fingerprint: str | None = None
     apply_report_ids: list[str] = field(default_factory=list)
     verification_report_id: str | None = None
@@ -211,9 +213,14 @@ class Patch:
             raise RevisionModelError(f"Unsupported Patch status: {self.status!r}.")
         if self.supersedes_patch_id is not None:
             _text(self.supersedes_patch_id, "supersedes_patch_id")
+        _sha256(self.preflight_fingerprint, "preflight_fingerprint", optional=True)
         _sha256(self.approval_fingerprint, "approval_fingerprint", optional=True)
+        if self.status in {"preflighted", "approved", "applied", "verified"} and not self.preflight_fingerprint:
+            raise RevisionModelError(f"Patch in {self.status} state requires preflight_fingerprint.")
         if self.status in {"approved", "applied", "verified"} and not self.approval_fingerprint:
             raise RevisionModelError(f"Patch in {self.status} state requires approval_fingerprint.")
+        if self.status in {"preflighted", "approved", "applied", "verified"} and not self.preflight_report_id:
+            raise RevisionModelError(f"Patch in {self.status} state requires preflight_report_id.")
 
     @property
     def scope_fingerprint(self) -> str:
@@ -252,6 +259,8 @@ class Patch:
             "operations": [item.to_dict() for item in self.operations],
             "status": self.status,
             "supersedes_patch_id": self.supersedes_patch_id,
+            "preflight_fingerprint": self.preflight_fingerprint,
+            "preflight_report_id": self.preflight_report_id,
             "approval_fingerprint": self.approval_fingerprint,
             "apply_report_ids": list(self.apply_report_ids),
             "verification_report_id": self.verification_report_id,
@@ -527,6 +536,11 @@ class RevisionLedger:
             errors.append("RevisionLedger contains duplicate response_unit_id values.")
         known_patches = set(patch_ids)
         for patch in self.patches:
+            if patch.status in {"preflighted", "approved", "applied", "verified"}:
+                if not _SHA256_RE.fullmatch(patch.preflight_fingerprint or ""):
+                    errors.append(f"Patch {patch.patch_id} in {patch.status} state lacks a valid preflight fingerprint.")
+                if not patch.preflight_report_id:
+                    errors.append(f"Patch {patch.patch_id} in {patch.status} state lacks preflight_report_id.")
             if patch.status in {"approved", "applied", "verified"} and not _SHA256_RE.fullmatch(
                 patch.approval_fingerprint or ""
             ):
@@ -750,6 +764,114 @@ class RevisionLedger:
             "revision_items": items,
         }
 
+    def record_legacy_preflight(
+        self,
+        preflight_report: Mapping[str, Any],
+        revision_plan: Mapping[str, Any],
+        *,
+        report_id: str,
+        actor: str = "Co_Reviewer Preflight",
+    ) -> None:
+        if not isinstance(preflight_report, Mapping):
+            raise RevisionModelError("Preflight report must be an object.")
+        preflight_items = preflight_report.get("preflight_items", [])
+        if not isinstance(preflight_items, list):
+            raise RevisionModelError("Preflight report must contain preflight_items.")
+        plan_items = revision_plan.get("revision_items", [])
+        if not isinstance(plan_items, list):
+            raise RevisionModelError("Legacy revision plan must contain revision_items.")
+        plan_by_id = {
+            item.get("id"): item for item in plan_items if isinstance(item, Mapping)
+        }
+        patch_by_id = {patch.patch_id: patch for patch in self.patches}
+        now = datetime.now(timezone.utc).isoformat()
+        _text(report_id, "report_id")
+        _text(actor, "actor")
+        for record in preflight_items:
+            if not isinstance(record, Mapping):
+                raise RevisionModelError("Preflight item entries must be objects.")
+            patch_id = _text(record.get("revision_item_id"), "revision_item_id")
+            patch = patch_by_id.get(patch_id)
+            plan_item = plan_by_id.get(patch_id)
+            if patch is None or not isinstance(plan_item, Mapping):
+                raise RevisionModelError(f"Preflight result refers to unknown Patch {patch_id}.")
+            fingerprint = _sha256(
+                record.get("preflight_fingerprint"), "preflight_fingerprint"
+            )
+            if fingerprint != plan_item.get("preflight_fingerprint"):
+                raise RevisionModelError(
+                    f"Preflight fingerprint mismatch for Patch {patch_id}."
+                )
+            targets = plan_item.get("targets", [])
+            if len(targets) != len(patch.operations):
+                raise RevisionModelError(f"Preflight target count mismatch for Patch {patch_id}.")
+            updated_operations = []
+            for operation, target in zip(patch.operations, targets):
+                source_hash = _sha256(
+                    target.get("source_sha256"), "source_sha256"
+                )
+                updated_operations.append(replace(operation, source_sha256=source_hash))
+            patch.operations = updated_operations
+            patch.preflight_fingerprint = fingerprint
+            patch.preflight_report_id = report_id
+            patch.status = "preflighted"
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=patch_id,
+                subject_type="patch",
+                event_type="preflight",
+                timestamp_utc=now,
+                actor=actor,
+                details={
+                    "preflight_report_id": report_id,
+                    "preflight_fingerprint": fingerprint,
+                },
+            ))
+        self.validate_or_raise()
+
+    def record_legacy_approval(
+        self,
+        revision_plan: Mapping[str, Any],
+        patch_ids: Sequence[str],
+        *,
+        actor: str,
+    ) -> None:
+        plan_items = revision_plan.get("revision_items", [])
+        if not isinstance(plan_items, list):
+            raise RevisionModelError("Legacy revision plan must contain revision_items.")
+        plan_by_id = {
+            item.get("id"): item for item in plan_items if isinstance(item, Mapping)
+        }
+        patch_by_id = {patch.patch_id: patch for patch in self.patches}
+        now = datetime.now(timezone.utc).isoformat()
+        _text(actor, "actor")
+        requested = list(dict.fromkeys(patch_ids))
+        if not requested:
+            raise RevisionModelError("At least one Patch ID must be approved.")
+        for patch_id in requested:
+            patch = patch_by_id.get(patch_id)
+            item = plan_by_id.get(patch_id)
+            if patch is None or not isinstance(item, Mapping):
+                raise RevisionModelError(f"Approval refers to unknown Patch {patch_id}.")
+            if item.get("status") != "approved":
+                raise RevisionModelError(f"Legacy revision item {patch_id} is not approved.")
+            preflight_fp = _sha256(item.get("preflight_fingerprint"), "preflight_fingerprint")
+            approval_fp = _sha256(item.get("approval_fingerprint"), "approval_fingerprint")
+            if preflight_fp != patch.preflight_fingerprint:
+                raise RevisionModelError(f"Patch {patch_id} preflight fingerprint changed before approval.")
+            patch.approval_fingerprint = approval_fp
+            patch.status = "approved"
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=patch_id,
+                subject_type="patch",
+                event_type="approval",
+                timestamp_utc=now,
+                actor=actor,
+                details={"approval_fingerprint": approval_fp},
+            ))
+        self.validate_or_raise()
+
     def record_legacy_apply_reports(
         self,
         reports: Sequence[Mapping[str, Any]],
@@ -828,6 +950,9 @@ class RevisionLedger:
                 )
             patch.approval_fingerprint = _sha256(
                 item.get("approval_fingerprint"), "approval_fingerprint"
+            )
+            patch.preflight_fingerprint = _sha256(
+                item.get("preflight_fingerprint"), "preflight_fingerprint"
             )
             patch.status = "verified"
             patch.verification_report_id = verification_report_id
@@ -1099,6 +1224,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             operations=operations,
             status=row.get("status", "planned"),
             supersedes_patch_id=row.get("supersedes_patch_id"),
+            preflight_fingerprint=row.get("preflight_fingerprint"),
+            preflight_report_id=row.get("preflight_report_id"),
             approval_fingerprint=row.get("approval_fingerprint"),
             apply_report_ids=list(row.get("apply_report_ids", [])),
             verification_report_id=row.get("verification_report_id"),
