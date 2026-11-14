@@ -643,7 +643,7 @@ class ResponseUnit:
             except OSError as exc:
                 errors.append(f"Cannot recheck location map file {map_path}: {exc}")
         if not self.final_locations:
-            errors.append("Mapped ResponseUnit has no final PDF line locations.")
+            errors.append("Mapped ResponseUnit has no final Word/PDF location records.")
         for location in self.final_locations:
             expected_method = "manual" if self.location_requirement == "manual_required" else "word_com"
             if location.mapping_method != expected_method:
@@ -708,7 +708,7 @@ class ResponseUnit:
             )
         _sha256(location_map_fingerprint, "location_map_fingerprint")
         if not final_locations:
-            raise RevisionModelError("At least one final PDF page/line location is required.")
+            raise RevisionModelError("At least one final Word/PDF location record is required.")
         if any(not isinstance(item, ResponseLocation) for item in final_locations):
             raise RevisionModelError("final_locations must contain ResponseLocation records.")
         expected_method = "manual" if self.location_requirement == "manual_required" else "word_com"
