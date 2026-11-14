@@ -2021,6 +2021,11 @@ def cmd_create_working_clean_views(args):
                     )
                 final_anchor_index = anchor_indices[0]
                 anchor_text = final_paragraphs[final_anchor_index]
+                if anchor_text.count(unit.anchor_source_excerpt) != 1:
+                    raise ValueError(
+                        f"No-change anchor excerpt for {unit.response_unit_id} occurs zero or multiple times "
+                        "in its final paragraph; refusing to guess the anchor."
+                    )
                 anchor_start = anchor_text.find(unit.anchor_source_excerpt)
                 if anchor_start < 0:
                     raise ValueError(
