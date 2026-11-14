@@ -111,7 +111,7 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
         dependencies[task_id] = deps
 
         status = task.get("status", "identified")
-        if status not in WORKFLOW_STATUSES:
+        if not isinstance(status, str) or status not in WORKFLOW_STATUSES:
             errors.append(
                 f"Task {task_id} has unsupported workflow status {status!r}."
             )
@@ -360,9 +360,9 @@ def transition_task(
     if not isinstance(task, Mapping):
         raise WorkflowValidationError("Workflow task must be an object.")
     current = task.get("status", "identified")
-    if current not in WORKFLOW_STATUSES:
+    if not isinstance(current, str) or current not in WORKFLOW_STATUSES:
         raise WorkflowValidationError(f"Unsupported current workflow status: {current!r}.")
-    if new_status not in WORKFLOW_STATUSES:
+    if not isinstance(new_status, str) or new_status not in WORKFLOW_STATUSES:
         raise WorkflowValidationError(f"Unsupported target workflow status: {new_status!r}.")
     if new_status not in ALLOWED_TRANSITIONS[current]:
         raise WorkflowValidationError(
@@ -457,7 +457,8 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
             for target in targets:
                 if not isinstance(target, Mapping):
                     continue
-                if target.get("action") not in _MUTATING_TARGET_ACTIONS:
+                action = target.get("action")
+                if not isinstance(action, str) or action not in _MUTATING_TARGET_ACTIONS:
                     continue
                 document = target.get("document")
                 part = target.get("part")
@@ -472,7 +473,7 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
         status = task.get("status", "pending")
         if status == "pending":
             status = "planned"
-        if status not in WORKFLOW_STATUSES:
+        if not isinstance(status, str) or status not in WORKFLOW_STATUSES:
             status = "planned"
         adapted.append({
             "task_id": task_id.strip(),
