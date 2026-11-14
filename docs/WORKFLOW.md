@@ -100,6 +100,8 @@ Before task authorization, enrich each executable task with exact `patch_operati
       }
     }
 
+Prepare the complete reviewer map before the first batch when possible. If a later build uses the generic fallback, the RevisionLedger retains any reviewer identity already recorded; a generic placeholder can be upgraded when an explicit reviewer label is supplied, but an existing explicit label cannot be silently replaced by a different explicit label.
+
 Authorize the prepared task scope, then build the conflict-free ready batch:
 
     python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
