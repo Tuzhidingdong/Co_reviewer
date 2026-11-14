@@ -249,6 +249,103 @@ class RevisionModelsTests(unittest.TestCase):
                 )],
             )
 
+    def test_response_unit_semantic_review_location_mapping_and_completion_are_separate(self):
+        ledger = RevisionLedger(
+            "round-response-lifecycle",
+            response_units=[ResponseUnit(
+                response_unit_id="RU-1",
+                reviewer="Reviewer 1",
+                comment_id="C1",
+                comment_text="Please explain.",
+                response_text="We have explained the process.",
+            )],
+        )
+        ledger.confirm_response_units(
+            ["RU-1"],
+            verification_report_id="response-semantic-001",
+            actor="Human Author",
+        )
+        self.assertEqual(ledger.response_units[0].status, "verified")
+        self.assertFalse(ledger.response_units[0].final_locations)
+
+        location_map = {
+            "location_map_id": "map-001",
+            "response_units": [{
+                "response_unit_id": "RU-1",
+                "location_map_fingerprint": HASH_A,
+                "final_locations": [{
+                    "document": "Manuscript",
+                    "output_file": "Manuscript_revised.docx",
+                    "page": 3,
+                    "line_start": 12,
+                    "line_end": 14,
+                    "pdf_sha256": HASH_B,
+                    "location_map_id": "map-001",
+                    "mapping_fingerprint": HASH_A,
+                }],
+            }],
+        }
+        ledger.record_response_locations(location_map, actor="Location Mapper")
+        self.assertEqual(ledger.response_units[0].status, "location_mapped")
+        self.assertEqual(ledger.response_units[0].final_locations[0].page, 3)
+
+        ledger.complete_response_units(
+            ["RU-1"],
+            ready_for_submission_confirmed=True,
+            actor="Human Author",
+        )
+        self.assertEqual(ledger.response_units[0].status, "completed")
+        self.assertEqual(len(ledger.events), 3)
+        self.assertEqual(
+            [event.subject_type for event in ledger.events],
+            ["response_unit", "response_unit", "response_unit"],
+        )
+        ledger.to_dict()
+
+    def test_response_completion_waits_for_every_linked_patch_to_be_verified(self):
+        patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please explain.",
+            proposed_response="We explained it.",
+            operations=[_operation()],
+            status="verified",
+            approval_fingerprint=HASH_A,
+            verification_report_id="verify-001",
+            verified_output_hashes=[{"path": "revised.docx", "sha256": HASH_B}],
+        )
+        unit = ResponseUnit(
+            response_unit_id="RU-1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please explain.",
+            response_text="We explained it.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="response-verify-001",
+        )
+        ledger = RevisionLedger("round-response-patch", patches=[patch], response_units=[unit])
+        location = ResponseLocation(
+            document="Manuscript",
+            output_file="Manuscript_revised.docx",
+            page=2,
+            line_start=4,
+            line_end=5,
+            pdf_sha256=HASH_B,
+            location_map_id="map-002",
+            mapping_fingerprint=HASH_A,
+        )
+        unit.record_final_locations(HASH_A, [location])
+        ledger.complete_response_units(
+            ["RU-1"],
+            ready_for_submission_confirmed=True,
+            actor="Human Author",
+        )
+        self.assertEqual(unit.status, "completed")
+
     def test_revision_ledger_round_trips_without_losing_patch_lineage(self):
         patch = Patch(
             patch_id="P2",
