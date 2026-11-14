@@ -64,6 +64,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "replace": "revised phrase",
             "location": "Results paragraph 1",
             "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
         })
         patch = Patch(
             patch_id="T1",
@@ -81,6 +82,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             response_text="We have clarified the statement.",
             linked_task_ids=["T1"],
             linked_patch_ids=["T1"],
+            linked_operation_ids=["OP-001"],
             linked_targets=[{
                 "document": "Manuscript",
                 "location": "Results paragraph 1",
@@ -253,6 +255,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "find": "old phrase",
                     "replace": "new phrase",
                     "evidence_ids": ["E2"],
+                    "source_comment_ids": ["C2", "C3"],
                 }],
             }],
         }
@@ -294,6 +297,10 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(
             {unit.comment_id: unit.reviewer for unit in saved.response_units},
             {"C2": "Reviewer 1", "C3": "Reviewer 2"},
+        )
+        self.assertEqual(
+            {unit.comment_id: unit.linked_operation_ids for unit in saved.response_units},
+            {"C2": ["OP-2"], "C3": ["OP-2"]},
         )
 
     def test_preflight_and_approval_parsers_accept_revision_ledger(self):
@@ -384,6 +391,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "find": "old phrase",
                 "replace": "more precise phrase",
                 "evidence_ids": ["E1"],
+                "source_comment_ids": ["C1"],
             }],
         }), encoding="utf-8")
 
@@ -550,6 +558,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "find": f"old text {task_id}",
                     "replace": f"new text {task_id}",
                     "evidence_ids": [f"E-{task_id}"],
+                    "source_comment_ids": [f"C-{task_id}"],
                 }],
             }
 
@@ -876,6 +885,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "find": "old target wording",
                     "replace": "new target wording",
                     "evidence_ids": ["E1"],
+                    "source_comment_ids": ["C1"],
                 }],
             }
 
@@ -1061,6 +1071,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "replace": "verified",
             "source_sha256": sha256_file(source),
             "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
         })
         old_patch = Patch(
             patch_id="OLD",

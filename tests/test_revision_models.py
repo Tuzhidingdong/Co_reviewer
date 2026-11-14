@@ -39,6 +39,7 @@ def _operation(**overrides):
         "location": "Results paragraph 4",
         "source_sha256": HASH_A,
         "evidence_ids": ["E1"],
+        "source_comment_ids": ["C1"],
     }
     data.update(overrides)
     return PatchOperation.from_mapping(data)
@@ -159,6 +160,16 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(len(ledger.response_units), 1)
         self.assertEqual(ledger.response_units[0].status, "draft")
         self.assertEqual(ledger.response_units[0].linked_patch_ids, [])
+        self.assertEqual(ledger.response_units[0].disposition, "reply_only")
+        self.assertEqual(ledger.response_units[0].location_requirement, "not_required")
+        ledger.confirm_response_units(
+            [ledger.response_units[0].response_unit_id], verification_report_id="semantic-reply-only", actor="Human Author"
+        )
+        ledger.complete_response_units(
+            [ledger.response_units[0].response_unit_id], ready_for_submission_confirmed=True, actor="Human Author"
+        )
+        self.assertEqual(ledger.response_units[0].status, "completed")
+        self.assertEqual(ledger.response_units[0].final_locations, [])
 
     def test_patch_builder_only_materializes_the_current_conflict_free_ready_batch(self):
         def task(task_id, comment_id, status, output_file):
@@ -206,6 +217,7 @@ class RevisionModelsTests(unittest.TestCase):
                     "find": f"old text {task_id}",
                     "replace": f"new text {task_id}",
                     "evidence_ids": [f"E-{task_id}"],
+                    "source_comment_ids": [comment_id],
                 }],
             }
 
@@ -272,6 +284,7 @@ class RevisionModelsTests(unittest.TestCase):
                 "find": "old",
                 "replace": "new",
                 "evidence_ids": [],
+                "source_comment_ids": ["C1"],
             }],
         }
         workflow = {
@@ -575,6 +588,7 @@ class RevisionModelsTests(unittest.TestCase):
             response_text="We explained it.",
             linked_task_ids=["T1"],
             linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-001"],
             status="verified",
             semantic_review_confirmed=True,
             verification_report_id="response-verify-001",
@@ -630,6 +644,7 @@ class RevisionModelsTests(unittest.TestCase):
             response_text="We clarified the statement.",
             linked_task_ids=["T1"],
             linked_patch_ids=["P1"],
+            linked_operation_ids=["P1-OP1"],
             status="verified",
             semantic_review_confirmed=True,
             verification_report_id="response-semantic-P1",
@@ -791,6 +806,7 @@ class RevisionModelsTests(unittest.TestCase):
             response_text="We clarified the statement.",
             linked_task_ids=["T1"],
             linked_patch_ids=["P1"],
+            linked_operation_ids=["P1-OP"],
             status="verified",
             semantic_review_confirmed=True,
             verification_report_id="response-review-1",
@@ -822,6 +838,7 @@ class RevisionModelsTests(unittest.TestCase):
             response_text="We clarified the statement with the dependent result.",
             linked_task_ids=["T1", "T2"],
             linked_patch_ids=["P2"],
+            linked_operation_ids=["P2-OP"],
             linked_targets=[{
                 "document": "Manuscript",
                 "location": "Updated Results",

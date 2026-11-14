@@ -285,6 +285,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "replace": "ZB-02",
                 "location": "Manuscript body paragraph 1",
                 "evidence_ids": ["E-MANUSCRIPT-1"],
+                "source_comment_ids": list(task["source_comment_ids"]),
             },
             {
                 "operation_id": "T1-OP-SI",
@@ -297,6 +298,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "replace": "ZB-02",
                 "location": "SI body paragraph 1",
                 "evidence_ids": ["E-SI-1"],
+                "source_comment_ids": list(task["source_comment_ids"]),
             },
         ]
         errors = validate_workflow_ledger(workflow)
