@@ -20,6 +20,7 @@ from co_reviewer.revision_models import (
 )
 from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,
+    _audit_sequence_fields,
     _read_word_position,
     _reusable_role_mapping,
     _validate_mapping_phrase,
@@ -291,6 +292,53 @@ class WordPdfMapperContractTests(unittest.TestCase):
             "Manuscript", [job, second_job], {unit.response_unit_id: unit}, source_clean_hash
         )
         self.assertIsNone(incomplete)
+
+    def test_native_figure_and_table_sequence_fields_are_checked_mechanically(self):
+        class FakeText:
+            def __init__(self, text):
+                self.Text = text
+
+        class FakeField:
+            def __init__(self, code, result):
+                self.Code = FakeText(code)
+                self.Result = FakeText(result)
+
+        class FakeFields:
+            def __init__(self, rows):
+                self.rows = rows
+                self.Count = len(rows)
+            def Item(self, index):
+                return self.rows[index - 1]
+
+        class FakeDocument:
+            def __init__(self, rows):
+                self.Fields = FakeFields([
+                    FakeField(code, value) for code, value in rows
+                ])
+
+        passing = _audit_sequence_fields(FakeDocument([
+            ("SEQ Figure \\* ARABIC", "1"),
+            ("SEQ Figure \\* ARABIC", "2"),
+            ("SEQ Table \\* ARABIC", "1"),
+        ]))
+        self.assertEqual(passing["status"], "pass")
+        self.assertEqual([row["value"] for row in passing["detected"]["Figure"]], [1, 2])
+        self.assertEqual([row["value"] for row in passing["detected"]["Table"]], [1])
+
+        failing = _audit_sequence_fields(FakeDocument([
+            ("SEQ Figure \\* ARABIC", "1"),
+            ("SEQ Figure \\* ARABIC", "3"),
+            ("SEQ Table \\* ARABIC", "1"),
+        ]))
+        self.assertEqual(failing["status"], "fail")
+        self.assertEqual(failing["issues"][0]["observed"], [1, 3])
+
+        manual = _audit_sequence_fields(FakeDocument([
+            ("SEQ Figure \\s 1 \\* ARABIC", "1"),
+            ("SEQ Table \\* ARABIC", "1"),
+        ]))
+        self.assertEqual(manual["status"], "manual_review")
+        self.assertTrue(manual["manual_review"])
 
     def test_word_position_uses_continuous_line_number_information(self):
         class FakeRange:
