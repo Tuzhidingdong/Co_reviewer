@@ -170,7 +170,7 @@
                 "if": { "properties": { "disposition": { "const": "no_change" } }, "required": ["disposition"] },
                 "then": {
                   "required": ["anchor_evidence_id"],
-                  "properties": { "location_requirement": { "const": "existing_anchor_required" } }
+                  "properties": { "location_requirement": { "enum": ["existing_anchor_required", "manual_required"] } }
                 }
               },
               {
