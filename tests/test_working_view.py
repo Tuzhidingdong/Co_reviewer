@@ -1,3 +1,4 @@
+import io
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,10 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import co_reviewer_cli as cli
-from co_reviewer.working_view import WorkingViewError, create_working_clean_view
+from co_reviewer.working_view import (
+    WorkingViewError, create_working_clean_view,
+    inspect_clean_baseline, strip_docx_comments_bytes,
+)
 from test_revision_engine import make_docx
 
 
@@ -106,6 +110,159 @@ class WorkingCleanViewTests(unittest.TestCase):
             types = ET.fromstring(archive.read("[Content_Types].xml"))
             self.assertEqual(len(list(types)), 0)
         self.assertGreater(report["counts"]["comment_anchors_removed"], 0)
+
+
+    def test_baseline_gate_detects_all_unresolved_revision_and_comment_categories(self):
+        make_docx(self.original, [[("A baseline paragraph with evidence.", False)]])
+        with zipfile.ZipFile(self.original, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(package["word/document.xml"])
+        paragraph = root.find(".//w:p", cli.NS)
+        for local in ("ins", "del", "moveFrom", "moveTo"):
+            wrapper = ET.SubElement(paragraph, f"{{{cli.W}}}{local}", {
+                f"{{{cli.W}}}id": str(len(list(paragraph)) + 1),
+                f"{{{cli.W}}}author": "Synthetic collaborator",
+            })
+            run = ET.SubElement(wrapper, f"{{{cli.W}}}r")
+            ET.SubElement(run, f"{{{cli.W}}}t").text = f"sample {local} text"
+        run = paragraph.find("w:r", cli.NS)
+        run_properties = run.find("w:rPr", cli.NS)
+        if run_properties is None:
+            run_properties = ET.SubElement(run, f"{{{cli.W}}}rPr")
+        ET.SubElement(run_properties, f"{{{cli.W}}}rPrChange", {
+            f"{{{cli.W}}}id": "90",
+        })
+        paragraph_properties = paragraph.find("w:pPr", cli.NS)
+        if paragraph_properties is None:
+            paragraph_properties = ET.Element(f"{{{cli.W}}}pPr")
+            paragraph.insert(0, paragraph_properties)
+        ET.SubElement(paragraph_properties, f"{{{cli.W}}}pPrChange", {
+            f"{{{cli.W}}}id": "91",
+        })
+        ET.SubElement(paragraph, f"{{{cli.W}}}commentRangeStart", {
+            f"{{{cli.W}}}id": "7",
+        })
+        ET.SubElement(paragraph, f"{{{cli.W}}}commentRangeEnd", {
+            f"{{{cli.W}}}id": "7",
+        })
+        reference_run = ET.SubElement(paragraph, f"{{{cli.W}}}r")
+        ET.SubElement(reference_run, f"{{{cli.W}}}commentReference", {
+            f"{{{cli.W}}}id": "7",
+        })
+        package["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        package["word/comments.xml"] = (
+            b'<?xml version="1.0"?>'
+            b'<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'<w:comment w:id="7" w:author="Synthetic collaborator"><w:p><w:r><w:t>Internal note</w:t></w:r></w:p></w:comment>'
+            b'</w:comments>'
+        )
+        rel_root = ET.fromstring(package["word/_rels/document.xml.rels"])
+        ET.SubElement(rel_root, "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship", {
+            "Id": "rIdComment",
+            "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "Target": "comments.xml",
+        })
+        package["word/_rels/document.xml.rels"] = ET.tostring(
+            rel_root, encoding="utf-8", xml_declaration=True
+        )
+        content_root = ET.fromstring(package["[Content_Types].xml"])
+        ET.SubElement(content_root, "{http://schemas.openxmlformats.org/package/2006/content-types}Override", {
+            "PartName": "/word/comments.xml",
+            "ContentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        })
+        package["[Content_Types].xml"] = ET.tostring(
+            content_root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.original, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        report = inspect_clean_baseline(self.original)
+        self.assertFalse(report["clean"])
+        self.assertGreater(report["blocking_counts"]["insertions"], 0)
+        self.assertGreater(report["blocking_counts"]["deletions"], 0)
+        self.assertGreater(report["blocking_counts"]["move_from"], 0)
+        self.assertGreater(report["blocking_counts"]["move_to"], 0)
+        self.assertGreater(report["blocking_counts"]["formatting_changes"], 0)
+        self.assertGreater(report["blocking_counts"]["comments"], 0)
+        self.assertGreater(report["blocking_counts"]["comment_anchors"], 0)
+        self.assertTrue(all("part" in issue and "category" in issue for issue in report["issues"]))
+
+    def test_marked_comment_cleanup_removes_comment_parts_but_preserves_track_changes(self):
+        make_docx(self.original, [[("A marked paragraph.", False)]])
+        with zipfile.ZipFile(self.original, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(package["word/document.xml"])
+        paragraph = root.find(".//w:p", cli.NS)
+        insertion = ET.SubElement(paragraph, f"{{{cli.W}}}ins", {
+            f"{{{cli.W}}}id": "11",
+            f"{{{cli.W}}}author": "Co_Reviewer",
+        })
+        insertion_run = ET.SubElement(insertion, f"{{{cli.W}}}r")
+        ET.SubElement(insertion_run, f"{{{cli.W}}}t").text = "revised"
+        deletion = ET.SubElement(paragraph, f"{{{cli.W}}}del", {
+            f"{{{cli.W}}}id": "12",
+            f"{{{cli.W}}}author": "Co_Reviewer",
+        })
+        deletion_run = ET.SubElement(deletion, f"{{{cli.W}}}r")
+        ET.SubElement(deletion_run, f"{{{cli.W}}}delText").text = "old"
+        ET.SubElement(paragraph, f"{{{cli.W}}}commentRangeStart", {
+            f"{{{cli.W}}}id": "7",
+        })
+        ET.SubElement(paragraph, f"{{{cli.W}}}commentRangeEnd", {
+            f"{{{cli.W}}}id": "7",
+        })
+        reference_run = ET.SubElement(paragraph, f"{{{cli.W}}}r")
+        ET.SubElement(reference_run, f"{{{cli.W}}}commentReference", {
+            f"{{{cli.W}}}id": "7",
+        })
+        package["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        package["word/comments.xml"] = (
+            b'<?xml version="1.0"?>'
+            b'<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'<w:comment w:id="7"><w:p/></w:comment></w:comments>'
+        )
+        rel_root = ET.fromstring(package["word/_rels/document.xml.rels"])
+        ET.SubElement(rel_root, "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship", {
+            "Id": "rIdComment",
+            "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "Target": "comments.xml",
+        })
+        package["word/_rels/document.xml.rels"] = ET.tostring(
+            rel_root, encoding="utf-8", xml_declaration=True
+        )
+        content_root = ET.fromstring(package["[Content_Types].xml"])
+        ET.SubElement(content_root, "{http://schemas.openxmlformats.org/package/2006/content-types}Override", {
+            "PartName": "/word/comments.xml",
+            "ContentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        })
+        package["[Content_Types].xml"] = ET.tostring(
+            content_root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.marked, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        cleaned, report = strip_docx_comments_bytes(self.marked.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(cleaned), "r") as archive:
+            names = set(archive.namelist())
+            document_root = ET.fromstring(archive.read("word/document.xml"))
+            self.assertNotIn("word/comments.xml", names)
+            self.assertIsNotNone(document_root.find(".//w:ins", cli.NS))
+            self.assertIsNotNone(document_root.find(".//w:del", cli.NS))
+            self.assertIsNone(document_root.find(".//w:commentRangeStart", cli.NS))
+            self.assertIsNone(document_root.find(".//w:commentRangeEnd", cli.NS))
+            self.assertIsNone(document_root.find(".//w:commentReference", cli.NS))
+            relationships = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+            self.assertFalse(any("comments" in child.attrib.get("Type", "") for child in relationships))
+            types = ET.fromstring(archive.read("[Content_Types].xml"))
+            self.assertFalse(any("comments" in child.attrib.get("PartName", "") for child in types))
+        self.assertEqual(report["validation"], "passed")
+        self.assertEqual(report["removed_comment_parts"], ["word/comments.xml"])
 
     def test_refuses_unsupported_tracked_table_structure_instead_of_guessing(self):
         make_docx(self.original, [[("Table content remains.", False)]])
