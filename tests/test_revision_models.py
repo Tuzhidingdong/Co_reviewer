@@ -160,6 +160,83 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(ledger.response_units[0].status, "draft")
         self.assertEqual(ledger.response_units[0].linked_patch_ids, [])
 
+    def test_patch_builder_only_materializes_the_current_conflict_free_ready_batch(self):
+        def task(task_id, comment_id, status, output_file):
+            return {
+                "task_id": task_id,
+                "sequence": 1 if task_id == "T1" else 2,
+                "stage": "revision",
+                "task_type": "local_revision",
+                "title": f"Revise {task_id}",
+                "source_comment_ids": [comment_id],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": f"E-{task_id}",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_comment_id": comment_id,
+                    "source_excerpt": f"Please revise {task_id}.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": f"Revise the text for {task_id}.",
+                "proposed_response": f"We revised {task_id}.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "action": "replace",
+                    "evidence_ids": [f"E-{task_id}"],
+                }],
+                "dependencies": [],
+                "target_groups": ["Manuscript|word/document.xml|p_idx=1"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "requires_user_approval": True,
+                "status": status,
+                "patch_operations": [{
+                    "operation_id": f"{task_id}-OP1",
+                    "document": "Manuscript",
+                    "input_file": "Manuscript.docx",
+                    "output_file": output_file,
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "find": f"old text {task_id}",
+                    "replace": f"new text {task_id}",
+                    "evidence_ids": [f"E-{task_id}"],
+                }],
+            }
+
+        ready_task = task("T1", "C1", "ready", "Manuscript_T1.docx")
+        planned_task = task("T2", "C2", "planned", "Manuscript_T2.docx")
+        workflow = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-ready-batch",
+            "source_files": [],
+            "documents": [],
+            "object_registry": [],
+            "tasks": [ready_task, planned_task],
+            "events": [{
+                "event_id": "EV-T1-READY",
+                "task_id": "T1",
+                "timestamp_utc": STAMP,
+                "event_type": "status_transition",
+                "from_status": "planned",
+                "to_status": "ready",
+                "reason": "Author approved T1.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(ready_task),
+            }],
+        }
+        ledger = build_revision_ledger(workflow, document_paths={})
+        self.assertEqual([patch.task_id for patch in ledger.patches], ["T1"])
+        self.assertEqual(
+            {unit.comment_id for unit in ledger.response_units},
+            {"C1", "C2"},
+        )
+
     def test_build_revision_ledger_requires_traceable_reviewer_comment(self):
         task = {
             "task_id": "T1",
