@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
+from .identity import DocumentIdentity, DocumentObjectIdentity, TargetRef
+
 WORKFLOW_STATUSES = frozenset({
     "identified",
     "planned",
@@ -757,7 +759,20 @@ def invalidate_downstream(
     return rows
 
 
-def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
+def _identity_record_payload(value: Any, field: str) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return copy.deepcopy(dict(value))
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        record = to_dict()
+        if isinstance(record, Mapping):
+            return copy.deepcopy(dict(record))
+    raise WorkflowValidationError(
+        f"{field} entries must be identity objects or dictionaries."
+    )
+
+
+def workflow_tasks_from_decision_plan(tasks: Any, target_refs_by_task: Mapping[str, Sequence[Any]] | None = None) -> list[dict[str, Any]]:
     """Adapt pending decision-plan tasks to the workflow core.
 
     The target-group key is deliberately provisional: it uses the legacy
@@ -766,6 +781,8 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
     """
     if not isinstance(tasks, (list, tuple)):
         return []
+    if target_refs_by_task is not None and not isinstance(target_refs_by_task, Mapping):
+        raise WorkflowValidationError("target_refs_by_task must be a mapping keyed by task_id.")
     adapted: list[dict[str, Any]] = []
     for task in tasks:
         if not isinstance(task, Mapping):
@@ -775,23 +792,46 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
             continue
 
         groups: set[str] = set()
-        targets = task.get("targets", [])
-        if isinstance(targets, (list, tuple)):
-            for target in targets:
-                if not isinstance(target, Mapping):
-                    continue
-                action = target.get("action")
-                if not isinstance(action, str) or action not in _MUTATING_TARGET_ACTIONS:
-                    continue
-                document = target.get("document")
-                part = target.get("part")
-                p_idx = target.get("p_idx")
-                if (
-                    isinstance(document, str) and document.strip()
-                    and isinstance(part, str) and part.strip()
-                    and isinstance(p_idx, int) and not isinstance(p_idx, bool) and p_idx >= 0
-                ):
-                    groups.add(f"{document.strip()}|{part.strip()}|p_idx={p_idx}")
+        stable_refs: list[dict[str, Any]] = []
+        supplied_refs = (
+            target_refs_by_task.get(task_id.strip(), [])
+            if target_refs_by_task is not None else []
+        )
+        if not isinstance(supplied_refs, (list, tuple)):
+            raise WorkflowValidationError(
+                f"Target refs for task {task_id} must be an array."
+            )
+        for target_ref in supplied_refs:
+            record = _identity_record_payload(target_ref, f"Target refs for task {task_id}")
+            stable_refs.append(record)
+            document_id = record.get("document_id")
+            object_id = record.get("object_id")
+            if (
+                isinstance(document_id, str) and document_id.strip()
+                and isinstance(object_id, str) and object_id.strip()
+            ):
+                groups.add(f"{document_id.strip()}|object={object_id.strip()}")
+
+        # Prefer persistent object IDs. The old p_idx key is only a migration
+        # fallback for tasks that have not yet been mapped into the object registry.
+        if not stable_refs:
+            targets = task.get("targets", [])
+            if isinstance(targets, (list, tuple)):
+                for target in targets:
+                    if not isinstance(target, Mapping):
+                        continue
+                    action = target.get("action")
+                    if not isinstance(action, str) or action not in _MUTATING_TARGET_ACTIONS:
+                        continue
+                    document = target.get("document")
+                    part = target.get("part")
+                    p_idx = target.get("p_idx")
+                    if (
+                        isinstance(document, str) and document.strip()
+                        and isinstance(part, str) and part.strip()
+                        and isinstance(p_idx, int) and not isinstance(p_idx, bool) and p_idx >= 0
+                    ):
+                        groups.add(f"{document.strip()}|{part.strip()}|p_idx={p_idx}")
 
         status = task.get("status", "pending")
         if status == "pending":
@@ -810,6 +850,8 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
             "target_groups": sorted(groups),
             "status": status,
         })
+        if stable_refs:
+            record["target_refs"] = stable_refs
         adapted.append(record)
     return adapted
 
