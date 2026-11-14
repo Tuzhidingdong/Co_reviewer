@@ -354,16 +354,24 @@ class ResponseLocation:
     def __post_init__(self) -> None:
         _text(self.document, "document")
         _safe_docx_path(self.output_file, "output_file")
-        pdf_path = _text(self.pdf_file, "pdf_file")
-        if Path(pdf_path).suffix.casefold() != ".pdf":
+        pdf_path = Path(_text(self.pdf_file, "pdf_file")).expanduser().resolve()
+        if pdf_path.suffix.casefold() != ".pdf":
             raise RevisionModelError("pdf_file must point to a .pdf file.")
+        if not pdf_path.is_file():
+            raise RevisionModelError(f"Final mapped PDF does not exist: {pdf_path}")
         for name in ("page", "line_start", "line_end"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise RevisionModelError(f"{name} must be a positive integer.")
         if self.line_end < self.line_start:
             raise RevisionModelError("line_end cannot be earlier than line_start.")
-        _sha256(self.pdf_sha256, "pdf_sha256")
+        expected_pdf_sha256 = _sha256(self.pdf_sha256, "pdf_sha256")
+        try:
+            actual_pdf_sha256 = sha256_file(pdf_path)
+        except OSError as exc:
+            raise RevisionModelError(f"Cannot hash final mapped PDF {pdf_path}: {exc}") from exc
+        if actual_pdf_sha256 != expected_pdf_sha256:
+            raise RevisionModelError(f"Final mapped PDF changed after line mapping: {pdf_path}")
         _text(self.location_map_id, "location_map_id")
         _sha256(self.mapping_fingerprint, "mapping_fingerprint")
 
@@ -667,22 +675,6 @@ class RevisionLedger:
             ]
             if len(final_locations) != len(raw_locations):
                 raise RevisionModelError(f"{unit_id} contains malformed final location entries.")
-            for final_location in final_locations:
-                pdf_path = Path(final_location.pdf_file).expanduser().resolve()
-                if not pdf_path.is_file():
-                    raise RevisionModelError(
-                        f"Final mapped PDF does not exist for {unit_id}: {pdf_path}"
-                    )
-                try:
-                    actual_pdf_sha256 = sha256_file(pdf_path)
-                except OSError as exc:
-                    raise RevisionModelError(
-                        f"Cannot hash final mapped PDF {pdf_path}: {exc}"
-                    ) from exc
-                if actual_pdf_sha256 != final_location.pdf_sha256:
-                    raise RevisionModelError(
-                        f"Final mapped PDF changed after line mapping for {unit_id}: {pdf_path}"
-                    )
             unit.record_final_locations(location_fingerprint, final_locations)
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
