@@ -564,6 +564,20 @@
             "null"
           ],
           "format": "date-time"
+        },
+        "location_map_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "location_map_file_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "allOf": [
@@ -584,7 +598,9 @@
           },
           "then": {
             "required": [
-              "verification_report_id"
+              "verification_report_id",
+              "location_map_file",
+              "location_map_file_sha256"
             ],
             "properties": {
               "semantic_review_confirmed": {
@@ -612,7 +628,9 @@
           },
           "then": {
             "required": [
-              "location_map_fingerprint"
+              "location_map_fingerprint",
+              "location_map_file",
+              "location_map_file_sha256"
             ],
             "properties": {
               "semantic_review_confirmed": {
