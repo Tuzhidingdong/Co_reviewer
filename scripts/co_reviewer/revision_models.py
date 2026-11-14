@@ -92,6 +92,8 @@ class PatchOperation:
     location: str = ""
     source_sha256: str | None = None
     evidence_ids: tuple[str, ...] = ()
+    source_comment_ids: tuple[str, ...] = ()
+    location_phrase: str | None = None
     target_ref: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -115,6 +117,14 @@ class PatchOperation:
             raise RevisionModelError("evidence_ids must contain non-empty strings.")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise RevisionModelError("evidence_ids must be unique.")
+        if any(not isinstance(item, str) or not item.strip() for item in self.source_comment_ids):
+            raise RevisionModelError("source_comment_ids must contain non-empty comment IDs.")
+        if len(self.source_comment_ids) != len(set(self.source_comment_ids)):
+            raise RevisionModelError("source_comment_ids must be unique.")
+        if self.location_phrase is not None:
+            _text(self.location_phrase, "location_phrase")
+            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\\r\\n\\t"):
+                raise RevisionModelError("location_phrase must be a single-line Word Find phrase of at most 255 characters.")
         if self.target_ref is not None:
             if not isinstance(self.target_ref, Mapping):
                 raise RevisionModelError("target_ref must be an object or null.")
@@ -146,6 +156,8 @@ class PatchOperation:
             location=data.get("location", ""),
             source_sha256=data.get("source_sha256"),
             evidence_ids=tuple(data.get("evidence_ids", [])),
+            source_comment_ids=tuple(str(value) for value in data.get("source_comment_ids", [])),
+            location_phrase=data.get("location_phrase"),
             target_ref=data.get("target_ref"),
         )
 
@@ -162,6 +174,8 @@ class PatchOperation:
             "location": self.location,
             "source_sha256": self.source_sha256,
             "evidence_ids": list(self.evidence_ids),
+            "source_comment_ids": list(self.source_comment_ids),
+            "location_phrase": self.location_phrase,
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
         }
 
@@ -175,6 +189,9 @@ class PatchOperation:
             "find": self.find,
             "replace": self.replace,
             "location": self.location,
+            "operation_id": self.operation_id,
+            "source_comment_ids": list(self.source_comment_ids),
+            "location_phrase": self.location_phrase,
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
@@ -385,6 +402,8 @@ class ResponseLocation:
     location_map_id: str
     mapping_fingerprint: str
     output_sha256: str | None = None
+    locator_id: str | None = None
+    source_clean_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.document, "document")
@@ -419,6 +438,9 @@ class ResponseLocation:
             raise RevisionModelError(f"Final mapped PDF changed after line mapping: {pdf_path}")
         _text(self.location_map_id, "location_map_id")
         _sha256(self.mapping_fingerprint, "mapping_fingerprint")
+        if self.locator_id is not None:
+            _text(self.locator_id, "locator_id")
+        _sha256(self.source_clean_sha256, "source_clean_sha256", optional=True)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -432,6 +454,8 @@ class ResponseLocation:
             "location_map_id": self.location_map_id,
             "mapping_fingerprint": self.mapping_fingerprint,
             "output_sha256": self.output_sha256,
+            "locator_id": self.locator_id,
+            "source_clean_sha256": self.source_clean_sha256,
         }
 
     @property
@@ -456,6 +480,15 @@ class ResponseUnit:
     linked_task_ids: list[str] = field(default_factory=list)
     linked_patch_ids: list[str] = field(default_factory=list)
     linked_targets: list[dict[str, str]] = field(default_factory=list)
+    linked_operation_ids: list[str] = field(default_factory=list)
+    disposition: str = "revised"
+    location_requirement: str = "required"
+    resolution_reason: str = ""
+    anchor_evidence_id: str | None = None
+    anchor_document: str | None = None
+    anchor_part: str | None = None
+    anchor_p_idx: int | None = None
+    location_phrase: str | None = None
     status: str = "draft"
     semantic_review_confirmed: bool = False
     verification_report_id: str | None = None
@@ -469,9 +502,31 @@ class ResponseUnit:
         for name in ("response_unit_id", "reviewer", "comment_id", "comment_text"):
             _text(getattr(self, name), name)
         _text(self.response_text, "response_text", allow_empty=True)
+        if self.disposition not in {"revised", "reply_only", "no_change", "clarification_needed"}:
+            raise RevisionModelError(f"Unsupported ResponseUnit disposition: {self.disposition!r}.")
+        if self.location_requirement not in {"required", "existing_anchor_required", "not_required", "manual_required"}:
+            raise RevisionModelError(f"Unsupported location_requirement: {self.location_requirement!r}.")
+        _text(self.resolution_reason, "resolution_reason", allow_empty=True)
+        if self.location_phrase is not None:
+            _text(self.location_phrase, "location_phrase")
+            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\\r\\n\\t"):
+                raise RevisionModelError("ResponseUnit location_phrase must be a single-line phrase of at most 255 characters.")
+        if self.disposition == "reply_only" and self.location_requirement != "not_required":
+            raise RevisionModelError("reply_only ResponseUnits must use location_requirement=not_required.")
+        if self.disposition == "no_change":
+            if self.location_requirement != "existing_anchor_required":
+                raise RevisionModelError("no_change ResponseUnits must use existing_anchor_required.")
+            if not all((self.anchor_evidence_id, self.anchor_document, self.anchor_part)) or self.anchor_p_idx is None:
+                raise RevisionModelError("no_change ResponseUnits require a confirmed evidence ID, document, Word part and paragraph index.")
+        if self.disposition == "clarification_needed" and self.status != "blocked":
+            raise RevisionModelError("clarification_needed ResponseUnits must remain blocked until resolved.")
+        if self.disposition == "revised" and self.location_requirement == "not_required":
+            raise RevisionModelError("revised ResponseUnits cannot bypass final location mapping.")
+        if self.anchor_p_idx is not None and (not isinstance(self.anchor_p_idx, int) or isinstance(self.anchor_p_idx, bool) or self.anchor_p_idx < 0):
+            raise RevisionModelError("anchor_p_idx must be a non-negative integer or null.")
         if self.status not in _RESPONSE_STATES:
             raise RevisionModelError(f"Unsupported ResponseUnit status: {self.status!r}.")
-        for field_name in ("linked_task_ids", "linked_patch_ids"):
+        for field_name in ("linked_task_ids", "linked_patch_ids", "linked_operation_ids"):
             values = getattr(self, field_name)
             if any(not isinstance(value, str) or not value.strip() for value in values):
                 raise RevisionModelError(f"{field_name} must contain non-empty strings.")
@@ -489,6 +544,10 @@ class ResponseUnit:
             _sha256(self.location_map_fingerprint, "location_map_fingerprint")
         if self.location_map_file_sha256 is not None:
             _sha256(self.location_map_file_sha256, "location_map_file_sha256")
+        if self.status in {"location_mapped", "completed"} and self.location_requirement == "not_required":
+            raise RevisionModelError("A not_required ResponseUnit cannot carry a Word/PDF location state.")
+        if self.status in {"location_mapped", "completed"} and self.location_requirement == "manual_required":
+            raise RevisionModelError("manual_required ResponseUnits need an explicit manual locator.")
         if self.status in {"location_mapped", "completed"}:
             if not self.semantic_review_confirmed:
                 raise RevisionModelError("Location-mapped ResponseUnit requires semantic review.")
@@ -509,6 +568,9 @@ class ResponseUnit:
                 raise RevisionModelError(f"Cannot hash location map file {map_path}: {exc}") from exc
             if actual_map_hash != self.location_map_file_sha256:
                 raise RevisionModelError(f"Location map file changed after mapping: {map_path}")
+        if self.status == "completed" and self.location_requirement == "not_required":
+            if self.final_locations or self.location_map_file or self.location_map_fingerprint:
+                raise RevisionModelError("not_required completed ResponseUnits cannot carry fabricated location evidence.")
         if self.status == "completed":
             if not self.completed_at_utc:
                 raise RevisionModelError("Completed ResponseUnit requires completed_at_utc.")
@@ -562,6 +624,8 @@ class ResponseUnit:
         return _fingerprint([item.to_dict() for item in self.final_locations])
 
     def confirm_semantic_review(self, verification_report_id: str) -> None:
+        if self.disposition == "clarification_needed":
+            raise RevisionModelError("clarification_needed ResponseUnits cannot be confirmed before clarification is resolved.")
         if self.status not in {"draft", "verified"}:
             raise RevisionModelError(
                 f"ResponseUnit {self.response_unit_id} cannot be semantically confirmed from {self.status}."
@@ -581,7 +645,11 @@ class ResponseUnit:
         location_map_file: str,
         location_map_file_sha256: str,
     ) -> None:
-        if self.status != "verified" or not self.semantic_review_confirmed:
+        if self.location_requirement == "not_required":
+            raise RevisionModelError("This ResponseUnit is explicitly not required to have a location.")
+        if self.location_requirement == "manual_required":
+            raise RevisionModelError("This ResponseUnit requires an author-reviewed manual locator.")
+        if self.status not in {"verified", "location_mapped", "completed"} or not self.semantic_review_confirmed:
             raise RevisionModelError(
                 "ResponseUnit must pass semantic review before final location mapping."
             )
@@ -613,13 +681,19 @@ class ResponseUnit:
         self.location_map_file = str(map_path)
         self.location_map_file_sha256 = expected_map_hash
         self.final_locations = list(final_locations)
+        self.completed_at_utc = None
         self.status = "location_mapped"
 
     def mark_completed(self, completed_at_utc: str) -> None:
-        if self.status != "location_mapped":
-            raise RevisionModelError(
-                "ResponseUnit can only complete after final PDF locations are mapped."
-            )
+        if self.disposition == "clarification_needed":
+            raise RevisionModelError("clarification_needed ResponseUnits cannot be completed.")
+        if self.location_requirement == "not_required":
+            if self.disposition != "reply_only" or self.status != "verified" or not self.semantic_review_confirmed:
+                raise RevisionModelError("Only a semantically verified reply_only ResponseUnit may complete without location evidence.")
+            if self.final_locations or self.location_map_file or self.location_map_fingerprint:
+                raise RevisionModelError("not_required ResponseUnits cannot include page/line locations.")
+        elif self.status != "location_mapped":
+            raise RevisionModelError("Location-required ResponseUnits can only complete after final PDF locations are mapped.")
         _aware_timestamp(completed_at_utc, "completed_at_utc")
         self.completed_at_utc = completed_at_utc
         self.status = "completed"
@@ -634,6 +708,15 @@ class ResponseUnit:
             "linked_task_ids": list(self.linked_task_ids),
             "linked_patch_ids": list(self.linked_patch_ids),
             "linked_targets": copy.deepcopy(self.linked_targets),
+            "linked_operation_ids": list(self.linked_operation_ids),
+            "disposition": self.disposition,
+            "location_requirement": self.location_requirement,
+            "resolution_reason": self.resolution_reason,
+            "anchor_evidence_id": self.anchor_evidence_id,
+            "anchor_document": self.anchor_document,
+            "anchor_part": self.anchor_part,
+            "anchor_p_idx": self.anchor_p_idx,
+            "location_phrase": self.location_phrase,
             "status": self.status,
             "semantic_review_confirmed": self.semantic_review_confirmed,
             "verification_report_id": self.verification_report_id,
@@ -810,7 +893,24 @@ class RevisionLedger:
                 if predecessor is None:
                     break
                 current = predecessor
+        operation_owners = {
+            operation.operation_id: (patch.patch_id, operation)
+            for patch in self.patches
+            for operation in patch.operations
+        }
         for unit in self.response_units:
+            for operation_id in unit.linked_operation_ids:
+                owner = operation_owners.get(operation_id)
+                if owner is None:
+                    errors.append(f"ResponseUnit {unit.response_unit_id} links unknown PatchOperation {operation_id}.")
+                    continue
+                patch_id, operation = owner
+                if unit.comment_id not in operation.source_comment_ids:
+                    errors.append(f"ResponseUnit {unit.response_unit_id} is not declared by PatchOperation {operation_id}.")
+                if patch_id not in unit.linked_patch_ids:
+                    errors.append(f"ResponseUnit {unit.response_unit_id} links operation {operation_id} without its parent Patch {patch_id}.")
+            if unit.disposition == "revised" and unit.status in {"verified", "location_mapped", "completed"} and not unit.linked_operation_ids:
+                errors.append(f"ResponseUnit {unit.response_unit_id} is marked revised but has no exact linked PatchOperation IDs.")
             errors.extend(
                 f"ResponseUnit {unit.response_unit_id}: {error}"
                 for error in unit.validate_location_evidence()
@@ -1757,6 +1857,26 @@ class RevisionLedger:
             for target in incoming.linked_targets:
                 if target not in linked_targets:
                     linked_targets.append(target)
+            linked_operations = list(dict.fromkeys(current.linked_operation_ids + incoming.linked_operation_ids))
+            classification_changed = (
+                current.disposition != incoming.disposition
+                or current.location_requirement != incoming.location_requirement
+                or current.resolution_reason != incoming.resolution_reason
+                or current.anchor_evidence_id != incoming.anchor_evidence_id
+                or current.anchor_document != incoming.anchor_document
+                or current.anchor_part != incoming.anchor_part
+                or current.anchor_p_idx != incoming.anchor_p_idx
+                or current.location_phrase != incoming.location_phrase
+            )
+            if classification_changed:
+                current.disposition = incoming.disposition
+                current.location_requirement = incoming.location_requirement
+                current.resolution_reason = incoming.resolution_reason
+                current.anchor_evidence_id = incoming.anchor_evidence_id
+                current.anchor_document = incoming.anchor_document
+                current.anchor_part = incoming.anchor_part
+                current.anchor_p_idx = incoming.anchor_p_idx
+                current.location_phrase = incoming.location_phrase
             response_text_changed = (
                 bool(incoming.response_text)
                 and incoming.response_text != current.response_text
@@ -1765,14 +1885,17 @@ class RevisionLedger:
                 linked_patches != current.linked_patch_ids
                 or linked_tasks != current.linked_task_ids
                 or linked_targets != current.linked_targets
+                or linked_operations != current.linked_operation_ids
+                or classification_changed
             )
             current.linked_patch_ids = linked_patches
             current.linked_task_ids = linked_tasks
             current.linked_targets = linked_targets
+            current.linked_operation_ids = linked_operations
             if response_text_changed:
                 current.response_text = incoming.response_text
             if response_text_changed or relationship_changed:
-                current.status = "draft"
+                current.status = "blocked" if current.disposition == "clarification_needed" else "draft"
                 current.semantic_review_confirmed = False
                 current.verification_report_id = None
                 current.location_map_fingerprint = None
@@ -1964,11 +2087,20 @@ def build_revision_ledger(
             data.setdefault("input_file", paths.get("input_file"))
             data.setdefault("output_file", paths.get("output_file"))
             data.setdefault("document", document)
-            operation_records.append(
-                PatchOperation.from_mapping(
-                    data, fallback_id=f"{task_id}-OP{index + 1:03d}"
-                )
+            operation = PatchOperation.from_mapping(
+                data, fallback_id=f"{task_id}-OP{index + 1:03d}"
             )
+            if not operation.source_comment_ids:
+                raise RevisionModelError(
+                    f"Task {task_id} PatchOperation {operation.operation_id} must declare source_comment_ids at authoring time."
+                )
+            unknown_sources = set(operation.source_comment_ids) - set(comment_ids)
+            if unknown_sources:
+                raise RevisionModelError(
+                    f"PatchOperation {operation.operation_id} refers to comment ID(s) outside Task {task_id}: "
+                    + ", ".join(sorted(unknown_sources))
+                )
+            operation_records.append(operation)
 
         patch_id = str(task.get("patch_id") or task_id)
         if operation_records:
@@ -1990,6 +2122,23 @@ def build_revision_ledger(
         # One ResponseUnit per source reviewer comment. Response text is copied
         # only when the workflow task explicitly contains it; it is never invented.
         if comment_ids and comment_text:
+            raw_specs = task.get("response_unit_specs")
+            if raw_specs is not None and not isinstance(raw_specs, list):
+                raise RevisionModelError(f"Task {task_id} response_unit_specs must be an array.")
+            specs_by_comment: dict[str, Mapping[str, Any]] = {}
+            for spec in (raw_specs or []):
+                if not isinstance(spec, Mapping):
+                    raise RevisionModelError(f"Task {task_id} response_unit_specs entries must be objects.")
+                spec_comment_id = str(spec.get("comment_id", ""))
+                if spec_comment_id not in comment_ids:
+                    raise RevisionModelError(f"Task {task_id} response_unit_specs references unknown comment ID {spec_comment_id!r}.")
+                if spec_comment_id in specs_by_comment:
+                    raise RevisionModelError(f"Task {task_id} has duplicate response_unit_specs for {spec_comment_id}.")
+                specs_by_comment[spec_comment_id] = spec
+            evidence_by_id = {
+                str(row.get("evidence_id")): row for row in evidence
+                if isinstance(row, Mapping) and row.get("evidence_id") is not None
+            }
             for index, comment_id in enumerate(comment_ids):
                 specific_comment = reviewer_comments_by_id.get(comment_id)
                 if not specific_comment:
@@ -2001,13 +2150,49 @@ def build_revision_ledger(
                         and str(row.get("source_comment_id", "")) == comment_id
                     ), "")
                     specific_comment = matching or comment_text
-                linked_targets = []
-                for op in operation_records:
-                    linked_targets.append({
-                        "document": op.document,
-                        "location": op.location,
-                        "output_file": op.output_file,
-                    })
+                linked_ops = [op for op in operation_records if comment_id in op.source_comment_ids]
+                spec = specs_by_comment.get(comment_id)
+                if spec is None:
+                    if linked_ops or (task_id not in selected_ids and task.get("patch_operations")):
+                        disposition, location_requirement, resolution_reason = "revised", "required", ""
+                    elif task.get("task_type") == "response_only":
+                        disposition, location_requirement = "reply_only", "not_required"
+                        resolution_reason = "Response-only task; no manuscript change or existing-text location is claimed."
+                    elif task.get("readiness") == "needs_clarification" or task.get("status") == "blocked":
+                        disposition, location_requirement = "clarification_needed", "required"
+                        resolution_reason = "; ".join(str(value) for value in task.get("unresolved_questions", [])) or "Author clarification remains unresolved."
+                    else:
+                        raise RevisionModelError(
+                            f"Task {task_id} comment {comment_id} has no PatchOperation and no explicit response_unit_specs classification; declare reply_only, no_change or clarification_needed."
+                        )
+                    anchor_evidence_id = None
+                    anchor_document = anchor_part = None
+                    anchor_p_idx = None
+                else:
+                    disposition = _text(spec.get("disposition"), f"Task {task_id} response_unit_specs[{comment_id}].disposition")
+                    location_requirement = _text(spec.get("location_requirement"), f"Task {task_id} response_unit_specs[{comment_id}].location_requirement")
+                    resolution_reason = str(spec.get("resolution_reason") or "")
+                    anchor_evidence_id = spec.get("anchor_evidence_id")
+                    anchor_document = anchor_part = None
+                    anchor_p_idx = None
+                    if disposition == "no_change":
+                        anchor = evidence_by_id.get(str(anchor_evidence_id))
+                        if not isinstance(anchor, Mapping) or anchor.get("match_status") != "confirmed" or anchor.get("document") not in {"Manuscript", "SI"} or anchor.get("part") != "word/document.xml" or not isinstance(anchor.get("p_idx"), int):
+                            raise RevisionModelError(f"no_change ResponseUnit {comment_id} requires confirmed Manuscript/SI body-paragraph anchor evidence.")
+                        anchor_document, anchor_part, anchor_p_idx = anchor.get("document"), anchor.get("part"), anchor.get("p_idx")
+                if disposition == "revised" and task_id in selected_ids and not linked_ops:
+                    raise RevisionModelError(f"revised ResponseUnit {comment_id} has no PatchOperation with source_comment_ids including that comment.")
+                if disposition == "reply_only" and location_requirement != "not_required":
+                    raise RevisionModelError(f"reply_only ResponseUnit {comment_id} must use not_required location policy.")
+                if disposition == "no_change" and location_requirement != "existing_anchor_required":
+                    raise RevisionModelError(f"no_change ResponseUnit {comment_id} must use existing_anchor_required location policy.")
+                if disposition == "revised" and location_requirement not in {"required", "manual_required"}:
+                    raise RevisionModelError(f"revised ResponseUnit {comment_id} must use required or manual_required location policy.")
+                if disposition == "clarification_needed" and location_requirement == "not_required":
+                    raise RevisionModelError(f"clarification_needed ResponseUnit {comment_id} cannot bypass resolution with not_required.")
+                linked_targets = [{
+                    "document": op.document, "location": op.location, "output_file": op.output_file,
+                } for op in linked_ops]
                 response_units.append(ResponseUnit(
                     response_unit_id=f"RU-{task_id}-{comment_id}",
                     reviewer=comment_reviewers.get(
@@ -2017,9 +2202,17 @@ def build_revision_ledger(
                     comment_text=specific_comment,
                     response_text=str(task.get("proposed_response") or ""),
                     linked_task_ids=[task_id],
-                    linked_patch_ids=[patch_id] if operation_records else [],
+                    linked_patch_ids=[patch_id] if linked_ops else [],
                     linked_targets=linked_targets,
-                    status="draft",
+                    linked_operation_ids=[op.operation_id for op in linked_ops],
+                    disposition=disposition,
+                    location_requirement=location_requirement,
+                    resolution_reason=resolution_reason,
+                    anchor_evidence_id=str(anchor_evidence_id) if anchor_evidence_id is not None else None,
+                    anchor_document=anchor_document,
+                    anchor_part=anchor_part,
+                    anchor_p_idx=anchor_p_idx,
+                    status="blocked" if disposition == "clarification_needed" else "draft",
                 ))
 
     identities_by_role: dict[str, list[Mapping[str, Any]]] = {}
@@ -2031,9 +2224,19 @@ def build_revision_ledger(
     for patch in patches:
         for operation in patch.operations:
             operations_by_role.setdefault(operation.document, operation)
+    anchor_roles = {
+        unit.anchor_document for unit in response_units
+        if unit.location_requirement == "existing_anchor_required" and unit.anchor_document
+    }
+    registered_roles = set(operations_by_role) | anchor_roles
 
     document_records: list[RevisionDocument] = []
-    for role, first_operation in operations_by_role.items():
+    for role in sorted(registered_roles):
+        first_operation = operations_by_role.get(role)
+        if first_operation is None:
+            paths = document_paths.get(role, {})
+            if not paths.get("input_file") or not paths.get("output_file"):
+                raise RevisionModelError(f"Existing-anchor document role {role} needs explicit input_file and output_file in --document-paths.")
         identity_rows = identities_by_role.get(role, [])
         identity = identity_rows[0] if identity_rows else {}
         paths = document_paths.get(role, {})
@@ -2045,8 +2248,8 @@ def build_revision_ledger(
                 "identity_mode": "round-scoped-legacy-fallback",
             })),
             role=role,
-            input_file=paths.get("input_file", first_operation.input_file),
-            output_file=paths.get("output_file", first_operation.output_file),
+            input_file=paths.get("input_file", first_operation.input_file if first_operation else None),
+            output_file=paths.get("output_file", first_operation.output_file if first_operation else None),
             source_sha256=identity.get("source_sha256"),
         ))
 
@@ -2165,6 +2368,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
                 location_map_id=item.get("location_map_id"),
                 mapping_fingerprint=item.get("mapping_fingerprint"),
                 output_sha256=item.get("output_sha256"),
+                locator_id=item.get("locator_id"),
+                source_clean_sha256=item.get("source_clean_sha256"),
             )
             for item in row.get("final_locations", [])
         ]
@@ -2177,7 +2382,16 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             linked_task_ids=list(row.get("linked_task_ids", [])),
             linked_patch_ids=list(row.get("linked_patch_ids", [])),
             linked_targets=copy.deepcopy(row.get("linked_targets", [])),
-            status=row.get("status", "draft"),
+            linked_operation_ids=list(row.get("linked_operation_ids", [])),
+            disposition=row.get("disposition", "revised" if row.get("linked_patch_ids") else "clarification_needed"),
+            location_requirement=row.get("location_requirement", "required"),
+            resolution_reason=row.get("resolution_reason", ""),
+            anchor_evidence_id=row.get("anchor_evidence_id"),
+            anchor_document=row.get("anchor_document"),
+            anchor_part=row.get("anchor_part"),
+            anchor_p_idx=row.get("anchor_p_idx"),
+            location_phrase=row.get("location_phrase"),
+            status=("blocked" if row.get("disposition") is None and not row.get("linked_patch_ids") else row.get("status", "draft")),
             semantic_review_confirmed=row.get("semantic_review_confirmed", False),
             verification_report_id=row.get("verification_report_id"),
             location_map_fingerprint=row.get("location_map_fingerprint"),
