@@ -69,9 +69,9 @@ _ALL_REVISION_ELEMENTS = _ACCEPT_WRAPPERS | _REJECT_WRAPPERS | _REMOVE_ELEMENTS 
 }
 _COMMENT_PARTS = {
     "word/comments.xml",
-    "word/commentsExtended.xml",
-    "word/commentsIds.xml",
-    "word/commentsExtensible.xml",
+    "word/commentsextended.xml",
+    "word/commentsids.xml",
+    "word/commentsextensible.xml",
     "word/people.xml",
 }
 
@@ -134,6 +134,9 @@ def _resolve_revisions(root: ET._Element) -> dict[str, int]:
         "moves_from_rejected": 0,
         "revision_properties_removed": 0,
         "comment_anchors_removed": 0,
+        "comment_parts_removed": 0,
+        "comment_relationships_removed": 0,
+        "comment_content_type_entries_removed": 0,
         "other_revision_markers_removed": 0,
     }
 
@@ -229,7 +232,9 @@ def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
                     root = ET.fromstring(archive.read(part), parser=_xml_parser())
                 except ET.XMLSyntaxError as exc:
                     raise WorkingViewError(f"Cannot inspect baseline Word part {part}: {exc}") from exc
-                paragraph_indices = {id(node): index for index, node in enumerate(root.findall(".//w:p", {"w": W}))}
+                paragraph_indices = {
+                    node: index for index, node in enumerate(root.findall(".//w:p", {"w": W}))
+                }
                 for node in root.iter():
                     if not isinstance(node.tag, str) or ET.QName(node).namespace != W:
                         continue
@@ -256,7 +261,7 @@ def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
                         (ancestor for ancestor in node.iterancestors() if ancestor.tag == _qn("p")),
                         None,
                     )
-                    paragraph_index = paragraph_indices.get(id(paragraph)) if paragraph is not None else None
+                    paragraph_index = paragraph_indices.get(paragraph) if paragraph is not None else None
                     text_value = "".join(item.text or "" for item in node.iter() if isinstance(item.tag, str) and item.tag in {_qn("t"), _qn("delText")}).strip()
                     issues.append({
                         "category": category,
@@ -428,24 +433,29 @@ def create_working_clean_view(
         "moves_from_rejected": 0,
         "revision_properties_removed": 0,
         "comment_anchors_removed": 0,
+        "comment_parts_removed": 0,
+        "comment_relationships_removed": 0,
+        "comment_content_type_entries_removed": 0,
         "other_revision_markers_removed": 0,
     }
     changed_parts: list[str] = []
 
     for name, data in list(package.items()):
-        if name in _COMMENT_PARTS:
+        if name.casefold() in _COMMENT_PARTS:
             del package[name]
+            counts["comment_parts_removed"] += 1
             continue
-        if name == "word/_rels/document.xml.rels":
+        if name.endswith(".rels"):
             updated, removed = _remove_comment_relationships(data)
             if removed:
                 package[name] = updated
-                counts["comment_anchors_removed"] += removed
+                counts["comment_relationships_removed"] += removed
             continue
         if name == "[Content_Types].xml":
             updated, removed = _remove_comment_content_types(data)
             if removed:
                 package[name] = updated
+                counts["comment_content_type_entries_removed"] += removed
             continue
         if not name.startswith("word/") or not name.endswith(".xml"):
             continue
@@ -498,6 +508,28 @@ def create_working_clean_view(
     if residual:
         raise WorkingViewError(
             "Working Clean View still contains revision markup: " + ", ".join(residual)
+        )
+    residual_comment_parts = [
+        name for name in package if name.casefold() in _COMMENT_PARTS
+    ]
+    residual_comment_relationships: list[str] = []
+    for name, data in package.items():
+        if not name.endswith(".rels"):
+            continue
+        try:
+            rel_root = ET.fromstring(data, parser=_xml_parser())
+        except ET.XMLSyntaxError as exc:
+            raise WorkingViewError(f"Cannot validate relationships in {name}: {exc}") from exc
+        if any(
+            "/comments" in child.get("Type", "").casefold()
+            or "/people" in child.get("Type", "").casefold()
+            for child in rel_root
+        ):
+            residual_comment_relationships.append(name)
+    if residual_comment_parts or residual_comment_relationships:
+        raise WorkingViewError(
+            "Working Clean View still contains Word comment package metadata: "
+            f"parts={residual_comment_parts}, relationships={residual_comment_relationships}"
         )
 
     fd, temp_name = tempfile.mkstemp(
