@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from co_reviewer.identity import revision_item_fingerprint, revision_targets_fingerprint
 from co_reviewer.revision_models import (
     Patch,
     PatchOperation,
@@ -151,11 +152,41 @@ class RevisionModelsTests(unittest.TestCase):
             operations=[operation],
         )
         ledger = RevisionLedger("round-apply", patches=[patch])
-        approval = {
+        legacy_item = {
             "id": "T1",
-            "status": "applied",
-            "approval_fingerprint": HASH_A,
+            "reviewer": patch.reviewer,
+            "comment": patch.comment,
+            "proposed_response": patch.proposed_response,
+            "status": "planned",
+            "targets": [operation.to_legacy_target()],
         }
+        legacy_item["targets"][0]["source_sha256"] = HASH_A
+        legacy_item["preflight_fingerprint"] = revision_targets_fingerprint(legacy_item)
+        preflight_report = {
+            "preflight_items": [{
+                "revision_item_id": "T1",
+                "preflight_fingerprint": legacy_item["preflight_fingerprint"],
+            }]
+        }
+        preflight_plan = {"revision_items": [legacy_item]}
+        ledger.record_legacy_preflight(
+            preflight_report,
+            preflight_plan,
+            report_id="preflight-001",
+        )
+        self.assertEqual(patch.status, "preflighted")
+        self.assertEqual(patch.operations[0].source_sha256, HASH_A)
+
+        approved_item = dict(legacy_item)
+        approved_item["status"] = "approved"
+        approved_item["approval_fingerprint"] = revision_item_fingerprint(approved_item)
+        approval_plan = {"approved": True, "revision_items": [approved_item]}
+        ledger.record_legacy_approval(
+            approval_plan, ["T1"], actor="Human Author"
+        )
+        self.assertEqual(patch.status, "approved")
+
+        applied_item = dict(approved_item, status="applied")
         report = {
             "input_file": "Manuscript.docx",
             "output_file": "Manuscript_revised.docx",
@@ -165,15 +196,15 @@ class RevisionModelsTests(unittest.TestCase):
                 "status": "applied",
             }],
         }
-        ledger.record_legacy_apply_reports([report], {"revision_items": [approval]})
+        ledger.record_legacy_apply_reports(
+            [report], {"revision_items": [applied_item]}
+        )
         self.assertEqual(patch.status, "applied")
-        self.assertEqual(patch.approval_fingerprint, HASH_A)
-        self.assertEqual(len(ledger.events), 1)
+        self.assertEqual(patch.approval_fingerprint, approved_item["approval_fingerprint"])
 
         verified_item = {
-            "id": "T1",
+            **applied_item,
             "status": "verified",
-            "approval_fingerprint": HASH_A,
             "semantic_review_confirmed": True,
             "verified_output_hashes": [{
                 "path": "Manuscript_revised.docx",
@@ -186,7 +217,11 @@ class RevisionModelsTests(unittest.TestCase):
         )
         self.assertEqual(patch.status, "verified")
         self.assertEqual(patch.verification_report_id, "verify-001")
-        self.assertEqual(len(ledger.events), 2)
+        self.assertEqual(len(patch.verified_output_hashes), 1)
+        self.assertEqual(
+            [event.event_type for event in ledger.events],
+            ["preflight", "approval", "patch_applied", "verification"],
+        )
         ledger.to_dict()
 
     def test_response_is_not_final_until_final_pdf_line_mapping_exists(self):
@@ -311,6 +346,8 @@ class RevisionModelsTests(unittest.TestCase):
             proposed_response="We explained it.",
             operations=[_operation()],
             status="verified",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-001",
             approval_fingerprint=HASH_A,
             verification_report_id="verify-001",
             verified_output_hashes=[{"path": "revised.docx", "sha256": HASH_B}],
