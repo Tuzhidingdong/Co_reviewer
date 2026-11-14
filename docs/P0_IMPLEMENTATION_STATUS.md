@@ -34,6 +34,7 @@ Added \`scripts/co_reviewer/workflow_engine.py\` with:
 - Task DAG validation and deterministic topological scheduling.
 - Target Group Quotient DAG construction. Cycles introduced only by shared target groups are condensed into lock/review components; actual task-level dependency cycles remain errors.
 - Readiness gating: a task is selectable only when it is explicitly ready and its dependencies are verified or completed.
+- Conflict-free ready batches: one batch never includes two tasks that reserve the same target-group conflict component.
 - Downstream invalidation: changing an upstream task moves every transitive dependent to \`recheck_required\`.
 - Scope/input, approval, output, verification and completion fingerprints. Changes to a task's evidence, proposed action, dependencies or targets make prior preflight/approval fingerprints stale.
 - Evidence requirements for preflight, explicit human approval, execution, semantic verification and completion.
@@ -69,7 +70,7 @@ The scheduler prefers stable \`document_id|object=object_id\` groups when Target
 
 - Original baseline: 76 test methods.
 - Current added tests: 5 document-engine module tests, 12 identity tests, 16 Workflow Engine tests, and 2 additional decision-plan/ledger integration tests.
-- Expected current total: 111 test methods. This is an inventory count, not a test-pass claim.
+- Expected current total: 113 test methods. This is an inventory count, not a test-pass claim.
 - The current branch has not yet been executed on the user's Windows Python environment.
 - GitHub Actions previously failed before runner assignment: both matrix jobs reported \`runner_id=0\`, no runner name and no steps. No checkout, compilation or test execution occurred. This is an infrastructure/runner blocker, not evidence of a Python test failure.
 - Microsoft Word GUI opening, Track Changes rendering, save-round-trip, pagination and PDF line mapping are also not yet accepted.
