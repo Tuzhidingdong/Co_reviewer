@@ -10,10 +10,18 @@ Keep original inputs immutable. Use a dedicated folder per round:
         Manuscript.docx
         SI.docx
       plan/
-        edits_plan.json
+        revision_decision_plan.json
+        workflow_ledger.json
+        reviewer_map.json
+        revision_ledger.json
+        edits_plan_batch_01.json
+        edits_plan_batch_02.json
       output/
-        Manuscript_revised.docx
-        SI_revised.docx
+        Manuscript_marked.docx
+        SI_marked.docx
+        word_pdf_final/
+        Response_to_Reviewers.docx
+        Response_to_Reviewers.md
         revision_apply_report.json
       reports/
         workspace_digest.md
@@ -21,6 +29,8 @@ Keep original inputs immutable. Use a dedicated folder per round:
         review_audit_report.md
         review_audit_report.json
         review_decision_queue.json
+        preflight_report_batch_01.json
+        revision_verification_batch_01.json
       .co-reviewer-cache/
         docx-v1-<source-sha256>-<author-filter>.json
 
