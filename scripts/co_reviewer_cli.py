@@ -1957,6 +1957,8 @@ def cmd_record_response_locations(args):
     location_map = json.loads(location_map_path.read_text(encoding="utf-8"))
     if not isinstance(location_map, dict):
         raise ValueError("Location map JSON root must be an object.")
+    from co_reviewer.word_pdf_mapper import assert_location_map_matches_ledger
+    assert_location_map_matches_ledger(location_map, ledger_path)
     location_map["location_map_file"] = str(location_map_path)
     location_map["location_map_file_sha256"] = sha256_file(location_map_path)
     ledger.record_response_locations(location_map, actor=args.actor)
