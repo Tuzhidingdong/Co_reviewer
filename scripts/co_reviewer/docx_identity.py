@@ -602,9 +602,11 @@ def build_document_identity_manifest(
             from .working_view import inspect_clean_baseline
             baseline = inspect_clean_baseline(source_path)
             if not baseline["clean"]:
+                issue_details = json.dumps(baseline["issues"], ensure_ascii=False, indent=2)
                 raise DocxIdentityError(
                     f"Baseline for {role} is not clean; unresolved Word revisions/comments: "
-                    f"{baseline['blocking_counts']}. Supply a clean baseline DOCX before identity registration."
+                    f"{baseline['blocking_counts']}. Supply a clean baseline DOCX before identity registration.\n"
+                    f"Exact package/paragraph positions and excerpts:\n{issue_details}"
                 )
         parsed, descriptors = _read_docx(source_path)
         _validate_inventory_paragraphs(row, descriptors, role=role)
