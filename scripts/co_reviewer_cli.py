@@ -1293,6 +1293,185 @@ def cmd_authorize_workflow_tasks(args):
     return 0
 
 
+def cmd_sync_workflow_ledger(args):
+    from co_reviewer.workflow_engine import (
+        transition_task,
+        validate_workflow_ledger,
+        workflow_scope_fingerprint,
+    )
+
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    revision_ledger = _load_revision_ledger(revision_path)
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise ValueError(
+            "Cannot synchronize an invalid Workflow Ledger:\n- " + "\n- ".join(errors)
+        )
+    expected_fingerprint = revision_ledger.workflow_ledger_fingerprint
+    actual_fingerprint = canonical_fingerprint(workflow)
+    if not expected_fingerprint or expected_fingerprint != actual_fingerprint:
+        raise ValueError(
+            "Workflow Ledger changed since this RevisionLedger batch was built. "
+            "Refusing to apply stale Patch results to a different task graph."
+        )
+
+    tasks = workflow.get("tasks", [])
+    task_by_id = {
+        task.get("task_id"): task for task in tasks if isinstance(task, dict)
+    }
+    now = datetime.now(timezone.utc).isoformat()
+    synchronized: list[str] = []
+
+    def latest_patch_event(patch_id: str, event_type: str) -> Any:
+        matches = [
+            event for event in revision_ledger.events
+            if event.subject_type == "patch"
+            and event.subject_id == patch_id
+            and event.event_type == event_type
+        ]
+        return matches[-1] if matches else None
+
+    for task_id, task in task_by_id.items():
+        if task.get("status") in {"verified", "completed"}:
+            continue
+        active_patches = [
+            patch for patch in revision_ledger.patches
+            if patch.task_id == task_id
+            and patch.status not in {"superseded", "blocked"}
+        ]
+        if not active_patches:
+            continue
+        if len(active_patches) != 1:
+            raise ValueError(
+                f"Task {task_id} has multiple active Patches; resolve the Patch lineage before synchronization."
+            )
+        patch = active_patches[0]
+        if patch.status != "verified":
+            continue
+        if task.get("status") != "ready":
+            raise ValueError(
+                f"Verified Patch {patch.patch_id} is linked to Workflow task {task_id} "
+                f"in unexpected state {task.get('status')}."
+            )
+
+        preflight_event = latest_patch_event(patch.patch_id, "preflight")
+        approval_event = latest_patch_event(patch.patch_id, "approval")
+        apply_event = latest_patch_event(patch.patch_id, "patch_applied")
+        verification_event = latest_patch_event(patch.patch_id, "verification")
+        if not all((preflight_event, approval_event, apply_event, verification_event)):
+            raise ValueError(
+                f"Patch {patch.patch_id} is marked verified but its complete preflight/approval/apply/verification event chain is missing."
+            )
+        if not patch.preflight_report_id or not patch.apply_report_ids or not patch.verification_report_id:
+            raise ValueError(f"Patch {patch.patch_id} is missing lifecycle report references.")
+        if any(not operation.source_sha256 for operation in patch.operations):
+            raise ValueError(f"Patch {patch.patch_id} has an operation without a preflight source hash.")
+
+        input_fingerprint = canonical_fingerprint(sorted(
+            (
+                operation.document,
+                operation.input_file,
+                operation.source_sha256,
+            )
+            for operation in patch.operations
+        ))
+        output_fingerprint = canonical_fingerprint(patch.verified_output_hashes)
+        transitions = [
+            (
+                "preflighted",
+                {
+                    "input_fingerprint": input_fingerprint,
+                    "preflight_report_id": patch.preflight_report_id,
+                    "preflighted_at_utc": preflight_event.timestamp_utc,
+                },
+                preflight_event,
+                "Synchronized from the RevisionLedger preflight event.",
+            ),
+            (
+                "approved",
+                {
+                    "human_approval_confirmed": True,
+                    "approved_by": approval_event.actor,
+                    "approved_at_utc": approval_event.timestamp_utc,
+                },
+                approval_event,
+                "Synchronized from the explicit Patch approval event.",
+            ),
+            (
+                "applied",
+                {
+                    "output_fingerprint": output_fingerprint,
+                    "execution_report_id": patch.apply_report_ids[-1],
+                    "applied_at_utc": apply_event.timestamp_utc,
+                },
+                apply_event,
+                "Synchronized from the DOCX apply report.",
+            ),
+            (
+                "verified",
+                {
+                    "semantic_review_confirmed": True,
+                    "verified_by": verification_event.actor,
+                    "verified_at_utc": verification_event.timestamp_utc,
+                    "verification_report_id": patch.verification_report_id,
+                },
+                verification_event,
+                "Synchronized from mechanical verification and explicit semantic review.",
+            ),
+        ]
+        for new_status, evidence, source_event, reason in transitions:
+            previous_status = task["status"]
+            updated = transition_task(
+                task,
+                new_status,
+                evidence=evidence,
+            )
+            task.clear()
+            task.update(updated)
+            workflow.setdefault("events", []).append({
+                "event_id": str(uuid.uuid4()),
+                "task_id": task_id,
+                "timestamp_utc": source_event.timestamp_utc or now,
+                "event_type": "status_transition",
+                "from_status": previous_status,
+                "to_status": new_status,
+                "reason": reason,
+                "actor": source_event.actor,
+                "fingerprint": workflow_scope_fingerprint(task),
+            })
+        synchronized.append(task_id)
+
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise ValueError(
+            "Synchronized Workflow Ledger failed validation:\n- " + "\n- ".join(errors)
+        )
+    revision_ledger.workflow_ledger_fingerprint = canonical_fingerprint(workflow)
+    revision_ledger.validate_or_raise()
+
+    old_workflow = workflow_path.read_bytes()
+    old_revision = revision_path.read_bytes()
+    try:
+        write_json_atomic(workflow_path, workflow)
+        write_json_atomic(revision_path, revision_ledger.to_dict())
+    except Exception:
+        workflow_path.write_bytes(old_workflow)
+        revision_path.write_bytes(old_revision)
+        raise
+
+    print(
+        "[WORKFLOW VERIFIED] "
+        + (", ".join(synchronized) if synchronized else "No newly verified Patch tasks to synchronize.")
+    )
+    print(f"[OK] Workflow Ledger: {workflow_path}")
+    print(f"[OK] RevisionLedger: {revision_path}")
+    return 0
+
+
 def cmd_build_revision_ledger(args):
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     output_path = Path(args.out).expanduser().resolve()
@@ -1892,6 +2071,10 @@ def build_parser():
     cv.add_argument("--semantic-review-confirmed", action="store_true", required=True,
                     help="Required acknowledgement that scientific meaning and cross-document consistency were reviewed.")
     cv.set_defaults(func=cmd_confirm_verified)
+    syncwl = sub.add_parser("sync-workflow-ledger", help="Synchronize verified Patch lifecycle evidence back to the dependency graph.")
+    syncwl.add_argument("--workflow-ledger", required=True)
+    syncwl.add_argument("--revision-ledger", required=True)
+    syncwl.set_defaults(func=cmd_sync_workflow_ledger)
     awt = sub.add_parser("approve-workflow-tasks", help="Explicitly authorize planned tasks to enter the ready queue.")
     awt.add_argument("--workflow-ledger", required=True)
     awt.add_argument("--ids", nargs="+", required=True)
