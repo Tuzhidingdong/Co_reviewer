@@ -2400,6 +2400,9 @@ def cmd_record_manual_response_locations(args):
                 raise ValueError(f"Word COM final output is unavailable for document role {role}.")
             if word_output.get("source_working_clean_sha256") != revision_document.working_clean_sha256:
                 raise ValueError(f"Word map for {role} does not match its current Working Clean SHA-256.")
+            word_page_count = word_output.get("word_page_count")
+            if not isinstance(word_page_count, int) or isinstance(word_page_count, bool) or word_page_count < 1:
+                raise ValueError(f"Word map has no valid Word COM page count for {role}.")
             output_file = Path(str(word_output.get("output_file", ""))).expanduser().resolve()
             pdf_file = Path(str(word_output.get("pdf_file", ""))).expanduser().resolve()
             output_sha = word_output.get("output_sha256")
@@ -2424,6 +2427,11 @@ def cmd_record_manual_response_locations(args):
             line_end = source.get("line_end")
             if page is not None and (not isinstance(page, int) or isinstance(page, bool) or page < 1):
                 raise ValueError(f"Manual page for {unit_id}/{operation_id} must be a positive integer or omitted.")
+            if page is not None and page > word_page_count:
+                raise ValueError(
+                    f"Manual page {page} for {unit_id}/{operation_id} exceeds the Word COM page count "
+                    f"{word_page_count} for {role}."
+                )
             if line_start is not None or line_end is not None:
                 if page is None or any(
                     not isinstance(value, int) or isinstance(value, bool) or value < 1
