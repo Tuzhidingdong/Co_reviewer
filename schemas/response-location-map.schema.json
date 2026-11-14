@@ -44,6 +44,24 @@
           "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
           "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
           "word_page_count": { "type": "integer", "minimum": 1 },
+          "sequence_audit": {
+            "type": "object",
+            "required": ["status", "detected", "issues", "manual_review"],
+            "properties": {
+              "status": { "enum": ["pass", "fail", "manual_review"] },
+              "detected": {
+                "type": "object",
+                "properties": {
+                  "Figure": { "type": "array", "items": { "type": "object" } },
+                  "Table": { "type": "array", "items": { "type": "object" } }
+                },
+                "additionalProperties": false
+              },
+              "issues": { "type": "array", "items": { "type": "object" } },
+              "manual_review": { "type": "array", "items": { "type": "object" } }
+            },
+            "additionalProperties": false
+          },
           "reused": { "type": "boolean" },
           "refreshed_fields": {
             "type": "object",
