@@ -3,7 +3,7 @@
   "title": "Co_Reviewer v0.5.1 Revision Workflow Ledger",
   "description": "Unified task ledger for document revisions, author decisions, evidence requests and response-only work. It is distinct from the DOCX-only revision plan.",
   "type": "object",
-  "required": ["schema_version", "revision_round_id", "tasks"],
+  "required": ["schema_version", "revision_round_id", "documents", "object_registry", "tasks"],
   "properties": {
     "schema_version": { "const": "0.5.1" },
     "revision_round_id": { "type": "string", "minLength": 1 },
@@ -20,6 +20,14 @@
         },
         "additionalProperties": false
       }
+    },
+    "documents": {
+      "type": "array",
+      "items": { "$ref": "document-identity.schema.json#/$defs/documentIdentity" }
+    },
+    "object_registry": {
+      "type": "array",
+      "items": { "$ref": "document-identity.schema.json#/$defs/documentObjectIdentity" }
     },
     "tasks": {
       "type": "array",
@@ -143,9 +151,13 @@
         },
         "target_groups": {
           "type": "array",
-          "description": "Scheduler lock groups. Current adapters use provisional document|part|p_idx keys; persistent object IDs will replace them.",
+          "description": "Scheduler lock groups. Stable TargetRefs use document_id|object=object_id; unmigrated tasks temporarily use document|part|p_idx.",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
+        },
+        "target_refs": {
+          "type": "array",
+          "items": { "$ref": "document-identity.schema.json#/$defs/targetRef" }
         },
         "readiness": {
           "enum": [
@@ -207,7 +219,10 @@
             "properties": { "task_type": { "const": "response_only" } }
           },
           "then": {
-            "properties": { "target_groups": { "maxItems": 0 } }
+            "properties": {
+              "target_groups": { "maxItems": 0 },
+              "target_refs": { "maxItems": 0 }
+            }
           }
         },
         {
