@@ -493,9 +493,14 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         source = self.root / "Manuscript.docx"
         marked = self.root / "Manuscript_r1.docx"
         final_docx = self.root / "Manuscript_r2.docx"
-        source.write_bytes(b"source docx bytes")
-        marked.write_bytes(b"marked revision one")
-        final_docx.write_bytes(b"marked revision two")
+        make_docx(
+            source,
+            [[("Synthetic introduction", False)], [("old text T1 and old text T2", False)]],
+        )
+        make_docx(
+            marked,
+            [[("Synthetic introduction", False)], [("new text T1 and old text T2", False)]],
+        )
         source_hash = sha256_file(source)
         marked_hash = sha256_file(marked)
 
@@ -719,6 +724,81 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             ["T2"],
         )
         merged.assert_legacy_plan_matches(batch_two_plan)
+
+        # Run the second batch through the existing Track Changes adapter.
+        plan_path = self.root / "edits_plan_batch_02.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_export_revision_plan(Namespace(
+                ledger=str(revision_path),
+                out=str(plan_path),
+            )), 0)
+        self.assertEqual(
+            [item["id"] for item in json.loads(plan_path.read_text(encoding="utf-8"))["revision_items"]],
+            ["T2"],
+        )
+
+        preflight_path = self.root / "preflight_report_batch_02.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_preflight(Namespace(
+                plan=str(plan_path),
+                out=str(preflight_path),
+                author="Synthetic Integration",
+                revision_ledger=str(revision_path),
+            )), 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_approve_plan(Namespace(
+                plan=str(plan_path),
+                ids=["T2"],
+                revision_ledger=str(revision_path),
+                actor="Human Author",
+            )), 0)
+
+        apply_report_path = self.root / "revision_apply_report.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(Namespace(
+                plan=str(plan_path),
+                report=str(apply_report_path),
+                author="Synthetic Integration",
+                revision_ledger=str(revision_path),
+            )), 0)
+        self.assertTrue(final_docx.is_file())
+
+        verification_path = self.root / "verification_report_batch_02.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_verify(Namespace(
+                plan=str(plan_path),
+                apply_report=str(apply_report_path),
+                out=str(verification_path),
+            )), 0)
+        verification = json.loads(verification_path.read_text(encoding="utf-8"))
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_verified"], 1)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(plan_path),
+                apply_report=str(apply_report_path),
+                ids=["T2"],
+                semantic_review_confirmed=True,
+                revision_ledger=str(revision_path),
+            )), 0)
+            self.assertEqual(cli.cmd_sync_workflow_ledger(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+            )), 0)
+
+        final_ledger = revision_ledger_from_mapping(
+            json.loads(revision_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(
+            {patch.patch_id: patch.status for patch in final_ledger.patches},
+            {"T1": "verified", "T2": "verified"},
+        )
+        final_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {task["task_id"]: task["status"] for task in final_workflow["tasks"]},
+            {"T1": "verified", "T2": "verified"},
+        )
 
     def test_authorized_rebase_supersedes_verified_patch_and_preserves_history(self):
         source = self.root / "Manuscript_source.docx"
