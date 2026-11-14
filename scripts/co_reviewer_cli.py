@@ -526,11 +526,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 raise ValueError(f"Duplicate operation_id in revision plan: {operation_id}.")
             targets_by_operation[operation_id] = target
 
-    for (inp, _out), edits in grouped.items():
-        prepared_entry = next(
-            entry for entry in prepared
-            if str(entry["report"]["input_file"]) == str(Path(inp).expanduser().resolve())
-        )
+    for ((inp, _out), edits), prepared_entry in zip(grouped.items(), prepared):
         source_bytes = accepted_view_docx_bytes(Path(inp).expanduser().read_bytes())
         with zipfile.ZipFile(io.BytesIO(source_bytes), "r") as accepted_archive:
             accepted_root = parse_xml(accepted_archive.read("word/document.xml"))
@@ -2005,7 +2001,15 @@ def cmd_create_working_clean_views(args):
                         continue
                     phrase = operation.location_phrase
                     phrase_count = sum(paragraph.count(phrase) for paragraph in final_paragraphs) if phrase else 0
-                    if phrase_count != 1:
+                    phrase_in_expected_paragraph = (
+                        operation.p_idx is None
+                        or (
+                            0 <= operation.p_idx < len(final_paragraphs)
+                            and bool(phrase)
+                            and phrase in final_paragraphs[operation.p_idx]
+                        )
+                    )
+                    if phrase_count != 1 or not phrase_in_expected_paragraph:
                         if operation.replace and operation.p_idx is not None and 0 <= operation.p_idx < len(final_paragraphs):
                             paragraph_text = final_paragraphs[operation.p_idx]
                             if paragraph_text.count(operation.replace) == 1:

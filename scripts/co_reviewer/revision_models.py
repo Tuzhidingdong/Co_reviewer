@@ -1435,7 +1435,12 @@ class RevisionLedger:
                 phrase = target.get("location_phrase")
                 if not isinstance(phrase, str) or not phrase.strip() or len(phrase) > 255:
                     raise RevisionModelError(f"Preflight did not generate a valid unique location_phrase for PatchOperation {operation.operation_id}.")
-                updated_operations.append(replace(operation, source_sha256=source_hash, location_phrase=phrase))
+                updated_operations.append(replace(
+                    operation,
+                    source_sha256=source_hash,
+                    location_phrase=phrase,
+                    p_idx=target.get("p_idx"),
+                ))
             patch.operations = updated_operations
             patch.preflight_fingerprint = fingerprint
             patch.preflight_report_id = report_id

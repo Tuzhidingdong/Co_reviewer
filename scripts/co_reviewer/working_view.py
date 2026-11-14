@@ -301,6 +301,7 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
     for name, data in list(package.items()):
         if name.endswith(".rels"):
             root = ET.fromstring(data, parser=_xml_parser())
+            part_relationship_count = 0
             for child in list(root):
                 if not isinstance(child.tag, str):
                     continue
@@ -308,7 +309,8 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
                 if "/comments" in rel_type or "/people" in rel_type:
                     root.remove(child)
                     relationship_counts += 1
-            if relationship_counts:
+                    part_relationship_count += 1
+            if part_relationship_count:
                 package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
             continue
         if name == "[Content_Types].xml":
@@ -323,6 +325,7 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
         if not name.startswith("word/") or not name.endswith(".xml"):
             continue
         root = ET.fromstring(data, parser=_xml_parser())
+        part_anchor_count = 0
         for node in list(root.iter()):
             if isinstance(node.tag, str) and node.tag in {
                 _qn("commentRangeStart"), _qn("commentRangeEnd"), _qn("commentReference")
@@ -331,7 +334,8 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
                 if parent is not None:
                     _remove_child(parent, node)
                     anchor_counts += 1
-        if anchor_counts:
+                    part_anchor_count += 1
+        if part_anchor_count:
             package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
