@@ -653,12 +653,23 @@ class RevisionLedger:
                 continue
             if document.working_clean_file:
                 working_path = Path(document.working_clean_file).expanduser().resolve()
+                marked_path = Path(document.output_file).expanduser().resolve()
+                if not marked_path.is_file():
+                    errors.append(
+                        f"Marked DOCX no longer exists for Working Clean View {document.role}: {marked_path}"
+                    )
                 if not working_path.is_file():
                     errors.append(
                         f"Working Clean View no longer exists for {document.role}: {working_path}"
                     )
                 else:
                     try:
+                        if marked_path.is_file():
+                            actual_marked_hash = sha256_file(marked_path)
+                            if actual_marked_hash != document.output_sha256:
+                                errors.append(
+                                    f"Marked DOCX changed after Working Clean View generation: {marked_path}"
+                                )
                         actual_hash = sha256_file(working_path)
                         if actual_hash != document.working_clean_sha256:
                             errors.append(
