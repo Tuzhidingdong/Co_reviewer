@@ -1138,13 +1138,15 @@ def cmd_approve_plan(args):
         item["status"] = "approved"
         item["approval_fingerprint"] = revision_item_fingerprint(item)
     plan["approved"] = True
+    ledger_payload = None
     if revision_ledger is not None:
         revision_ledger.record_legacy_approval(
             plan, requested, actor=getattr(args, "actor", "Human Author")
         )
+        ledger_payload = revision_ledger.to_dict()
     write_json_atomic(plan_path, plan)
-    if revision_ledger is not None:
-        write_json_atomic(ledger_path, revision_ledger.to_dict())
+    if ledger_payload is not None:
+        write_json_atomic(ledger_path, ledger_payload)
     print(f"[APPROVED] {len(requested)} revision item(s) sealed: {', '.join(requested)}")
     print("[GUARD] Any later change to comments, proposed responses, document targets or source DOCX versions invalidates that item's approval.")
     return 0
@@ -1339,7 +1341,6 @@ def cmd_apply(args):
 
     reports = apply_plan(plan, args.author)
     report_history.extend(reports)
-    write_json_atomic(report_path, report_history)
     applied_ids = {
         edit.get("revision_item_id")
         for report in reports
@@ -1349,10 +1350,16 @@ def cmd_apply(args):
     for item in plan["revision_items"]:
         if item.get("status") == "approved" and item.get("id") in applied_ids:
             item["status"] = "applied"
-    write_json_atomic(plan_path, plan)
+    ledger_payload = None
     if revision_ledger is not None:
         revision_ledger.record_legacy_apply_reports(reports, plan)
-        write_json_atomic(args.revision_ledger, revision_ledger.to_dict())
+        ledger_payload = revision_ledger.to_dict()
+
+    # Validate all ledger transitions before writing the plan/report artifacts.
+    write_json_atomic(report_path, report_history)
+    write_json_atomic(plan_path, plan)
+    if ledger_payload is not None:
+        write_json_atomic(args.revision_ledger, ledger_payload)
         print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     for r in reports: print(f"[DONE] {r['output_file']}: {r['edits_applied']}/{r['edits_requested']} edits")
     print(f"[STATE] Plan updated: {len(applied_ids)} revision item(s) marked applied.")
@@ -1492,7 +1499,7 @@ def cmd_confirm_verified(args):
     errors = validate_plan(plan, require_approval=False)
     if errors:
         raise ValueError("Verification confirmation failed validation:\n- " + "\n- ".join(errors))
-    write_json_atomic(plan_path, plan)
+    ledger_payload = None
     if revision_ledger is not None:
         verification_id = (
             "confirm-verified:"
@@ -1504,7 +1511,10 @@ def cmd_confirm_verified(args):
             plan,
             verification_report_id=verification_id,
         )
-        write_json_atomic(args.revision_ledger, revision_ledger.to_dict())
+        ledger_payload = revision_ledger.to_dict()
+    write_json_atomic(plan_path, plan)
+    if ledger_payload is not None:
+        write_json_atomic(args.revision_ledger, ledger_payload)
         print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     print(f"[VERIFIED] {len(requested)} revision item(s): {', '.join(requested)}")
     print("[GUARD] Exact Track Changes were rechecked; current output DOCX hashes are sealed.")
