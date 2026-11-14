@@ -1477,8 +1477,6 @@ def cmd_build_revision_ledger(args):
     output_path = Path(args.out).expanduser().resolve()
     if output_path == workflow_path:
         raise ValueError("RevisionLedger output must not overwrite the Workflow Ledger.")
-    if output_path.exists():
-        raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
 
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     from co_reviewer.workflow_engine import (
@@ -1517,6 +1515,19 @@ def cmd_build_revision_ledger(args):
         raise ValueError("--reviewer-comments must contain a JSON object.")
     if not isinstance(reviewer_map, dict):
         raise ValueError("--reviewer-map must contain a JSON object.")
+
+    source_artifacts = {workflow_path}
+    for source_arg in (
+        getattr(args, "document_paths", None),
+        getattr(args, "reviewer_comments", None),
+        getattr(args, "reviewer_map", None),
+    ):
+        if source_arg:
+            source_artifacts.add(Path(source_arg).expanduser().resolve())
+    if output_path in source_artifacts:
+        raise ValueError(
+            "RevisionLedger output must not overwrite the Workflow Ledger or any auxiliary input."
+        )
 
     ledger = build_revision_ledger(
         workflow,
