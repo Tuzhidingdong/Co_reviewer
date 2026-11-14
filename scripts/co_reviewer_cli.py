@@ -2433,11 +2433,11 @@ def cmd_record_manual_response_locations(args):
                 operation_id = locator_key
                 patch, operation = operation_owners[operation_id]
                 if patch.patch_id not in unit.linked_patch_ids or unit.comment_id not in operation.source_comment_ids:
-                    raise ValueError(f"Manual locator attribution mismatch for {unit_id}/{operation_id}.")
+                    raise ValueError(f"Manual locator attribution mismatch for {unit_id}/{locator_key}.")
                 if patch.status != "verified":
-                    raise ValueError(f"Manual locator operation {operation_id} belongs to unverified Patch {patch.patch_id}.")
+                    raise ValueError(f"Manual locator operation {locator_key} belongs to unverified Patch {patch.patch_id}.")
                 role = operation.document
-                stable_locator_id = f"manual:{operation_id}"
+                stable_locator_id = f"manual:{locator_key}"
             else:
                 if not unit.anchor_evidence_id or not unit.anchor_document or not unit.anchor_part or unit.anchor_p_idx is None:
                     raise ValueError(f"Manual no_change ResponseUnit {unit_id} has no confirmed Clean anchor evidence.")
@@ -2469,16 +2469,16 @@ def cmd_record_manual_response_locations(args):
                 or any(character in locator_text for character in "\r\n\t")
             ):
                 raise ValueError(
-                    f"Manual locator text for {unit_id}/{operation_id} must be non-empty and single-line."
+                    f"Manual locator text for {unit_id}/{locator_key} must be non-empty and single-line."
                 )
             page = source.get("page")
             line_start = source.get("line_start")
             line_end = source.get("line_end")
             if page is not None and (not isinstance(page, int) or isinstance(page, bool) or page < 1):
-                raise ValueError(f"Manual page for {unit_id}/{operation_id} must be a positive integer or omitted.")
+                raise ValueError(f"Manual page for {unit_id}/{locator_key} must be a positive integer or omitted.")
             if page is not None and page > word_page_count:
                 raise ValueError(
-                    f"Manual page {page} for {unit_id}/{operation_id} exceeds the Word COM page count "
+                    f"Manual page {page} for {unit_id}/{locator_key} exceeds the Word COM page count "
                     f"{word_page_count} for {role}."
                 )
             if line_start is not None or line_end is not None:
@@ -2487,10 +2487,10 @@ def cmd_record_manual_response_locations(args):
                     for value in (line_start, line_end)
                 ):
                     raise ValueError(
-                        f"Manual lines for {unit_id}/{operation_id} require page, line_start and line_end positive integers."
+                        f"Manual lines for {unit_id}/{locator_key} require page, line_start and line_end positive integers."
                     )
                 if line_end < line_start:
-                    raise ValueError(f"Manual line_end precedes line_start for {unit_id}/{operation_id}.")
+                    raise ValueError(f"Manual line_end precedes line_start for {unit_id}/{locator_key}.")
             final_locations.append({
                 "document": role,
                 "output_file": str(output_file),
