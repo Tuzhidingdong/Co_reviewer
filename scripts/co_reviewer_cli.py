@@ -1996,48 +1996,80 @@ def cmd_create_working_clean_views(args):
                 working_view_fingerprint=report["working_view_fingerprint"],
             )
             with zipfile.ZipFile(clean_path, "r") as clean_archive:
+                clean_names = set(clean_archive.namelist())
                 clean_root = parse_xml(clean_archive.read("word/document.xml"))
-            final_paragraphs = [visible_text(paragraph) for paragraph in clean_root.findall(".//w:body//w:p", NS)]
+                final_paragraph_nodes = clean_root.findall(".//w:body//w:p", NS)
+                final_paragraphs = [visible_text(paragraph) for paragraph in final_paragraph_nodes]
 
-            # Resolve no-change anchors by stable paragraph ID first, then by the
-            # exact imported evidence excerpt. Never reuse a stale paragraph index.
-            for unit in ledger.response_units:
-                if unit.location_requirement != "existing_anchor_required" or unit.anchor_document != document.role:
-                    continue
-                paragraph_nodes = clean_root.findall(".//w:body//w:p", NS)
-                para_id_key = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
-                anchor_indices = [
-                    index for index, paragraph in enumerate(paragraph_nodes)
-                    if unit.anchor_para_id and paragraph.get(para_id_key) == unit.anchor_para_id
-                ]
-                if len(anchor_indices) != 1:
+                # Resolve no-change anchors in their declared Word part, using
+                # paraId first and the exact source excerpt as the fallback.
+                # Manual-required anchors are still revalidated in this current
+                # Clean package, but do not need an automatic Word Find phrase.
+                for unit in ledger.response_units:
+                    if (
+                        unit.disposition != "no_change"
+                        or unit.location_requirement not in {"existing_anchor_required", "manual_required"}
+                        or unit.anchor_document != document.role
+                    ):
+                        continue
+                    anchor_part = unit.anchor_part
+                    if not isinstance(anchor_part, str) or anchor_part not in clean_names:
+                        raise ValueError(
+                            f"Declared no-change anchor part {anchor_part!r} for "
+                            f"{unit.response_unit_id} is missing from final {document.role} Clean DOCX."
+                        )
+                    try:
+                        anchor_root = (
+                            clean_root if anchor_part == "word/document.xml"
+                            else parse_xml(clean_archive.read(anchor_part))
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            f"Cannot read current Clean anchor part {anchor_part} for {unit.response_unit_id}: {exc}"
+                        ) from exc
+                    paragraph_nodes = anchor_root.findall(".//w:p", NS)
+                    paragraph_texts = [visible_text(paragraph) for paragraph in paragraph_nodes]
+                    para_id_key = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
                     anchor_indices = [
-                        index for index, paragraph_text in enumerate(final_paragraphs)
-                        if unit.anchor_source_excerpt and unit.anchor_source_excerpt in paragraph_text
+                        idx for idx, paragraph in enumerate(paragraph_nodes)
+                        if unit.anchor_para_id and paragraph.get(para_id_key) == unit.anchor_para_id
                     ]
-                if len(anchor_indices) != 1:
-                    raise ValueError(
-                        f"Cannot uniquely resolve no-change anchor {unit.response_unit_id} in final {document.role} Clean DOCX; "
-                        "the original paragraph identity or exact evidence excerpt is missing/ambiguous."
-                    )
-                final_anchor_index = anchor_indices[0]
-                anchor_text = final_paragraphs[final_anchor_index]
-                if anchor_text.count(unit.anchor_source_excerpt) != 1:
-                    raise ValueError(
-                        f"No-change anchor excerpt for {unit.response_unit_id} occurs zero or multiple times "
-                        "in its final paragraph; refusing to guess the anchor."
-                    )
-                anchor_start = anchor_text.find(unit.anchor_source_excerpt)
-                if anchor_start < 0:
-                    raise ValueError(
-                        f"No-change anchor excerpt for {unit.response_unit_id} is no longer present in final {document.role}; "
-                        "do not reuse the baseline page/line reference."
-                    )
-                unit.anchor_p_idx = final_anchor_index
-                unit.location_phrase = build_unique_location_phrase(
-                    final_paragraphs, final_anchor_index,
-                    anchor_start, anchor_start + len(unit.anchor_source_excerpt),
-                )
+                    if len(anchor_indices) != 1:
+                        anchor_indices = [
+                            idx for idx, paragraph_text in enumerate(paragraph_texts)
+                            if unit.anchor_source_excerpt and unit.anchor_source_excerpt in paragraph_text
+                        ]
+                    if len(anchor_indices) != 1:
+                        raise ValueError(
+                            f"Cannot uniquely resolve no-change anchor {unit.response_unit_id} in "
+                            f"{anchor_part} of final {document.role} Clean DOCX; its paragraph ID or exact evidence excerpt is missing/ambiguous."
+                        )
+                    final_anchor_index = anchor_indices[0]
+                    anchor_text = paragraph_texts[final_anchor_index]
+                    if anchor_text.count(unit.anchor_source_excerpt) != 1:
+                        raise ValueError(
+                            f"No-change anchor excerpt for {unit.response_unit_id} occurs zero or multiple times "
+                            f"in final paragraph {final_anchor_index} of {anchor_part}; refusing to guess."
+                        )
+                    anchor_start = anchor_text.find(unit.anchor_source_excerpt)
+                    if anchor_start < 0:
+                        raise ValueError(
+                            f"No-change anchor excerpt for {unit.response_unit_id} is no longer present in final "
+                            f"{document.role} Clean DOCX; do not reuse baseline page/line references."
+                        )
+                    unit.anchor_p_idx = final_anchor_index
+                    if unit.location_requirement == "manual_required":
+                        unit.location_phrase = None
+                    else:
+                        if anchor_part != "word/document.xml":
+                            raise ValueError(
+                                f"No-change anchor {unit.response_unit_id} is in {anchor_part}; "
+                                "use location_requirement=manual_required instead of guessing a body line locator."
+                            )
+                        unit.location_phrase = build_unique_location_phrase(
+                            final_paragraphs, final_anchor_index,
+                            anchor_start, anchor_start + len(unit.anchor_source_excerpt),
+                        )
 
             # Refresh operation locators against the final accepted text. The preflight
             # phrase remains valid when unchanged; otherwise use the surviving replacement.
