@@ -811,7 +811,11 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(Path(final_document.input_file), marked)
         self.assertEqual(Path(final_document.output_file), final_docx)
         self.assertEqual(final_document.source_sha256, marked_hash)
-        self.assertEqual(final_document.output_sha256, sha256_file(final_docx))
+        final_patch = next(patch for patch in final_ledger.patches if patch.patch_id == "T2")
+        self.assertEqual(
+            final_patch.verified_output_hashes,
+            [{"path": str(final_docx.resolve()), "sha256": sha256_file(final_docx)}],
+        )
         final_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
         self.assertEqual(
             {task["task_id"]: task["status"] for task in final_workflow["tasks"]},
