@@ -307,6 +307,12 @@ class WorkingCleanViewTests(unittest.TestCase):
             for name, data in package.items():
                 archive.writestr(name, data)
 
+        baseline = inspect_clean_baseline(self.marked)
+        self.assertFalse(baseline["clean"])
+        self.assertEqual(baseline["blocking_counts"]["comment_parts"], 4)
+        self.assertEqual(baseline["blocking_counts"]["comment_relationships"], 4)
+        self.assertEqual(baseline["blocking_counts"]["comment_content_type_entries"], 4)
+
         create_working_clean_view(self.marked, self.clean)
         cleaned, strip_report = strip_docx_comments_bytes(self.marked.read_bytes())
         for payload in (self.clean.read_bytes(), cleaned):
