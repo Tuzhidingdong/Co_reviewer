@@ -296,29 +296,37 @@ class RevisionDocument:
 @dataclass(frozen=True)
 class RevisionEvent:
     event_id: str
-    patch_id: str
+    subject_id: str
+    subject_type: str
     event_type: str
     timestamp_utc: str
     actor: str
     details: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("event_id", "patch_id", "event_type", "actor"):
+        for name in ("event_id", "subject_id", "subject_type", "event_type", "actor"):
             _text(getattr(self, name), name)
+        if self.subject_type not in {"patch", "response_unit"}:
+            raise RevisionModelError("RevisionEvent subject_type must be patch or response_unit.")
         _aware_timestamp(self.timestamp_utc, "timestamp_utc")
         if not isinstance(self.details, Mapping):
             raise RevisionModelError("RevisionEvent details must be an object.")
 
+    @property
+    def patch_id(self) -> str | None:
+        """Compatibility accessor for patch-scoped events."""
+        return self.subject_id if self.subject_type == "patch" else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
-            "patch_id": self.patch_id,
+            "subject_id": self.subject_id,
+            "subject_type": self.subject_type,
             "event_type": self.event_type,
             "timestamp_utc": self.timestamp_utc,
             "actor": self.actor,
             "details": dict(self.details),
         }
-
 
 @dataclass(frozen=True)
 class ResponseLocation:
@@ -403,6 +411,10 @@ class ResponseUnit:
             isinstance(self.verification_report_id, str) and self.verification_report_id.strip()
         ):
             raise RevisionModelError("Semantic confirmation requires verification_report_id.")
+        if self.status in {"verified", "location_mapped", "completed"} and not self.semantic_review_confirmed:
+            raise RevisionModelError(f"ResponseUnit in {self.status} state requires semantic review.")
+        if self.status in {"verified", "location_mapped", "completed"} and not self.response_text.strip():
+            raise RevisionModelError(f"ResponseUnit in {self.status} state requires response_text.")
         if self.location_map_fingerprint is not None:
             _sha256(self.location_map_fingerprint, "location_map_fingerprint")
         if self.status in {"location_mapped", "completed"}:
@@ -420,6 +432,52 @@ class ResponseUnit:
     @property
     def final_location_fingerprint(self) -> str:
         return _fingerprint([item.to_dict() for item in self.final_locations])
+
+    def confirm_semantic_review(self, verification_report_id: str) -> None:
+        if self.status not in {"draft", "verified"}:
+            raise RevisionModelError(
+                f"ResponseUnit {self.response_unit_id} cannot be semantically confirmed from {self.status}."
+            )
+        _text(self.response_text, "response_text")
+        self.verification_report_id = _text(
+            verification_report_id, "verification_report_id"
+        )
+        self.semantic_review_confirmed = True
+        self.status = "verified"
+
+    def record_final_locations(
+        self,
+        location_map_fingerprint: str,
+        final_locations: Sequence[ResponseLocation],
+    ) -> None:
+        if self.status != "verified" or not self.semantic_review_confirmed:
+            raise RevisionModelError(
+                "ResponseUnit must pass semantic review before final location mapping."
+            )
+        _sha256(location_map_fingerprint, "location_map_fingerprint")
+        if not final_locations:
+            raise RevisionModelError("At least one final PDF page/line location is required.")
+        if any(not isinstance(item, ResponseLocation) for item in final_locations):
+            raise RevisionModelError("final_locations must contain ResponseLocation records.")
+        if any(
+            item.mapping_fingerprint != location_map_fingerprint
+            for item in final_locations
+        ):
+            raise RevisionModelError(
+                "Every final location must belong to the supplied location-map fingerprint."
+            )
+        self.location_map_fingerprint = location_map_fingerprint
+        self.final_locations = list(final_locations)
+        self.status = "location_mapped"
+
+    def mark_completed(self, completed_at_utc: str) -> None:
+        if self.status != "location_mapped":
+            raise RevisionModelError(
+                "ResponseUnit can only complete after final PDF locations are mapped."
+            )
+        _aware_timestamp(completed_at_utc, "completed_at_utc")
+        self.completed_at_utc = completed_at_utc
+        self.status = "completed"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -491,10 +549,146 @@ class RevisionLedger:
                     f"ResponseUnit {unit.response_unit_id} links unknown patch(es): "
                     + ", ".join(sorted(unknown))
                 )
+        known_response_units = set(response_ids)
         for event in self.events:
-            if event.patch_id not in known_patches:
+            if event.subject_type == "patch" and event.subject_id not in known_patches:
                 errors.append(f"RevisionEvent {event.event_id} refers to unknown patch.")
+            elif event.subject_type == "response_unit" and event.subject_id not in known_response_units:
+                errors.append(f"RevisionEvent {event.event_id} refers to unknown ResponseUnit.")
         return errors
+
+    def confirm_response_units(
+        self,
+        response_unit_ids: Sequence[str],
+        *,
+        verification_report_id: str,
+        actor: str,
+    ) -> None:
+        requested = list(dict.fromkeys(response_unit_ids))
+        if not requested:
+            raise RevisionModelError("At least one ResponseUnit ID must be supplied.")
+        by_id = {unit.response_unit_id: unit for unit in self.response_units}
+        unknown = [item for item in requested if item not in by_id]
+        if unknown:
+            raise RevisionModelError("Unknown ResponseUnit ID(s): " + ", ".join(unknown))
+        _text(actor, "actor")
+        _text(verification_report_id, "verification_report_id")
+        now = datetime.now(timezone.utc).isoformat()
+        for unit_id in requested:
+            unit = by_id[unit_id]
+            unit.confirm_semantic_review(verification_report_id)
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=unit_id,
+                subject_type="response_unit",
+                event_type="response_semantic_review",
+                timestamp_utc=now,
+                actor=actor,
+                details={"verification_report_id": verification_report_id},
+            ))
+        self.validate_or_raise()
+
+    def record_response_locations(
+        self,
+        location_map: Mapping[str, Any],
+        *,
+        actor: str = "Co_Reviewer Location Mapper",
+    ) -> None:
+        if not isinstance(location_map, Mapping):
+            raise RevisionModelError("Location map must be an object.")
+        mappings = location_map.get("response_units")
+        if not isinstance(mappings, list):
+            raise RevisionModelError("Location map must contain a response_units array.")
+        by_id = {unit.response_unit_id: unit for unit in self.response_units}
+        now = datetime.now(timezone.utc).isoformat()
+        for entry in mappings:
+            if not isinstance(entry, Mapping):
+                raise RevisionModelError("Location map entries must be objects.")
+            unit_id = _text(entry.get("response_unit_id"), "response_unit_id")
+            unit = by_id.get(unit_id)
+            if unit is None:
+                raise RevisionModelError(f"Unknown ResponseUnit in location map: {unit_id}.")
+            location_fingerprint = _sha256(
+                entry.get("location_map_fingerprint"), "location_map_fingerprint"
+            )
+            raw_locations = entry.get("final_locations")
+            if not isinstance(raw_locations, list):
+                raise RevisionModelError(f"{unit_id} final_locations must be an array.")
+            final_locations = [
+                ResponseLocation(
+                    document=row.get("document"),
+                    output_file=row.get("output_file"),
+                    page=row.get("page"),
+                    line_start=row.get("line_start"),
+                    line_end=row.get("line_end"),
+                    pdf_sha256=row.get("pdf_sha256"),
+                    location_map_id=row.get("location_map_id"),
+                    mapping_fingerprint=row.get("mapping_fingerprint"),
+                )
+                for row in raw_locations if isinstance(row, Mapping)
+            ]
+            if len(final_locations) != len(raw_locations):
+                raise RevisionModelError(f"{unit_id} contains malformed final location entries.")
+            unit.record_final_locations(location_fingerprint, final_locations)
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=unit_id,
+                subject_type="response_unit",
+                event_type="final_location_mapped",
+                timestamp_utc=now,
+                actor=actor,
+                details={
+                    "location_map_id": location_map.get("location_map_id", ""),
+                    "location_map_fingerprint": location_fingerprint,
+                    "final_locations": [item.to_dict() for item in final_locations],
+                },
+            ))
+        self.validate_or_raise()
+
+    def complete_response_units(
+        self,
+        response_unit_ids: Sequence[str],
+        *,
+        ready_for_submission_confirmed: bool,
+        actor: str,
+    ) -> None:
+        if ready_for_submission_confirmed is not True:
+            raise RevisionModelError(
+                "Completion requires explicit ready_for_submission_confirmed=true."
+            )
+        requested = list(dict.fromkeys(response_unit_ids))
+        if not requested:
+            raise RevisionModelError("At least one ResponseUnit ID must be supplied.")
+        unit_by_id = {unit.response_unit_id: unit for unit in self.response_units}
+        patch_by_id = {patch.patch_id: patch for patch in self.patches}
+        unknown = [item for item in requested if item not in unit_by_id]
+        if unknown:
+            raise RevisionModelError("Unknown ResponseUnit ID(s): " + ", ".join(unknown))
+        _text(actor, "actor")
+        now = datetime.now(timezone.utc).isoformat()
+        for unit_id in requested:
+            unit = unit_by_id[unit_id]
+            unverified = [
+                patch_id for patch_id in unit.linked_patch_ids
+                if patch_by_id.get(patch_id) is None
+                or patch_by_id[patch_id].status != "verified"
+            ]
+            if unverified:
+                raise RevisionModelError(
+                    f"ResponseUnit {unit_id} still links unverified Patch(es): "
+                    + ", ".join(unverified)
+                )
+            unit.mark_completed(now)
+            self.events.append(RevisionEvent(
+                event_id=str(uuid.uuid4()),
+                subject_id=unit_id,
+                subject_type="response_unit",
+                event_type="response_completed",
+                timestamp_utc=now,
+                actor=actor,
+                details={"ready_for_submission_confirmed": True},
+            ))
+        self.validate_or_raise()
 
     def assert_legacy_plan_matches(self, revision_plan: Mapping[str, Any]) -> None:
         """Reject plan/ledger drift before handing the plan to the DOCX writer."""
@@ -646,7 +840,8 @@ class RevisionLedger:
                 )
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
-                patch_id=patch.patch_id,
+                subject_id=patch.patch_id,
+                subject_type="patch",
                 event_type="verification",
                 timestamp_utc=now,
                 actor=actor,
@@ -943,7 +1138,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
     events = [
         RevisionEvent(
             event_id=row.get("event_id"),
-            patch_id=row.get("patch_id"),
+            subject_id=row.get("subject_id", row.get("patch_id")),
+            subject_type=row.get("subject_type", "patch"),
             event_type=row.get("event_type"),
             timestamp_utc=row.get("timestamp_utc"),
             actor=row.get("actor"),
