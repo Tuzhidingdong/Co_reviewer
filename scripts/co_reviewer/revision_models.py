@@ -611,7 +611,7 @@ class RevisionLedger:
         if self.schema_version != "0.5.1":
             raise RevisionModelError("RevisionLedger schema_version must be '0.5.1'.")
         _sha256(self.workflow_ledger_fingerprint, "workflow_ledger_fingerprint", optional=True)
-        self.validate()
+        self.validate_or_raise()
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -641,6 +641,28 @@ class RevisionLedger:
                     errors.append(f"Verified patch {patch.patch_id} lacks verification_report_id.")
                 if not patch.verified_output_hashes:
                     errors.append(f"Verified patch {patch.patch_id} lacks verified_output_hashes.")
+                expected_outputs = {
+                    _canonical_path(operation.output_file)
+                    for operation in patch.operations
+                }
+                actual_outputs: set[str] = set()
+                for entry in patch.verified_output_hashes:
+                    if not isinstance(entry, Mapping):
+                        errors.append(f"Verified Patch {patch.patch_id} contains a malformed output hash record.")
+                        continue
+                    path_value = entry.get("path")
+                    digest = entry.get("sha256")
+                    if not isinstance(path_value, str) or not path_value.strip():
+                        errors.append(f"Verified Patch {patch.patch_id} contains an empty output path.")
+                        continue
+                    if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
+                        errors.append(f"Verified Patch {patch.patch_id} contains an invalid output SHA-256.")
+                        continue
+                    actual_outputs.add(_canonical_path(path_value))
+                if actual_outputs != expected_outputs or len(actual_outputs) != len(patch.verified_output_hashes):
+                    errors.append(
+                        f"Verified output hashes for Patch {patch.patch_id} must cover exactly its DOCX outputs."
+                    )
             if patch.supersedes_patch_id and patch.supersedes_patch_id not in known_patches:
                 errors.append(
                     f"Patch {patch.patch_id} supersedes unknown patch {patch.supersedes_patch_id}."
@@ -697,6 +719,9 @@ class RevisionLedger:
                     f"ResponseUnit {unit.response_unit_id} links unknown patch(es): "
                     + ", ".join(sorted(unknown))
                 )
+        event_ids = [event.event_id for event in self.events]
+        if len(event_ids) != len(set(event_ids)):
+            errors.append("RevisionLedger contains duplicate event_id values.")
         known_response_units = set(response_ids)
         for event in self.events:
             if event.subject_type == "patch" and event.subject_id not in known_patches:
