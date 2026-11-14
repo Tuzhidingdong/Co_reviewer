@@ -50,3 +50,34 @@ Persistent object IDs are represented by DocumentObjectIdentity records and are 
 When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
 
 The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. The old CLI revision-item apply/verify commands remain compatible and are not yet fully migrated to the ledger. Typed Patch/RevisionLedger execution, Working Clean View, Word COM pagination, final PDF line mapping and the complete ResponseUnit renderer remain later integration stages.
+
+
+## Patch execution bridge
+
+The implementation now has separate typed records for \`PatchOperation\`, \`Patch\`, \`RevisionDocument\`, \`RevisionEvent\` and \`RevisionLedger\`.
+
+A decision task is not automatically converted into a text edit. A task may contain \`patch_operations\` only when the authoring stage supplies the exact \`find\`, \`replace\`, Word part, source/target DOCX paths and evidence IDs. Missing or inferred replacement operands are rejected. The bridge exports these explicit operations into the existing DOCX revision-plan format; the existing WordprocessingML/Track Changes writer remains the only writer.
+
+The recommended command sequence is:
+
+1. \`build-revision-ledger --workflow-ledger ... --out revision_ledger.json\` — validate the Workflow Ledger and create typed Patch and ResponseUnit records.
+2. \`export-revision-plan --ledger revision_ledger.json --out revision_plan.json\` — emit a pending, unapproved DOCX execution plan.
+3. \`preflight-plan --plan revision_plan.json --revision-ledger revision_ledger.json\` — bind the patch to exact source DOCX hashes and record the preflight event.
+4. \`approve-plan --plan revision_plan.json --ids ... --revision-ledger revision_ledger.json\` — seal the exact reviewer-facing scope and record the approver.
+5. \`apply --plan revision_plan.json --revision-ledger revision_ledger.json\` — execute through the legacy writer and synchronize Patch state/events.
+6. \`confirm-verified --plan revision_plan.json --apply-report ... --ids ... --semantic-review-confirmed --revision-ledger revision_ledger.json\` — recheck native Track Changes and output hashes, then record the human semantic-review acknowledgement.
+
+When a RevisionLedger is supplied, the adapter checks patch IDs, reviewer, original comment, proposed response and every exact target before preflight/apply/verify. A mismatch stops the operation. Exported legacy plans are always pending; approval is never silently copied from a previous ledger state.
+
+## ResponseUnit closure
+
+A ResponseUnit is independent of DOCX Patch execution. Its lifecycle is:
+
+\`draft → verified → location_mapped → completed\`
+
+- \`confirm-response-units\` records an explicit semantic-review report. It does not claim that page/line locations are known.
+- \`record-response-locations\` consumes a location-map JSON artifact. Every final location must include its actual PDF path and SHA-256; the CLI also records the mapping JSON file path and SHA-256. The model rechecks these file hashes before serializing a mapped or completed ledger.
+- \`complete-response-units\` requires an explicit ready-for-submission acknowledgement and rejects a ResponseUnit while any linked Patch is unverified.
+- \`render-response\` and \`render-response-docx\` can consume the RevisionLedger. A semantically reviewed ResponseUnit without final PDF locations is rendered as \`location_pending\`, not as a final verified response.
+
+This stage consumes a location map; it does not yet generate one. Word COM pagination, PDF export and the actual page/line extraction engine remain a separate implementation and acceptance milestone. A manually typed page/line string is not sufficient evidence by itself.
