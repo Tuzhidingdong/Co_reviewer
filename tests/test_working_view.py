@@ -107,6 +107,29 @@ class WorkingCleanViewTests(unittest.TestCase):
             self.assertEqual(len(list(types)), 0)
         self.assertGreater(report["counts"]["comment_anchors_removed"], 0)
 
+    def test_refuses_unsupported_tracked_table_structure_instead_of_guessing(self):
+        make_docx(self.original, [[("Table content remains.", False)]])
+        with zipfile.ZipFile(self.original, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(package["word/document.xml"])
+        body = root.find(".//w:body", cli.NS)
+        table = ET.SubElement(body, f"{{{cli.W}}}tbl")
+        row = ET.SubElement(table, f"{{{cli.W}}}tr")
+        row_properties = ET.SubElement(row, f"{{{cli.W}}}trPr")
+        ET.SubElement(row_properties, f"{{{cli.W}}}cellDel", {
+            f"{{{cli.W}}}id": "7",
+        })
+        package["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.marked, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        with self.assertRaisesRegex(WorkingViewError, "Unsupported table-structure revision"):
+            create_working_clean_view(self.marked, self.clean)
+        self.assertFalse(self.clean.exists())
+
     def test_refuses_overwrite_of_input_or_existing_output(self):
         make_docx(self.original, [[("No tracked changes.", False)]])
         with self.assertRaisesRegex(WorkingViewError, "must not overwrite"):
