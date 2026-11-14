@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -85,6 +86,38 @@ class DocxQualityTests(unittest.TestCase):
         check = next(row for row in report["checks"] if row["id"] == "pdf_integrity")
         self.assertEqual(check["status"], "FAIL")
         self.assertEqual(report["status"], "FAIL")
+
+    def test_final_quality_audit_detects_extended_comment_parts_and_relationships(self):
+        path = self._make_docx()
+        with zipfile.ZipFile(path, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+        package["word/commentsExtended.xml"] = b'<w15:commentsEx xmlns:w15="urn:synthetic:w15"/>'
+        rel_root = ET.fromstring(package["word/_rels/document.xml.rels"])
+        ET.SubElement(rel_root, "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship", {
+            "Id": "rIdCommentsExtended",
+            "Type": "http://schemas.microsoft.com/office/word/2018/wordml/commentsExtended",
+            "Target": "commentsExtended.xml",
+        })
+        package["word/_rels/document.xml.rels"] = ET.tostring(
+            rel_root, encoding="utf-8", xml_declaration=True
+        )
+        types_root = ET.fromstring(package["[Content_Types].xml"])
+        ET.SubElement(types_root, "{http://schemas.openxmlformats.org/package/2006/content-types}Override", {
+            "PartName": "/word/commentsExtended.xml",
+            "ContentType": "application/xml",
+        })
+        package["[Content_Types].xml"] = ET.tostring(
+            types_root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        report = audit_docx_quality(path, profile="word-final-clean")
+        check = next(row for row in report["checks"] if row["id"] == "comments")
+        self.assertEqual(check["status"], "FAIL")
+        self.assertIn("word/commentsExtended.xml", report["docx"]["comment_package_parts"])
+        self.assertEqual(len(report["docx"]["comment_relationships"]), 1)
 
     def test_missing_or_invalid_docx_is_rejected(self):
         with self.assertRaises(DocxQualityError):
