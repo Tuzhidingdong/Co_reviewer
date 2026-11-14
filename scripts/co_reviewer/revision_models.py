@@ -664,6 +664,12 @@ class RevisionLedger:
                     )
                 successor_by_patch[previous.patch_id] = patch.patch_id
 
+        for patch in self.patches:
+            if patch.status == "superseded" and patch.patch_id not in successor_by_patch:
+                errors.append(
+                    f"Superseded Patch {patch.patch_id} has no recorded replacement."
+                )
+
         # Supersession is a lineage graph; reject cycles before it can be used
         # to select the current Patch for a task.
         for patch in self.patches:
@@ -998,6 +1004,7 @@ class RevisionLedger:
                     )
 
         now = datetime.now(timezone.utc).isoformat()
+        previous_status = previous.status
         previous.status = "superseded"
         self.patches.append(replacement)
         self.events.append(RevisionEvent(
@@ -1010,12 +1017,7 @@ class RevisionLedger:
             details={
                 "replacement_patch_id": replacement.patch_id,
                 "reason": reason,
-                "previous_status": (
-                    "applied" if previous.apply_report_ids else
-                    "verified" if previous.verification_report_id else
-                    "preflighted" if previous.preflight_report_id else
-                    "planned"
-                ),
+                "previous_status": previous_status,
             },
         ))
         for unit in self.response_units:
