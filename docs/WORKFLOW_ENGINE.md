@@ -30,7 +30,7 @@ A change to the task scope (targets, evidence, proposed action, dependencies or 
 ## Scheduling rules
 
 1. The task DAG is authoritative. Unknown dependencies and task-level cycles are rejected.
-2. A task can be selected for execution only when it is explicitly ready and every dependency is verified or completed.
+2. A task can be selected only when it is explicitly ready and every dependency is verified or completed. One returned batch is target-conflict-free: at most one task may reserve a target-group conflict component, while tasks without document targets can proceed independently.
 3. Target groups are derived from the document objects a task may change. The quotient graph maps task dependencies onto target groups.
 4. When that quotient graph contains a cycle although the task DAG is acyclic, its strongly connected target groups are condensed into one lock/review component. The task-level order inside that component remains authoritative.
 5. If an upstream task changes, every transitive dependent task moves to recheck_required. The prior state is retained in recheck_from; the engine does not silently preserve a downstream approval or verification.
