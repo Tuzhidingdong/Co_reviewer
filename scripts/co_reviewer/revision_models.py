@@ -549,6 +549,10 @@ class ResponseUnit:
                 raise RevisionModelError("ResponseUnit location_phrase must be a single-line phrase of at most 255 characters.")
         if self.disposition == "reply_only" and self.location_requirement != "not_required":
             raise RevisionModelError("reply_only ResponseUnits must use location_requirement=not_required.")
+        if self.disposition != "no_change" and self.location_requirement == "existing_anchor_required":
+            raise RevisionModelError("existing_anchor_required is reserved for no_change ResponseUnits.")
+        if self.disposition != "revised" and self.location_requirement == "manual_required":
+            raise RevisionModelError("manual_required is reserved for revised ResponseUnits.")
         if self.disposition in {"reply_only", "no_change", "clarification_needed"} and (self.linked_patch_ids or self.linked_operation_ids):
             raise RevisionModelError(
                 f"{self.disposition} ResponseUnits cannot claim Patch or PatchOperation links; "
@@ -966,6 +970,7 @@ class RevisionLedger:
             for operation in patch.operations
         }
         documents_by_role = {document.role: document for document in self.documents}
+        role_location_versions: dict[str, set[tuple[str, str, str, str]]] = {}
         for unit in self.response_units:
             for operation_id in unit.linked_operation_ids:
                 owner = operation_owners.get(operation_id)
@@ -1011,11 +1016,42 @@ class RevisionLedger:
                             f"ResponseUnit {unit.response_unit_id} has stale page/line positions for {location.document}; "
                             "the current Working Clean hash changed and that whole document role must be remapped."
                         )
+                    role_location_versions.setdefault(location.document, set()).add((
+                        _canonical_path(location.output_file),
+                        location.output_sha256,
+                        _canonical_path(location.pdf_file),
+                        location.pdf_sha256,
+                    ))
+                    if unit.disposition == "no_change":
+                        if location.document != unit.anchor_document:
+                            errors.append(
+                                f"ResponseUnit {unit.response_unit_id} existing-anchor location is not in "
+                                f"its confirmed document role {unit.anchor_document}."
+                            )
+                    else:
+                        operation_id = (
+                            location.locator_id[len("manual:"):]
+                            if unit.location_requirement == "manual_required"
+                            and location.locator_id.startswith("manual:")
+                            else location.locator_id
+                        )
+                        owner = operation_owners.get(operation_id)
+                        if owner is not None and location.document != owner[1].document:
+                            errors.append(
+                                f"ResponseUnit {unit.response_unit_id} location for PatchOperation "
+                                f"{operation_id} is assigned to {location.document}, not {owner[1].document}."
+                            )
             unknown = set(unit.linked_patch_ids) - known_patches
             if unknown:
                 errors.append(
                     f"ResponseUnit {unit.response_unit_id} links unknown patch(es): "
                     + ", ".join(sorted(unknown))
+                )
+        for role, versions in role_location_versions.items():
+            if len(versions) > 1:
+                errors.append(
+                    f"Final page/line locations for document role {role} do not share one final DOCX/PDF hash pair; "
+                    "all ResponseUnits in a changed role must be remapped together."
                 )
         event_ids = [event.event_id for event in self.events]
         if len(event_ids) != len(set(event_ids)):
