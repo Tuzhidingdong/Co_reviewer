@@ -2552,7 +2552,7 @@ def build_parser():
     bl.add_argument("--task-ids", nargs="+", help="Optional subset of the current conflict-free ready batch.")
     bl.add_argument("--document-paths", help="Optional JSON map of document role to input_file/output_file.")
     bl.add_argument("--reviewer-comments", help="Optional JSON map of comment ID to exact reviewer comment text.")
-    bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label.")
+    bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label; nested comment_ids maps preserve multiple reviewers within one task.")
     bl.add_argument("--out", default="revision_ledger.json")
     bl.set_defaults(func=cmd_build_revision_ledger)
     sp = sub.add_parser("supersede-patch", help="Replace a Patch while reopening linked ResponseUnits.")
