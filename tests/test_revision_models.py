@@ -15,6 +15,7 @@ from co_reviewer.revision_models import (
     ResponseLocation,
     ResponseUnit,
     RevisionLedger,
+    RevisionDocument,
     RevisionModelError,
     build_revision_ledger,
     response_units_to_legacy_plan,
@@ -57,6 +58,21 @@ class RevisionModelsTests(unittest.TestCase):
         self.map_bytes = b'{"location_map_id":"fixture-map","source":"synthetic"}'
         self.map_path.write_bytes(self.map_bytes)
         self.map_sha256 = hashlib.sha256(self.map_bytes).hexdigest()
+        self.input_docx = self.root / "Manuscript_source.docx"
+        self.marked_docx = self.root / "Manuscript_marked.docx"
+        self.clean_docx = self.root / "Manuscript_working_clean.docx"
+        self.input_docx.write_bytes(b"synthetic source DOCX")
+        self.marked_docx.write_bytes(b"synthetic marked DOCX")
+        self.clean_docx.write_bytes(b"synthetic accepted Clean DOCX")
+        self.clean_sha256 = hashlib.sha256(self.clean_docx.read_bytes()).hexdigest()
+        self.document = RevisionDocument(
+            document_id="doc-manuscript", revision_id="rev-synthetic", role="Manuscript",
+            input_file=str(self.input_docx), output_file=str(self.marked_docx),
+            source_sha256=hashlib.sha256(self.input_docx.read_bytes()).hexdigest(),
+            output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+            working_clean_file=str(self.clean_docx), working_clean_sha256=self.clean_sha256,
+            working_view_fingerprint=HASH_B,
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -478,6 +494,14 @@ class RevisionModelsTests(unittest.TestCase):
             comment_id="C1",
             comment_text="Please explain.",
             response_text="We explained it.",
+            disposition="no_change",
+            location_requirement="existing_anchor_required",
+            resolution_reason="The original paragraph already contains the requested explanation.",
+            anchor_evidence_id="E-STALE-ANCHOR",
+            anchor_document="Manuscript",
+            anchor_part="word/document.xml",
+            anchor_p_idx=0,
+            anchor_source_excerpt="The original paragraph already contains this explanation.",
             status="location_mapped",
             semantic_review_confirmed=True,
             verification_report_id="semantic-001",
@@ -494,9 +518,11 @@ class RevisionModelsTests(unittest.TestCase):
                 pdf_sha256=self.pdf_sha256,
                 location_map_id="fixture-map",
                 mapping_fingerprint=HASH_A,
+                locator_id="anchor:E-STALE-ANCHOR",
+                source_clean_sha256=self.clean_sha256,
             )],
         )
-        ledger = RevisionLedger("round-stale-pdf", response_units=[unit])
+        ledger = RevisionLedger("round-stale-pdf", documents=[self.document], response_units=[unit])
         self.pdf_path.write_bytes(self.pdf_bytes + b"tampered")
         with self.assertRaisesRegex(RevisionModelError, "Final mapped PDF changed"):
             ledger.to_dict()
@@ -510,7 +536,16 @@ class RevisionModelsTests(unittest.TestCase):
                 comment_id="C1",
                 comment_text="Please explain.",
                 response_text="We have explained the process.",
+                disposition="no_change",
+                location_requirement="existing_anchor_required",
+                resolution_reason="The confirmed original paragraph already describes the method.",
+                anchor_evidence_id="E-ANCHOR",
+                anchor_document="Manuscript",
+                anchor_part="word/document.xml",
+                anchor_p_idx=0,
+                anchor_source_excerpt="The existing paragraph explains the process.",
             )],
+            documents=[self.document],
         )
         ledger.confirm_response_units(
             ["RU-1"],
@@ -535,6 +570,8 @@ class RevisionModelsTests(unittest.TestCase):
                     "pdf_sha256": self.pdf_sha256,
                     "location_map_id": "map-001",
                     "mapping_fingerprint": HASH_A,
+                    "locator_id": "anchor:E-ANCHOR",
+                    "source_clean_sha256": self.clean_sha256,
                 }],
             }],
         }
@@ -593,7 +630,7 @@ class RevisionModelsTests(unittest.TestCase):
             semantic_review_confirmed=True,
             verification_report_id="response-verify-001",
         )
-        ledger = RevisionLedger("round-response-patch", patches=[patch], response_units=[unit])
+        ledger = RevisionLedger("round-response-patch", documents=[self.document], patches=[patch], response_units=[unit])
         location = ResponseLocation(
             document="Manuscript",
             output_file="Manuscript_revised.docx",
@@ -604,6 +641,8 @@ class RevisionModelsTests(unittest.TestCase):
             pdf_sha256=self.pdf_sha256,
             location_map_id="map-002",
             mapping_fingerprint=HASH_A,
+            locator_id="OP-001",
+            source_clean_sha256=self.clean_sha256,
         )
         unit.record_final_locations(
             HASH_A,
