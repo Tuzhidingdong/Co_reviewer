@@ -372,6 +372,27 @@
             "null"
           ],
           "pattern": "^[a-f0-9]{64}$"
+        },
+        "working_clean_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "working_clean_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "working_view_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "additionalProperties": false
