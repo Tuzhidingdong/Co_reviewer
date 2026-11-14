@@ -114,6 +114,22 @@ class WorkflowEngineTests(unittest.TestCase):
         )
         self.assertEqual(tasks[1]["status"], "verified")
 
+    def test_malformed_status_and_action_values_do_not_crash_adapter(self):
+        malformed = [{
+            "task_id": "T1",
+            "dependencies": [],
+            "target_groups": [],
+            "status": {"unexpected": "mapping"},
+        }]
+        self.assertTrue(any("unsupported workflow status" in error for error in validate_workflow_tasks(malformed)))
+        adapted = workflow_tasks_from_decision_plan([{
+            "task_id": "T2",
+            "status": "pending",
+            "dependencies": [],
+            "targets": [{"action": {"bad": "type"}, "document": "Manuscript", "part": "word/document.xml", "p_idx": 0}],
+        }])
+        self.assertEqual(adapted[0]["target_groups"], [])
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             {"task_id": "A", "dependencies": [], "target_groups": ["shared"], "status": "planned"},
