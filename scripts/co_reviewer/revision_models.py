@@ -468,6 +468,39 @@ class ResponseUnit:
                 raise RevisionModelError("Completed ResponseUnit requires completed_at_utc.")
             _aware_timestamp(self.completed_at_utc, "completed_at_utc")
 
+    def validate_location_evidence(self) -> list[str]:
+        if self.status not in {"location_mapped", "completed"}:
+            return []
+        errors: list[str] = []
+        if not self.location_map_file or not self.location_map_file_sha256:
+            return ["Mapped ResponseUnit is missing its source location-map artifact."]
+        map_path = Path(self.location_map_file).expanduser().resolve()
+        if not map_path.is_file():
+            errors.append(f"Location map file no longer exists: {map_path}")
+        else:
+            try:
+                if sha256_file(map_path) != self.location_map_file_sha256:
+                    errors.append(f"Location map file changed after mapping: {map_path}")
+            except OSError as exc:
+                errors.append(f"Cannot recheck location map file {map_path}: {exc}")
+        if not self.final_locations:
+            errors.append("Mapped ResponseUnit has no final PDF line locations.")
+        for location in self.final_locations:
+            pdf_path = Path(location.pdf_file).expanduser().resolve()
+            if not pdf_path.is_file():
+                errors.append(f"Final mapped PDF no longer exists: {pdf_path}")
+                continue
+            try:
+                if sha256_file(pdf_path) != location.pdf_sha256:
+                    errors.append(f"Final mapped PDF changed after line mapping: {pdf_path}")
+            except OSError as exc:
+                errors.append(f"Cannot recheck final mapped PDF {pdf_path}: {exc}")
+            if location.mapping_fingerprint != self.location_map_fingerprint:
+                errors.append(
+                    f"ResponseUnit {self.response_unit_id} contains a location from another map."
+                )
+        return errors
+
     @property
     def final_location_fingerprint(self) -> str:
         return _fingerprint([item.to_dict() for item in self.final_locations])
@@ -606,6 +639,10 @@ class RevisionLedger:
             if patch.supersedes_patch_id == patch.patch_id:
                 errors.append(f"Patch {patch.patch_id} cannot supersede itself.")
         for unit in self.response_units:
+            errors.extend(
+                f"ResponseUnit {unit.response_unit_id}: {error}"
+                for error in unit.validate_location_evidence()
+            )
             unknown = set(unit.linked_patch_ids) - known_patches
             if unknown:
                 errors.append(
