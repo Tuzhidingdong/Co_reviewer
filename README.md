@@ -223,3 +223,21 @@ The command requires exact operation coverage for every manual-required Response
 
 
 A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id (for example, anchor:E-ANCHOR-2), not operation_id; it records a locator, never an executable Patch.
+
+
+For a `no_change/manual_required` unit, the input uses the confirmed anchor key rather than a PatchOperation:
+
+```json
+{
+  "response_units": [
+    {
+      "response_unit_id": "RU-T2-C3",
+      "locator_id": "anchor:E-ANCHOR-2",
+      "locator_text": "Table 2, Methods, row 3"
+    }
+  ]
+}
+```
+
+The anchor evidence must already have been confirmed and re-resolved in the current Working Clean part. This records only the author's final locator; it does not create a PatchOperation or claim that the manuscript was changed.
+
