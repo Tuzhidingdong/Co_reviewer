@@ -33,6 +33,7 @@ The output directory must be new or empty. The command creates one Word-final Cl
 - The same target phrase must be extractable from the corresponding PDF page.
 - Word is explicitly switched to Print Layout view before line numbering is queried. Page and line numbers are read from Word COM after pagination; both the first and last target characters use Word's `wdFirstCharacterLineNumber` constant (10). `wdWithInTable` (12) is used only to reject table-cell locations because Word line numbering is not reliable there. The PDF page text is an independent page-level check.
 - The map stores the final DOCX and PDF SHA-256 values. Ledger validation rechecks them.
+- The standalone `record-response-locations` command also compares the map's `revision_ledger_sha256` with the exact current RevisionLedger bytes before attaching locations; stale maps must be regenerated and cannot be reused after any ledger change.
 - Automatic mapping currently supports unique, single-paragraph body-text replacement text outside tables in `word/document.xml` that fits Word's 255-character Find limit and stays on one page. Deletions, ambiguous text, multi-page spans, header/footer targets and response-only units stop for manual resolution rather than receiving guessed locations.
 
 ## Acceptance boundary
