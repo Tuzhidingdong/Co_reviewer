@@ -159,6 +159,53 @@ class WordPdfMapperContractTests(unittest.TestCase):
         self.assertEqual(job.source_clean_docx, str(self.clean_docx.resolve()))
         self.assertEqual((job.patch_id, job.operation_id, job.locator_id), ("P1", "OP-1", "OP-1"))
 
+    def test_manual_required_non_body_target_requests_role_export_without_auto_mapping(self):
+        operation = PatchOperation.from_mapping({
+            **self.operation.to_dict(),
+            "part": "word/header1.xml",
+        })
+        manual_patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please revise the table.",
+            proposed_response="We revised the table.",
+            operations=[operation],
+            status="verified",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="PF-1",
+            approval_fingerprint="b" * 64,
+            apply_report_ids=["AP-1"],
+            verification_report_id="VF-1",
+            verified_output_hashes=[{
+                "path": str(self.marked_docx),
+                "sha256": sha256_file(self.marked_docx),
+            }],
+        )
+        manual_unit = ResponseUnit(
+            response_unit_id="RU-MANUAL-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please revise the table.",
+            response_text="We revised the table.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-1"],
+            disposition="revised",
+            location_requirement="manual_required",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-MANUAL",
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-manual",
+            documents=[self.document],
+            patches=[manual_patch],
+            response_units=[manual_unit],
+        )
+        jobs = build_mapping_jobs(ledger)
+        self.assertEqual(jobs, {"Manuscript": []})
+
     def test_unconfirmed_response_unit_is_excluded_not_guessed(self):
         jobs = build_mapping_jobs(self._ledger(unit_status="draft"))
         self.assertEqual(jobs, {})
