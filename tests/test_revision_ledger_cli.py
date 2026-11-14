@@ -636,8 +636,18 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             verification_report_id="SEM-T2",
         )
         timestamp = "2026-11-14T12:00:00+08:00"
+        prior_document = RevisionDocument(
+            document_id="Manuscript",
+            revision_id="revision-one",
+            role="Manuscript",
+            input_file=str(source),
+            output_file=str(marked),
+            source_sha256=source_hash,
+            output_sha256=marked_hash,
+        )
         revision = RevisionLedger(
             revision_round_id="round-dag-sync",
+            documents=[prior_document],
             patches=[patch1],
             response_units=[response1, response2],
             events=[
@@ -794,6 +804,14 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             {patch.patch_id: patch.status for patch in final_ledger.patches},
             {"T1": "verified", "T2": "verified"},
         )
+        final_document = next(
+            document for document in final_ledger.documents
+            if document.role == "Manuscript"
+        )
+        self.assertEqual(Path(final_document.input_file), marked)
+        self.assertEqual(Path(final_document.output_file), final_docx)
+        self.assertEqual(final_document.source_sha256, marked_hash)
+        self.assertEqual(final_document.output_sha256, sha256_file(final_docx))
         final_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
         self.assertEqual(
             {task["task_id"]: task["status"] for task in final_workflow["tasks"]},
