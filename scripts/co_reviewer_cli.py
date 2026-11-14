@@ -1202,6 +1202,13 @@ def cmd_build_revision_ledger(args):
         raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
 
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    from co_reviewer.workflow_engine import validate_workflow_ledger
+    workflow_errors = validate_workflow_ledger(workflow)
+    if workflow_errors:
+        raise ValueError(
+            "Cannot build a RevisionLedger from an invalid Workflow Ledger:\n- "
+            + "\n- ".join(workflow_errors)
+        )
     document_paths = (
         json.loads(Path(args.document_paths).read_text(encoding="utf-8"))
         if args.document_paths else {}
