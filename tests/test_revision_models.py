@@ -462,6 +462,139 @@ class RevisionModelsTests(unittest.TestCase):
         )
         self.assertEqual(unit.status, "completed")
 
+    def test_patch_supersession_reopens_response_and_rebases_on_prior_output(self):
+        previous = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify the statement.",
+            proposed_response="We clarified the statement.",
+            operations=[_operation(
+                operation_id="P1-OP1",
+                input_file="Manuscript.docx",
+                output_file="Manuscript_r1.docx",
+            )],
+            status="applied",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-P1",
+            approval_fingerprint=HASH_B,
+            apply_report_ids=["apply-P1"],
+        )
+        response = ResponseUnit(
+            response_unit_id="RU-T1-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify the statement.",
+            response_text="We clarified the statement.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="response-semantic-P1",
+        )
+        ledger = RevisionLedger(
+            "round-supersession",
+            patches=[previous],
+            response_units=[response],
+        )
+        replacement = Patch(
+            patch_id="P2",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify the statement.",
+            proposed_response="We revised the clarification again.",
+            operations=[_operation(
+                operation_id="P2-OP1",
+                input_file="Manuscript_r1.docx",
+                output_file="Manuscript_r2.docx",
+                find="revised phrase",
+                replace="more precise phrase",
+            )],
+            supersedes_patch_id="P1",
+        )
+        ledger.supersede_patch(
+            "P1",
+            replacement,
+            actor="Human Author",
+            reason="The first revision needs a more precise description.",
+        )
+        self.assertEqual(previous.status, "superseded")
+        self.assertEqual(replacement.status, "planned")
+        self.assertEqual(response.linked_patch_ids, ["P2"])
+        self.assertEqual(response.status, "draft")
+        self.assertFalse(response.semantic_review_confirmed)
+        self.assertIsNone(response.verification_report_id)
+        self.assertEqual(
+            [patch.patch_id for patch in ledger.to_legacy_revision_plan()["revision_items"]],
+            ["P2"],
+        )
+        self.assertEqual(
+            [event.event_type for event in ledger.events],
+            ["patch_superseded", "response_reopened_after_patch_supersession"],
+        )
+
+    def test_patch_supersession_refuses_to_rebase_from_wrong_source(self):
+        previous = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="Clarified.",
+            operations=[_operation(
+                input_file="Manuscript.docx",
+                output_file="Manuscript_r1.docx",
+            )],
+            status="verified",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-P1",
+            approval_fingerprint=HASH_B,
+            apply_report_ids=["apply-P1"],
+            verification_report_id="verify-P1",
+            verified_output_hashes=[{"path": "Manuscript_r1.docx", "sha256": HASH_B}],
+        )
+        ledger = RevisionLedger("round-wrong-rebase", patches=[previous])
+        replacement = Patch(
+            patch_id="P2",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="Updated clarification.",
+            operations=[_operation(
+                input_file="Manuscript.docx",
+                output_file="Manuscript_r2.docx",
+            )],
+            supersedes_patch_id="P1",
+        )
+        with self.assertRaisesRegex(RevisionModelError, "must use the prior Patch output"):
+            ledger.supersede_patch(
+                "P1",
+                replacement,
+                actor="Human Author",
+                reason="Replace earlier approved wording.",
+            )
+        self.assertEqual(previous.status, "verified")
+        self.assertEqual(len(ledger.patches), 1)
+
+    def test_executed_patch_cannot_be_reexported_as_a_fresh_pending_edit(self):
+        patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="Clarified.",
+            operations=[_operation()],
+            status="applied",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-P1",
+            approval_fingerprint=HASH_B,
+            apply_report_ids=["apply-P1"],
+        )
+        ledger = RevisionLedger("round-no-replay", patches=[patch])
+        with self.assertRaisesRegex(RevisionModelError, "no executable patches"):
+            ledger.to_legacy_revision_plan()
+        with self.assertRaisesRegex(RevisionModelError, "only a new planned Patch"):
+            patch.to_legacy_revision_item()
+
     def test_revision_ledger_round_trips_without_losing_patch_lineage(self):
         patch = Patch(
             patch_id="P2",
