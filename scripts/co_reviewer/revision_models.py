@@ -236,9 +236,10 @@ class Patch:
 
     def to_legacy_revision_item(self) -> dict[str, Any]:
         """Create a pending legacy revision item; approval is deliberately not copied."""
-        if self.status in {"superseded", "blocked"}:
+        if self.status != "planned":
             raise RevisionModelError(
-                f"Patch {self.patch_id} in {self.status} state cannot be sent to the DOCX writer."
+                f"Patch {self.patch_id} is {self.status}; only a new planned Patch can be exported. "
+                "Use its existing preflight/approval/apply history rather than resetting it."
             )
         return {
             "id": self.patch_id,
@@ -617,7 +618,11 @@ class RevisionLedger:
         if len(response_ids) != len(set(response_ids)):
             errors.append("RevisionLedger contains duplicate response_unit_id values.")
         known_patches = set(patch_ids)
+        patch_by_id = {patch.patch_id: patch for patch in self.patches}
+        successor_by_patch: dict[str, str] = {}
         for patch in self.patches:
+            if patch.status in {"applied", "verified"} and not patch.apply_report_ids:
+                errors.append(f"Patch {patch.patch_id} in {patch.status} state lacks apply_report_ids.")
             if patch.status in {"preflighted", "approved", "applied", "verified"}:
                 if not _SHA256_RE.fullmatch(patch.preflight_fingerprint or ""):
                     errors.append(f"Patch {patch.patch_id} in {patch.status} state lacks a valid preflight fingerprint.")
@@ -638,6 +643,39 @@ class RevisionLedger:
                 )
             if patch.supersedes_patch_id == patch.patch_id:
                 errors.append(f"Patch {patch.patch_id} cannot supersede itself.")
+            if patch.supersedes_patch_id in patch_by_id:
+                previous = patch_by_id[patch.supersedes_patch_id]
+                if previous.task_id != patch.task_id:
+                    errors.append(
+                        f"Patch {patch.patch_id} cannot supersede a Patch from another task."
+                    )
+                if previous.status not in {"superseded", "applied", "verified"}:
+                    errors.append(
+                        f"Patch {patch.patch_id} has supersession lineage but predecessor "
+                        f"{previous.patch_id} is still {previous.status}."
+                    )
+                if previous.patch_id in successor_by_patch:
+                    errors.append(
+                        f"Patch {previous.patch_id} has more than one superseding Patch."
+                    )
+                successor_by_patch[previous.patch_id] = patch.patch_id
+
+        # Supersession is a lineage graph; reject cycles before it can be used
+        # to select the current Patch for a task.
+        for patch in self.patches:
+            seen_lineage: set[str] = set()
+            current = patch
+            while current.supersedes_patch_id:
+                if current.patch_id in seen_lineage:
+                    errors.append(
+                        f"Patch supersession cycle detected at {current.patch_id}."
+                    )
+                    break
+                seen_lineage.add(current.patch_id)
+                predecessor = patch_by_id.get(current.supersedes_patch_id)
+                if predecessor is None:
+                    break
+                current = predecessor
         for unit in self.response_units:
             errors.extend(
                 f"ResponseUnit {unit.response_unit_id}: {error}"
@@ -881,7 +919,7 @@ class RevisionLedger:
         items = [
             patch.to_legacy_revision_item()
             for patch in self.patches
-            if patch.status not in {"superseded", "blocked"}
+            if patch.status == "planned"
         ]
         if not items:
             raise RevisionModelError("RevisionLedger has no executable patches.")
