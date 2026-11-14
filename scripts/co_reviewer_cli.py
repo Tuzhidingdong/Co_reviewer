@@ -1201,6 +1201,98 @@ def _load_revision_ledger(path: str | Path) -> RevisionLedger:
     return revision_ledger_from_mapping(payload)
 
 
+def cmd_authorize_workflow_tasks(args):
+    from co_reviewer.workflow_engine import (
+        select_ready_tasks,
+        transition_task,
+        validate_workflow_ledger,
+        workflow_scope_fingerprint,
+    )
+
+    if getattr(args, "plan_approved", False) is not True:
+        raise ValueError(
+            "Explicit --plan-approved confirmation is required before tasks can enter ready."
+        )
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise ValueError(
+            "Cannot authorize an invalid Workflow Ledger:\n- " + "\n- ".join(errors)
+        )
+    requested = list(dict.fromkeys(args.ids))
+    if not requested:
+        raise ValueError("At least one task ID must be explicitly approved.")
+    by_id = {
+        task["task_id"]: task
+        for task in workflow.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("task_id"), str)
+    }
+    unknown = [task_id for task_id in requested if task_id not in by_id]
+    if unknown:
+        raise ValueError("Unknown Workflow task ID(s): " + ", ".join(unknown))
+
+    now = datetime.now(timezone.utc).isoformat()
+    for task_id in requested:
+        task = by_id[task_id]
+        if task.get("status") not in {"planned", "blocked", "recheck_required"}:
+            raise ValueError(
+                f"Task {task_id} cannot be authorized from state {task.get('status')}."
+            )
+        if task.get("readiness") != "ready_for_author_approval":
+            raise ValueError(
+                f"Task {task_id} is not ready for author approval "
+                f"(readiness={task.get('readiness')})."
+            )
+        if task.get("unresolved_questions"):
+            raise ValueError(
+                f"Task {task_id} still has unresolved questions; resolve them before approval."
+            )
+        if task.get("requires_user_approval") is not True:
+            raise ValueError(
+                f"Task {task_id} is missing the explicit user-approval requirement."
+            )
+        pending_dependencies = [
+            dependency for dependency in task.get("dependencies", [])
+            if by_id[dependency].get("status") not in {"verified", "completed"}
+        ]
+        if pending_dependencies:
+            raise ValueError(
+                f"Task {task_id} is blocked by unverified dependencies: "
+                + ", ".join(pending_dependencies)
+            )
+        previous_status = task["status"]
+        updated = transition_task(task, "ready")
+        task.clear()
+        task.update(updated)
+        workflow.setdefault("events", []).append({
+            "event_id": str(uuid.uuid4()),
+            "task_id": task_id,
+            "timestamp_utc": now,
+            "event_type": "status_transition",
+            "from_status": previous_status,
+            "to_status": "ready",
+            "reason": "Author explicitly approved this revision task plan.",
+            "actor": args.actor,
+            "fingerprint": workflow_scope_fingerprint(task),
+        })
+
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise ValueError(
+            "Approved Workflow Ledger failed validation:\n- " + "\n- ".join(errors)
+        )
+    ready_batch = select_ready_tasks(workflow["tasks"])
+    write_json_atomic(workflow_path, workflow)
+    print(f"[APPROVED] {len(requested)} task(s): {', '.join(requested)}")
+    print(
+        "[READY BATCH] "
+        + (", ".join(ready_batch) if ready_batch else "No conflict-free task currently executable.")
+    )
+    print(f"[OK] Workflow Ledger: {workflow_path}")
+    return 0
+
+
 def cmd_build_revision_ledger(args):
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     output_path = Path(args.out).expanduser().resolve()
@@ -1210,12 +1302,23 @@ def cmd_build_revision_ledger(args):
         raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
 
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-    from co_reviewer.workflow_engine import validate_workflow_ledger
+    from co_reviewer.workflow_engine import (
+        select_ready_tasks,
+        validate_workflow_ledger,
+    )
     workflow_errors = validate_workflow_ledger(workflow)
     if workflow_errors:
         raise ValueError(
             "Cannot build a RevisionLedger from an invalid Workflow Ledger:\n- "
             + "\n- ".join(workflow_errors)
+        )
+    scheduler_batch = select_ready_tasks(workflow.get("tasks", []))
+    selected_task_ids = list(dict.fromkeys(args.task_ids or scheduler_batch))
+    unavailable = set(selected_task_ids) - set(scheduler_batch)
+    if not selected_task_ids or unavailable:
+        raise ValueError(
+            "RevisionLedger can only be built from the current conflict-free ready batch. "
+            "Unavailable task ID(s): " + ", ".join(sorted(unavailable))
         )
     document_paths = (
         json.loads(Path(args.document_paths).read_text(encoding="utf-8"))
@@ -1241,9 +1344,15 @@ def cmd_build_revision_ledger(args):
         document_paths=document_paths,
         reviewer_comments_by_id=reviewer_comments,
         reviewer_by_task=reviewer_map,
+        selected_task_ids=selected_task_ids,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        existing_ledger = _load_revision_ledger(output_path)
+        existing_ledger.merge_batch(ledger)
+        ledger = existing_ledger
     write_json_atomic(output_path, ledger.to_dict())
+    print(f"[BATCH] Selected ready task(s): {', '.join(selected_task_ids)}")
     print(f"[LEDGER] {len(ledger.patches)} Patch record(s); {len(ledger.response_units)} ResponseUnit(s).")
     print(f"[OK] RevisionLedger: {output_path}")
     return 0
@@ -1783,8 +1892,15 @@ def build_parser():
     cv.add_argument("--semantic-review-confirmed", action="store_true", required=True,
                     help="Required acknowledgement that scientific meaning and cross-document consistency were reviewed.")
     cv.set_defaults(func=cmd_confirm_verified)
-    bl = sub.add_parser("build-revision-ledger", help="Build typed Patches and ResponseUnits from a Workflow Ledger.")
+    awt = sub.add_parser("approve-workflow-tasks", help="Explicitly authorize planned tasks to enter the ready queue.")
+    awt.add_argument("--workflow-ledger", required=True)
+    awt.add_argument("--ids", nargs="+", required=True)
+    awt.add_argument("--actor", default="Human Author")
+    awt.add_argument("--plan-approved", action="store_true", required=True)
+    awt.set_defaults(func=cmd_authorize_workflow_tasks)
+    bl = sub.add_parser("build-revision-ledger", help="Build typed Patches from the current conflict-free ready batch and merge them into the round ledger.")
     bl.add_argument("--workflow-ledger", required=True)
+    bl.add_argument("--task-ids", nargs="+", help="Optional subset of the current conflict-free ready batch.")
     bl.add_argument("--document-paths", help="Optional JSON map of document role to input_file/output_file.")
     bl.add_argument("--reviewer-comments", help="Optional JSON map of comment ID to exact reviewer comment text.")
     bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label.")
