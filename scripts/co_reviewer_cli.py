@@ -1526,6 +1526,7 @@ def cmd_build_revision_ledger(args):
     from co_reviewer.workflow_engine import (
         select_ready_tasks,
         validate_workflow_ledger,
+        workflow_scope_fingerprint,
     )
     workflow_errors = validate_workflow_ledger(workflow)
     if workflow_errors:
@@ -1583,7 +1584,147 @@ def cmd_build_revision_ledger(args):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         existing_ledger = _load_revision_ledger(output_path)
-        existing_ledger.merge_batch(ledger)
+        previous_fingerprints = existing_ledger.workflow_task_fingerprints
+        incoming_fingerprints = ledger.workflow_task_fingerprints
+        removed_tasks = set(previous_fingerprints) - set(incoming_fingerprints)
+        if removed_tasks:
+            raise ValueError(
+                "The new Workflow Ledger removed task(s) from this review round: "
+                + ", ".join(sorted(removed_tasks))
+            )
+        changed_scope_tasks = {
+            task_id for task_id, fingerprint in previous_fingerprints.items()
+            if incoming_fingerprints.get(task_id) != fingerprint
+        }
+        unselected_scope_changes = changed_scope_tasks - set(selected_task_ids)
+        if unselected_scope_changes:
+            raise ValueError(
+                "Task scope changed outside the current author-approved ready batch; "
+                "re-authorize those tasks before refreshing this RevisionLedger: "
+                + ", ".join(sorted(unselected_scope_changes))
+            )
+
+        workflow_tasks_by_id = {
+            task.get("task_id"): task
+            for task in workflow.get("tasks", [])
+            if isinstance(task, dict)
+        }
+        ready_events_by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in workflow.get("events", []):
+            if (
+                isinstance(event, dict)
+                and event.get("event_type") == "status_transition"
+                and event.get("to_status") == "ready"
+                and isinstance(event.get("task_id"), str)
+                and isinstance(event.get("actor"), str)
+                and event.get("actor").strip()
+            ):
+                ready_events_by_task[event["task_id"]].append(event)
+
+        original_addition_patches = list(ledger.patches)
+        superseded_in_addition: set[str] = set()
+        for patch in original_addition_patches:
+            task = workflow_tasks_by_id.get(patch.task_id)
+            same_task_history = [
+                item for item in existing_ledger.patches
+                if item.task_id == patch.task_id
+            ]
+            active_history = [
+                item for item in same_task_history
+                if item.status not in {"superseded", "blocked"}
+            ]
+            if len(active_history) > 1:
+                raise ValueError(
+                    f"Task {patch.task_id} has multiple active Patches; resolve its lineage before rebasing."
+                )
+
+            prior = active_history[0] if active_history else None
+            if prior is not None:
+                same_patch_scope = (
+                    prior.reviewer == patch.reviewer
+                    and prior.comment == patch.comment
+                    and prior.proposed_response == patch.proposed_response
+                    and [item.to_dict() for item in prior.operations]
+                    == [item.to_dict() for item in patch.operations]
+                )
+                if same_patch_scope:
+                    if prior.status == "planned":
+                        # Idempotent rerun: the exact planned Patch is already recorded.
+                        superseded_in_addition.add(patch.patch_id)
+                        continue
+                    raise ValueError(
+                        f"Task {patch.task_id} already has a {prior.status} Patch with unchanged operands. "
+                        "Refresh its input DOCX from the latest verified document output before rebuilding."
+                    )
+
+                matching_ready_events = [
+                    event for event in ready_events_by_task.get(patch.task_id, [])
+                    if event.get("fingerprint") == workflow_scope_fingerprint(task)
+                ]
+                if not matching_ready_events:
+                    raise ValueError(
+                        f"Task {patch.task_id} has no author-approval event for the current Patch scope."
+                    )
+                actor = matching_ready_events[-1]["actor"]
+                next_number = 2
+                candidate_id = f"{patch.patch_id}-r{next_number}"
+                existing_ids = {item.patch_id for item in existing_ledger.patches}
+                while candidate_id in existing_ids:
+                    next_number += 1
+                    candidate_id = f"{patch.patch_id}-r{next_number}"
+                replacement = replace(
+                    patch,
+                    patch_id=candidate_id,
+                    supersedes_patch_id=prior.patch_id,
+                )
+                existing_ledger.supersede_patch(
+                    prior.patch_id,
+                    replacement,
+                    actor=actor,
+                    reason=(
+                        task.get("invalidation_reason")
+                        or "The author reapproved this task against a refreshed document target."
+                    ),
+                )
+                for unit in ledger.response_units:
+                    if patch.patch_id in unit.linked_patch_ids:
+                        unit.linked_patch_ids = [
+                            candidate_id if item == patch.patch_id else item
+                            for item in unit.linked_patch_ids
+                        ]
+                superseded_in_addition.add(patch.patch_id)
+            else:
+                collisions = [
+                    item for item in existing_ledger.patches
+                    if item.patch_id == patch.patch_id and item.task_id != patch.task_id
+                ]
+                if collisions:
+                    raise ValueError(
+                        f"Patch ID {patch.patch_id} is already owned by another task."
+                    )
+                if any(item.patch_id == patch.patch_id for item in same_task_history):
+                    next_number = 2
+                    candidate_id = f"{patch.patch_id}-r{next_number}"
+                    existing_ids = {item.patch_id for item in existing_ledger.patches}
+                    while candidate_id in existing_ids:
+                        next_number += 1
+                        candidate_id = f"{patch.patch_id}-r{next_number}"
+                    patch.patch_id = candidate_id
+                    for unit in ledger.response_units:
+                        if candidate_id not in unit.linked_patch_ids and (
+                            patch.task_id in unit.linked_task_ids
+                        ):
+                            unit.linked_patch_ids.append(candidate_id)
+
+        if superseded_in_addition:
+            ledger.patches = [
+                patch for patch in ledger.patches
+                if patch.patch_id not in superseded_in_addition
+            ]
+        existing_ledger.merge_batch(
+            ledger,
+            allow_scope_refresh_for_task_ids=sorted(changed_scope_tasks),
+        )
         ledger = existing_ledger
     write_json_atomic(output_path, ledger.to_dict())
     print(f"[BATCH] Selected ready task(s): {', '.join(selected_task_ids)}")

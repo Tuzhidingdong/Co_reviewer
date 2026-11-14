@@ -1530,7 +1530,12 @@ class RevisionLedger:
             "events": [item.to_dict() for item in self.events],
         }
 
-    def merge_batch(self, addition: "RevisionLedger") -> None:
+    def merge_batch(
+        self,
+        addition: "RevisionLedger",
+        *,
+        allow_scope_refresh_for_task_ids: Sequence[str] = (),
+    ) -> None:
         """Append a new ready-batch result to the same review-round ledger."""
         if not isinstance(addition, RevisionLedger):
             raise RevisionModelError("addition must be a RevisionLedger.")
@@ -1546,23 +1551,61 @@ class RevisionLedger:
                 "New Workflow Ledger removed task(s) from this revision round: "
                 + ", ".join(sorted(missing_tasks))
             )
-        changed_tasks = [
+        changed_tasks = {
             task_id for task_id, previous_fingerprint in previous_task_fingerprints.items()
             if incoming_task_fingerprints.get(task_id) != previous_fingerprint
-        ]
-        if changed_tasks:
-            raise RevisionModelError(
-                "Workflow task scope changed after its RevisionLedger batch was created: "
-                + ", ".join(sorted(changed_tasks))
-            )
-        existing_patch_ids = {patch.patch_id for patch in self.patches}
-        duplicate_patches = existing_patch_ids & {
-            patch.patch_id for patch in addition.patches
         }
-        if duplicate_patches:
+        allowed_scope_refreshes = set(allow_scope_refresh_for_task_ids)
+        if changed_tasks - allowed_scope_refreshes:
             raise RevisionModelError(
-                "Patch IDs already exist in the RevisionLedger: "
-                + ", ".join(sorted(duplicate_patches))
+                "Workflow task scope changed without an explicitly authorized rebase: "
+                + ", ".join(sorted(changed_tasks - allowed_scope_refreshes))
+            )
+        for task_id in changed_tasks:
+            existing_task_patches = [
+                patch for patch in self.patches if patch.task_id == task_id
+            ]
+            active_task_patches = [
+                patch for patch in existing_task_patches
+                if patch.status not in {"superseded", "blocked"}
+            ]
+            incoming_task_patches = [
+                patch for patch in addition.patches if patch.task_id == task_id
+            ]
+            existing_replacements = [
+                patch for patch in existing_task_patches
+                if patch.supersedes_patch_id
+                and patch.status not in {"superseded", "blocked"}
+            ]
+            incoming_units = [
+                unit for unit in addition.response_units
+                if task_id in unit.linked_task_ids
+            ]
+            if active_task_patches and not existing_replacements and not any(
+                patch.supersedes_patch_id for patch in incoming_task_patches
+            ):
+                raise RevisionModelError(
+                    f"Task {task_id} scope cannot be refreshed while an earlier Patch is active; "
+                    "create an explicit superseding Patch first."
+                )
+            if not incoming_task_patches and not existing_replacements and not incoming_units:
+                raise RevisionModelError(
+                    f"Task {task_id} scope refresh has no replacement Patch or ResponseUnit evidence."
+                )
+        existing_patch_ids = {patch.patch_id for patch in self.patches}
+        incoming_patch_by_id = {patch.patch_id: patch for patch in addition.patches}
+        duplicate_patches = existing_patch_ids & set(incoming_patch_by_id)
+        conflicting_duplicates = [
+            patch_id for patch_id in duplicate_patches
+            if patch_by_id := next(
+                (item for item in self.patches if item.patch_id == patch_id), None
+            )
+            if patch_by_id.to_dict() != incoming_patch_by_id[patch_id].to_dict()
+        ]
+        if conflicting_duplicates:
+            raise RevisionModelError(
+                "Patch IDs already exist with different contents in the RevisionLedger: "
+                + ", ".join(sorted(conflicting_duplicates))
             )
 
         document_index = {
@@ -1655,7 +1698,10 @@ class RevisionLedger:
                 current.final_locations = []
                 current.completed_at_utc = None
 
-        self.patches.extend(addition.patches)
+        self.patches.extend(
+            patch for patch in addition.patches
+            if patch.patch_id not in existing_patch_ids
+        )
         known_event_ids = {event.event_id for event in self.events}
         for event in addition.events:
             if event.event_id in known_event_ids:
@@ -1847,13 +1893,13 @@ def build_revision_ledger(
             document_id=str(identity.get("document_id") or role),
             revision_id=str(identity.get("revision_id") or _fingerprint({
                 "role": role,
-                "input_file": first_operation.input_file,
-                "source_sha256": first_operation.source_sha256,
+                "revision_round_id": round_id,
+                "identity_mode": "round-scoped-legacy-fallback",
             })),
             role=role,
             input_file=paths.get("input_file", first_operation.input_file),
             output_file=paths.get("output_file", first_operation.output_file),
-            source_sha256=identity.get("source_sha256") or first_operation.source_sha256,
+            source_sha256=identity.get("source_sha256"),
         ))
 
     ledger = RevisionLedger(
