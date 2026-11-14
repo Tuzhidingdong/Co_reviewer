@@ -14,11 +14,13 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import co_reviewer_cli as cli
+from co_reviewer.identity import sha256_file
 from docx import Document
 from co_reviewer.revision_models import (
     Patch,
     PatchOperation,
     ResponseUnit,
+    RevisionDocument,
     RevisionLedger,
     revision_ledger_from_mapping,
     response_units_to_legacy_plan,
@@ -265,6 +267,56 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "--revision-ledger", str(self.ledger_path),
         ])
         self.assertEqual(parsed_approval.revision_ledger, str(self.ledger_path))
+
+    def test_working_clean_view_cli_persists_immutable_projection_in_ledger(self):
+        ledger = self._ledger()
+        cli.apply_document(
+            str(self.input),
+            str(self.output),
+            [{
+                "p_idx": 0,
+                "find": "old phrase",
+                "replace": "revised phrase",
+                "part": "word/document.xml",
+            }],
+            "Working View CLI Test",
+        )
+        marked_bytes = self.output.read_bytes()
+        ledger.documents = [RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id="rev-manuscript-1",
+            role="Manuscript",
+            input_file=str(self.input),
+            output_file=str(self.output),
+            source_sha256=sha256_file(self.input),
+            output_sha256=sha256_file(self.output),
+        )]
+        cli.write_json_atomic(self.ledger_path, ledger.to_dict())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_create_working_clean_views(Namespace(
+                ledger=str(self.ledger_path),
+                suffix=".working_clean",
+                actor="Working View Test",
+            )), 0)
+
+        restored = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        document = restored.documents[0]
+        view_path = Path(document.working_clean_file)
+        self.assertTrue(view_path.is_file())
+        self.assertEqual(self.output.read_bytes(), marked_bytes)
+        self.assertEqual(document.output_sha256, sha256_file(self.output))
+        self.assertEqual(document.working_clean_sha256, sha256_file(view_path))
+        with __import__("zipfile").ZipFile(view_path) as archive:
+            root = __import__("xml.etree.ElementTree", fromlist=["ElementTree"]).fromstring(
+                archive.read("word/document.xml")
+            )
+            self.assertIsNone(root.find(".//w:ins", cli.NS))
+            self.assertIsNone(root.find(".//w:del", cli.NS))
+            paragraph = root.find(".//w:p", cli.NS)
+            self.assertEqual(cli.visible_text(paragraph), "The revised phrase remains.")
 
     def test_supersede_patch_cli_reopens_response_and_writes_new_pending_patch(self):
         ledger = self._ledger()
