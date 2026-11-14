@@ -73,7 +73,7 @@ Reviewer attribution is separate from task identity. Populate reviewer_map.json 
       }
     }
 
-The RevisionLedger will label the Patch with the distinct reviewers involved and each ResponseUnit with the reviewer attached to its own comment ID. Do not let one task-level reviewer label overwrite the identities of comments from other reviewers. Without an explicit map, the builder uses the generic label "Reviewer".
+The RevisionLedger will label the Patch with the distinct reviewers involved and each ResponseUnit with the reviewer attached to its own comment ID. Do not let one task-level reviewer label overwrite the identities of comments from other reviewers. Without an explicit map, the builder uses the generic label "Reviewer". For incremental batches, the RevisionLedger preserves any reviewer identity already recorded when a later batch uses this generic fallback; a generic placeholder can be upgraded when an explicit label is supplied, but one explicit reviewer label cannot be silently replaced by a different explicit label. Prefer preparing the complete reviewer map before the first build so every ResponseUnit has correct attribution from the start.
 
 The exact operations, proposed response and reviewer attribution become part of the author-approval fingerprint. Finish preparing them before asking the author to authorize the task. Then authorize only the selected, fully prepared tasks:
 
