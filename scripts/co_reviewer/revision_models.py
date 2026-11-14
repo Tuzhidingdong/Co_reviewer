@@ -1801,7 +1801,9 @@ def build_revision_ledger(
 
     No edit text is inferred. Every executable patch operation must supply
     find/replace and both paths. Reviewer comment text must come from explicit
-    reviewer evidence or reviewer_comments_by_id.
+    reviewer evidence or reviewer_comments_by_id. reviewer_by_task accepts a
+    legacy task-level label or a per-comment mapping so ResponseUnits preserve
+    the reviewer attached to each original comment ID.
     """
     if not isinstance(workflow_ledger, Mapping):
         raise RevisionModelError("workflow_ledger must be an object.")
