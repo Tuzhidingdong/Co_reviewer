@@ -565,6 +565,8 @@
         "anchor_document": { "type": ["string", "null"] },
         "anchor_part": { "type": ["string", "null"] },
         "anchor_p_idx": { "type": ["integer", "null"], "minimum": 0 },
+        "anchor_para_id": { "type": ["string", "null"] },
+        "anchor_source_excerpt": { "type": ["string", "null"] },
         "location_phrase": { "type": ["string", "null"], "maxLength": 255 },
         "linked_targets": {
           "type": "array",
@@ -715,7 +717,7 @@
             "properties": { "disposition": { "const": "no_change" } }
           },
           "then": {
-            "required": ["anchor_evidence_id", "anchor_document", "anchor_part", "anchor_p_idx"],
+            "required": ["anchor_evidence_id", "anchor_document", "anchor_part", "anchor_p_idx", "anchor_source_excerpt"],
             "properties": { "location_requirement": { "const": "existing_anchor_required" } }
           }
         },

@@ -488,6 +488,8 @@ class ResponseUnit:
     anchor_document: str | None = None
     anchor_part: str | None = None
     anchor_p_idx: int | None = None
+    anchor_para_id: str | None = None
+    anchor_source_excerpt: str | None = None
     location_phrase: str | None = None
     status: str = "draft"
     semantic_review_confirmed: bool = False
@@ -516,8 +518,9 @@ class ResponseUnit:
         if self.disposition == "no_change":
             if self.location_requirement != "existing_anchor_required":
                 raise RevisionModelError("no_change ResponseUnits must use existing_anchor_required.")
-            if not all((self.anchor_evidence_id, self.anchor_document, self.anchor_part)) or self.anchor_p_idx is None:
-                raise RevisionModelError("no_change ResponseUnits require a confirmed evidence ID, document, Word part and paragraph index.")
+            if not all((self.anchor_evidence_id, self.anchor_document, self.anchor_part, self.anchor_source_excerpt)) or self.anchor_p_idx is None:
+                raise RevisionModelError("no_change ResponseUnits require a confirmed evidence ID, document, Word part, paragraph index and source excerpt.")
+            _text(self.anchor_source_excerpt, "anchor_source_excerpt")
         if self.disposition == "clarification_needed" and self.status != "blocked":
             raise RevisionModelError("clarification_needed ResponseUnits must remain blocked until resolved.")
         if self.disposition == "revised" and self.location_requirement == "not_required":
@@ -716,6 +719,8 @@ class ResponseUnit:
             "anchor_document": self.anchor_document,
             "anchor_part": self.anchor_part,
             "anchor_p_idx": self.anchor_p_idx,
+            "anchor_para_id": self.anchor_para_id,
+            "anchor_source_excerpt": self.anchor_source_excerpt,
             "location_phrase": self.location_phrase,
             "status": self.status,
             "semantic_review_confirmed": self.semantic_review_confirmed,
@@ -1903,6 +1908,8 @@ class RevisionLedger:
                 or current.anchor_document != incoming.anchor_document
                 or current.anchor_part != incoming.anchor_part
                 or current.anchor_p_idx != incoming.anchor_p_idx
+                or current.anchor_para_id != incoming.anchor_para_id
+                or current.anchor_source_excerpt != incoming.anchor_source_excerpt
                 or current.location_phrase != incoming.location_phrase
             )
             if classification_changed:
@@ -1913,6 +1920,8 @@ class RevisionLedger:
                 current.anchor_document = incoming.anchor_document
                 current.anchor_part = incoming.anchor_part
                 current.anchor_p_idx = incoming.anchor_p_idx
+                current.anchor_para_id = incoming.anchor_para_id
+                current.anchor_source_excerpt = incoming.anchor_source_excerpt
                 current.location_phrase = incoming.location_phrase
             response_text_changed = (
                 bool(incoming.response_text)
@@ -2205,6 +2214,7 @@ def build_revision_ledger(
                     anchor_evidence_id = None
                     anchor_document = anchor_part = None
                     anchor_p_idx = None
+                    anchor_para_id = anchor_source_excerpt = None
                 else:
                     disposition = _text(spec.get("disposition"), f"Task {task_id} response_unit_specs[{comment_id}].disposition")
                     location_requirement = _text(spec.get("location_requirement"), f"Task {task_id} response_unit_specs[{comment_id}].location_requirement")
@@ -2212,11 +2222,16 @@ def build_revision_ledger(
                     anchor_evidence_id = spec.get("anchor_evidence_id")
                     anchor_document = anchor_part = None
                     anchor_p_idx = None
+                    anchor_para_id = anchor_source_excerpt = None
                     if disposition == "no_change":
                         anchor = evidence_by_id.get(str(anchor_evidence_id))
                         if not isinstance(anchor, Mapping) or anchor.get("match_status") != "confirmed" or anchor.get("document") not in {"Manuscript", "SI"} or anchor.get("part") != "word/document.xml" or not isinstance(anchor.get("p_idx"), int):
                             raise RevisionModelError(f"no_change ResponseUnit {comment_id} requires confirmed Manuscript/SI body-paragraph anchor evidence.")
                         anchor_document, anchor_part, anchor_p_idx = anchor.get("document"), anchor.get("part"), anchor.get("p_idx")
+                        anchor_para_id = anchor.get("para_id")
+                        anchor_source_excerpt = anchor.get("source_excerpt")
+                        if not isinstance(anchor_source_excerpt, str) or not anchor_source_excerpt.strip():
+                            raise RevisionModelError(f"no_change ResponseUnit {comment_id} anchor evidence must include source_excerpt text.")
                 if disposition == "revised" and task_id in selected_ids and not linked_ops:
                     raise RevisionModelError(f"revised ResponseUnit {comment_id} has no PatchOperation with source_comment_ids including that comment.")
                 if disposition == "reply_only" and location_requirement != "not_required":
@@ -2249,6 +2264,8 @@ def build_revision_ledger(
                     anchor_document=anchor_document,
                     anchor_part=anchor_part,
                     anchor_p_idx=anchor_p_idx,
+                    anchor_para_id=anchor_para_id,
+                    anchor_source_excerpt=anchor_source_excerpt,
                     status="blocked" if disposition == "clarification_needed" else "draft",
                 ))
 
@@ -2431,6 +2448,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             anchor_document=row.get("anchor_document"),
             anchor_part=row.get("anchor_part"),
             anchor_p_idx=row.get("anchor_p_idx"),
+            anchor_para_id=row.get("anchor_para_id"),
+            anchor_source_excerpt=row.get("anchor_source_excerpt"),
             location_phrase=row.get("location_phrase"),
             status=("blocked" if legacy_unattributed else row.get("status", "draft")),
             semantic_review_confirmed=(False if legacy_unattributed else row.get("semantic_review_confirmed", False)),

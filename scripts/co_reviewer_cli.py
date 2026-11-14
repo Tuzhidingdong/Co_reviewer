@@ -1986,10 +1986,40 @@ def cmd_create_working_clean_views(args):
                 clean_root = parse_xml(clean_archive.read("word/document.xml"))
             final_paragraphs = [visible_text(paragraph) for paragraph in clean_root.findall(".//w:body//w:p", NS)]
 
-            # Rebuild no-change anchors against the actual final accepted view.
+            # Resolve no-change anchors by stable paragraph ID first, then by the
+            # exact imported evidence excerpt. Never reuse a stale paragraph index.
             for unit in ledger.response_units:
-                if unit.location_requirement == "existing_anchor_required" and unit.anchor_document == document.role:
-                    unit.location_phrase = build_unique_location_phrase(final_paragraphs, unit.anchor_p_idx)
+                if unit.location_requirement != "existing_anchor_required" or unit.anchor_document != document.role:
+                    continue
+                paragraph_nodes = clean_root.findall(".//w:body//w:p", NS)
+                para_id_key = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+                anchor_indices = [
+                    index for index, paragraph in enumerate(paragraph_nodes)
+                    if unit.anchor_para_id and paragraph.get(para_id_key) == unit.anchor_para_id
+                ]
+                if len(anchor_indices) != 1:
+                    anchor_indices = [
+                        index for index, paragraph_text in enumerate(final_paragraphs)
+                        if unit.anchor_source_excerpt and unit.anchor_source_excerpt in paragraph_text
+                    ]
+                if len(anchor_indices) != 1:
+                    raise ValueError(
+                        f"Cannot uniquely resolve no-change anchor {unit.response_unit_id} in final {document.role} Clean DOCX; "
+                        "the original paragraph identity or exact evidence excerpt is missing/ambiguous."
+                    )
+                final_anchor_index = anchor_indices[0]
+                anchor_text = final_paragraphs[final_anchor_index]
+                anchor_start = anchor_text.find(unit.anchor_source_excerpt)
+                if anchor_start < 0:
+                    raise ValueError(
+                        f"No-change anchor excerpt for {unit.response_unit_id} is no longer present in final {document.role}; "
+                        "do not reuse the baseline page/line reference."
+                    )
+                unit.anchor_p_idx = final_anchor_index
+                unit.location_phrase = build_unique_location_phrase(
+                    final_paragraphs, final_anchor_index,
+                    anchor_start, anchor_start + len(unit.anchor_source_excerpt),
+                )
 
             # Refresh operation locators against the final accepted text. The preflight
             # phrase remains valid when unchanged; otherwise use the surviving replacement.
