@@ -49,7 +49,7 @@ from co_reviewer.revision_models import (
 )
 from co_reviewer.working_view import (
     WorkingViewError, create_working_clean_view, inspect_clean_baseline,
-    strip_docx_comments_bytes,
+    strip_docx_comments_bytes, accepted_view_docx_bytes,
 )
 from co_reviewer.usage_audit import (
     record_usage_event, read_usage_events, build_usage_report, estimate_usage_cost,
@@ -486,7 +486,9 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "find": target["find"], "replace": target["replace"],
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
-                "document": target["document"], "location": target.get("location", "")
+                "document": target["document"], "location": target.get("location", ""),
+                "operation_id": target.get("operation_id"),
+                "source_comment_ids": list(target.get("source_comment_ids", [])),
             }
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
@@ -511,6 +513,64 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     prepared = []
     for (inp, out), edits in grouped.items():
         prepared.append(prepare_document(inp, out, edits, author))
+
+    # Generate each operation's unique final-text locator during Preflight.
+    from co_reviewer.word_pdf_mapper import build_unique_location_phrase
+    targets_by_operation: dict[str, dict[str, Any]] = {}
+    for item in eligible_items:
+        for target in item["targets"]:
+            operation_id = target.get("operation_id")
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                raise ValueError(f"{item['id']} contains a target without operation_id; rebuild the Patch with explicit operation attribution.")
+            if operation_id in targets_by_operation:
+                raise ValueError(f"Duplicate operation_id in revision plan: {operation_id}.")
+            targets_by_operation[operation_id] = target
+
+    for (inp, _out), edits in grouped.items():
+        prepared_entry = next(
+            entry for entry in prepared
+            if str(entry["report"]["input_file"]) == str(Path(inp).expanduser().resolve())
+        )
+        source_bytes = accepted_view_docx_bytes(Path(inp).expanduser().read_bytes())
+        with zipfile.ZipFile(io.BytesIO(source_bytes), "r") as accepted_archive:
+            accepted_root = parse_xml(accepted_archive.read("word/document.xml"))
+        body_paragraphs = accepted_root.findall(".//w:body//w:p", NS)
+        paragraph_texts = [visible_text(paragraph) for paragraph in body_paragraphs]
+        tracked_results = prepared_entry["report"].get("results", [])
+        if len(tracked_results) != len(edits):
+            raise ValueError("Preflight result count does not match its prepared target list.")
+        spans_by_operation: dict[str, tuple[int, int, int]] = {}
+        for result in tracked_results:
+            operation_id = result.get("operation_id")
+            if operation_id not in targets_by_operation:
+                raise ValueError(f"Prepared target has unknown operation_id {operation_id!r}.")
+            paragraph_index = result.get("p_idx")
+            if not isinstance(paragraph_index, int) or not 0 <= paragraph_index < len(paragraph_texts):
+                raise ValueError(f"Preflight could not resolve paragraph index for {operation_id}.")
+            current_text = paragraph_texts[paragraph_index]
+            old_text, new_text = str(result.get("find", "")), str(result.get("replace", ""))
+            if current_text.count(old_text) != 1:
+                raise ValueError(f"Preflight could not reproduce the unique text anchor for {operation_id}; no location phrase was guessed.")
+            start = current_text.find(old_text)
+            delta = len(new_text) - len(old_text)
+            for prior_id, (prior_p, prior_start, prior_end) in list(spans_by_operation.items()):
+                if prior_p != paragraph_index:
+                    continue
+                if start + len(old_text) <= prior_start:
+                    spans_by_operation[prior_id] = (prior_p, prior_start + delta, prior_end + delta)
+                elif start >= prior_end:
+                    continue
+                else:
+                    # A later operation edits inside an earlier target. Both ResponseUnits
+                    # point to the final surviving replacement span, not obsolete text.
+                    spans_by_operation[prior_id] = (prior_p, start, start + len(new_text))
+            paragraph_texts[paragraph_index] = current_text[:start] + new_text + current_text[start + len(old_text):]
+            spans_by_operation[operation_id] = (paragraph_index, start, start + len(new_text))
+        for operation_id, (paragraph_index, start, end) in spans_by_operation.items():
+            phrase = build_unique_location_phrase(paragraph_texts, paragraph_index, start, end)
+            target = targets_by_operation[operation_id]
+            target["p_idx"] = paragraph_index
+            target["location_phrase"] = phrase
 
     source_hashes_after = {
         key: sha256_file(path) for key, path in source_paths.items()
@@ -546,6 +606,9 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             result["status"] = "preflighted"
             result.pop("delete_revision_id", None)
             result.pop("insert_revision_id", None)
+            target = targets_by_operation.get(result.get("operation_id"))
+            if target is not None:
+                result["location_phrase"] = target.get("location_phrase")
         document_reports.append(document_report)
     results = [
         result
@@ -1906,6 +1969,7 @@ def cmd_create_working_clean_views(args):
 
     created: list[Path] = []
     now = datetime.now(timezone.utc).isoformat()
+    from co_reviewer.word_pdf_mapper import build_unique_location_phrase
     try:
         for index, (document, marked_path, clean_path) in enumerate(plans):
             report = create_working_clean_view(marked_path, clean_path)
@@ -1914,6 +1978,7 @@ def cmd_create_working_clean_views(args):
                 raise ValueError(
                     f"Marked DOCX for {document.role} changed since its last recorded output hash."
                 )
+            old_clean_sha256 = document.working_clean_sha256
             ledger.documents[index] = replace(
                 document,
                 output_sha256=report["source_sha256"],
@@ -1921,6 +1986,62 @@ def cmd_create_working_clean_views(args):
                 working_clean_sha256=report["output_sha256"],
                 working_view_fingerprint=report["working_view_fingerprint"],
             )
+            with zipfile.ZipFile(clean_path, "r") as clean_archive:
+                clean_root = parse_xml(clean_archive.read("word/document.xml"))
+            final_paragraphs = [visible_text(paragraph) for paragraph in clean_root.findall(".//w:body//w:p", NS)]
+
+            # Rebuild no-change anchors against the actual final accepted view.
+            for unit in ledger.response_units:
+                if unit.location_requirement == "existing_anchor_required" and unit.anchor_document == document.role:
+                    unit.location_phrase = build_unique_location_phrase(final_paragraphs, unit.anchor_p_idx)
+
+            # Refresh operation locators against the final accepted text. The preflight
+            # phrase remains valid when unchanged; otherwise use the surviving replacement.
+            for patch in ledger.patches:
+                refreshed_operations = []
+                for operation in patch.operations:
+                    if operation.document != document.role:
+                        refreshed_operations.append(operation)
+                        continue
+                    phrase = operation.location_phrase
+                    phrase_count = sum(paragraph.count(phrase) for paragraph in final_paragraphs) if phrase else 0
+                    if phrase_count != 1:
+                        if operation.replace and operation.p_idx is not None and 0 <= operation.p_idx < len(final_paragraphs):
+                            paragraph_text = final_paragraphs[operation.p_idx]
+                            if paragraph_text.count(operation.replace) == 1:
+                                start = paragraph_text.find(operation.replace)
+                                phrase = build_unique_location_phrase(final_paragraphs, operation.p_idx, start, start + len(operation.replace))
+                            else:
+                                raise ValueError(f"Cannot refresh unique final location_phrase for {patch.patch_id}/{operation.operation_id}; the replacement no longer exists uniquely in the final Clean DOCX.")
+                        else:
+                            raise ValueError(f"Cannot refresh final location_phrase for delete-only or superseded operation {patch.patch_id}/{operation.operation_id}; its preflight flank anchor no longer survives in the final Clean DOCX.")
+                    refreshed_operations.append(replace(operation, location_phrase=phrase))
+                patch.operations = refreshed_operations
+
+            if old_clean_sha256 and old_clean_sha256 != report["output_sha256"]:
+                for unit in ledger.response_units:
+                    stale = [location for location in unit.final_locations if location.document == document.role]
+                    if not stale:
+                        continue
+                    unit.final_locations = [location for location in unit.final_locations if location.document != document.role]
+                    unit.location_map_fingerprint = None
+                    unit.location_map_file = None
+                    unit.location_map_file_sha256 = None
+                    unit.completed_at_utc = None
+                    if unit.disposition != "clarification_needed" and unit.semantic_review_confirmed:
+                        unit.status = "verified"
+                    ledger.events.append(RevisionEvent(
+                        event_id=str(uuid.uuid4()), subject_id=unit.response_unit_id,
+                        subject_type="response_unit", event_type="document_role_locations_invalidated",
+                        timestamp_utc=now, actor=args.actor,
+                        details={
+                            "document": document.role,
+                            "previous_working_clean_sha256": old_clean_sha256,
+                            "current_working_clean_sha256": report["output_sha256"],
+                            "invalidated_locator_ids": [location.locator_id for location in stale],
+                            "scope": "entire_document_role",
+                        },
+                    ))
             for patch in ledger.patches:
                 if any(operation.document == document.role for operation in patch.operations):
                     ledger.events.append(RevisionEvent(

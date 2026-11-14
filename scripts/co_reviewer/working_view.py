@@ -365,6 +365,18 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
     }
 
 
+def accepted_view_docx_bytes(payload: bytes) -> bytes:
+    """Return an in-memory accepted-revisions projection without leaving artifacts behind."""
+    if not isinstance(payload, (bytes, bytearray)) or not payload:
+        raise WorkingViewError("Accepted-view projection requires non-empty DOCX bytes.")
+    with tempfile.TemporaryDirectory(prefix="co-reviewer-accepted-view-") as temporary:
+        source = Path(temporary) / "source.docx"
+        output = Path(temporary) / "accepted.docx"
+        source.write_bytes(bytes(payload))
+        create_working_clean_view(source, output)
+        return output.read_bytes()
+
+
 def create_working_clean_view(
     input_file: str | Path,
     output_file: str | Path,

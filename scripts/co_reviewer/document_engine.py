@@ -374,7 +374,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "inserted_text": normalize_script_characters(new),
                 "inserted_run_formats": inserted_run_formats
             }
-            for metadata_key in ("revision_item_id", "reviewer", "document", "location"):
+            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids"):
                 if metadata_key in edit:
                     edit_result[metadata_key] = edit[metadata_key]
             edit_results.append(edit_result)
