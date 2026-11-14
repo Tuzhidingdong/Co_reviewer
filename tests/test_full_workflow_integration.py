@@ -530,6 +530,29 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
         self.assertIn("Reviewer 1 — RU-T1-1", response_text)
         self.assertIn("SEMANTIC REVIEWED; FINAL PDF PAGE/LINE MAPPING PENDING", response_text)
         self.assertNotIn("**Response**", response_text)
+
+        response_docx_path = self.root / "Response_to_Reviewers.docx"
+        response_quality_path = self.root / "ResponseLetter_quality_report.json"
+        self.assertEqual(
+            self.call_silently(
+                cli.cmd_response_docx,
+                type("Args", (), {
+                    "plan": None,
+                    "revision_ledger": str(revision_ledger_path),
+                    "out": str(response_docx_path),
+                    "quality_report": str(response_quality_path),
+                    "manuscript_title": "Synthetic manuscript",
+                    "author": "Synthetic Author",
+                })(),
+            ),
+            0,
+        )
+        self.assertTrue(response_docx_path.is_file())
+        response_quality = json.loads(
+            response_quality_path.read_text(encoding="utf-8")
+        )
+        self.assertEqual(response_quality["status"], "PASS")
+
         self.assertEqual(
             {path: path.read_bytes() for path in original_bytes},
             original_bytes,
