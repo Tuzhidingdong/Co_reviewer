@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Word-native final pagination, PDF export and ResponseUnit location mapping.
+"""Word-native pagination and document-role-scoped ResponseUnit mapping.
 
-This module is intentionally Windows-only at execution time. It never edits the
-ledger's Marked DOCX or Working Clean View source: Word opens the latter read-only
-and saves a separate final Clean DOCX before exporting its PDF.
+All physical page and line values come from Microsoft Word COM after field
+refresh and repagination. The exported PDF is retained and hash-bound; no PDF
+text-extraction engine is used to manufacture or second-guess Word line numbers.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,21 +17,30 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .identity import sha256_file
-from .revision_models import RevisionLedger, RevisionModelError
+from .revision_models import RevisionLedger
 
 
 class WordPdfMappingError(RuntimeError):
-    """Raised when Word/PDF evidence is missing, ambiguous or inconsistent."""
+    """Raised when Word pagination evidence is missing, stale or ambiguous."""
 
 
 @dataclass(frozen=True)
 class MappingJob:
     response_unit_id: str
-    patch_id: str
-    operation_id: str
+    locator_id: str
+    patch_id: str | None
+    operation_id: str | None
     document_role: str
     phrase: str
     source_clean_docx: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.response_unit_id, self.locator_id)
+
+    @property
+    def label(self) -> str:
+        return f"{self.response_unit_id}/{self.locator_id}"
 
 
 def _fingerprint(payload: Any) -> str:
@@ -66,29 +74,120 @@ def assert_location_map_matches_ledger(
     return actual
 
 
-def _normalise_pdf_text(value: str) -> str:
-    value = unicodedata.normalize("NFKC", value).replace("\u00ad", "")
-    value = value.replace("\u00a0", " ")
-    return re.sub(r"\s+", " ", value).strip().casefold()
-
-
 def _validate_mapping_phrase(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise WordPdfMappingError("A Patch replacement must contain non-empty surviving text.")
+        raise WordPdfMappingError("A final location phrase must contain surviving text.")
     if len(value) > 255:
         raise WordPdfMappingError(
-            "Word's exact Find operation is limited to 255 characters; split this Patch target "
-            "into a shorter, independently verifiable phrase before mapping."
+            "Word's exact Find operation is limited to 255 characters; "
+            "the deterministic location-phrase window must be shortened."
         )
     if any(char in value for char in "\r\n\t"):
         raise WordPdfMappingError(
-            "Automatic mapping currently requires a single-paragraph phrase without tabs."
+            "Automatic Word mapping requires a single-paragraph phrase without tabs."
         )
     return value
 
 
+def _phrase_occurrences(paragraphs: Sequence[str], phrase: str) -> int:
+    total = 0
+    for paragraph in paragraphs:
+        cursor = 0
+        while True:
+            position = paragraph.find(phrase, cursor)
+            if position < 0:
+                break
+            total += 1
+            cursor = position + 1
+    return total
+
+
+def build_unique_location_phrase(
+    paragraphs: Sequence[str],
+    paragraph_index: int,
+    start: int | None = None,
+    end: int | None = None,
+) -> str:
+    """Create a <=255-character unique Word Find phrase by expanding local word flanks.
+
+    A zero-width span represents a deletion boundary and starts with the last
+    four words on the left plus the first four words on the right. When no span
+    is supplied, a compact anchor is chosen from the middle of an existing
+    paragraph (used for no-change responses).
+    """
+    if not isinstance(paragraphs, (list, tuple)) or not 0 <= paragraph_index < len(paragraphs):
+        raise WordPdfMappingError("The location-phrase paragraph anchor is outside the document.")
+    paragraph = str(paragraphs[paragraph_index])
+    tokens = list(re.finditer(r"\S+", paragraph))
+    if not tokens:
+        raise WordPdfMappingError("The selected paragraph has no mappable text.")
+    if start is None and end is None:
+        centre = len(tokens) // 2
+        first = max(0, centre - 2)
+        last = min(len(tokens) - 1, centre + 2)
+    elif isinstance(start, int) and isinstance(end, int) and 0 <= start <= end <= len(paragraph):
+        if start == end:
+            left = [i for i, token in enumerate(tokens) if token.end() <= start]
+            right = [i for i, token in enumerate(tokens) if token.start() >= end]
+            first = max(0, (left[-1] - 3) if left else (right[0] if right else 0))
+            last = min(len(tokens) - 1, (right[0] + 3) if right else (left[-1] if left else len(tokens) - 1))
+        else:
+            overlap = [
+                i for i, token in enumerate(tokens)
+                if token.end() > start and token.start() < end
+            ]
+            if not overlap:
+                nearest = min(range(len(tokens)), key=lambda i: abs(tokens[i].start() - start))
+                first = last = nearest
+            else:
+                first, last = overlap[0], overlap[-1]
+    else:
+        raise WordPdfMappingError("The location-phrase character span is invalid.")
+
+    # A long replacement is represented by a local word window around its centre;
+    # the resulting phrase still points to its exact final location.
+    candidate = paragraph[tokens[first].start():tokens[last].end()]
+    while len(candidate) > 255 and first < last:
+        if (last - first) % 2:
+            first += 1
+        else:
+            last -= 1
+        candidate = paragraph[tokens[first].start():tokens[last].end()]
+    if len(candidate) > 255:
+        centre = (tokens[first].start() + tokens[last].end()) // 2
+        left_bound = max(tokens[first].start(), centre - 110)
+        right_bound = min(tokens[last].end(), left_bound + 220)
+        candidate = paragraph[left_bound:right_bound].strip()
+    for _ in range(len(tokens) * 2 + 1):
+        if candidate and len(candidate) <= 255 and not any(ch in candidate for ch in "\r\n\t"):
+            if _phrase_occurrences(paragraphs, candidate) == 1:
+                return candidate
+        can_left = first > 0
+        can_right = last < len(tokens) - 1
+        if not can_left and not can_right:
+            break
+        if can_left:
+            proposed_first = first - 1
+            proposed = paragraph[tokens[proposed_first].start():tokens[last].end()]
+            if len(proposed) <= 255:
+                first = proposed_first
+                candidate = proposed
+        if _phrase_occurrences(paragraphs, candidate) != 1 and can_right:
+            proposed_last = last + 1
+            proposed = paragraph[tokens[first].start():tokens[proposed_last].end()]
+            if len(proposed) <= 255:
+                last = proposed_last
+                candidate = proposed
+        if not can_left and not can_right:
+            break
+    raise WordPdfMappingError(
+        f"Could not create a unique Word Find phrase for paragraph {paragraph_index}; "
+        "the document contains indistinguishable repeated text within Word's 255-character limit."
+    )
+
+
 def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
-    """Resolve each verified ResponseUnit to exact text in the current Clean View."""
+    """Collect every location-required RU locator, grouped at Document Role granularity."""
     if not isinstance(ledger, RevisionLedger):
         raise WordPdfMappingError("A validated RevisionLedger is required.")
     documents_by_role: dict[str, Any] = {}
@@ -100,71 +199,107 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
             )
         documents_by_role[document.role] = document
 
-    patches_by_id = {patch.patch_id: patch for patch in ledger.patches}
+    patch_by_id = {patch.patch_id: patch for patch in ledger.patches}
+    operation_index: dict[str, tuple[Any, Any]] = {}
+    for patch in ledger.patches:
+        for operation in patch.operations:
+            if operation.operation_id in operation_index:
+                raise WordPdfMappingError(f"Duplicate PatchOperation ID: {operation.operation_id}.")
+            operation_index[operation.operation_id] = (patch, operation)
+
     jobs: dict[str, list[MappingJob]] = {}
     for unit in ledger.response_units:
-        if unit.status != "verified" or unit.semantic_review_confirmed is not True:
-            raise WordPdfMappingError(
-                f"ResponseUnit {unit.response_unit_id} must pass semantic review before Word/PDF mapping."
-            )
-        if not unit.linked_patch_ids:
-            raise WordPdfMappingError(
-                f"ResponseUnit {unit.response_unit_id} has no linked Patch; "
-                "a surviving manuscript target cannot be inferred."
-            )
-        unit_job_count = 0
-        for patch_id in unit.linked_patch_ids:
-            patch = patches_by_id.get(patch_id)
-            if patch is None:
+        if unit.disposition == "clarification_needed" or unit.status == "blocked":
+            continue
+        if unit.location_requirement in {"not_required", "manual_required"}:
+            continue
+        if not unit.semantic_review_confirmed or unit.status not in {"verified", "location_mapped", "completed"}:
+            continue
+
+        if unit.disposition == "no_change":
+            role = unit.anchor_document
+            document = documents_by_role.get(role)
+            if document is None:
                 raise WordPdfMappingError(
-                    f"ResponseUnit {unit.response_unit_id} links unknown Patch {patch_id}."
+                    f"No current RevisionDocument is registered for existing anchor role {role!r}."
+                )
+            phrase = _validate_mapping_phrase(unit.location_phrase)
+            clean_path = document.working_clean_file
+            if not clean_path or not document.working_clean_sha256:
+                raise WordPdfMappingError(
+                    f"{role} has no hash-bound Working Clean View for existing-anchor mapping."
+                )
+            source = Path(clean_path).expanduser().resolve()
+            if not source.is_file() or sha256_file(source) != document.working_clean_sha256:
+                raise WordPdfMappingError(f"Working Clean View is missing or stale: {source}")
+            locator_id = f"anchor:{unit.anchor_evidence_id}"
+            jobs.setdefault(role, []).append(MappingJob(
+                response_unit_id=unit.response_unit_id,
+                locator_id=locator_id,
+                patch_id=None,
+                operation_id=None,
+                document_role=role,
+                phrase=phrase,
+                source_clean_docx=str(source),
+            ))
+            continue
+
+        if unit.disposition != "revised" or unit.location_requirement != "required":
+            continue
+        if not unit.linked_operation_ids:
+            raise WordPdfMappingError(
+                f"Verified revised ResponseUnit {unit.response_unit_id} has no exact linked_operation_ids."
+            )
+        for operation_id in unit.linked_operation_ids:
+            pair = operation_index.get(operation_id)
+            if pair is None:
+                raise WordPdfMappingError(
+                    f"ResponseUnit {unit.response_unit_id} links unknown PatchOperation {operation_id}."
+                )
+            patch, operation = pair
+            if patch.patch_id not in unit.linked_patch_ids:
+                raise WordPdfMappingError(
+                    f"ResponseUnit {unit.response_unit_id} links operation {operation_id} "
+                    f"without parent Patch {patch.patch_id}."
+                )
+            if unit.comment_id not in operation.source_comment_ids:
+                raise WordPdfMappingError(
+                    f"PatchOperation {operation_id} does not declare source comment {unit.comment_id}."
                 )
             if patch.status != "verified":
                 raise WordPdfMappingError(
-                    f"Patch {patch_id} is {patch.status}, not verified; final lines are blocked."
+                    f"Patch {patch.patch_id} is {patch.status}, not verified; "
+                    f"mapping for {unit.response_unit_id} is blocked."
                 )
-            for operation in patch.operations:
-                if operation.part != "word/document.xml":
-                    raise WordPdfMappingError(
-                        f"Patch {patch_id}/{operation.operation_id} targets {operation.part}; "
-                        "automatic mapping currently supports the main document body only."
-                    )
-                phrase = _validate_mapping_phrase(operation.replace)
-                document = documents_by_role.get(operation.document)
-                if document is None:
-                    raise WordPdfMappingError(
-                        f"No current RevisionDocument is registered for role {operation.document!r}."
-                    )
-                clean_path = document.working_clean_file
-                if not clean_path or not document.working_clean_sha256:
-                    raise WordPdfMappingError(
-                        f"{operation.document} has no hash-bound Working Clean View. "
-                        "Run create-working-clean-views after the final Patch batch."
-                    )
-                source = Path(clean_path).expanduser().resolve()
-                if not source.is_file():
-                    raise WordPdfMappingError(
-                        f"Working Clean View does not exist: {source}"
-                    )
-                if sha256_file(source) != document.working_clean_sha256:
-                    raise WordPdfMappingError(
-                        f"Working Clean View changed after ledger validation: {source}"
-                    )
-                jobs.setdefault(operation.document, []).append(MappingJob(
-                    response_unit_id=unit.response_unit_id,
-                    patch_id=patch.patch_id,
-                    operation_id=operation.operation_id,
-                    document_role=operation.document,
-                    phrase=phrase,
-                    source_clean_docx=str(source),
-                ))
-                unit_job_count += 1
-        if unit_job_count == 0:
-            raise WordPdfMappingError(
-                f"ResponseUnit {unit.response_unit_id} has no executable location target."
-            )
-    if not jobs:
-        raise WordPdfMappingError("No verified Patch text is available for final location mapping.")
+            if operation.part != "word/document.xml":
+                raise WordPdfMappingError(
+                    f"Patch {patch.patch_id}/{operation_id} targets {operation.part}; "
+                    "automatic mapping currently supports main-body paragraphs only."
+                )
+            phrase = _validate_mapping_phrase(operation.location_phrase)
+            document = documents_by_role.get(operation.document)
+            if document is None:
+                raise WordPdfMappingError(
+                    f"No current RevisionDocument is registered for role {operation.document!r}."
+                )
+            clean_path = document.working_clean_file
+            if not clean_path or not document.working_clean_sha256:
+                raise WordPdfMappingError(
+                    f"{operation.document} has no hash-bound Working Clean View. "
+                    "Run create-working-clean-views after the final Patch batch."
+                )
+            source = Path(clean_path).expanduser().resolve()
+            if not source.is_file() or sha256_file(source) != document.working_clean_sha256:
+                raise WordPdfMappingError(f"Working Clean View is missing or stale: {source}")
+            jobs.setdefault(operation.document, []).append(MappingJob(
+                response_unit_id=unit.response_unit_id,
+                locator_id=operation_id,
+                patch_id=patch.patch_id,
+                operation_id=operation_id,
+                document_role=operation.document,
+                phrase=phrase,
+                source_clean_docx=str(source),
+            ))
     return jobs
 
 
@@ -175,35 +310,29 @@ def _read_word_position(
     *,
     label: str,
 ) -> tuple[int, int, int, int]:
-    """Read physical PDF page and continuous line number for one matched phrase.
-
-    WdInformation constants:
-      3  = wdActiveEndPageNumber
-      10 = wdFirstCharacterLineNumber
-      12 = wdWithInTable (NOT a line-number constant)
-    """
+    """Read physical page and continuous line numbers from Word COM."""
     if end <= start:
         raise WordPdfMappingError(f"Word returned an empty match for {label}.")
     first_character = document.Range(start, min(start + 1, end))
     last_character = document.Range(max(start, end - 1), end)
     if bool(first_character.Information(12)) or bool(last_character.Information(12)):
         raise WordPdfMappingError(
-            f"{label} is inside a table. Word line numbering does not provide a reliable "
-            "body line reference for table cells; use a separately reviewed table locator."
+            f"{label} is inside a table. Word line numbering is not reliable for table cells; "
+            "use a separately reviewed table locator."
         )
-    page_start = int(first_character.Information(3))  # wdActiveEndPageNumber
+    page_start = int(first_character.Information(3))
     page_end = int(last_character.Information(3))
-    line_start = int(first_character.Information(10))  # wdFirstCharacterLineNumber
-    line_end = int(last_character.Information(10))  # same constant on the last character
+    line_start = int(first_character.Information(10))
+    line_end = int(last_character.Information(10))
     if min(page_start, page_end, line_start, line_end) < 1:
         raise WordPdfMappingError(
             f"Word did not return valid page/line numbers for {label}; "
-            "check print-layout view, section line-number settings and target placement."
+            "check Print Layout and section line-number settings."
         )
     if page_start != page_end:
         raise WordPdfMappingError(
-            f"{label} crosses pages {page_start}-{page_end}. "
-            "The current ResponseLocation schema requires one page per target."
+            f"{label} crosses pages {page_start}-{page_end}; "
+            "the current ResponseLocation schema requires one page per target."
         )
     if line_end < line_start:
         raise WordPdfMappingError(f"Word returned a reversed line range for {label}.")
@@ -211,7 +340,7 @@ def _read_word_position(
 
 
 def _find_unique_phrase(document: Any, phrase: str, *, label: str) -> tuple[int, int, int, int]:
-    """Return (page, line_start, line_end, page_end) for exactly one body-text match."""
+    """Return (page, line_start, line_end, page_end) for one exact Word Find match."""
     search_text = phrase.replace("^", "^^")
     content_end = int(document.Content.End)
     cursor = int(document.Content.Start)
@@ -222,7 +351,7 @@ def _find_unique_phrase(document: Any, phrase: str, *, label: str) -> tuple[int,
         finder.ClearFormatting()
         finder.Text = search_text
         finder.Forward = True
-        finder.Wrap = 0  # wdFindStop
+        finder.Wrap = 0
         finder.Format = False
         finder.MatchCase = True
         finder.MatchWholeWord = False
@@ -243,13 +372,50 @@ def _find_unique_phrase(document: Any, phrase: str, *, label: str) -> tuple[int,
     return _read_word_position(document, start, end, label=label)
 
 
+def _refresh_builtin_fields(document: Any) -> dict[str, int]:
+    """Refresh only Word PAGE/PAGEREF/SEQ/REF fields; leave citation plugins untouched."""
+    updated = {"SEQ": 0, "REF": 0, "PAGE": 0, "PAGEREF": 0}
+    story_ranges: list[Any] = []
+    for story_type in range(1, 18):
+        try:
+            story = document.StoryRanges.Item(story_type)
+        except Exception:
+            continue
+        while story is not None:
+            story_ranges.append(story)
+            try:
+                story = story.NextStoryRange
+            except Exception:
+                story = None
+    for target_codes in ({"SEQ", "REF"}, {"PAGE", "PAGEREF"}):
+        for story in story_ranges:
+            try:
+                fields = story.Fields
+                field_count = int(fields.Count)
+            except Exception:
+                continue
+            for index in range(1, field_count + 1):
+                field = fields.Item(index)
+                code = str(field.Code.Text or "")
+                match = re.match(r"^\s*(SEQ|REF|PAGE|PAGEREF)\b", code, re.IGNORECASE)
+                if not match:
+                    continue
+                kind = match.group(1).upper()
+                if kind not in target_codes:
+                    continue
+                field.Update()
+                updated[kind] += 1
+        document.Repaginate()
+    return updated
+
+
 def _export_one_document(
     word: Any,
     source_docx: Path,
     output_docx: Path,
     output_pdf: Path,
     jobs: Sequence[MappingJob],
-) -> dict[tuple[str, str], tuple[int, int, int]]:
+) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, int]]:
     if output_docx.exists() or output_pdf.exists():
         raise FileExistsError(
             f"Refusing to overwrite Word/PDF output for {source_docx.stem}."
@@ -268,18 +434,18 @@ def _export_one_document(
                 f"Working Clean View still contains tracked revisions: {source_docx}"
             )
         document.TrackRevisions = False
-        # Word line numbering is exposed in Print Layout view.
-        document.ActiveWindow.View.Type = 3  # wdPrintView
+        document.ActiveWindow.View.Type = 3
         for section_index in range(1, int(document.Sections.Count) + 1):
             numbering = document.Sections.Item(section_index).PageSetup.LineNumbering
             numbering.Active = True
-            numbering.RestartMode = 0  # wdRestartContinuous
+            numbering.RestartMode = 0
             numbering.CountBy = 1
             numbering.StartingNumber = 1
+        refreshed_fields = _refresh_builtin_fields(document)
         document.Repaginate()
         document.SaveAs2(
             FileName=str(output_docx),
-            FileFormat=16,  # wdFormatDocumentDefault (.docx)
+            FileFormat=16,
             AddToRecentFiles=False,
         )
         document.Repaginate()
@@ -287,20 +453,18 @@ def _export_one_document(
         positions: dict[tuple[str, str], tuple[int, int, int]] = {}
         unique_jobs: dict[tuple[str, str], MappingJob] = {}
         for job in jobs:
-            unique_jobs.setdefault((job.patch_id, job.operation_id), job)
+            unique_jobs.setdefault(job.key, job)
         for key, job in unique_jobs.items():
             page, line_start, line_end, _ = _find_unique_phrase(
-                document,
-                job.phrase,
-                label=f"{job.patch_id}/{job.operation_id}",
+                document, job.phrase, label=job.label
             )
             positions[key] = (page, line_start, line_end)
 
         document.ExportAsFixedFormat(
             OutputFileName=str(output_pdf),
-            ExportFormat=17,  # wdExportFormatPDF
+            ExportFormat=17,
             OpenAfterExport=False,
-            OptimizeFor=0,  # wdExportOptimizeForPrint
+            OptimizeFor=0,
         )
         if not output_docx.is_file() or not output_pdf.is_file():
             raise WordPdfMappingError(
@@ -308,7 +472,7 @@ def _export_one_document(
             )
         if output_docx.stat().st_size == 0 or output_pdf.stat().st_size == 0:
             raise WordPdfMappingError("Word produced an empty final DOCX or PDF.")
-        return positions
+        return positions, refreshed_fields
     except WordPdfMappingError:
         raise
     except Exception as exc:
@@ -323,30 +487,56 @@ def _export_one_document(
                 pass
 
 
-def _verify_pdf_page_text(pdf_path: Path, phrase: str, page_number: int) -> None:
-    try:
-        import fitz
-    except ImportError as exc:
-        raise WordPdfMappingError(
-            "PyMuPDF is required to verify PDF page text. Install with "
-            'pip install -e ".[word-pdf]".'
-        ) from exc
-    try:
-        with fitz.open(str(pdf_path)) as pdf:
-            if page_number < 1 or page_number > pdf.page_count:
-                raise WordPdfMappingError(
-                    f"Word page {page_number} is outside the exported PDF ({pdf.page_count} pages)."
-                )
-            actual_text = pdf.load_page(page_number - 1).get_text("text")
-    except WordPdfMappingError:
-        raise
-    except Exception as exc:
-        raise WordPdfMappingError(f"Cannot inspect exported PDF {pdf_path}: {exc}") from exc
-    if _normalise_pdf_text(phrase) not in _normalise_pdf_text(actual_text):
-        raise WordPdfMappingError(
-            f"The target phrase is not extractable from PDF page {page_number}: {pdf_path}. "
-            "The Word page/line result is not being recorded."
-        )
+def _reusable_role_mapping(
+    role: str,
+    jobs: Sequence[MappingJob],
+    units_by_id: Mapping[str, Any],
+    source_clean_sha256: str,
+) -> tuple[dict[tuple[str, str], tuple[int, int, int]], dict[str, Any]] | None:
+    """Reuse only a complete, hash-verified mapping for the whole unchanged document role."""
+    positions: dict[tuple[str, str], tuple[int, int, int]] = {}
+    output_files: set[str] = set()
+    pdf_files: set[str] = set()
+    output_hashes: set[str] = set()
+    pdf_hashes: set[str] = set()
+    for job in jobs:
+        unit = units_by_id[job.response_unit_id]
+        matches = [
+            location for location in unit.final_locations
+            if location.document == role
+            and location.locator_id == job.locator_id
+            and location.source_clean_sha256 == source_clean_sha256
+        ]
+        if len(matches) != 1:
+            return None
+        location = matches[0]
+        output_path = Path(location.output_file).expanduser().resolve()
+        pdf_path = Path(location.pdf_file).expanduser().resolve()
+        if not output_path.is_file() or not pdf_path.is_file():
+            return None
+        if sha256_file(output_path) != location.output_sha256:
+            return None
+        if sha256_file(pdf_path) != location.pdf_sha256:
+            return None
+        if min(location.page, location.line_start, location.line_end) < 1:
+            return None
+        output_files.add(str(output_path))
+        pdf_files.add(str(pdf_path))
+        output_hashes.add(location.output_sha256)
+        pdf_hashes.add(location.pdf_sha256)
+        positions[job.key] = (location.page, location.line_start, location.line_end)
+    if len(output_files) != 1 or len(pdf_files) != 1 or len(output_hashes) != 1 or len(pdf_hashes) != 1:
+        return None
+    output_file = next(iter(output_files))
+    pdf_file = next(iter(pdf_files))
+    return positions, {
+        "output_file": output_file,
+        "output_sha256": next(iter(output_hashes)),
+        "pdf_file": pdf_file,
+        "pdf_sha256": next(iter(pdf_hashes)),
+        "reused": True,
+        "refreshed_fields": {"SEQ": 0, "REF": 0, "PAGE": 0, "PAGEREF": 0},
+    }
 
 
 def generate_word_pdf_location_map(
@@ -355,7 +545,12 @@ def generate_word_pdf_location_map(
     ledger_path: str | Path,
     output_dir: str | Path,
 ) -> dict[str, Any]:
-    """Create Word-final Clean DOCX/PDF artifacts and a hash-bound location map."""
+    """Refresh every eligible locator in a changed document role in one Word session.
+
+    A role is reusable only when every required ResponseUnit locator for that role
+    already has a source-clean-hash-bound position and its final DOCX/PDF hashes
+    still match. One missing or stale locator forces a full role-level remap.
+    """
     jobs_by_role = build_mapping_jobs(ledger)
     ledger_file = Path(ledger_path).expanduser().resolve()
     if not ledger_file.is_file():
@@ -370,8 +565,9 @@ def generate_word_pdf_location_map(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     documents_by_role = {document.role: document for document in ledger.documents}
-    safe_names: dict[str, str] = {}
+    units_by_id = {unit.response_unit_id: unit for unit in ledger.response_units}
     used_names: set[str] = set()
+    safe_names: dict[str, str] = {}
     for role in jobs_by_role:
         base = re.sub(r"[^A-Za-z0-9._-]+", "_", role).strip("._-") or "document"
         candidate = base
@@ -379,77 +575,93 @@ def generate_word_pdf_location_map(
         while candidate.casefold() in used_names:
             candidate = f"{base}_{suffix}"
             suffix += 1
-        safe_names[role] = candidate
         used_names.add(candidate.casefold())
+        safe_names[role] = candidate
 
-    try:
-        import pythoncom
-        import win32com.client
-    except ImportError as exc:
-        raise WordPdfMappingError(
-            "Microsoft Word COM dependencies are unavailable. On Windows install "
-            'the optional dependencies with pip install -e ".[word-pdf]".'
-        ) from exc
-
-    pythoncom.CoInitialize()
-    word = None
     document_outputs: dict[str, dict[str, Any]] = {}
     positions_by_role: dict[str, dict[tuple[str, str], tuple[int, int, int]]] = {}
-    try:
-        word = win32com.client.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
-        word.AutomationSecurity = 3
-        word.Options.SaveNormalPrompt = False
-        word.Options.UpdateLinksAtOpen = False
-
-        for role, jobs in jobs_by_role.items():
-            ledger_document = documents_by_role[role]
-            source_docx = Path(ledger_document.working_clean_file).expanduser().resolve()
-            if sha256_file(source_docx) != ledger_document.working_clean_sha256:
-                raise WordPdfMappingError(
-                    f"Working Clean View changed immediately before Word opened it: {source_docx}"
-                )
-            stem = safe_names[role]
-            output_docx = out_dir / f"{stem}.final-clean.docx"
-            output_pdf = out_dir / f"{stem}.final-clean.pdf"
-            positions = _export_one_document(
-                word, source_docx, output_docx, output_pdf, jobs
-            )
-            output_sha256 = sha256_file(output_docx)
-            pdf_sha256 = sha256_file(output_pdf)
-            for job in jobs:
-                page, _, _ = positions[(job.patch_id, job.operation_id)]
-                _verify_pdf_page_text(output_pdf, job.phrase, page)
+    changed_roles: list[str] = []
+    for role, jobs in jobs_by_role.items():
+        ledger_document = documents_by_role.get(role)
+        if ledger_document is None or not ledger_document.working_clean_file or not ledger_document.working_clean_sha256:
+            raise WordPdfMappingError(f"Document role {role} has no current hash-bound Working Clean View.")
+        source_docx = Path(ledger_document.working_clean_file).expanduser().resolve()
+        if not source_docx.is_file() or sha256_file(source_docx) != ledger_document.working_clean_sha256:
+            raise WordPdfMappingError(f"Working Clean View is missing or stale: {source_docx}")
+        reusable = _reusable_role_mapping(
+            role, jobs, units_by_id, ledger_document.working_clean_sha256
+        )
+        if reusable is not None:
+            positions_by_role[role], reused = reusable
             document_outputs[role] = {
                 "source_working_clean_file": str(source_docx),
                 "source_working_clean_sha256": ledger_document.working_clean_sha256,
-                "output_file": str(output_docx),
-                "output_sha256": output_sha256,
-                "pdf_file": str(output_pdf),
-                "pdf_sha256": pdf_sha256,
+                **reused,
             }
-            positions_by_role[role] = positions
-    finally:
-        if word is not None:
+        else:
+            changed_roles.append(role)
+
+    if changed_roles:
+        try:
+            import pythoncom
+            import win32com.client
+        except ImportError as exc:
+            raise WordPdfMappingError(
+                "Microsoft Word COM dependencies are unavailable. On Windows install "
+                'pywin32 with pip install -e ".[word-pdf]".'
+            ) from exc
+
+        pythoncom.CoInitialize()
+        word = None
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = 0
+            word.AutomationSecurity = 3
+            word.Options.SaveNormalPrompt = False
+            word.Options.UpdateLinksAtOpen = False
+            for role in changed_roles:
+                ledger_document = documents_by_role[role]
+                source_docx = Path(ledger_document.working_clean_file).expanduser().resolve()
+                output_docx = out_dir / f"{safe_names[role]}.final-clean.docx"
+                output_pdf = out_dir / f"{safe_names[role]}.final-clean.pdf"
+                positions, refreshed_fields = _export_one_document(
+                    word, source_docx, output_docx, output_pdf, jobs_by_role[role]
+                )
+                positions_by_role[role] = positions
+                document_outputs[role] = {
+                    "source_working_clean_file": str(source_docx),
+                    "source_working_clean_sha256": ledger_document.working_clean_sha256,
+                    "output_file": str(output_docx),
+                    "output_sha256": sha256_file(output_docx),
+                    "pdf_file": str(output_pdf),
+                    "pdf_sha256": sha256_file(output_pdf),
+                    "reused": False,
+                    "refreshed_fields": refreshed_fields,
+                }
+        finally:
+            if word is not None:
+                try:
+                    word.Quit(SaveChanges=0)
+                except Exception:
+                    pass
             try:
-                word.Quit(SaveChanges=0)
+                pythoncom.CoUninitialize()
             except Exception:
                 pass
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
 
-    location_map_id = "word-pdf-" + uuid.uuid4().hex
+    # Build every ResponseUnit's complete location set. For an unchanged role,
+    # the verified old page/line is reused; a changed role contributes a full
+    # fresh pass over all of its current eligible ResponseUnit locators.
     locations_by_unit: dict[str, list[dict[str, Any]]] = {
         unit.response_unit_id: [] for unit in ledger.response_units
     }
     for role, jobs in jobs_by_role.items():
         document_output = document_outputs[role]
         positions = positions_by_role[role]
+        ledger_document = documents_by_role[role]
         for job in jobs:
-            page, line_start, line_end = positions[(job.patch_id, job.operation_id)]
+            page, line_start, line_end = positions[job.key]
             locations_by_unit[job.response_unit_id].append({
                 "document": role,
                 "output_file": document_output["output_file"],
@@ -462,21 +674,18 @@ def generate_word_pdf_location_map(
                 "target_sha256": hashlib.sha256(job.phrase.encode("utf-8")).hexdigest(),
                 "patch_id": job.patch_id,
                 "operation_id": job.operation_id,
+                "locator_id": job.locator_id,
+                "source_clean_sha256": ledger_document.working_clean_sha256,
             })
 
+    location_map_id = "word-pdf-" + uuid.uuid4().hex
     response_rows: list[dict[str, Any]] = []
     for unit_id, rows in locations_by_unit.items():
         if not rows:
-            raise WordPdfMappingError(
-                f"ResponseUnit {unit_id} has no mapped final location."
-            )
-        unique: dict[tuple[Any, ...], dict[str, Any]] = {}
+            continue
+        unique: dict[tuple[str, str], dict[str, Any]] = {}
         for row in rows:
-            key = (
-                row["document"], row["output_file"], row["pdf_file"],
-                row["page"], row["line_start"], row["line_end"],
-            )
-            unique.setdefault(key, row)
+            unique[(row["document"], row["locator_id"])] = row
         final_locations = list(unique.values())
         fingerprint = _fingerprint({
             "response_unit_id": unit_id,
@@ -498,6 +707,23 @@ def generate_word_pdf_location_map(
             ],
         })
 
+    skipped = []
+    mapped_ids = {row["response_unit_id"] for row in response_rows}
+    for unit in ledger.response_units:
+        if unit.response_unit_id in mapped_ids:
+            continue
+        if unit.location_requirement == "not_required":
+            reason = "not_required"
+        elif unit.location_requirement == "manual_required":
+            reason = "manual_location_required"
+        elif unit.disposition == "clarification_needed" or unit.status == "blocked":
+            reason = "clarification_needed"
+        elif not unit.semantic_review_confirmed or unit.status not in {"verified", "location_mapped", "completed"}:
+            reason = "semantic_review_or_patch_verification_pending"
+        else:
+            reason = "no_eligible_location_locator"
+        skipped.append({"response_unit_id": unit.response_unit_id, "reason": reason})
+
     return {
         "schema_version": "0.5.1",
         "location_map_id": location_map_id,
@@ -510,4 +736,6 @@ def generate_word_pdf_location_map(
             for role in sorted(document_outputs)
         ],
         "response_units": response_rows,
+        "skipped_response_units": skipped,
+        "document_refresh_policy": "full-role-remap-if-clean-hash-or-any-role-locator-changes-v1",
     }
