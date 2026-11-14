@@ -8,6 +8,7 @@ Manuscript or a substitute for Microsoft Word save/render validation.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import uuid
@@ -365,9 +366,16 @@ def create_working_clean_view(
         "source_sha256": source_hash,
         "output_file": str(target),
         "output_sha256": output_hash,
-        "working_view_fingerprint": _sha256(
-            f"{source_hash}:{output_hash}:accept-insertions-reject-deletions-v1".encode("utf-8")
-        ),
+        "working_view_fingerprint": _sha256(json.dumps(
+            {
+                "source_sha256": source_hash,
+                "working_clean_sha256": output_hash,
+                "policy": "accept-insertions-reject-deletions-v1",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")),
         "changed_word_parts": sorted(changed_parts),
         "counts": counts,
         "validation": {
