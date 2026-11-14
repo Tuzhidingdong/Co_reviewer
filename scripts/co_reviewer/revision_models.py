@@ -414,6 +414,8 @@ class ResponseUnit:
     semantic_review_confirmed: bool = False
     verification_report_id: str | None = None
     location_map_fingerprint: str | None = None
+    location_map_file: str | None = None
+    location_map_file_sha256: str | None = None
     final_locations: list[ResponseLocation] = field(default_factory=list)
     completed_at_utc: str | None = None
 
@@ -439,6 +441,8 @@ class ResponseUnit:
             raise RevisionModelError(f"ResponseUnit in {self.status} state requires response_text.")
         if self.location_map_fingerprint is not None:
             _sha256(self.location_map_fingerprint, "location_map_fingerprint")
+        if self.location_map_file_sha256 is not None:
+            _sha256(self.location_map_file_sha256, "location_map_file_sha256")
         if self.status in {"location_mapped", "completed"}:
             if not self.semantic_review_confirmed:
                 raise RevisionModelError("Location-mapped ResponseUnit requires semantic review.")
@@ -446,6 +450,19 @@ class ResponseUnit:
                 raise RevisionModelError("Location-mapped ResponseUnit requires final PDF line locations.")
             if not self.location_map_fingerprint:
                 raise RevisionModelError("Location-mapped ResponseUnit requires location_map_fingerprint.")
+            if not self.location_map_file or not self.location_map_file_sha256:
+                raise RevisionModelError(
+                    "Location-mapped ResponseUnit requires the source location-map file and SHA-256."
+                )
+            map_path = Path(self.location_map_file).expanduser().resolve()
+            if not map_path.is_file():
+                raise RevisionModelError(f"Location map file does not exist: {map_path}")
+            try:
+                actual_map_hash = sha256_file(map_path)
+            except OSError as exc:
+                raise RevisionModelError(f"Cannot hash location map file {map_path}: {exc}") from exc
+            if actual_map_hash != self.location_map_file_sha256:
+                raise RevisionModelError(f"Location map file changed after mapping: {map_path}")
         if self.status == "completed":
             if not self.completed_at_utc:
                 raise RevisionModelError("Completed ResponseUnit requires completed_at_utc.")
@@ -471,6 +488,9 @@ class ResponseUnit:
         self,
         location_map_fingerprint: str,
         final_locations: Sequence[ResponseLocation],
+        *,
+        location_map_file: str,
+        location_map_file_sha256: str,
     ) -> None:
         if self.status != "verified" or not self.semantic_review_confirmed:
             raise RevisionModelError(
@@ -488,7 +508,21 @@ class ResponseUnit:
             raise RevisionModelError(
                 "Every final location must belong to the supplied location-map fingerprint."
             )
+        map_path = Path(_text(location_map_file, "location_map_file")).expanduser().resolve()
+        expected_map_hash = _sha256(
+            location_map_file_sha256, "location_map_file_sha256"
+        )
+        if not map_path.is_file():
+            raise RevisionModelError(f"Location map file does not exist: {map_path}")
+        try:
+            actual_map_hash = sha256_file(map_path)
+        except OSError as exc:
+            raise RevisionModelError(f"Cannot hash location map file {map_path}: {exc}") from exc
+        if actual_map_hash != expected_map_hash:
+            raise RevisionModelError(f"Location map file changed after mapping: {map_path}")
         self.location_map_fingerprint = location_map_fingerprint
+        self.location_map_file = str(map_path)
+        self.location_map_file_sha256 = expected_map_hash
         self.final_locations = list(final_locations)
         self.status = "location_mapped"
 
@@ -515,6 +549,8 @@ class ResponseUnit:
             "semantic_review_confirmed": self.semantic_review_confirmed,
             "verification_report_id": self.verification_report_id,
             "location_map_fingerprint": self.location_map_fingerprint,
+            "location_map_file": self.location_map_file,
+            "location_map_file_sha256": self.location_map_file_sha256,
             "final_locations": [item.to_dict() for item in self.final_locations],
             "completed_at_utc": self.completed_at_utc,
         }
@@ -675,7 +711,12 @@ class RevisionLedger:
             ]
             if len(final_locations) != len(raw_locations):
                 raise RevisionModelError(f"{unit_id} contains malformed final location entries.")
-            unit.record_final_locations(location_fingerprint, final_locations)
+            unit.record_final_locations(
+                location_fingerprint,
+                final_locations,
+                location_map_file=str(map_path),
+                location_map_file_sha256=location_map_file_sha256,
+            )
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
                 subject_id=unit_id,
@@ -1351,6 +1392,8 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             semantic_review_confirmed=row.get("semantic_review_confirmed", False),
             verification_report_id=row.get("verification_report_id"),
             location_map_fingerprint=row.get("location_map_fingerprint"),
+            location_map_file=row.get("location_map_file"),
+            location_map_file_sha256=row.get("location_map_file_sha256"),
             final_locations=locations,
             completed_at_utc=row.get("completed_at_utc"),
         ))
