@@ -49,7 +49,7 @@ Persistent object IDs are represented by DocumentObjectIdentity records and are 
 
 When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
 
-The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. Typed Patch/RevisionLedger records are now connected to the legacy DOCX writer through a compatibility adapter: preflight, human approval, apply and verified confirmation are synchronized back to the ledger. The dependency scheduler is not yet the sole execution dispatcher; the CLI currently provides the controlled bridge. Working Clean View, direct DAG-to-Patch dispatch, Word COM pagination and the PDF location-map producer remain later integration stages.
+The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. Typed Patch/RevisionLedger records are connected to the legacy DOCX writer through a compatibility adapter: preflight, human approval, apply and verified confirmation are synchronized back to the ledger. The dependency scheduler is not yet the sole execution dispatcher; the CLI currently provides the controlled bridge. Direct DAG-to-Patch dispatch, Word COM pagination and the PDF location-map producer remain later integration stages.
 
 
 ## Patch execution bridge
@@ -66,8 +66,17 @@ The recommended command sequence is:
 4. \`approve-plan --plan revision_plan.json --ids ... --revision-ledger revision_ledger.json\` — seal the exact reviewer-facing scope and record the approver.
 5. \`apply --plan revision_plan.json --revision-ledger revision_ledger.json\` — execute through the legacy writer and synchronize Patch state/events.
 6. \`confirm-verified --plan revision_plan.json --apply-report ... --ids ... --semantic-review-confirmed --revision-ledger revision_ledger.json\` — recheck native Track Changes and output hashes, then record the human semantic-review acknowledgement.
+7. \`create-working-clean-views --ledger revision_ledger.json\` — create immutable accepted-changes projections from the final Marked DOCX outputs and bind both file hashes into the ledger.
 
 When a RevisionLedger is supplied, the adapter checks patch IDs, reviewer, original comment, proposed response and every exact target before preflight/apply/verify. A mismatch stops the operation. Exported legacy plans are always pending; approval is never silently copied from a previous ledger state.
+
+## Working Clean View
+
+\`create-working-clean-views --ledger revision_ledger.json\` creates one derivative DOCX per marked \`RevisionDocument\`. It accepts native insertions and move-to text, rejects deletions and move-from text, removes revision property snapshots and comment anchors/parts, and turns off tracking in the derivative. It never edits the source or Marked DOCX.
+
+The output path, exact Marked DOCX hash, Working Clean View hash and projection-policy fingerprint are persisted in the RevisionLedger. The ledger rechecks both DOCX files before serialization, so a later change makes the saved Working Clean View evidence stale.
+
+This is an internal accepted-changes projection for downstream analysis and cross-document consistency checks. It is not the final publication Clean Manuscript and does not establish actual Microsoft Word pagination. The projection fails closed on table-structure revision elements it cannot safely resolve rather than guessing the table state.
 
 ## Incremental Patch supersession
 
