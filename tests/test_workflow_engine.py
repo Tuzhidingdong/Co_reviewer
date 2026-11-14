@@ -15,92 +15,218 @@ from co_reviewer.workflow_engine import (
     workflow_tasks_from_decision_plan,
 )
 
+INPUT_HASH = "a" * 64
+OUTPUT_HASH = "b" * 64
+COMPLETION_HASH = "c" * 64
+STAMP = "2026-11-14T12:00:00+08:00"
+
+
+def _task(task_id, dependencies=None, status="ready", groups=None, sequence=1):
+    return {
+        "task_id": task_id,
+        "sequence": sequence,
+        "stage": "revision",
+        "task_type": "local_revision",
+        "dependencies": dependencies or [],
+        "target_groups": groups or [],
+        "status": status,
+        "title": f"Task {task_id}",
+        "proposed_action": f"Revise {task_id}",
+        "requires_user_approval": True,
+    }
+
+
+def _preflighted(task):
+    return transition_task(
+        task,
+        "preflighted",
+        evidence={
+            "input_fingerprint": INPUT_HASH,
+            "preflight_report_id": "preflight-001",
+            "preflighted_at_utc": STAMP,
+        },
+    )
+
+
+def _approved(task):
+    return transition_task(
+        _preflighted(task),
+        "approved",
+        evidence={
+            "human_approval_confirmed": True,
+            "approved_by": "Human Author",
+            "approved_at_utc": STAMP,
+        },
+    )
+
+
+def _applied(task):
+    return transition_task(
+        _approved(task),
+        "applied",
+        evidence={
+            "output_fingerprint": OUTPUT_HASH,
+            "execution_report_id": "apply-001",
+            "applied_at_utc": STAMP,
+        },
+    )
+
+
+def _verified(task):
+    return transition_task(
+        _applied(task),
+        "verified",
+        evidence={
+            "semantic_review_confirmed": True,
+            "verified_by": "Human Author",
+            "verified_at_utc": STAMP,
+            "verification_report_id": "verify-001",
+        },
+    )
+
+
+def _completed(task):
+    return transition_task(
+        _verified(task),
+        "completed",
+        evidence={
+            "completion_record_id": "completion-001",
+            "completion_record_fingerprint": COMPLETION_HASH,
+            "completed_at_utc": STAMP,
+        },
+    )
+
 
 class WorkflowEngineTests(unittest.TestCase):
     def test_task_dag_returns_stable_dependency_order(self):
         tasks = [
-            {"task_id": "C", "sequence": 3, "dependencies": ["A"], "target_groups": ["doc-2"], "status": "planned"},
-            {"task_id": "B", "sequence": 2, "dependencies": [], "target_groups": ["doc-1"], "status": "planned"},
-            {"task_id": "A", "sequence": 1, "dependencies": [], "target_groups": ["doc-1"], "status": "planned"},
+            _task("C", ["A"], "planned", ["doc-2"], 3),
+            _task("B", [], "planned", ["doc-1"], 2),
+            _task("A", [], "planned", ["doc-1"], 1),
         ]
         schedule = build_workflow_schedule(tasks)
         self.assertEqual(schedule.task_order, ("A", "B", "C"))
         self.assertEqual(schedule.target_group_edges, (("doc-1", "doc-2"),))
 
     def test_unknown_dependency_and_cycle_are_rejected(self):
-        unknown = [{"task_id": "A", "dependencies": ["MISSING"], "target_groups": [], "status": "planned"}]
-        self.assertTrue(any("unknown workflow task" in error for error in validate_workflow_tasks(unknown)))
+        unknown = [_task("A", ["MISSING"], "planned")]
+        self.assertTrue(any(
+            "unknown workflow task" in error
+            for error in validate_workflow_tasks(unknown)
+        ))
 
         cyclic = [
-            {"task_id": "A", "dependencies": ["B"], "target_groups": [], "status": "planned"},
-            {"task_id": "B", "dependencies": ["A"], "target_groups": [], "status": "planned"},
+            _task("A", ["B"], "planned"),
+            _task("B", ["A"], "planned"),
         ]
-        self.assertTrue(any("Dependency cycle detected" in error for error in validate_workflow_tasks(cyclic)))
+        self.assertTrue(any(
+            "Dependency cycle detected" in error
+            for error in validate_workflow_tasks(cyclic)
+        ))
         with self.assertRaises(WorkflowValidationError):
             build_workflow_schedule(cyclic)
 
     def test_target_group_quotient_cycle_is_condensed_not_misreported_as_task_cycle(self):
         tasks = [
-            {"task_id": "A1", "dependencies": ["B1"], "target_groups": ["A"], "status": "planned"},
-            {"task_id": "A2", "dependencies": [], "target_groups": ["A"], "status": "planned"},
-            {"task_id": "B1", "dependencies": ["A2"], "target_groups": ["B"], "status": "planned"},
+            _task("A1", ["B1"], "planned", ["A"]),
+            _task("A2", [], "planned", ["A"]),
+            _task("B1", ["A2"], "planned", ["B"]),
         ]
         schedule = build_workflow_schedule(tasks)
         self.assertEqual(schedule.task_order, ("A2", "B1", "A1"))
         self.assertEqual(schedule.target_group_components, (("A", "B"),))
-        self.assertEqual(
-            schedule.target_group_edges,
-            (("A", "B"), ("B", "A")),
-        )
+        self.assertEqual(schedule.target_group_edges, (("A", "B"), ("B", "A")))
 
     def test_response_only_decision_task_has_no_document_target_group(self):
         adapted = workflow_tasks_from_decision_plan([{
             "task_id": "R1-RESPONSE",
             "sequence": 1,
             "task_type": "response_only",
+            "title": "Draft response",
             "status": "pending",
             "dependencies": [],
-            "targets": [{"action": "reply_only", "document": "Reviewers", "part": "word/document.xml", "p_idx": 0}],
+            "targets": [{
+                "action": "reply_only",
+                "document": "Reviewers",
+                "part": "word/document.xml",
+                "p_idx": 0,
+            }],
         }])
         self.assertEqual(adapted[0]["status"], "planned")
         self.assertEqual(adapted[0]["task_type"], "response_only")
         self.assertEqual(adapted[0]["target_groups"], [])
-        self.assertEqual(build_workflow_schedule(adapted).target_group_components, ())
+        self.assertEqual(
+            build_workflow_schedule(adapted).target_group_components, ()
+        )
 
     def test_ready_tasks_wait_for_verified_dependencies(self):
-        tasks = [
-            {"task_id": "A", "dependencies": [], "target_groups": [], "status": "applied"},
-            {"task_id": "B", "dependencies": ["A"], "target_groups": [], "status": "ready"},
-            {"task_id": "C", "dependencies": [], "target_groups": [], "status": "ready"},
-        ]
+        task_a = _applied(_task("A"))
+        task_b = _task("B", ["A"], "ready")
+        task_c = _task("C", [], "ready")
+        tasks = [task_a, task_b, task_c]
+
         self.assertEqual(select_ready_tasks(tasks), ["C"])
-        tasks[0]["status"] = "verified"
+        tasks[0] = _verified(_task("A"))
         self.assertEqual(select_ready_tasks(tasks), ["B", "C"])
 
-    def test_lifecycle_rejects_skipping_approval_and_verification_gates(self):
-        task = {"task_id": "T1", "status": "ready"}
+    def test_lifecycle_requires_preflight_human_approval_and_semantic_review(self):
+        task = _task("T1")
         with self.assertRaisesRegex(WorkflowValidationError, "ready -> applied"):
             transition_task(task, "applied")
-        preflighted = transition_task(task, "preflighted")
-        approved = transition_task(preflighted, "approved")
-        applied = transition_task(approved, "applied")
-        verified = transition_task(applied, "verified")
-        completed = transition_task(verified, "completed")
+        with self.assertRaisesRegex(WorkflowValidationError, "input_fingerprint"):
+            transition_task(task, "preflighted")
+
+        preflighted = _preflighted(task)
+        with self.assertRaisesRegex(WorkflowValidationError, "human_approval_confirmed"):
+            transition_task(
+                preflighted,
+                "approved",
+                evidence={
+                    "human_approval_confirmed": False,
+                    "approved_by": "Human Author",
+                    "approved_at_utc": STAMP,
+                },
+            )
+
+        completed = _completed(task)
         self.assertEqual(completed["status"], "completed")
+        self.assertEqual(validate_workflow_tasks([completed]), [])
         self.assertEqual(task["status"], "ready")
+
+    def test_scope_change_invalidates_preflight_and_approval_fingerprints(self):
+        approved = _approved(_task("T1"))
+        tampered = dict(approved)
+        tampered["proposed_action"] = "A changed action that was not re-approved."
+        errors = validate_workflow_tasks([tampered])
+        self.assertTrue(any("preflight_fingerprint is stale" in error for error in errors))
+        self.assertTrue(any("approval_fingerprint is stale" in error for error in errors))
+
+    def test_verification_requires_explicit_semantic_confirmation(self):
+        applied = _applied(_task("T1"))
+        with self.assertRaisesRegex(WorkflowValidationError, "semantic_review_confirmed"):
+            transition_task(
+                applied,
+                "verified",
+                evidence={
+                    "semantic_review_confirmed": False,
+                    "verified_by": "Human Author",
+                    "verified_at_utc": STAMP,
+                    "verification_report_id": "verify-001",
+                },
+            )
 
     def test_block_and_invalidation_transitions_require_reasons(self):
         with self.assertRaisesRegex(WorkflowValidationError, "reason is required"):
-            transition_task({"status": "planned"}, "blocked")
+            transition_task(_task("T1", status="planned"), "blocked")
         with self.assertRaisesRegex(WorkflowValidationError, "reason is required"):
-            transition_task({"status": "verified"}, "recheck_required")
+            transition_task(_verified(_task("T2")), "recheck_required")
 
     def test_upstream_change_invalidates_all_transitive_dependents(self):
         tasks = [
-            {"task_id": "A", "dependencies": [], "target_groups": [], "status": "completed"},
-            {"task_id": "B", "dependencies": ["A"], "target_groups": [], "status": "verified"},
-            {"task_id": "C", "dependencies": ["B"], "target_groups": [], "status": "approved"},
-            {"task_id": "D", "dependencies": [], "target_groups": [], "status": "ready"},
+            _completed(_task("A")),
+            _verified(_task("B", ["A"])),
+            _approved(_task("C", ["B"])),
+            _task("D", [], "ready"),
         ]
         updated = invalidate_downstream(tasks, "A", "Upstream target changed.")
         states = {task["task_id"]: task["status"] for task in updated}
@@ -111,7 +237,10 @@ class WorkflowEngineTests(unittest.TestCase):
             "D": "ready",
         })
         self.assertEqual(
-            {task["task_id"]: task.get("recheck_from") for task in updated if task["task_id"] in {"B", "C"}},
+            {
+                task["task_id"]: task.get("recheck_from")
+                for task in updated if task["task_id"] in {"B", "C"}
+            },
             {"B": "verified", "C": "approved"},
         )
         self.assertEqual(tasks[1]["status"], "verified")
@@ -123,29 +252,41 @@ class WorkflowEngineTests(unittest.TestCase):
             "target_groups": [],
             "status": {"unexpected": "mapping"},
         }]
-        self.assertTrue(any("unsupported workflow status" in error for error in validate_workflow_tasks(malformed)))
+        self.assertTrue(any(
+            "unsupported workflow status" in error
+            for error in validate_workflow_tasks(malformed)
+        ))
         adapted = workflow_tasks_from_decision_plan([{
             "task_id": "T2",
             "status": "pending",
             "dependencies": [],
-            "targets": [{"action": {"bad": "type"}, "document": "Manuscript", "part": "word/document.xml", "p_idx": 0}],
+            "targets": [{
+                "action": {"bad": "type"},
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "p_idx": 0,
+            }],
         }])
         self.assertEqual(adapted[0]["target_groups"], [])
 
-    def test_workflow_ledger_schema_is_present_and_separates_response_only(self):
+    def test_workflow_ledger_schema_requires_state_evidence(self):
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-ledger.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         task_schema = schema["$defs"]["workflowTask"]
         self.assertIn("response_only", task_schema["properties"]["task_type"]["enum"])
-        self.assertEqual(
-            task_schema["allOf"][0]["then"]["properties"]["target_groups"]["maxItems"],
-            0,
-        )
+        self.assertTrue(any(
+            condition.get("if", {}).get("properties", {}).get("status", {}).get("const") == "approved"
+            for condition in task_schema["allOf"]
+        ))
+        self.assertTrue(any(
+            "verification_fingerprint" in condition.get("then", {}).get("required", [])
+            for condition in task_schema["allOf"]
+        ))
 
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
-            {"task_id": "A", "dependencies": [], "target_groups": ["shared"], "status": "planned"},
-            {"task_id": "B", "dependencies": ["A"], "target_groups": ["shared"], "status": "planned"},
+            _task("A", [], "planned", ["shared"]),
+            _task("B", ["A"], "planned", ["shared"]),
         ]
         schedule = build_workflow_schedule(tasks)
         self.assertEqual(schedule.target_group_edges, ())
