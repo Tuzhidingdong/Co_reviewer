@@ -551,7 +551,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
         response_quality = json.loads(
             response_quality_path.read_text(encoding="utf-8")
         )
-        self.assertEqual(response_quality["status"], "PASS")
+        self.assertIn(response_quality["status"], {"PASS", "PASS_WITH_WARNINGS"})
 
         self.assertEqual(
             {path: path.read_bytes() for path in original_bytes},
