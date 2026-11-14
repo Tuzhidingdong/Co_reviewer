@@ -2380,7 +2380,7 @@ def build_revision_ledger(
                             anchor_part_value == "word/document.xml"
                             or (
                                 isinstance(anchor_part_value, str)
-                                and re.fullmatch(r"word/(?:header|footer)\\d+\\.xml", anchor_part_value) is not None
+                                and re.fullmatch(r"word/(?:header|footer)\d+\.xml", anchor_part_value) is not None
                             )
                         )
                         if (
