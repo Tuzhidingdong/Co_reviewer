@@ -2393,43 +2393,56 @@ def cmd_record_manual_response_locations(args):
         if not isinstance(row, dict):
             raise ValueError("Manual response_units entries must be objects.")
         unit_id = row.get("response_unit_id")
-        operation_id = row.get("operation_id")
+        locator_key = row.get("locator_id", row.get("operation_id"))
         if not isinstance(unit_id, str) or not unit_id.strip():
             raise ValueError("Each manual locator entry requires response_unit_id.")
-        if not isinstance(operation_id, str) or not operation_id.strip():
-            raise ValueError(f"Manual locator entry for {unit_id} requires operation_id.")
+        if not isinstance(locator_key, str) or not locator_key.strip():
+            raise ValueError(f"Manual locator entry for {unit_id} requires locator_id (or operation_id for compatibility).")
         if unit_id not in units_by_id:
             raise ValueError(f"Unknown ResponseUnit in manual locator input: {unit_id}.")
-        if operation_id in submitted_by_unit.setdefault(unit_id, {}):
-            raise ValueError(f"Duplicate manual locator for {unit_id}/{operation_id}.")
-        submitted_by_unit[unit_id][operation_id] = row
+        if locator_key in submitted_by_unit.setdefault(unit_id, {}):
+            raise ValueError(f"Duplicate manual locator for {unit_id}/{locator_key}.")
+        submitted_by_unit[unit_id][locator_key] = row
 
     location_map_id = "manual-locator-" + uuid.uuid4().hex
     response_rows: list[dict[str, Any]] = []
     for unit_id, unit in units_by_id.items():
         if unit.location_requirement != "manual_required":
             continue
-        if unit.disposition != "revised" or unit.status != "verified" or not unit.semantic_review_confirmed:
+        if unit.disposition not in {"revised", "no_change"} or unit.status != "verified" or not unit.semantic_review_confirmed:
             raise ValueError(
-                f"{unit_id} must be a semantically verified revised ResponseUnit before manual location."
+                f"{unit_id} must be a semantically verified revised or anchored no_change ResponseUnit before manual location."
             )
         submitted = submitted_by_unit.get(unit_id, {})
-        expected_operations = set(unit.linked_operation_ids)
-        if set(submitted) != expected_operations:
-            missing = sorted(expected_operations - set(submitted))
-            extra = sorted(set(submitted) - expected_operations)
+        expected_locators = (
+            set(unit.linked_operation_ids)
+            if unit.disposition == "revised"
+            else {f"anchor:{unit.anchor_evidence_id}"}
+        )
+        if set(submitted) != expected_locators:
+            missing = sorted(expected_locators - set(submitted))
+            extra = sorted(set(submitted) - expected_locators)
             raise ValueError(
-                f"Manual locators for {unit_id} must cover every exact PatchOperation; "
+                f"Manual locators for {unit_id} must cover every exact linked locator; "
                 f"missing={missing}, unexpected={extra}."
             )
         final_locations: list[dict[str, Any]] = []
-        for operation_id in unit.linked_operation_ids:
-            patch, operation = operation_owners[operation_id]
-            if patch.patch_id not in unit.linked_patch_ids or unit.comment_id not in operation.source_comment_ids:
-                raise ValueError(f"Manual locator attribution mismatch for {unit_id}/{operation_id}.")
-            if patch.status != "verified":
-                raise ValueError(f"Manual locator operation {operation_id} belongs to unverified Patch {patch.patch_id}.")
-            role = operation.document
+        for locator_key in sorted(expected_locators):
+            patch = operation = None
+            if unit.disposition == "revised":
+                operation_id = locator_key
+                patch, operation = operation_owners[operation_id]
+                if patch.patch_id not in unit.linked_patch_ids or unit.comment_id not in operation.source_comment_ids:
+                    raise ValueError(f"Manual locator attribution mismatch for {unit_id}/{operation_id}.")
+                if patch.status != "verified":
+                    raise ValueError(f"Manual locator operation {operation_id} belongs to unverified Patch {patch.patch_id}.")
+                role = operation.document
+                stable_locator_id = f"manual:{operation_id}"
+            else:
+                if not unit.anchor_evidence_id or not unit.anchor_document or not unit.anchor_part or unit.anchor_p_idx is None:
+                    raise ValueError(f"Manual no_change ResponseUnit {unit_id} has no confirmed Clean anchor evidence.")
+                role = unit.anchor_document
+                stable_locator_id = f"manual:anchor:{unit.anchor_evidence_id}"
             revision_document = documents_by_role.get(role)
             word_output = word_outputs.get(role)
             if revision_document is None or word_output is None:
@@ -2448,7 +2461,7 @@ def cmd_record_manual_response_locations(args):
             if not pdf_file.is_file() or sha256_file(pdf_file) != pdf_sha:
                 raise ValueError(f"Word-final PDF is missing or changed for {role}: {pdf_file}.")
 
-            source = submitted[operation_id]
+            source = submitted[locator_key]
             locator_text = source.get("locator_text")
             if (
                 not isinstance(locator_text, str)
@@ -2489,9 +2502,9 @@ def cmd_record_manual_response_locations(args):
                 "line_end": line_end,
                 "locator_text": locator_text.strip(),
                 "target_sha256": hashlib.sha256(locator_text.strip().encode("utf-8")).hexdigest(),
-                "patch_id": patch.patch_id,
-                "operation_id": operation_id,
-                "locator_id": f"manual:{operation_id}",
+                "patch_id": patch.patch_id if patch is not None else None,
+                "operation_id": operation.operation_id if operation is not None else None,
+                "locator_id": stable_locator_id,
                 "source_clean_sha256": revision_document.working_clean_sha256,
                 "location_map_id": location_map_id,
                 "mapping_method": "manual",
