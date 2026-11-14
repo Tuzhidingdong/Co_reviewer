@@ -1794,7 +1794,7 @@ def build_revision_ledger(
     *,
     document_paths: Mapping[str, Mapping[str, str]] | None = None,
     reviewer_comments_by_id: Mapping[str, str] | None = None,
-    reviewer_by_task: Mapping[str, str] | None = None,
+    reviewer_by_task: Mapping[str, Any] | None = None,
     selected_task_ids: Sequence[str] | None = None,
 ) -> RevisionLedger:
     """Build explicit Patch and ResponseUnit records from a Workflow Ledger.
@@ -1850,7 +1850,68 @@ def build_revision_ledger(
             raise RevisionModelError("Workflow task entries must be objects.")
         task_id = _text(task.get("task_id"), "task_id")
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
-        reviewer = reviewer_by_task.get(task_id, "Reviewer")
+        reviewer_spec = reviewer_by_task.get(task_id, "Reviewer")
+        comment_reviewers: dict[str, str] = {}
+        default_reviewer: str | None = None
+        if isinstance(reviewer_spec, str):
+            reviewer = _text(reviewer_spec, f"reviewer_map[{task_id}]")
+            default_reviewer = reviewer
+        elif isinstance(reviewer_spec, Mapping):
+            allowed_reviewer_keys = {"default", "patch_label", "comment_ids"}
+            unknown_reviewer_keys = set(reviewer_spec) - allowed_reviewer_keys
+            if unknown_reviewer_keys:
+                raise RevisionModelError(
+                    f"reviewer_map[{task_id}] contains unsupported key(s): "
+                    + ", ".join(sorted(str(key) for key in unknown_reviewer_keys))
+                )
+            raw_default = reviewer_spec.get("default")
+            if raw_default is not None:
+                default_reviewer = _text(
+                    raw_default, f"reviewer_map[{task_id}].default"
+                )
+            raw_comment_reviewers = reviewer_spec.get("comment_ids", {})
+            if not isinstance(raw_comment_reviewers, Mapping):
+                raise RevisionModelError(
+                    f"reviewer_map[{task_id}].comment_ids must be an object."
+                )
+            for raw_comment_id, raw_label in raw_comment_reviewers.items():
+                comment_id = str(raw_comment_id)
+                if comment_id not in comment_ids:
+                    raise RevisionModelError(
+                        f"reviewer_map[{task_id}] refers to unknown task comment ID {comment_id!r}."
+                    )
+                comment_reviewers[comment_id] = _text(
+                    raw_label,
+                    f"reviewer_map[{task_id}].comment_ids[{comment_id}]",
+                )
+            missing_reviewers = [
+                comment_id for comment_id in comment_ids
+                if comment_id not in comment_reviewers and default_reviewer is None
+            ]
+            if missing_reviewers:
+                raise RevisionModelError(
+                    f"reviewer_map[{task_id}] is missing reviewer labels for comment ID(s): "
+                    + ", ".join(missing_reviewers)
+                )
+            assigned_reviewers = [
+                comment_reviewers.get(comment_id, default_reviewer)
+                for comment_id in comment_ids
+            ]
+            unique_reviewers = list(dict.fromkeys(
+                value for value in assigned_reviewers if value
+            ))
+            raw_patch_label = reviewer_spec.get("patch_label")
+            reviewer = (
+                _text(raw_patch_label, f"reviewer_map[{task_id}].patch_label")
+                if raw_patch_label is not None
+                else " / ".join(unique_reviewers) or "Reviewer"
+            )
+            if default_reviewer is None and unique_reviewers:
+                default_reviewer = unique_reviewers[0]
+        else:
+            raise RevisionModelError(
+                f"reviewer_map[{task_id}] must be a reviewer label or an object."
+            )
         evidence = task.get("evidence", [])
         comment_texts = []
         for comment_id in comment_ids:
@@ -1933,7 +1994,9 @@ def build_revision_ledger(
                     })
                 response_units.append(ResponseUnit(
                     response_unit_id=f"RU-{task_id}-{comment_id}",
-                    reviewer=reviewer,
+                    reviewer=comment_reviewers.get(
+                        comment_id, default_reviewer or reviewer
+                    ),
                     comment_id=comment_id,
                     comment_text=specific_comment,
                     response_text=str(task.get("proposed_response") or ""),
