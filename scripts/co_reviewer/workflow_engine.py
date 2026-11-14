@@ -8,9 +8,13 @@ editing, human approval, or Word pagination implicit side effects.
 from __future__ import annotations
 
 import copy
+import hashlib
 import heapq
+import json
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 WORKFLOW_STATUSES = frozenset({
@@ -62,6 +66,213 @@ class WorkflowSchedule:
             "target_group_components": [list(row) for row in self.target_group_components],
             "target_group_edges": [list(edge) for edge in self.target_group_edges],
         }
+
+
+
+_SCOPE_FINGERPRINT_FIELDS = (
+    "task_id", "sequence", "stage", "task_type", "title",
+    "source_comment_ids", "target_documents", "evidence", "proposed_action",
+    "targets", "dependencies", "target_groups", "readiness",
+    "unresolved_questions", "confidence", "requires_user_approval",
+    "response_unit_ids",
+)
+_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+
+def _digest(payload: Mapping[str, Any]) -> str:
+    try:
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    except (TypeError, ValueError) as exc:
+        raise WorkflowValidationError(
+            f"Workflow fingerprint input is not JSON-serializable: {exc}"
+        ) from exc
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _is_aware_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def workflow_scope_fingerprint(task: Mapping[str, Any]) -> str:
+    """Fingerprint every author-facing and target-defining part of one task."""
+    payload = {
+        field: task[field]
+        for field in _SCOPE_FINGERPRINT_FIELDS
+        if field in task
+    }
+    return _digest(payload)
+
+
+def workflow_preflight_fingerprint(
+    task: Mapping[str, Any], input_fingerprint: str
+) -> str:
+    if not _is_sha256(input_fingerprint):
+        raise WorkflowValidationError("input_fingerprint must be a lowercase SHA-256 digest.")
+    return _digest({
+        "scope_fingerprint": workflow_scope_fingerprint(task),
+        "input_fingerprint": input_fingerprint,
+    })
+
+
+def workflow_approval_fingerprint(
+    task: Mapping[str, Any], preflight_fingerprint: str
+) -> str:
+    if not _is_sha256(preflight_fingerprint):
+        raise WorkflowValidationError("preflight_fingerprint must be a lowercase SHA-256 digest.")
+    return _digest({
+        "scope_fingerprint": workflow_scope_fingerprint(task),
+        "preflight_fingerprint": preflight_fingerprint,
+    })
+
+
+def workflow_verification_fingerprint(task: Mapping[str, Any]) -> str:
+    return _digest({
+        "approval_fingerprint": task.get("approval_fingerprint"),
+        "output_fingerprint": task.get("output_fingerprint"),
+        "verification_report_id": task.get("verification_report_id"),
+        "semantic_review_confirmed": task.get("semantic_review_confirmed"),
+    })
+
+
+def workflow_completion_fingerprint(task: Mapping[str, Any]) -> str:
+    return _digest({
+        "verification_fingerprint": task.get("verification_fingerprint"),
+        "completion_record_id": task.get("completion_record_id"),
+        "completion_record_fingerprint": task.get("completion_record_fingerprint"),
+    })
+
+
+def _state_evidence_errors(
+    task_id: str, task: Mapping[str, Any], status: str
+) -> list[str]:
+    errors: list[str] = []
+
+    if status in {"blocked"} and not (
+        isinstance(task.get("block_reason"), str) and task["block_reason"].strip()
+    ):
+        errors.append(f"Task {task_id} in blocked state requires block_reason.")
+    if status == "recheck_required":
+        if task.get("recheck_from") not in WORKFLOW_STATUSES - {"recheck_required"}:
+            errors.append(f"Task {task_id} in recheck_required state needs a valid recheck_from.")
+        if not (
+            isinstance(task.get("invalidation_reason"), str)
+            and task["invalidation_reason"].strip()
+        ):
+            errors.append(f"Task {task_id} in recheck_required state requires invalidation_reason.")
+
+    preflight_states = {"preflighted", "approved", "applied", "verified", "completed"}
+    if status in preflight_states:
+        if not _is_sha256(task.get("input_fingerprint")):
+            errors.append(f"Task {task_id} requires input_fingerprint before preflighted state.")
+        if not _is_sha256(task.get("preflight_fingerprint")):
+            errors.append(f"Task {task_id} requires preflight_fingerprint.")
+        elif _is_sha256(task.get("input_fingerprint")):
+            try:
+                expected = workflow_preflight_fingerprint(
+                    task, task["input_fingerprint"]
+                )
+                if task["preflight_fingerprint"] != expected:
+                    errors.append(f"Task {task_id} preflight_fingerprint is stale for its current scope/input.")
+            except WorkflowValidationError as exc:
+                errors.append(f"Task {task_id}: {exc}")
+        if not isinstance(task.get("preflight_report_id"), str) or not task["preflight_report_id"].strip():
+            errors.append(f"Task {task_id} requires preflight_report_id.")
+        if not _is_aware_timestamp(task.get("preflighted_at_utc")):
+            errors.append(f"Task {task_id} requires timezone-aware preflighted_at_utc.")
+
+    approval_states = {"approved", "applied", "verified", "completed"}
+    if status in approval_states:
+        if task.get("human_approval_confirmed") is not True:
+            errors.append(f"Task {task_id} requires explicit human_approval_confirmed=true.")
+        if not isinstance(task.get("approved_by"), str) or not task["approved_by"].strip():
+            errors.append(f"Task {task_id} requires approved_by.")
+        if not _is_aware_timestamp(task.get("approved_at_utc")):
+            errors.append(f"Task {task_id} requires timezone-aware approved_at_utc.")
+        if not _is_sha256(task.get("approval_fingerprint")):
+            errors.append(f"Task {task_id} requires approval_fingerprint.")
+        elif _is_sha256(task.get("preflight_fingerprint")):
+            try:
+                expected = workflow_approval_fingerprint(
+                    task, task["preflight_fingerprint"]
+                )
+                if task["approval_fingerprint"] != expected:
+                    errors.append(f"Task {task_id} approval_fingerprint is stale for its current scope/preflight.")
+            except WorkflowValidationError as exc:
+                errors.append(f"Task {task_id}: {exc}")
+
+    applied_states = {"applied", "verified", "completed"}
+    if status in applied_states:
+        if not _is_sha256(task.get("output_fingerprint")):
+            errors.append(f"Task {task_id} requires output_fingerprint.")
+        if not isinstance(task.get("execution_report_id"), str) or not task["execution_report_id"].strip():
+            errors.append(f"Task {task_id} requires execution_report_id.")
+        if not _is_aware_timestamp(task.get("applied_at_utc")):
+            errors.append(f"Task {task_id} requires timezone-aware applied_at_utc.")
+
+    verified_states = {"verified", "completed"}
+    if status in verified_states:
+        if task.get("semantic_review_confirmed") is not True:
+            errors.append(f"Task {task_id} requires semantic_review_confirmed=true.")
+        if not isinstance(task.get("verified_by"), str) or not task["verified_by"].strip():
+            errors.append(f"Task {task_id} requires verified_by.")
+        if not _is_aware_timestamp(task.get("verified_at_utc")):
+            errors.append(f"Task {task_id} requires timezone-aware verified_at_utc.")
+        if not isinstance(task.get("verification_report_id"), str) or not task["verification_report_id"].strip():
+            errors.append(f"Task {task_id} requires verification_report_id.")
+        if not _is_sha256(task.get("verification_fingerprint")):
+            errors.append(f"Task {task_id} requires verification_fingerprint.")
+        else:
+            try:
+                expected = workflow_verification_fingerprint(task)
+                if task["verification_fingerprint"] != expected:
+                    errors.append(f"Task {task_id} verification_fingerprint is stale.")
+            except WorkflowValidationError as exc:
+                errors.append(f"Task {task_id}: {exc}")
+
+    if status == "completed":
+        if not isinstance(task.get("completion_record_id"), str) or not task["completion_record_id"].strip():
+            errors.append(f"Task {task_id} requires completion_record_id.")
+        if not _is_sha256(task.get("completion_record_fingerprint")):
+            errors.append(f"Task {task_id} requires completion_record_fingerprint.")
+        if not _is_aware_timestamp(task.get("completed_at_utc")):
+            errors.append(f"Task {task_id} requires timezone-aware completed_at_utc.")
+        if not _is_sha256(task.get("completion_fingerprint")):
+            errors.append(f"Task {task_id} requires completion_fingerprint.")
+        else:
+            try:
+                expected = workflow_completion_fingerprint(task)
+                if task["completion_fingerprint"] != expected:
+                    errors.append(f"Task {task_id} completion_fingerprint is stale.")
+            except WorkflowValidationError as exc:
+                errors.append(f"Task {task_id}: {exc}")
+
+    return errors
+
+
+def _clear_execution_evidence(task: dict[str, Any]) -> None:
+    for field in (
+        "input_fingerprint", "preflight_fingerprint", "preflight_report_id",
+        "preflighted_at_utc", "human_approval_confirmed", "approved_by",
+        "approved_at_utc", "approval_fingerprint", "output_fingerprint",
+        "execution_report_id", "applied_at_utc", "semantic_review_confirmed",
+        "verified_by", "verified_at_utc", "verification_report_id",
+        "verification_fingerprint", "completion_record_id",
+        "completion_record_fingerprint", "completed_at_utc",
+        "completion_fingerprint",
+    ):
+        task.pop(field, None)
 
 
 def _string_list(value: Any, field: str, task_id: str) -> tuple[list[str], list[str]]:
@@ -122,6 +333,7 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
             errors.append(f"Task {task_id} sequence must be a non-negative integer.")
         if not isinstance(task.get("stage", "revision"), str):
             errors.append(f"Task {task_id} stage must be a string.")
+        errors.extend(_state_evidence_errors(task_id, task, status))
 
     for task_id, deps in dependencies.items():
         for dependency in deps:
@@ -355,8 +567,9 @@ def transition_task(
     task: Mapping[str, Any],
     new_status: str,
     reason: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Apply one legal lifecycle transition without mutating the input mapping."""
+    """Apply a legal transition only when its state-specific evidence is supplied."""
     if not isinstance(task, Mapping):
         raise WorkflowValidationError("Workflow task must be an object.")
     current = task.get("status", "identified")
@@ -375,22 +588,127 @@ def transition_task(
         raise WorkflowValidationError(
             f"A non-empty reason is required when transitioning to {new_status}."
         )
+    if evidence is not None and not isinstance(evidence, Mapping):
+        raise WorkflowValidationError("Transition evidence must be an object.")
 
+    supplied = dict(evidence or {})
     updated = copy.deepcopy(dict(task))
+
+    if current == "recheck_required" or (
+        current == "preflighted" and new_status in {"ready", "blocked"}
+    ):
+        _clear_execution_evidence(updated)
+    if current == "recheck_required":
+        updated.pop("recheck_from", None)
+        updated.pop("invalidation_reason", None)
+    if current == "blocked":
+        updated.pop("block_reason", None)
+
     updated["status"] = new_status
     if new_status == "blocked":
         updated["block_reason"] = reason.strip()
-    elif current == "blocked":
-        updated.pop("block_reason", None)
-
+        return updated
     if new_status == "recheck_required":
         updated["recheck_from"] = current
         updated["invalidation_reason"] = reason.strip()
-    elif current == "recheck_required":
-        updated.pop("recheck_from", None)
-        updated.pop("invalidation_reason", None)
-    return updated
+        return updated
 
+    if new_status == "preflighted":
+        input_fingerprint = supplied.get("input_fingerprint")
+        report_id = supplied.get("preflight_report_id")
+        timestamp = supplied.get("preflighted_at_utc")
+        if not _is_sha256(input_fingerprint):
+            raise WorkflowValidationError(
+                "Preflight requires a lowercase SHA-256 input_fingerprint."
+            )
+        if not isinstance(report_id, str) or not report_id.strip():
+            raise WorkflowValidationError("Preflight requires preflight_report_id.")
+        if not _is_aware_timestamp(timestamp):
+            raise WorkflowValidationError("Preflight requires timezone-aware preflighted_at_utc.")
+        updated["input_fingerprint"] = input_fingerprint
+        updated["preflight_report_id"] = report_id.strip()
+        updated["preflighted_at_utc"] = timestamp
+        updated["preflight_fingerprint"] = workflow_preflight_fingerprint(
+            updated, input_fingerprint
+        )
+
+    elif new_status == "approved":
+        if supplied.get("human_approval_confirmed") is not True:
+            raise WorkflowValidationError(
+                "Approval requires explicit human_approval_confirmed=true."
+            )
+        approved_by = supplied.get("approved_by")
+        approved_at = supplied.get("approved_at_utc")
+        if not isinstance(approved_by, str) or not approved_by.strip():
+            raise WorkflowValidationError("Approval requires approved_by.")
+        if not _is_aware_timestamp(approved_at):
+            raise WorkflowValidationError("Approval requires timezone-aware approved_at_utc.")
+        updated["human_approval_confirmed"] = True
+        updated["approved_by"] = approved_by.strip()
+        updated["approved_at_utc"] = approved_at
+        updated["approval_fingerprint"] = workflow_approval_fingerprint(
+            updated, updated.get("preflight_fingerprint", "")
+        )
+
+    elif new_status == "applied":
+        output_fingerprint = supplied.get("output_fingerprint")
+        report_id = supplied.get("execution_report_id")
+        timestamp = supplied.get("applied_at_utc")
+        if not _is_sha256(output_fingerprint):
+            raise WorkflowValidationError("Apply requires a lowercase SHA-256 output_fingerprint.")
+        if not isinstance(report_id, str) or not report_id.strip():
+            raise WorkflowValidationError("Apply requires execution_report_id.")
+        if not _is_aware_timestamp(timestamp):
+            raise WorkflowValidationError("Apply requires timezone-aware applied_at_utc.")
+        updated["output_fingerprint"] = output_fingerprint
+        updated["execution_report_id"] = report_id.strip()
+        updated["applied_at_utc"] = timestamp
+
+    elif new_status == "verified":
+        if supplied.get("semantic_review_confirmed") is not True:
+            raise WorkflowValidationError(
+                "Verification requires explicit semantic_review_confirmed=true."
+            )
+        verified_by = supplied.get("verified_by")
+        verified_at = supplied.get("verified_at_utc")
+        report_id = supplied.get("verification_report_id")
+        if not isinstance(verified_by, str) or not verified_by.strip():
+            raise WorkflowValidationError("Verification requires verified_by.")
+        if not _is_aware_timestamp(verified_at):
+            raise WorkflowValidationError("Verification requires timezone-aware verified_at_utc.")
+        if not isinstance(report_id, str) or not report_id.strip():
+            raise WorkflowValidationError("Verification requires verification_report_id.")
+        updated["semantic_review_confirmed"] = True
+        updated["verified_by"] = verified_by.strip()
+        updated["verified_at_utc"] = verified_at
+        updated["verification_report_id"] = report_id.strip()
+        updated["verification_fingerprint"] = workflow_verification_fingerprint(updated)
+
+    elif new_status == "completed":
+        record_id = supplied.get("completion_record_id")
+        record_fingerprint = supplied.get("completion_record_fingerprint")
+        completed_at = supplied.get("completed_at_utc")
+        if not isinstance(record_id, str) or not record_id.strip():
+            raise WorkflowValidationError("Completion requires completion_record_id.")
+        if not _is_sha256(record_fingerprint):
+            raise WorkflowValidationError(
+                "Completion requires a lowercase SHA-256 completion_record_fingerprint."
+            )
+        if not _is_aware_timestamp(completed_at):
+            raise WorkflowValidationError("Completion requires timezone-aware completed_at_utc.")
+        updated["completion_record_id"] = record_id.strip()
+        updated["completion_record_fingerprint"] = record_fingerprint
+        updated["completed_at_utc"] = completed_at
+        updated["completion_fingerprint"] = workflow_completion_fingerprint(updated)
+
+    local_errors = _state_evidence_errors(
+        str(updated.get("task_id", "<unknown>")), updated, new_status
+    )
+    if local_errors:
+        raise WorkflowValidationError(
+            "Transition evidence failed validation:\n- " + "\n- ".join(local_errors)
+        )
+    return updated
 
 def invalidate_downstream(
     tasks: Any,
