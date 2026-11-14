@@ -475,7 +475,11 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
             status = "planned"
         if not isinstance(status, str) or status not in WORKFLOW_STATUSES:
             status = "planned"
-        adapted.append({
+        # Preserve the decision-plan evidence and author-facing task payload.
+        # The workflow ledger is the common layer; DOCX-only revision_items are
+        # generated later from mutating tasks, not from response-only tasks.
+        record = copy.deepcopy(dict(task))
+        record.update({
             "task_id": task_id.strip(),
             "sequence": task.get("sequence", 0),
             "stage": task.get("task_type", "revision"),
@@ -483,6 +487,7 @@ def workflow_tasks_from_decision_plan(tasks: Any) -> list[dict[str, Any]]:
             "target_groups": sorted(groups),
             "status": status,
         })
+        adapted.append(record)
     return adapted
 
 
