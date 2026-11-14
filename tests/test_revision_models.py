@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -40,6 +41,19 @@ def _operation(**overrides):
 
 
 class RevisionModelsTests(unittest.TestCase):
+    def test_revision_ledger_schema_keeps_patch_and_response_unit_separate(self):
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "revision-ledger.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertIn("patch", schema["$defs"])
+        self.assertIn("responseUnit", schema["$defs"])
+        self.assertIn("patchOperation", schema["$defs"])
+        response = schema["$defs"]["responseUnit"]
+        self.assertIn("location_mapped", response["properties"]["status"]["enum"])
+        self.assertTrue(any(
+            "final_locations" in condition.get("then", {}).get("required", [])
+            for condition in response["allOf"]
+        ))
+
     def test_patch_requires_explicit_exact_text_operation(self):
         patch = Patch(
             patch_id="T1",
