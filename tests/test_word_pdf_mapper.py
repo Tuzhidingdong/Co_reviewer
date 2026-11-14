@@ -22,6 +22,7 @@ from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,
     _normalise_pdf_text,
     _validate_mapping_phrase,
+    _read_word_position,
     build_mapping_jobs,
 )
 
@@ -154,6 +155,43 @@ class WordPdfMapperContractTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(WordPdfMappingError, "main document body"):
             build_mapping_jobs(self._ledger(operation=header))
+
+    def test_word_position_uses_last_character_line_number_constant(self):
+        class FakeRange:
+            def __init__(self, values):
+                self.values = values
+            def Information(self, code):
+                return self.values[code]
+
+        class FakeDocument:
+            def Range(self, start, end):
+                values = (
+                    {3: 2, 10: 17, 12: False}
+                    if start == 20
+                    else {3: 2, 10: 19, 12: False}
+                )
+                return FakeRange(values)
+
+        self.assertEqual(
+            _read_word_position(FakeDocument(), 20, 25, label="P1/OP1"),
+            (2, 17, 19, 2),
+        )
+
+    def test_word_position_refuses_table_cell_line_numbers(self):
+        class FakeRange:
+            def __init__(self, in_table):
+                self.in_table = in_table
+            def Information(self, code):
+                if code == 12:
+                    return self.in_table
+                return 2 if code == 3 else 7
+
+        class FakeDocument:
+            def Range(self, start, end):
+                return FakeRange(True)
+
+        with self.assertRaisesRegex(WordPdfMappingError, "inside a table"):
+            _read_word_position(FakeDocument(), 5, 10, label="P1/OP1")
 
     def test_word_find_phrase_limit_and_pdf_text_normalisation(self):
         with self.assertRaisesRegex(WordPdfMappingError, "255 characters"):

@@ -144,6 +144,48 @@ def build_mapping_jobs(ledger: RevisionLedger) -> dict[str, list[MappingJob]]:
     return jobs
 
 
+def _read_word_position(
+    document: Any,
+    start: int,
+    end: int,
+    *,
+    label: str,
+) -> tuple[int, int, int, int]:
+    """Read physical PDF page and continuous line number for one matched phrase.
+
+    WdInformation constants:
+      3  = wdActiveEndPageNumber
+      10 = wdFirstCharacterLineNumber
+      12 = wdWithInTable (NOT a line-number constant)
+    """
+    if end <= start:
+        raise WordPdfMappingError(f"Word returned an empty match for {label}.")
+    first_character = document.Range(start, min(start + 1, end))
+    last_character = document.Range(max(start, end - 1), end)
+    if bool(first_character.Information(12)) or bool(last_character.Information(12)):
+        raise WordPdfMappingError(
+            f"{label} is inside a table. Word line numbering does not provide a reliable "
+            "body line reference for table cells; use a separately reviewed table locator."
+        )
+    page_start = int(first_character.Information(3))  # wdActiveEndPageNumber
+    page_end = int(last_character.Information(3))
+    line_start = int(first_character.Information(10))  # wdFirstCharacterLineNumber
+    line_end = int(last_character.Information(10))  # same constant on the last character
+    if min(page_start, page_end, line_start, line_end) < 1:
+        raise WordPdfMappingError(
+            f"Word did not return valid page/line numbers for {label}; "
+            "check print-layout view, section line-number settings and target placement."
+        )
+    if page_start != page_end:
+        raise WordPdfMappingError(
+            f"{label} crosses pages {page_start}-{page_end}. "
+            "The current ResponseLocation schema requires one page per target."
+        )
+    if line_end < line_start:
+        raise WordPdfMappingError(f"Word returned a reversed line range for {label}.")
+    return page_start, line_start, line_end, page_end
+
+
 def _find_unique_phrase(document: Any, phrase: str, *, label: str) -> tuple[int, int, int, int]:
     """Return (page, line_start, line_end, page_end) for exactly one body-text match."""
     search_text = phrase.replace("^", "^^")
@@ -173,27 +215,8 @@ def _find_unique_phrase(document: Any, phrase: str, *, label: str) -> tuple[int,
             f"{label} matched {len(matches)} times in the Word-final DOCX; "
             "automatic mapping requires exactly one occurrence."
         )
-
     start, end = matches[0]
-    first_character = document.Range(start, min(start + 1, end))
-    last_character = document.Range(max(start, end - 1), end)
-    page_start = int(first_character.Information(3))  # wdActiveEndPageNumber
-    page_end = int(last_character.Information(3))
-    line_start = int(first_character.Information(10))  # wdFirstCharacterLineNumber
-    line_end = int(last_character.Information(12))  # wdLastCharacterLineNumber
-    if min(page_start, page_end, line_start, line_end) < 1:
-        raise WordPdfMappingError(
-            f"Word did not return valid page/line numbers for {label}; "
-            "check section line-number settings and target placement."
-        )
-    if page_start != page_end:
-        raise WordPdfMappingError(
-            f"{label} crosses pages {page_start}-{page_end}. "
-            "The current ResponseLocation schema requires one page per target."
-        )
-    if line_end < line_start:
-        raise WordPdfMappingError(f"Word returned a reversed line range for {label}.")
-    return page_start, line_start, line_end, page_end
+    return _read_word_position(document, start, end, label=label)
 
 
 def _export_one_document(
@@ -221,6 +244,8 @@ def _export_one_document(
                 f"Working Clean View still contains tracked revisions: {source_docx}"
             )
         document.TrackRevisions = False
+        # Word line numbering is exposed in Print Layout view.
+        document.ActiveWindow.View.Type = 3  # wdPrintView
         for section_index in range(1, int(document.Sections.Count) + 1):
             numbering = document.Sections.Item(section_index).PageSetup.LineNumbering
             numbering.Active = True

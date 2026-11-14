@@ -31,9 +31,9 @@ The output directory must be new or empty. The command creates one Word-final Cl
 - Word opens the hash-verified Working Clean View read-only, enables continuous line numbering, repaginates, saves a separate DOCX and exports PDF.
 - The replacement text in every linked verified Patch must occur exactly once in the Word-final DOCX.
 - The same target phrase must be extractable from the corresponding PDF page.
-- Page and line numbers are read from Word COM after pagination; the PDF page text is an independent page-level check.
+- Word is explicitly switched to Print Layout view before line numbering is queried. Page and line numbers are read from Word COM after pagination; both the first and last target characters use Word's `wdFirstCharacterLineNumber` constant (10). `wdWithInTable` (12) is used only to reject table-cell locations because Word line numbering is not reliable there. The PDF page text is an independent page-level check.
 - The map stores the final DOCX and PDF SHA-256 values. Ledger validation rechecks them.
-- Automatic mapping currently supports unique, single-paragraph replacement text in `word/document.xml` that fits Word's 255-character Find limit and stays on one page. Deletions, ambiguous text, multi-page spans, header/footer targets and response-only units stop for manual resolution rather than receiving guessed locations.
+- Automatic mapping currently supports unique, single-paragraph body-text replacement text outside tables in `word/document.xml` that fits Word's 255-character Find limit and stays on one page. Deletions, ambiguous text, multi-page spans, header/footer targets and response-only units stop for manual resolution rather than receiving guessed locations.
 
 ## Acceptance boundary
 
