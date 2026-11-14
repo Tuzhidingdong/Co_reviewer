@@ -191,3 +191,38 @@ Use `record-usage-event` to append an event from a metadata-only JSON file when 
 Run `audit-docx-quality --docx <file.docx> --profile <profile> --out <report.json>` for structural/typography checks. Supported profiles are `generic`, `clean-manuscript`, `marked-manuscript`, `word-final-clean` and `response-letter`. `render-response-docx` and `map-response-locations` also emit deterministic quality reports automatically.
 
 A DOCX quality report is not proof of visual correctness. Final pagination and page/line locations must still come from Microsoft Word COM and the corresponding exported PDF; scientific correctness requires human semantic review.
+
+## P0 integrity gates and final-location rules
+
+The initial Manuscript and SI baselines must be clean before a revision round is registered. The gate scans native insertions/deletions, move revisions, every Word *Change element, native comment definitions and comment anchors. Existing unresolved markup blocks the round with package-part and paragraph evidence; it is not silently accepted as the new baseline.
+
+Final Marked and Clean deliverables physically remove Word comment definitions, comment anchors, comment-related package parts, relationships and content-type overrides. Marked files retain the in-line w:ins and w:del Track Changes that record the current Co_Reviewer edits. Do not remove those revisions as a shortcut for comment cleanup.
+
+Every executable PatchOperation must carry a non-empty, exact source_comment_ids list. Each revised ResponseUnit must link the precise operation IDs that declare that comment ID. No post-hoc inference from task text or target overlap is permitted. The ResponseUnit disposition and locator requirement are explicit: reply_only/not_required, no_change/existing_anchor_required, revised/required or revised/manual_required; clarification_needed remains blocked.
+
+Final body-text page/line positions come only from Microsoft Word COM on the final Clean DOCX. Mapping is grouped by document role. If the role's Working Clean SHA changes, all existing page/line evidence for that role is invalidated and the role is repaginated/remapped together. Each mapped ResponseUnit is bound to the final DOCX SHA, PDF SHA, map artifact SHA, locator ID and source Working Clean SHA. The ledger rejects mixed final DOCX/PDF versions within one document role.
+
+After Word refreshes built-in SEQ, REF, PAGE and PAGEREF fields (not citation-manager ADDIN fields), it repaginates and exports the PDF. Native numeric SEQ Figure and SEQ Table results are checked for gaps, duplicates and unexpected starting numbers. A deterministic numbering error blocks export. Chapter-reset, non-numeric or manually typed caption schemes are explicitly marked manual_review; they are not reported as automatically certified.
+
+### Table and non-body manual locators
+
+When a target cannot safely receive an automatic body-line locator (for example, a table cell or unsupported header/footer object), set location_requirement to manual_required. The Word mapper still exports the final DOCX/PDF for that document role but does not invent a line number. After map-response-locations, enter one locator row for every exact linked PatchOperation:
+
+    {
+      "response_units": [
+        {
+          "response_unit_id": "RU-T1-C1",
+          "operation_id": "OP-1",
+          "locator_text": "Table S2, Supplementary Information",
+          "page": null,
+          "line_start": null,
+          "line_end": null
+        }
+      ]
+    }
+
+Then record the author-confirmed locators against the Word-exported artifacts:
+
+    python scripts/co_reviewer_cli.py record-manual-response-locations --ledger revision_ledger.json --word-map word_pdf_final/response_location_map.json --input manual_locations.json --out manual_location_map.json --actor "Human Author"
+
+The command requires exact operation coverage for every manual-required ResponseUnit, validates the output DOCX/PDF and current Working Clean hashes, and stores mapping_method=manual with a stable locator ID. locator_text is mandatory. Page is optional; line numbers may be supplied only when the author has checked them. When line numbers are supplied, page, line_start and line_end must all be positive integers. Do not fill uncertain line numbers with estimates. A manual locator is visibly distinct from a Word COM location in the ledger and Response Letter.
