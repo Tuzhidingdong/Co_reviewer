@@ -385,7 +385,7 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
             root = ET.fromstring(data, parser=_xml_parser())
             for child in list(root):
                 part_name = child.get("PartName", "").lstrip("/").casefold()
-                if part_name in _COMMENT_PARTS:
+                if _is_comment_part_name(part_name):
                     root.remove(child)
                     content_type_counts += 1
             package[name] = ET.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
@@ -412,7 +412,7 @@ def strip_docx_comments_bytes(payload: bytes) -> tuple[bytes, dict[str, Any]]:
     cleaned = output.getvalue()
     with zipfile.ZipFile(io.BytesIO(cleaned), "r") as archive:
         names = set(archive.namelist())
-        if any(name.casefold() in _COMMENT_PARTS for name in names):
+        if any(_is_comment_part_name(name) for name in names):
             raise WorkingViewError("Comment package parts remain after Marked DOCX cleanup.")
         for name in names:
             if not name.startswith("word/") or not name.endswith(".xml"):
