@@ -174,13 +174,14 @@ class WordPdfMapperContractTests(unittest.TestCase):
 
     def test_location_phrase_expands_until_unique(self):
         paragraphs = [
-            "The same phrase has an earlier occurrence in the document.",
-            "Before context one two three the target sentence includes unique words after it.",
-            "A different paragraph closes the document.",
+            "same prefix target anchor phrase end alpha one two three",
+            "same prefix target anchor phrase end beta four five six",
         ]
-        phrase = build_unique_location_phrase(paragraphs, 1, 30, 49)
-        self.assertIn("Before context", phrase)
-        self.assertIn("unique words", phrase)
+        start = paragraphs[0].index("target anchor phrase")
+        end = start + len("target anchor phrase")
+        phrase = build_unique_location_phrase(paragraphs, 0, start, end)
+        self.assertIn("same prefix", phrase)
+        self.assertIn("alpha", phrase)
         matches = sum(paragraph.count(phrase) for paragraph in paragraphs)
         self.assertEqual(matches, 1)
 

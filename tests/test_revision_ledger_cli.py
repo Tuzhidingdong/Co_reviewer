@@ -960,6 +960,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             response_text="We revised the target sentence against the updated manuscript.",
             linked_task_ids=["T1"],
             linked_patch_ids=["T1"],
+            linked_operation_ids=["T1-OP1"],
         )
         timestamp = "2026-11-14T12:00:00+08:00"
         prior_document = RevisionDocument(
