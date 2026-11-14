@@ -234,7 +234,11 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
                 "object_type": "reviewer_comment",
                 "part": part,
                 "native_id": comment_id,
-                "location_hint": {"comment_idx": comment_index, "comment_id": comment_id},
+                "location_hint": {
+                "comment_idx": comment_index,
+                "comment_id": comment_id,
+                "visible_text_length": len(text),
+            },
                 "payload": payload,
                 "_formatting": {},
             })
@@ -277,6 +281,7 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
         para_id = paragraph.get(W14_PARA_ID)
         if para_id:
             hint["para_id"] = para_id
+        hint["visible_text_length"] = len(normalized_text)
         if table_index is not None:
             hint["table_idx"] = table_index
             row = _ancestor(paragraph, "tr")
@@ -569,7 +574,6 @@ def build_document_identity_manifest(
     document_records: list[dict[str, Any]] = []
     object_records: list[dict[str, Any]] = []
     report_rows: list[dict[str, Any]] = []
-    object_text_by_id: dict[str, str] = {}
 
     for row in rows:
         if not isinstance(row, Mapping):
@@ -697,8 +701,6 @@ def build_document_identity_manifest(
                 location_hint=hint,
             )
             object_records.append(identity.to_dict())
-            if isinstance(descriptor.get("payload", {}).get("text"), str):
-                object_text_by_id[object_id] = descriptor["payload"]["text"]
 
         report_rows.append({
             "role": role,
@@ -713,7 +715,6 @@ def build_document_identity_manifest(
         "schema_version": "0.5.1",
         "documents": document_records,
         "objects": object_records,
-        "_object_text_by_id": object_text_by_id,
     }
     report = {
         "algorithm": "native-paraId-then-unique-exact-fingerprint-v1",
@@ -938,37 +939,32 @@ def build_target_refs_by_task(
             item = candidates[0]
             start_offset = target.get("start_offset")
             end_offset = target.get("end_offset")
-            object_payload_candidates = [
-                row for row in objects
-                if row.get("document_id") == item.get("document_id")
-                and row.get("revision_id") == item.get("revision_id")
-                and row.get("object_id") == item.get("object_id")
-            ]
-            object_text = (
-                object_payload_candidates[0].get("text")
-                if object_payload_candidates else None
+            location_hint = item.get("location_hint")
+            visible_text_length = (
+                location_hint.get("visible_text_length")
+                if isinstance(location_hint, Mapping) else None
             )
-            # Object text is stored as part of the canonical fingerprint payload,
-            # so recover it only from the parser's manifest-private payload map below.
-            text_by_object = manifest.get("_object_text_by_id", {})
-            if isinstance(text_by_object, Mapping):
-                object_text = text_by_object.get(item.get("object_id"), object_text)
             if start_offset is not None or end_offset is not None:
-                if not isinstance(object_text, str):
+                if (
+                    not isinstance(visible_text_length, int)
+                    or isinstance(visible_text_length, bool)
+                    or visible_text_length < 0
+                ):
                     errors.append(
-                        f"Task {task_id} target[{target_index}] has offsets but no visible-text length."
+                        f"Task {task_id} target[{target_index}] has offsets but its parser-backed "
+                        "object has no visible_text_length."
                     )
                     continue
                 if (
                     not isinstance(start_offset, int) or isinstance(start_offset, bool)
                     or not isinstance(end_offset, int) or isinstance(end_offset, bool)
                     or start_offset < 0 or end_offset <= start_offset
-                    or end_offset > len(normalize_visible_text(object_text))
+                    or end_offset > visible_text_length
                 ):
                     errors.append(
                         f"Task {task_id} target[{target_index}] character range "
                         f"{start_offset!r}:{end_offset!r} exceeds the resolved object's "
-                        f"visible-text length {len(normalize_visible_text(object_text))}."
+                        f"visible-text length {visible_text_length}."
                     )
                     continue
             try:

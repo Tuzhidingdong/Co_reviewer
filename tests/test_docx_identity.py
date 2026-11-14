@@ -290,6 +290,50 @@ class DocxIdentityRegistryTests(unittest.TestCase):
         }], manifest)
         self.assertEqual(refs["T1"], [])
         self.assertTrue(any("exceeds the resolved object's visible-text length" in error for error in errors))
+        valid_refs, valid_errors = build_target_refs_by_task([{
+            "task_id": "T2",
+            "targets": [{
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "action": "replace",
+                "start_offset": 0,
+                "end_offset": 5,
+            }],
+        }], manifest)
+        self.assertEqual(valid_errors, [])
+        self.assertEqual(
+            (valid_refs["T2"][0]["start_offset"], valid_refs["T2"][0]["end_offset"]),
+            (0, 5),
+        )
+
+    def test_inventory_paragraph_text_must_match_actual_docx(self):
+        path = self._docx("inventory-mismatch.docx", ["Actual paragraph."])
+        inventory = _inventory(path)
+        inventory[0]["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "para_id": None,
+            "text": "Stale or wrong paragraph.",
+        }]
+        with self.assertRaisesRegex(DocxIdentityError, "text does not match the actual DOCX"):
+            build_document_identity_manifest(inventory)
+
+    def test_inventory_para_id_must_match_actual_docx(self):
+        path = self._docx(
+            "inventory-paraid.docx",
+            ["Actual paragraph."],
+            {"Actual paragraph.": "ABCD1234"},
+        )
+        inventory = _inventory(path)
+        inventory[0]["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "para_id": "WRONG123",
+            "text": "Actual paragraph.",
+        }]
+        with self.assertRaisesRegex(DocxIdentityError, "paraId does not match the actual DOCX"):
+            build_document_identity_manifest(inventory)
 
     def test_stale_inventory_hash_is_rejected_before_identity_generation(self):
         path = self._docx("stale.docx", ["Original."])
