@@ -1203,6 +1203,58 @@ def cmd_build_revision_ledger(args):
     return 0
 
 
+def cmd_confirm_response_units(args):
+    if not getattr(args, "semantic_review_confirmed", False):
+        raise ValueError(
+            "Explicit semantic-review acknowledgement is required before confirming ResponseUnits."
+        )
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    ledger = _load_revision_ledger(ledger_path)
+    report_id = args.verification_report_id or (
+        "response-review:" + datetime.now(timezone.utc).isoformat()
+    )
+    ledger.confirm_response_units(
+        args.ids,
+        verification_report_id=report_id,
+        actor=args.actor,
+    )
+    write_json_atomic(ledger_path, ledger.to_dict())
+    print(f"[RESPONSE VERIFIED] {len(args.ids)} ResponseUnit(s): {', '.join(args.ids)}")
+    print("[GUARD] This records semantic review only; final PDF page/line mapping is still required.")
+    return 0
+
+
+def cmd_record_response_locations(args):
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    location_map_path = Path(args.location_map).expanduser().resolve()
+    if ledger_path == location_map_path:
+        raise ValueError("Location map must not overwrite the RevisionLedger.")
+    ledger = _load_revision_ledger(ledger_path)
+    location_map = json.loads(location_map_path.read_text(encoding="utf-8"))
+    ledger.record_response_locations(location_map, actor=args.actor)
+    write_json_atomic(ledger_path, ledger.to_dict())
+    mapped = sum(1 for unit in ledger.response_units if unit.status in {"location_mapped", "completed"})
+    print(f"[LOCATIONS] {mapped} ResponseUnit(s) now have final PDF page/line mappings.")
+    print(f"[OK] RevisionLedger: {ledger_path}")
+    return 0
+
+
+def cmd_complete_response_units(args):
+    if not getattr(args, "ready_for_submission_confirmed", False):
+        raise ValueError("Explicit ready-for-submission confirmation is required.")
+    ledger_path = Path(args.ledger).expanduser().resolve()
+    ledger = _load_revision_ledger(ledger_path)
+    ledger.complete_response_units(
+        args.ids,
+        ready_for_submission_confirmed=True,
+        actor=args.actor,
+    )
+    write_json_atomic(ledger_path, ledger.to_dict())
+    print(f"[RESPONSE COMPLETE] {len(args.ids)} ResponseUnit(s): {', '.join(args.ids)}")
+    print("[NOTE] This records completion only; it does not submit files to a journal.")
+    return 0
+
+
 def cmd_export_revision_plan(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
     output_path = Path(args.out).expanduser().resolve()
@@ -1556,6 +1608,24 @@ def build_parser():
     ex.add_argument("--ledger", required=True)
     ex.add_argument("--out", default="revision_plan.json")
     ex.set_defaults(func=cmd_export_revision_plan)
+    cru = sub.add_parser("confirm-response-units", help="Record explicit semantic review of response text.")
+    cru.add_argument("--ledger", required=True)
+    cru.add_argument("--ids", nargs="+", required=True)
+    cru.add_argument("--verification-report-id")
+    cru.add_argument("--actor", default="Human Author")
+    cru.add_argument("--semantic-review-confirmed", action="store_true", required=True)
+    cru.set_defaults(func=cmd_confirm_response_units)
+    rloc = sub.add_parser("record-response-locations", help="Attach final PDF page/line locations to ResponseUnits.")
+    rloc.add_argument("--ledger", required=True)
+    rloc.add_argument("--location-map", required=True)
+    rloc.add_argument("--actor", default="Co_Reviewer Location Mapper")
+    rloc.set_defaults(func=cmd_record_response_locations)
+    cru2 = sub.add_parser("complete-response-units", help="Complete units after verified patches and final PDF locations.")
+    cru2.add_argument("--ledger", required=True)
+    cru2.add_argument("--ids", nargs="+", required=True)
+    cru2.add_argument("--actor", default="Human Author")
+    cru2.add_argument("--ready-for-submission-confirmed", action="store_true", required=True)
+    cru2.set_defaults(func=cmd_complete_response_units)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)
