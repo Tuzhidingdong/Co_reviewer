@@ -135,20 +135,6 @@
         {
           "if": { "required": ["end_offset"] },
           "then": { "required": ["start_offset"] }
-        },
-        {
-          "if": {
-            "required": ["start_offset", "end_offset"],
-            "properties": {
-              "start_offset": { "type": "integer" },
-              "end_offset": { "type": "integer" }
-            }
-          },
-          "then": {
-            "properties": {
-              "end_offset": { "exclusiveMinimum": { "$data": "1/start_offset" } }
-            }
-          }
         }
       ],
       "additionalProperties": false
