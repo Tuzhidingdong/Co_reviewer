@@ -203,7 +203,7 @@ def _remove_comment_content_types(data: bytes) -> tuple[bytes, int]:
     removed = 0
     for child in list(root):
         part_name = child.get("PartName", "").lstrip("/").casefold()
-        if part_name in _COMMENT_PARTS:
+        if _is_comment_part_name(part_name):
             root.remove(child)
             removed += 1
     if removed:
@@ -510,7 +510,7 @@ def create_working_clean_view(
     changed_parts: list[str] = []
 
     for name, data in list(package.items()):
-        if name.casefold() in _COMMENT_PARTS:
+        if _is_comment_part_name(name):
             del package[name]
             counts["comment_parts_removed"] += 1
             continue
