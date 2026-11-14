@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import co_reviewer_cli as cli
 from co_reviewer.identity import sha256_file
@@ -205,6 +206,100 @@ class WordPdfMapperContractTests(unittest.TestCase):
         )
         jobs = build_mapping_jobs(ledger)
         self.assertEqual(jobs, {"Manuscript": []})
+
+    def test_manual_location_cli_records_operation_bound_table_locator(self):
+        operation = PatchOperation.from_mapping({
+            **self.operation.to_dict(),
+            "part": "word/header1.xml",
+        })
+        patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please revise the table.",
+            proposed_response="We revised the table.",
+            operations=[operation],
+            status="verified",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="PF-1",
+            approval_fingerprint="b" * 64,
+            apply_report_ids=["AP-1"],
+            verification_report_id="VF-1",
+            verified_output_hashes=[{
+                "path": str(self.marked_docx),
+                "sha256": sha256_file(self.marked_docx),
+            }],
+        )
+        unit = ResponseUnit(
+            response_unit_id="RU-MANUAL-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please revise the table.",
+            response_text="We revised the table.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-1"],
+            disposition="revised",
+            location_requirement="manual_required",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="SEM-MANUAL",
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-manual-cli",
+            documents=[self.document],
+            patches=[patch],
+            response_units=[unit],
+        )
+        ledger_path = self.root / "revision_ledger.json"
+        word_map_path = self.root / "word_location_map.json"
+        input_path = self.root / "manual_locations.json"
+        output_path = self.root / "manual_location_map.json"
+        cli.write_json_atomic(ledger_path, ledger.to_dict())
+        cli.write_json_atomic(word_map_path, {
+            "generator": "co-reviewer-word-pdf-mapper-v1",
+            "documents": [{
+                "document": "Manuscript",
+                "source_working_clean_sha256": sha256_file(self.clean_docx),
+                "output_file": str(self.marked_docx),
+                "output_sha256": sha256_file(self.marked_docx),
+                "pdf_file": str(self.pdf),
+                "pdf_sha256": sha256_file(self.pdf),
+                "word_page_count": 3,
+                "sequence_audit": {
+                    "status": "manual_review",
+                    "detected": {"Figure": [], "Table": []},
+                    "issues": [],
+                    "manual_review": [{"reason": "Synthetic fixture."}],
+                },
+            }],
+            "quality_reports": [],
+        })
+        cli.write_json_atomic(input_path, {
+            "response_units": [{
+                "response_unit_id": "RU-MANUAL-C1",
+                "operation_id": "OP-1",
+                "locator_text": "Table S2, Supplementary Information",
+            }]
+        })
+        args = SimpleNamespace(
+            ledger=str(ledger_path),
+            word_map=str(word_map_path),
+            input=str(input_path),
+            out=str(output_path),
+            actor="Synthetic Author",
+        )
+        self.assertEqual(cli.cmd_record_manual_response_locations(args), 0)
+        updated = cli._load_revision_ledger(str(ledger_path))
+        mapped = updated.response_units[0]
+        self.assertEqual(mapped.status, "location_mapped")
+        self.assertEqual(mapped.final_locations[0].mapping_method, "manual")
+        self.assertIsNone(mapped.final_locations[0].page)
+        self.assertEqual(
+            mapped.final_locations[0].display_text,
+            "Table S2, Supplementary Information",
+        )
+        self.assertTrue(output_path.is_file())
 
     def test_unconfirmed_response_unit_is_excluded_not_guessed(self):
         jobs = build_mapping_jobs(self._ledger(unit_status="draft"))
