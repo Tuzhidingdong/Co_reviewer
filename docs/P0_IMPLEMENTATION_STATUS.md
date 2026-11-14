@@ -6,84 +6,110 @@
 - Implementation branch: \`upgrade/v0.5.1-p0-implementation-20261114\`
 - Base branch: \`upgrade/execution-integrity-v0.3\`
 - Base commit: \`7b0fef325a5f8282a39259d39bb3cc0118e24a68\`
-- Code head before this status update: \`e26cb81576b6db22bff56647a50e9b7f268fed61\`
-- \`main\` is unchanged; no PR has been merged.
-- No formal installed Skill directory, manuscript, SI, reviewer file or user experiment data has been modified.
+- Branch remains separate from the release branch; no feature PR has been merged.
+- The formal installed Skill directory and all source Manuscript/SI/Reviewer files remain untouched.
 - No Worker has been started.
+
+During an earlier connector operation, a test-only file was briefly written to the default branch because the branch argument was omitted. The file was checked and removed in a follow-up commit; the current default-branch tree does not contain it. No Co_Reviewer feature implementation was merged to the default branch.
 
 ## Implemented
 
 ### P0-01 — Preserve the v0.3 regression baseline
 
-- Added \`docs/BASELINE_V0.3.md\`, retaining the inventory of all 76 original test methods.
-- Existing regression tests have not been removed or weakened. New tests are additive.
-- The historical local pass on the original v0.3 source is not evidence that this branch passes.
+- Added \`docs/BASELINE_V0.3.md\`, preserving the exact inventory of the 76 original test methods.
+- Existing baseline tests have not been deleted or weakened.
 
 ### P0-02 — Establish behavior-preserving module boundaries
 
-- Added \`scripts/co_reviewer/document_engine.py\` for the existing WordprocessingML and native Track Changes implementation.
-- Added \`scripts/co_reviewer/identity.py\` to centralize the existing file and workflow fingerprints, then extended it with the v0.5.1 identity foundation.
-- Kept \`scripts/co_reviewer_cli.py\` as the compatibility entry point and routed existing functions through the extracted modules.
-- The existing identity hashes remain available; new semantic identity dimensions are additive.
+- Added \`scripts/co_reviewer/document_engine.py\` for existing WordprocessingML parsing, Run handling and native Track Changes behavior.
+- Added \`scripts/co_reviewer/identity.py\` for existing file and approval fingerprints, with the new identity model layered alongside the legacy hashes.
+- Kept \`scripts/co_reviewer_cli.py\` as the compatibility command entry point.
 
-### P0-03 — Introduce the common Workflow Engine and durable ledger
+### P0-03 — Unified task workflow and scheduling
 
-Added \`scripts/co_reviewer/workflow_engine.py\` with:
+Added \`scripts/co_reviewer/workflow_engine.py\`:
 
-- One lifecycle state model: \`identified → planned → ready → preflighted → approved → applied → verified → completed\`, plus explicit \`blocked\` and \`recheck_required\` paths.
-- Task DAG validation and deterministic topological scheduling.
-- Target Group Quotient DAG construction. Cycles introduced only by shared target groups are condensed into lock/review components; actual task-level dependency cycles remain errors.
-- Readiness gating: a task is selectable only when it is explicitly ready and its dependencies are verified or completed.
-- Conflict-free ready batches: one batch never includes two tasks that reserve the same target-group conflict component.
-- Downstream invalidation: changing an upstream task moves every transitive dependent to \`recheck_required\`.
-- Scope/input, approval, output, verification and completion fingerprints. Changes to a task's evidence, proposed action, dependencies or targets make prior preflight/approval fingerprints stale.
-- Evidence requirements for preflight, explicit human approval, execution, semantic verification and completion.
-- Decision-plan adaptation that preserves the evidence and task payload instead of flattening it.
-- \`build_workflow_ledger()\` and \`validate_workflow_ledger()\` for a persistent per-round task ledger.
+- Lifecycle states and legal transitions.
+- Task DAG validation, deterministic dependency order and target-group quotient graph.
+- Condensation of target-group cycles while still rejecting true task dependency cycles.
+- Ready-task gating and conflict-free candidate batches.
+- Transitive downstream invalidation when an upstream task changes.
+- Fingerprints binding task scope, input versions, preflight, human approval, output, verification and completion evidence.
+- A durable Workflow Ledger with build and validation APIs.
 
-The old \`revision-plan.schema.json\` and \`validate_plan()\` remain DOCX-edit-only and continue requiring non-empty document targets. The new Workflow Ledger is the common task layer; response-only work is not represented as a fake DOCX edit.
+The decision-plan validator now consumes the common workflow engine. The old DOCX-only revision plan still requires real document targets; Response-only tasks are preserved in the Workflow Ledger instead of being converted into fake DOCX edits.
 
-### P0-04 — Establish five-dimensional document and object identity
+### P0-04 — Document and object identity foundation
 
-Extended \`scripts/co_reviewer/identity.py\` with:
+Added five distinct identity dimensions:
 
-- Exact source-byte SHA-256.
-- Normalized visible-content SHA-256.
-- Structure SHA-256.
-- Formatting SHA-256.
-- Citation-state SHA-256, including a versioned \`CitationProfile\` for citation mode, style, numbering scope, examples and detection evidence.
-- Persistent \`DocumentObjectIdentity\` records whose object IDs are independent from paragraph-index location hints.
-- Stable \`TargetRef\` references bound to a document revision, object ID, part, object fingerprint and optional character range.
+1. Exact source-byte hash.
+2. Normalized visible-content hash.
+3. Structure hash.
+4. Formatting hash.
+5. Citation-state hash with a versioned CitationProfile.
 
-Added \`schemas/document-identity.schema.json\`. The Workflow Ledger schema now accepts document identities, an object registry and task-level TargetRefs. Ledger validation checks that references resolve to the registered document revision and object fingerprint.
+Added \`DocumentIdentity\`, \`DocumentObjectIdentity\` and \`TargetRef\`. The Workflow Ledger can persist document revisions and an object registry, and validates that stable target references match the registered object fingerprint. The scheduler prefers \`document_id|object=object_id\` groups when TargetRefs exist. The legacy \`document|part|p_idx\` key remains a migration fallback until parser-backed stable object matching is complete.
 
-The scheduler prefers stable \`document_id|object=object_id\` groups when TargetRefs are supplied. The legacy \`document|part|p_idx\` key remains only as a migration fallback. Parser-backed identity registration and cross-revision object matching are not yet finished.
+### P0-05 — Typed Patch and RevisionLedger execution bridge
 
-### Decision-plan integration
+Added \`scripts/co_reviewer/revision_models.py\` and \`schemas/revision-ledger.schema.json\`:
 
-- \`scripts/validate_decision_plan.py\` now consumes the shared Workflow Engine for dependency validation and scheduling.
-- Its CLI reports the task and target-group schedule summary.
-- Added \`schemas/workflow-ledger.schema.json\` and \`docs/WORKFLOW_ENGINE.md\`.
-- \`response_only\` tasks remain in the Workflow Ledger without document target groups or DOCX targets.
+- \`PatchOperation\` represents an exact \`find/replace\` operation in a Word part, with distinct input/output DOCX paths and evidence IDs.
+- A generic \`proposed_action\` is never treated as executable text. Missing exact operands are rejected.
+- \`Patch\` groups operations for one task and retains supersession lineage.
+- \`RevisionLedger\` stores document revision records, Patches and append-only execution events.
+- The legacy DOCX writer remains the only document writer. The adapter exports pending, unapproved legacy revision items and refuses to execute if reviewer text, proposed response or exact targets drift from the Patch record.
+- With \`--revision-ledger\`, preflight, approval, apply and verified confirmation are synchronized back to the new ledger, including fingerprints and events.
+- The old CLI entry points and schema remain compatible for users who do not opt into the new ledger.
 
-## Regression and CI status
+The bridge does not yet implement full patch supersession/rebase, a Working Clean View or a complete multi-stage workflow CLI. Those remain explicit next-stage tasks.
+
+### P0-06 — ResponseUnit lifecycle and final-location evidence
+
+Added a separate \`ResponseUnit\` model:
+
+- One reviewer comment and response, linked to relevant task IDs, Patches and document targets.
+- Semantic review is a separate explicit transition; it does not imply final page/line locations.
+- Final location mapping requires page, line range, actual PDF path and PDF SHA-256.
+- The source location-map JSON file and its SHA-256 are also stored. PDF/map bytes are rechecked before a mapped/completed RevisionLedger can be serialized.
+- Completion requires semantic review, final locations, explicit ready-for-submission confirmation and verified status for every linked Patch.
+- Markdown/DOCX response renderers distinguish \`location_pending\` from a fully mapped response. They do not invent line numbers.
+
+CLI commands now include:
+
+- \`build-revision-ledger\`
+- \`export-revision-plan\`
+- \`confirm-response-units\`
+- \`record-response-locations\`
+- \`complete-response-units\`
+
+The location commands consume an externally produced map. They do not yet generate the Word COM/PDF pagination or line mapping themselves.
+
+## Regression inventory and validation status
 
 - Original baseline: 76 test methods.
-- Current added tests: 5 document-engine module tests, 12 identity tests, 16 Workflow Engine tests, and 2 additional decision-plan/ledger integration tests.
-- Expected current total: 113 test methods. This is an inventory count, not a test-pass claim.
-- The current branch has not yet been executed on the user's Windows Python environment.
-- GitHub Actions previously failed before runner assignment: both matrix jobs reported \`runner_id=0\`, no runner name and no steps. No checkout, compilation or test execution occurred. This is an infrastructure/runner blocker, not evidence of a Python test failure.
-- Microsoft Word GUI opening, Track Changes rendering, save-round-trip, pagination and PDF line mapping are also not yet accepted.
+- New document-engine module tests: 5.
+- New identity tests: 12.
+- New Workflow Engine tests: 17.
+- Decision-plan integration additions: 3.
+- New RevisionLedger/ResponseUnit model tests: 15.
+- New CLI integration tests: 7.
+- **Expected current inventory: 135 test methods.** This is a source inventory count, not an executed-test or pass claim.
 
-## Remaining roadmap
+The current branch has not yet completed a full Windows run with the configured Python interpreter. Earlier GitHub Actions attempts failed before a runner was assigned (the job records had no runner and no execution steps). No claim is made that the current branch passes unit tests.
 
-1. **Finish parser-backed identity migration:** create and persist object records from actual DOCX structures, map objects across revisions, profile real citation systems and remove the \`p_idx\` fallback from scheduling.
-2. **Connect the execution layer:** typed \`Patch\`, \`RevisionLedger\` and \`ResponseUnit\` models; patch supersession/conflict detection; Working Clean View; migrate the existing DOCX writer through a compatibility adapter.
-3. **Complete final-document location:** Word COM pagination and actual PDF-backed page/line mapping; Response Units must consume this final location map.
-4. **End-to-end acceptance:** run the full regression suite on Windows, then separate synthetic Word GUI/save-round-trip and final PDF/Response Letter integration checks.
+Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip, COM pagination and final PDF line extraction remain unaccepted.
+
+## Remaining roadmap — in priority order
+
+1. **Complete parser-backed identity migration:** generate object registry records from real DOCX parts, match objects across revisions, normalize actual citation systems and retire paragraph-index scheduling keys.
+2. **Complete the execution state machine:** add patch supersession/rebase and conflict resolution, Working Clean View, ledger-backed workflow transition commands and explicit dependency-aware patch batches. Keep the legacy DOCX writer as the writer until a replacement is proven equivalent.
+3. **Build the final-location engine:** Word COM pagination, PDF export and evidence-backed page/line mapping. ResponseUnits already have a consumer contract but still need the actual producer.
+4. **End-to-end acceptance:** run all tests on Windows, then separately validate synthetic Word GUI/save-round-trip, multi-document iterative patching and final Response Letter consistency.
 
 ## Verification boundary
 
-A structurally valid plan, a passing unit suite or a successful DOCX XML write does not establish scientific correctness. The evidence chain, cross-document consistency and semantic acceptability remain separate review gates, with scientific claims grounded in the user's supplied results.
+A schema-valid Ledger, a passing unit suite or a successful DOCX XML write does not establish scientific correctness or real Word rendering. The evidence chain, cross-document scientific consistency and semantic acceptability remain separate review gates. All scientific content must remain grounded in user-supplied results.
 
-Approval fingerprints and \`human_approval_confirmed\` are integrity/audit fields, not cryptographic proof of user identity. A production adapter must set approval state only from a direct user confirmation action and preserve that event.
+Approval flags/fingerprints provide integrity and audit linkage, not cryptographic proof of a person's identity. Production approval must originate from a direct user confirmation action and be retained in the event history.
