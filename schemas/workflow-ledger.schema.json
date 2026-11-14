@@ -176,7 +176,24 @@
         "invalidation_reason": { "type": "string" },
         "approval_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "input_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "preflight_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "preflight_report_id": { "type": "string", "minLength": 1 },
+        "preflighted_at_utc": { "type": "string", "format": "date-time" },
+        "human_approval_confirmed": { "type": "boolean" },
+        "approved_by": { "type": "string", "minLength": 1 },
+        "approved_at_utc": { "type": "string", "format": "date-time" },
         "output_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "execution_report_id": { "type": "string", "minLength": 1 },
+        "applied_at_utc": { "type": "string", "format": "date-time" },
+        "semantic_review_confirmed": { "type": "boolean" },
+        "verified_by": { "type": "string", "minLength": 1 },
+        "verified_at_utc": { "type": "string", "format": "date-time" },
+        "verification_report_id": { "type": "string", "minLength": 1 },
+        "verification_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "completion_record_id": { "type": "string", "minLength": 1 },
+        "completion_record_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "completed_at_utc": { "type": "string", "format": "date-time" },
+        "completion_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "response_unit_ids": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
@@ -199,6 +216,74 @@
             "properties": { "status": { "const": "blocked" } }
           },
           "then": { "required": ["block_reason"] }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "enum": ["preflighted", "approved", "applied", "verified", "completed"] } }
+          },
+          "then": {
+            "required": [
+              "input_fingerprint",
+              "preflight_fingerprint",
+              "preflight_report_id",
+              "preflighted_at_utc"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "enum": ["approved", "applied", "verified", "completed"] } }
+          },
+          "then": {
+            "required": [
+              "human_approval_confirmed",
+              "approved_by",
+              "approved_at_utc",
+              "approval_fingerprint"
+            ],
+            "properties": { "human_approval_confirmed": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "enum": ["applied", "verified", "completed"] } }
+          },
+          "then": {
+            "required": ["output_fingerprint", "execution_report_id", "applied_at_utc"]
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "enum": ["verified", "completed"] } }
+          },
+          "then": {
+            "required": [
+              "semantic_review_confirmed",
+              "verified_by",
+              "verified_at_utc",
+              "verification_report_id",
+              "verification_fingerprint"
+            ],
+            "properties": { "semantic_review_confirmed": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "completed" } }
+          },
+          "then": {
+            "required": [
+              "completion_record_id",
+              "completion_record_fingerprint",
+              "completed_at_utc",
+              "completion_fingerprint"
+            ]
+          }
         },
         {
           "if": {
