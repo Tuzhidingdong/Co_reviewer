@@ -1029,16 +1029,33 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
             os.unlink(tmp)
 
 def cmd_preflight(args):
-    plan_path = Path(args.plan)
-    report_path = Path(args.out)
+    plan_path = Path(args.plan).expanduser().resolve()
+    report_path = Path(args.out).expanduser().resolve()
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     validate_apply_artifact_paths(plan, plan_path, report_path)
-    report = preflight_plan(plan, args.author)
 
-    # Persist the input-version fingerprints first. If report persistence then
-    # fails, the plan remains safe but the user can simply rerun preflight.
+    revision_ledger = None
+    ledger_path = None
+    if getattr(args, "revision_ledger", None):
+        ledger_path = Path(args.revision_ledger).expanduser().resolve()
+        if ledger_path in {plan_path, report_path}:
+            raise ValueError("RevisionLedger path must be distinct from plan/preflight-report paths.")
+        revision_ledger = _load_revision_ledger(ledger_path)
+        revision_ledger.assert_legacy_plan_matches(plan)
+
+    report = preflight_plan(plan, args.author)
+    if revision_ledger is not None:
+        report_id = f"{report_path.name}:{report['generated_at']}"
+        revision_ledger.record_legacy_preflight(
+            report, plan, report_id=report_id, actor=args.author
+        )
+
+    # Prepare all three artifacts in memory before persisting the updated state.
+    # Each file is atomically replaced; rerunning preflight is safe if a write is interrupted.
     write_json_atomic(plan_path, plan)
     write_json_atomic(report_path, report)
+    if revision_ledger is not None:
+        write_json_atomic(ledger_path, revision_ledger.to_dict())
     print(f"[PREFLIGHT] {report['targets_preflighted']}/{report['targets_total']} target(s) are safe to apply.")
     print(f"[SOURCE] SHA-256 fingerprints recorded for {len(report['source_files'])} source DOCX file(s).")
     if report["approval_scope_changed_items"]:
@@ -1049,8 +1066,16 @@ def cmd_preflight(args):
 
 
 def cmd_approve_plan(args):
-    plan_path = Path(args.plan)
+    plan_path = Path(args.plan).expanduser().resolve()
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    revision_ledger = None
+    ledger_path = None
+    if getattr(args, "revision_ledger", None):
+        ledger_path = Path(args.revision_ledger).expanduser().resolve()
+        if ledger_path == plan_path:
+            raise ValueError("RevisionLedger path must be distinct from the legacy revision plan.")
+        revision_ledger = _load_revision_ledger(ledger_path)
+        revision_ledger.assert_legacy_plan_matches(plan)
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
     if errors:
         raise ValueError("Cannot approve an invalid revision plan:\n- " + "\n- ".join(errors))
@@ -1113,7 +1138,13 @@ def cmd_approve_plan(args):
         item["status"] = "approved"
         item["approval_fingerprint"] = revision_item_fingerprint(item)
     plan["approved"] = True
+    if revision_ledger is not None:
+        revision_ledger.record_legacy_approval(
+            plan, requested, actor=getattr(args, "actor", "Human Author")
+        )
     write_json_atomic(plan_path, plan)
+    if revision_ledger is not None:
+        write_json_atomic(ledger_path, revision_ledger.to_dict())
     print(f"[APPROVED] {len(requested)} revision item(s) sealed: {', '.join(requested)}")
     print("[GUARD] Any later change to comments, proposed responses, document targets or source DOCX versions invalidates that item's approval.")
     return 0
@@ -1560,10 +1591,13 @@ def build_parser():
     pf.add_argument("--plan", required=True)
     pf.add_argument("--out", default="preflight_report.json")
     pf.add_argument("--author", default="Co_Reviewer Preflight")
+    pf.add_argument("--revision-ledger", help="Synchronize preflight evidence/events into a v0.5.1 RevisionLedger.")
     pf.set_defaults(func=cmd_preflight)
     ap = sub.add_parser("approve-plan", help="Record explicit user approval for selected revision items.")
     ap.add_argument("--plan", required=True)
     ap.add_argument("--ids", nargs="+", required=True, help="Revision item IDs explicitly approved by the user.")
+    ap.add_argument("--revision-ledger", help="Synchronize explicit approval evidence/events into a v0.5.1 RevisionLedger.")
+    ap.add_argument("--actor", default="Human Author", help="Recorded approver label.")
     ap.set_defaults(func=cmd_approve_plan)
     a = sub.add_parser("apply", help="Apply an approved plan to separate DOCX output files.")
     a.add_argument("--plan", required=True); a.add_argument("--author", default="Co_Reviewer")
