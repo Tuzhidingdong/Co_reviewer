@@ -113,8 +113,19 @@ def _paragraph_formatting(paragraph: ET._Element) -> dict[str, Any]:
 
 
 def _paragraph_structure(paragraph: ET._Element) -> list[str]:
-    ignored = {qn("pPr"), qn("rPr"), qn("t"), qn("delText"), qn("instrText")}
-    return [_local(node) for node in paragraph.iter() if node is not paragraph and node.tag not in ignored]
+    result: list[str] = []
+
+    def walk(node: ET._Element, *, is_root: bool = False) -> None:
+        for child in list(node):
+            if child.tag in {qn("pPr"), qn("rPr")}:
+                continue
+            if child.tag in {qn("t"), qn("delText"), qn("instrText")}:
+                continue
+            result.append(_local(child))
+            walk(child)
+
+    walk(paragraph, is_root=True)
+    return result
 
 
 def _ancestor(element: ET._Element, tag: str) -> ET._Element | None:
@@ -172,6 +183,32 @@ def _table_payload(table: ET._Element) -> dict[str, Any]:
     }
 
 
+def _table_formatting(table: ET._Element) -> dict[str, Any]:
+    table_properties = table.find("w:tblPr", NS)
+    rows = []
+    for row in table.findall("./w:tr", NS):
+        cells = []
+        for cell in row.findall("./w:tc", NS):
+            cells.append(_element_signature(
+                cell.find("w:tcPr", NS),
+                ("tcW", "gridSpan", "vAlign", "tcBorders", "shd", "noWrap", "textDirection"),
+            ))
+        rows.append({
+            "row": _element_signature(
+                row.find("w:trPr", NS),
+                ("trHeight", "cantSplit", "tblHeader", "jc"),
+            ),
+            "cells": cells,
+        })
+    return {
+        "table": _element_signature(
+            table_properties,
+            ("tblStyle", "tblW", "tblLayout", "tblInd", "tblBorders", "tblCellMar", "jc"),
+        ),
+        "rows": rows,
+    }
+
+
 def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]], list[str], list[Any]]:
     descriptors: list[dict[str, Any]] = []
     content_fragments: list[str] = []
@@ -183,23 +220,20 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
             paragraphs = comment.findall(".//w:p", NS)
             text = normalize_visible_text("\n".join(visible_text(p) for p in paragraphs))
             comment_id = _attr(comment, "id")
-            payload = {
-                "text": text,
-                "paragraph_count": len(paragraphs),
-            }
+            payload = {"text": text, "paragraph_count": len(paragraphs)}
             descriptors.append({
                 "object_type": "reviewer_comment",
                 "part": part,
                 "native_id": comment_id,
                 "location_hint": {"comment_idx": comment_index, "comment_id": comment_id},
                 "payload": payload,
+                "_formatting": {},
             })
             content_fragments.append(text)
             structure.append({"type": "reviewer_comment", "paragraph_count": len(paragraphs)})
         return descriptors, content_fragments, structure
 
     tables = root.findall(".//w:tbl", NS)
-    table_ids: dict[int, str] = {}
     for table_index, table in enumerate(tables):
         payload = _table_payload(table)
         descriptors.append({
@@ -208,14 +242,17 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
             "native_id": None,
             "location_hint": {"table_idx": table_index},
             "payload": payload,
-            "_element": table,
+            "_formatting": _table_formatting(table),
         })
-        table_ids[id(table)] = ""
+        structure.append({
+            "type": "table",
+            "row_count": payload["row_count"],
+            "column_counts": payload["column_counts"],
+        })
 
     paragraphs = root.findall(".//w:p", NS)
     for paragraph_index, paragraph in enumerate(paragraphs):
-        text = visible_text(paragraph)
-        normalized_text = normalize_visible_text(text)
+        normalized_text = normalize_visible_text(visible_text(paragraph))
         ppr = paragraph.find("w:pPr", NS)
         style_id = _attr(ppr.find("w:pStyle", NS) if ppr is not None else None, "val")
         table = _ancestor(paragraph, "tbl")
@@ -236,9 +273,18 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
             row = _ancestor(paragraph, "tr")
             cell = _ancestor(paragraph, "tc")
             if row is not None:
-                hint["row_idx"] = len(row.getparent().findall("./w:tr", NS)) - 1
+                rows = row.getparent().findall("./w:tr", NS)
+                hint["row_idx"] = next(
+                    (idx for idx, candidate in enumerate(rows) if candidate is row),
+                    None,
+                )
             if cell is not None:
-                hint["cell_idx"] = len(cell.getparent().findall("./w:tc", NS)) - 1
+                cells = cell.getparent().findall("./w:tc", NS)
+                hint["cell_idx"] = next(
+                    (idx for idx, candidate in enumerate(cells) if candidate is cell),
+                    None,
+                )
+
         object_type = _paragraph_type(part, paragraph, style_id)
         descriptors.append({
             "object_type": object_type,
@@ -247,30 +293,16 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
             "location_hint": hint,
             "payload": payload,
             "_formatting": _paragraph_formatting(paragraph),
-            "_style_id": style_id,
-            "_text": normalized_text,
-            "_element": paragraph,
         })
         if normalized_text:
             content_fragments.append(normalized_text)
         structure.append({
             "type": object_type,
-            "style_id": style_id,
             "in_table": table_index is not None,
             "has_drawing": has_drawing(paragraph),
         })
 
-    for descriptor in descriptors:
-        element = descriptor.pop("_element", None)
-        if element is not None and descriptor["object_type"] == "table":
-            table_index = descriptor["location_hint"]["table_idx"]
-            for paragraph_index, paragraph in enumerate(paragraphs):
-                if _ancestor(paragraph, "tbl") is element:
-                    # Parent IDs are assigned after descriptors receive stable IDs.
-                    descriptor.setdefault("_paragraph_indices", []).append(paragraph_index)
-
     return descriptors, content_fragments, structure
-
 
 def _citation_profile(parts: Mapping[str, ET._Element]) -> CitationProfile:
     modes: set[str] = set()
@@ -339,7 +371,7 @@ def _citation_profile(parts: Mapping[str, ET._Element]) -> CitationProfile:
     }
     return CitationProfile(
         mode=mode,
-        numbering_scope="document" if mode.startswith("numeric_") else "unknown",
+        numbering_scope="unknown",
         marker_examples=selected_examples,
         reference_labels=selected_labels,
         detection_method="docx_rule_heuristics_v1",
@@ -371,7 +403,7 @@ def _read_docx(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         content_by_part[part] = fragments
         structure_by_part[part] = structure
         formatting_by_part[part] = [
-            row.get("_formatting", row.get("payload", {}))
+            row.get("_formatting", {})
             for row in part_descriptors
         ]
 
@@ -555,6 +587,13 @@ def build_document_identity_manifest(
                 object_id = str(uuid.uuid4())
                 new_objects += 1
 
+            hint = descriptor.get("location_hint", {})
+            parent_object_id = None
+            if object_type == "table" and isinstance(hint.get("table_idx"), int):
+                table_id_by_index[(part, hint["table_idx"])] = object_id
+            elif isinstance(hint.get("table_idx"), int):
+                parent_object_id = table_id_by_index.get((part, hint["table_idx"]))
+
             identity = build_object_identity(
                 document=document,
                 object_type=object_type,
@@ -562,12 +601,10 @@ def build_document_identity_manifest(
                 object_payload=descriptor["payload"],
                 object_id=object_id,
                 native_id=native_id,
-                location_hint=descriptor.get("location_hint"),
+                parent_object_id=parent_object_id,
+                location_hint=hint,
             )
             object_records.append(identity.to_dict())
-            hint = descriptor.get("location_hint", {})
-            if object_type == "table" and isinstance(hint.get("table_idx"), int):
-                table_id_by_index[(part, hint["table_idx"])] = object_id
 
         report_rows.append({
             "role": role,

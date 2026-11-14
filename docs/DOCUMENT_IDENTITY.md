@@ -51,5 +51,6 @@ The validator binds manifest source hashes to the decision plan, resolves each m
 - The parser reads DOCX WordprocessingML parts and does not infer object continuity from filenames.
 - Exact-fingerprint matching is only used when the candidate is unique on both sides.
 - When Word does not preserve `paraId` and content changes, the object is treated as new. This is safer than incorrectly reusing an identity.
-- Citation-profile classification is rule-based and records its evidence fingerprint. It is a hint for later review, not a final citation-style judgement.
+- Citation-profile classification is rule-based and records its evidence fingerprint. It deliberately leaves numbering scope as unknown unless later evidence proves a scope; it is a hint for review, not a final citation-style judgement.
+- Table-cell paragraphs are registered under their parent table object. Their row/cell positions are advisory hints, not permanent keys.
 - This first registry version supports one current DOCX per logical role (Reviewers, Manuscript, SI). Multiple SI files need explicit logical-document IDs before combining them into one role.
