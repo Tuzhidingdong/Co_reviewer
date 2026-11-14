@@ -142,9 +142,12 @@ class CitationProfile:
     profile_version: str = "1"
 
     def __post_init__(self) -> None:
-        if self.mode not in _CITATION_MODES:
+        if not isinstance(self.mode, str) or self.mode not in _CITATION_MODES:
             raise IdentityValidationError(f"Unsupported citation mode: {self.mode!r}.")
-        if self.numbering_scope not in _CITATION_NUMBERING_SCOPES:
+        if (
+            not isinstance(self.numbering_scope, str)
+            or self.numbering_scope not in _CITATION_NUMBERING_SCOPES
+        ):
             raise IdentityValidationError(
                 f"Unsupported citation numbering scope: {self.numbering_scope!r}."
             )
@@ -332,7 +335,10 @@ def build_object_identity(
     if not isinstance(document, DocumentIdentity):
         raise IdentityValidationError("document must be a DocumentIdentity.")
     return DocumentObjectIdentity(
-        object_id=_require_nonempty(object_id, "object_id") if object_id else str(uuid.uuid4()),
+        object_id=(
+            _require_nonempty(object_id, "object_id")
+            if object_id is not None else str(uuid.uuid4())
+        ),
         document_id=document.document_id,
         revision_id=document.revision_id,
         object_type=_require_nonempty(object_type, "object_type"),
