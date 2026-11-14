@@ -266,6 +266,85 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         ])
         self.assertEqual(parsed_approval.revision_ledger, str(self.ledger_path))
 
+    def test_response_unit_cli_requires_semantic_review_pdf_map_and_completion_confirmation(self):
+        unit = ResponseUnit(
+            response_unit_id="RU-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please explain the mechanism.",
+            response_text="We have explained the mechanism.",
+        )
+        ledger = RevisionLedger(
+            revision_round_id="round-response-cli",
+            response_units=[unit],
+        )
+        cli.write_json_atomic(self.ledger_path, ledger.to_dict())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_confirm_response_units(Namespace(
+                ledger=str(self.ledger_path),
+                ids=["RU-C1"],
+                verification_report_id="semantic-review-C1",
+                actor="Human Author",
+                semantic_review_confirmed=True,
+            )), 0)
+        semantically_reviewed = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(semantically_reviewed.response_units[0].status, "verified")
+
+        pdf_path = self.root / "Manuscript_final.pdf"
+        pdf_bytes = b"%PDF-1.4\nsynthetic final pagination output\n%%EOF"
+        pdf_path.write_bytes(pdf_bytes)
+        location_map = {
+            "location_map_id": "map-response-C1",
+            "response_units": [{
+                "response_unit_id": "RU-C1",
+                "location_map_fingerprint": "a" * 64,
+                "final_locations": [{
+                    "document": "Manuscript",
+                    "output_file": str(self.output),
+                    "pdf_file": str(pdf_path),
+                    "page": 4,
+                    "line_start": 18,
+                    "line_end": 22,
+                    "pdf_sha256": __import__("hashlib").sha256(pdf_bytes).hexdigest(),
+                    "location_map_id": "map-response-C1",
+                    "mapping_fingerprint": "a" * 64,
+                }],
+            }],
+        }
+        location_map_path = self.root / "location-map.json"
+        location_map_path.write_text(json.dumps(location_map), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_record_response_locations(Namespace(
+                ledger=str(self.ledger_path),
+                location_map=str(location_map_path),
+                actor="Word/PDF Location Mapper",
+            )), 0)
+        mapped = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(mapped.response_units[0].status, "location_mapped")
+        self.assertEqual(mapped.response_units[0].final_locations[0].line_start, 18)
+        self.assertEqual(
+            mapped.response_units[0].location_map_file_sha256,
+            __import__("hashlib").sha256(location_map_path.read_bytes()).hexdigest(),
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_complete_response_units(Namespace(
+                ledger=str(self.ledger_path),
+                ids=["RU-C1"],
+                actor="Human Author",
+                ready_for_submission_confirmed=True,
+            )), 0)
+        completed = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(completed.response_units[0].status, "completed")
+        self.assertEqual(len(completed.events), 3)
+
     def test_response_parser_requires_exactly_one_input(self):
         parser = cli.build_parser()
         with self.assertRaises(SystemExit):
