@@ -534,7 +534,11 @@ class RevisionModelsTests(unittest.TestCase):
         )
         self.assertEqual(
             [event.event_type for event in ledger.events],
-            ["patch_superseded", "response_reopened_after_patch_supersession"],
+            [
+                "patch_superseded",
+                "patch_created_as_replacement",
+                "response_reopened_after_patch_supersession",
+            ],
         )
 
     def test_patch_supersession_refuses_to_rebase_from_wrong_source(self):
@@ -598,6 +602,39 @@ class RevisionModelsTests(unittest.TestCase):
             ledger.to_legacy_revision_plan()
         with self.assertRaisesRegex(RevisionModelError, "only a new planned Patch"):
             patch.to_legacy_revision_item()
+
+    def test_verified_patch_must_seal_every_operation_output(self):
+        patch = Patch(
+            patch_id="P-MULTI",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Update the two affected locations.",
+            proposed_response="We updated both locations.",
+            operations=[
+                _operation(
+                    operation_id="OP-1",
+                    output_file="Manuscript_revised.docx",
+                ),
+                _operation(
+                    operation_id="OP-2",
+                    output_file="SI_revised.docx",
+                    document="SI",
+                    input_file="SI.docx",
+                ),
+            ],
+            status="verified",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-multi",
+            approval_fingerprint=HASH_B,
+            apply_report_ids=["apply-multi"],
+            verification_report_id="verify-multi",
+            verified_output_hashes=[{
+                "path": "Manuscript_revised.docx",
+                "sha256": HASH_A,
+            }],
+        )
+        with self.assertRaisesRegex(RevisionModelError, "cover exactly its DOCX outputs"):
+            RevisionLedger("round-partial-output-hash", patches=[patch])
 
     def test_revision_ledger_round_trips_without_losing_patch_lineage(self):
         patch = Patch(
