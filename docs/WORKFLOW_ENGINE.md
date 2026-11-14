@@ -49,7 +49,7 @@ Persistent object IDs are represented by DocumentObjectIdentity records and are 
 
 When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
 
-The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. The old CLI revision-item apply/verify commands remain compatible and are not yet fully migrated to the ledger. Typed Patch/RevisionLedger execution, Working Clean View, Word COM pagination, final PDF line mapping and the complete ResponseUnit renderer remain later integration stages.
+The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. Typed Patch/RevisionLedger records are now connected to the legacy DOCX writer through a compatibility adapter: preflight, human approval, apply and verified confirmation are synchronized back to the ledger. The dependency scheduler is not yet the sole execution dispatcher; the CLI currently provides the controlled bridge. Working Clean View, direct DAG-to-Patch dispatch, Word COM pagination and the PDF location-map producer remain later integration stages.
 
 
 ## Patch execution bridge
@@ -61,13 +61,21 @@ A decision task is not automatically converted into a text edit. A task may cont
 The recommended command sequence is:
 
 1. \`build-revision-ledger --workflow-ledger ... --out revision_ledger.json\` — validate the Workflow Ledger and create typed Patch and ResponseUnit records.
-2. \`export-revision-plan --ledger revision_ledger.json --out revision_plan.json\` — emit a pending, unapproved DOCX execution plan.
+2. \`export-revision-plan --ledger revision_ledger.json --out revision_plan.json\` — emit only new planned Patches as a pending, unapproved DOCX execution plan.
 3. \`preflight-plan --plan revision_plan.json --revision-ledger revision_ledger.json\` — bind the patch to exact source DOCX hashes and record the preflight event.
 4. \`approve-plan --plan revision_plan.json --ids ... --revision-ledger revision_ledger.json\` — seal the exact reviewer-facing scope and record the approver.
 5. \`apply --plan revision_plan.json --revision-ledger revision_ledger.json\` — execute through the legacy writer and synchronize Patch state/events.
 6. \`confirm-verified --plan revision_plan.json --apply-report ... --ids ... --semantic-review-confirmed --revision-ledger revision_ledger.json\` — recheck native Track Changes and output hashes, then record the human semantic-review acknowledgement.
 
 When a RevisionLedger is supplied, the adapter checks patch IDs, reviewer, original comment, proposed response and every exact target before preflight/apply/verify. A mismatch stops the operation. Exported legacy plans are always pending; approval is never silently copied from a previous ledger state.
+
+## Incremental Patch supersession
+
+The \`supersede-patch\` command creates a new planned Patch with a new ID and an explicit \`supersedes_patch_id\`. The predecessor's record and apply/verification history remain in the RevisionLedger. If the predecessor had already been applied or verified, every replacement operation must use its output DOCX as the new input.
+
+Supersession reopens linked ResponseUnits as drafts, relinks them to the replacement Patch, and clears semantic-review confirmation and old final PDF locations. This prevents an earlier response or line map from being carried forward after a document change. The replacement must pass preflight, explicit author approval, apply and verification again.
+
+Only new \`planned\` Patches are exported to a fresh legacy revision plan. Already preflighted, approved, applied, verified or superseded Patches are never silently reset to pending for replay. The lineage validator rejects cross-task replacements, duplicate successors, unknown predecessors and cycles.
 
 ## ResponseUnit closure
 
