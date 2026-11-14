@@ -284,6 +284,9 @@ class RevisionDocument:
     output_file: str
     source_sha256: str | None = None
     output_sha256: str | None = None
+    working_clean_file: str | None = None
+    working_clean_sha256: str | None = None
+    working_view_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("document_id", "revision_id", "role"):
@@ -294,6 +297,29 @@ class RevisionDocument:
             raise RevisionModelError("RevisionDocument input and output must be different.")
         _sha256(self.source_sha256, "source_sha256", optional=True)
         _sha256(self.output_sha256, "output_sha256", optional=True)
+        _sha256(self.working_clean_sha256, "working_clean_sha256", optional=True)
+        _sha256(self.working_view_fingerprint, "working_view_fingerprint", optional=True)
+        working_values = (
+            self.working_clean_file,
+            self.working_clean_sha256,
+            self.working_view_fingerprint,
+        )
+        if any(value is not None for value in working_values):
+            if not all(isinstance(value, str) and value.strip() for value in working_values):
+                raise RevisionModelError(
+                    "Working Clean View path, SHA-256 and fingerprint must be recorded together."
+                )
+            working_path = _safe_docx_path(
+                self.working_clean_file, "working_clean_file"
+            )
+            resolved_working = Path(working_path).expanduser().resolve()
+            if resolved_working in {
+                Path(self.input_file).expanduser().resolve(),
+                Path(self.output_file).expanduser().resolve(),
+            }:
+                raise RevisionModelError(
+                    "Working Clean View must be separate from both source and marked DOCX."
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -304,6 +330,9 @@ class RevisionDocument:
             "output_file": self.output_file,
             "source_sha256": self.source_sha256,
             "output_sha256": self.output_sha256,
+            "working_clean_file": self.working_clean_file,
+            "working_clean_sha256": self.working_clean_sha256,
+            "working_view_fingerprint": self.working_view_fingerprint,
         }
 
 
@@ -615,6 +644,40 @@ class RevisionLedger:
 
     def validate(self) -> list[str]:
         errors: list[str] = []
+        document_ids = [item.document_id for item in self.documents]
+        if len(document_ids) != len(set(document_ids)):
+            errors.append("RevisionLedger contains duplicate document_id values.")
+        for document in self.documents:
+            if not isinstance(document, RevisionDocument):
+                errors.append("RevisionLedger documents must be RevisionDocument records.")
+                continue
+            if document.working_clean_file:
+                working_path = Path(document.working_clean_file).expanduser().resolve()
+                if not working_path.is_file():
+                    errors.append(
+                        f"Working Clean View no longer exists for {document.role}: {working_path}"
+                    )
+                else:
+                    try:
+                        actual_hash = sha256_file(working_path)
+                        if actual_hash != document.working_clean_sha256:
+                            errors.append(
+                                f"Working Clean View changed after generation: {working_path}"
+                            )
+                        expected_view_fingerprint = _fingerprint({
+                            "source_sha256": document.output_sha256,
+                            "working_clean_sha256": document.working_clean_sha256,
+                            "policy": "accept-insertions-reject-deletions-v1",
+                        })
+                        if document.working_view_fingerprint != expected_view_fingerprint:
+                            errors.append(
+                                f"Working Clean View fingerprint is stale for {working_path}."
+                            )
+                    except OSError as exc:
+                        errors.append(
+                            f"Cannot recheck Working Clean View {working_path}: {exc}"
+                        )
+
         patch_ids = [item.patch_id for item in self.patches]
         if len(patch_ids) != len(set(patch_ids)):
             errors.append("RevisionLedger contains duplicate patch_id values.")
@@ -1597,6 +1660,9 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             output_file=row.get("output_file"),
             source_sha256=row.get("source_sha256"),
             output_sha256=row.get("output_sha256"),
+            working_clean_file=row.get("working_clean_file"),
+            working_clean_sha256=row.get("working_clean_sha256"),
+            working_view_fingerprint=row.get("working_view_fingerprint"),
         )
         for row in data.get("documents", [])
     ]
