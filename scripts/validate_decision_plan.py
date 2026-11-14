@@ -11,6 +11,11 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from co_reviewer.workflow_engine import (
+    validate_workflow_tasks,
+    workflow_tasks_from_decision_plan,
+)
+
 
 def _role(value: Any) -> str:
     if not isinstance(value, str):
@@ -345,23 +350,12 @@ def validate_decision_plan(
             if dep in task_sequences and task_id in task_sequences and task_sequences[dep] >= task_sequences[task_id]:
                 errors.append(f"Task {task_id} must be sequenced after dependency {dep}.")
 
-    # Detect cycles independently of the order in which tasks are presented.
-    visiting: set[str] = set()
-    visited: set[str] = set()
-    def visit(task_id: str) -> None:
-        if task_id in visiting:
-            errors.append(f"Dependency cycle detected at task {task_id}.")
-            return
-        if task_id in visited:
-            return
-        visiting.add(task_id)
-        for dep in dependencies.get(task_id, []):
-            if dep in dependencies:
-                visit(dep)
-        visiting.remove(task_id)
-        visited.add(task_id)
-    for task_id in dependencies:
-        visit(task_id)
+    # The workflow engine is now the single dependency-graph implementation.
+    # Keep the legacy checks above for readable source-plan validation messages;
+    # the adapter also derives provisional target groups for the quotient DAG.
+    workflow_tasks = workflow_tasks_from_decision_plan(tasks)
+    for workflow_error in validate_workflow_tasks(workflow_tasks):
+        errors.append(workflow_error)
 
     return list(dict.fromkeys(errors))
 
