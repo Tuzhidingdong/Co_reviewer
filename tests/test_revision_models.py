@@ -305,6 +305,51 @@ class RevisionModelsTests(unittest.TestCase):
                 )],
             )
 
+    def test_revision_ledger_rejects_reviewer_facing_plan_drift(self):
+        patch = Patch(
+            patch_id="T1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please clarify.",
+            proposed_response="We clarified the statement.",
+            operations=[_operation()],
+        )
+        ledger = RevisionLedger("round-drift", patches=[patch])
+        plan = ledger.to_legacy_revision_plan()
+        plan["revision_items"][0]["proposed_response"] = "A response that was never approved."
+        with self.assertRaisesRegex(RevisionModelError, "proposed_response differs"):
+            ledger.assert_legacy_plan_matches(plan)
+
+    def test_ledger_refuses_pdf_changed_after_final_line_mapping(self):
+        unit = ResponseUnit(
+            response_unit_id="RU-STALE",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please explain.",
+            response_text="We explained it.",
+            status="location_mapped",
+            semantic_review_confirmed=True,
+            verification_report_id="semantic-001",
+            location_map_fingerprint=HASH_A,
+            location_map_file=str(self.map_path),
+            location_map_file_sha256=self.map_sha256,
+            final_locations=[ResponseLocation(
+                document="Manuscript",
+                output_file="Manuscript_revised.docx",
+                pdf_file=str(self.pdf_path),
+                page=1,
+                line_start=1,
+                line_end=2,
+                pdf_sha256=self.pdf_sha256,
+                location_map_id="fixture-map",
+                mapping_fingerprint=HASH_A,
+            )],
+        )
+        ledger = RevisionLedger("round-stale-pdf", response_units=[unit])
+        self.pdf_path.write_bytes(self.pdf_bytes + b"tampered")
+        with self.assertRaisesRegex(RevisionModelError, "Final mapped PDF changed"):
+            ledger.to_dict()
+
     def test_response_unit_semantic_review_location_mapping_and_completion_are_separate(self):
         ledger = RevisionLedger(
             "round-response-lifecycle",
