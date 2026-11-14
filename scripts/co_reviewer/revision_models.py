@@ -878,10 +878,15 @@ class RevisionLedger:
             item.get("id"): item
             for item in rows if isinstance(item, Mapping)
         }
-        if set(actual) != set(expected):
+        if len(actual) != len(rows):
             raise RevisionModelError(
-                "Legacy revision plan patch IDs differ from RevisionLedger; "
-                "refusing to apply a plan with missing or extra patches."
+                "Legacy revision plan contains duplicate or invalid Patch IDs."
+            )
+        unexpected = set(actual) - set(expected)
+        if unexpected:
+            raise RevisionModelError(
+                "Legacy revision plan contains Patch IDs that are unknown, superseded "
+                "or blocked in the RevisionLedger: " + ", ".join(sorted(unexpected))
             )
         for patch_id, expected_item in expected.items():
             actual_item = actual.get(patch_id)
