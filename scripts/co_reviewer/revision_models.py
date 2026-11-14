@@ -144,6 +144,11 @@ class PatchOperation:
     def from_mapping(cls, data: Mapping[str, Any], *, fallback_id: str = "") -> "PatchOperation":
         if not isinstance(data, Mapping):
             raise RevisionModelError("Patch operation must be an object.")
+        raw_source_comment_ids = data.get("source_comment_ids", [])
+        if not isinstance(raw_source_comment_ids, (list, tuple)):
+            raise RevisionModelError("source_comment_ids must be an array of exact reviewer comment IDs.")
+        if any(not isinstance(value, str) or not value.strip() for value in raw_source_comment_ids):
+            raise RevisionModelError("source_comment_ids must contain non-empty strings.")
         return cls(
             operation_id=data.get("operation_id") or fallback_id or str(uuid.uuid4()),
             document=data.get("document"),
@@ -156,7 +161,7 @@ class PatchOperation:
             location=data.get("location", ""),
             source_sha256=data.get("source_sha256"),
             evidence_ids=tuple(data.get("evidence_ids", [])),
-            source_comment_ids=tuple(str(value) for value in data.get("source_comment_ids", [])),
+            source_comment_ids=tuple(raw_source_comment_ids),
             location_phrase=data.get("location_phrase"),
             target_ref=data.get("target_ref"),
         )
@@ -1317,6 +1322,22 @@ class RevisionLedger:
                         f"as its input for {operation.document}."
                     )
 
+        replacement_operations_by_unit: dict[str, list[PatchOperation]] = {}
+        for unit in self.response_units:
+            if previous_patch_id not in unit.linked_patch_ids:
+                continue
+            matched_operations = [
+                operation for operation in replacement.operations
+                if unit.comment_id in operation.source_comment_ids
+            ]
+            if unit.disposition == "revised" and not matched_operations:
+                raise RevisionModelError(
+                    f"Replacement Patch {replacement.patch_id} contains no operation explicitly attributed "
+                    f"to ResponseUnit {unit.response_unit_id} / comment {unit.comment_id}; "
+                    "refusing to guess operation ownership."
+                )
+            replacement_operations_by_unit[unit.response_unit_id] = matched_operations
+
         now = datetime.now(timezone.utc).isoformat()
         previous_status = previous.status
         previous.status = "superseded"
@@ -1354,11 +1375,13 @@ class RevisionLedger:
                 for patch_id in unit.linked_patch_ids
             ]
             unit.linked_patch_ids = list(dict.fromkeys(unit.linked_patch_ids))
+            replacement_operations = replacement_operations_by_unit[unit.response_unit_id]
+            unit.linked_operation_ids = [operation.operation_id for operation in replacement_operations]
             unit.linked_targets = [{
                 "document": operation.document,
                 "location": operation.location,
                 "output_file": operation.output_file,
-            } for operation in replacement.operations]
+            } for operation in replacement_operations]
             unit.status = "draft"
             unit.semantic_review_confirmed = False
             unit.verification_report_id = None
