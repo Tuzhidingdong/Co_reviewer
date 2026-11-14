@@ -319,6 +319,11 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
             0,
         )
 
+        reviewer_map_path = self.root / "reviewer_map.json"
+        reviewer_map_path.write_text(
+            json.dumps({"T1": "Reviewer 1"}),
+            encoding="utf-8",
+        )
         revision_ledger_path = self.root / "revision_ledger.json"
         self.assertEqual(
             self.call_silently(
@@ -327,7 +332,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                     "workflow_ledger": str(audit_workflow_path),
                     "document_paths": None,
                     "reviewer_comments": None,
-                    "reviewer_map": None,
+                    "reviewer_map": str(reviewer_map_path),
                     "task_ids": ["T1"],
                     "out": str(revision_ledger_path),
                 })(),
@@ -340,6 +345,7 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(len(ledger.patches), 1)
         self.assertEqual(len(ledger.patches[0].operations), 2)
         self.assertEqual(len(ledger.response_units), 1)
+        self.assertEqual(ledger.response_units[0].reviewer, "Reviewer 1")
         self.assertEqual(
             set(ledger.response_units[0].linked_patch_ids),
             {"T1"},
