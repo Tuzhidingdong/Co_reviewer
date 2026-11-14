@@ -48,7 +48,7 @@ The identity layer now defines five distinct document dimensions: exact source b
 
 Persistent object IDs are represented by DocumentObjectIdentity records and are kept separate from location hints such as paragraph indexes. TargetRef binds a task to a document revision, object ID, object fingerprint, Word part and optional character offsets. The Workflow Ledger can persist document identities and an object registry; it validates that each TargetRef resolves to the matching registered object and revision.
 
-When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
+When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback remains only for older decision plans without the optional parser-backed identity manifest. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
 
 The Workflow Engine is used by decision-plan validation, ledger creation/validation, ready-batch materialization and execution synchronization. `build-revision-ledger` converts only the current conflict-free ready batch into typed Patches; those Patches are then bridged to the legacy DOCX writer with fresh preflight and explicit approval. After verified changes, same-target peers and downstream tasks are invalidated before the next batch can be authorized. The CLI remains the controlled execution bridge rather than silently applying work.
 
@@ -83,7 +83,7 @@ This is an internal accepted-changes projection for downstream analysis and cros
 
 The \`supersede-patch\` command creates a new planned Patch with a new ID and an explicit \`supersedes_patch_id\`. The predecessor's record and apply/verification history remain in the RevisionLedger. If the predecessor had already been applied or verified, every replacement operation must use its output DOCX as the new input.
 
-Supersession reopens linked ResponseUnits as drafts, relinks them to the replacement Patch, and clears semantic-review confirmation and old final PDF locations. This prevents an earlier response or line map from being carried forward after a document change. The replacement must pass preflight, explicit author approval, apply and verification again.
+Supersession reopens linked ResponseUnits as drafts, relinks them to the replacement Patch, and clears semantic-review confirmation and old final PDF locations. This prevents an earlier response or line map from being carried forward after a document change. The replacement must pass preflight, explicit author approval, apply and verification again. `build-revision-ledger` can create this replacement automatically only after the author has reapproved the changed task scope; it preserves the prior Patch and records a new ID/lineage.
 
 Only new \`planned\` Patches are exported to a fresh legacy revision plan. Already preflighted, approved, applied, verified or superseded Patches are never silently reset to pending for replay. The lineage validator rejects cross-task replacements, duplicate successors, unknown predecessors and cycles.
 
@@ -98,4 +98,4 @@ A ResponseUnit is independent of DOCX Patch execution. Its lifecycle is:
 - \`complete-response-units\` requires an explicit ready-for-submission acknowledgement and rejects a ResponseUnit while any linked Patch is unverified.
 - \`render-response\` and \`render-response-docx\` can consume the RevisionLedger. A semantically reviewed ResponseUnit without final PDF locations is rendered as \`location_pending\`, not as a final verified response.
 
-This stage consumes a location map; it does not yet generate one. Word COM pagination, PDF export and the actual page/line extraction engine remain a separate implementation and acceptance milestone. A manually typed page/line string is not sufficient evidence by itself.
+The Windows-only `map-response-locations` producer generates the final Clean DOCX and PDF with Microsoft Word COM, reads the actual page/line positions after Word pagination, verifies target text on the corresponding PDF page, and binds both outputs by SHA-256. It remains pending execution/acceptance on the user's installed Windows/Word environment. A manually typed page/line string is not sufficient evidence by itself.

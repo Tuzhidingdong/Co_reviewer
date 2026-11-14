@@ -672,6 +672,183 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(merged.revision_round_id, "round-dag-sync")
         self.assertEqual(merged.workflow_task_fingerprints["T1"], workflow_scope_fingerprint(task1))
 
+    def test_authorized_rebase_supersedes_verified_patch_and_preserves_history(self):
+        source = self.root / "Manuscript_source.docx"
+        revision_one = self.root / "Manuscript_r1.docx"
+        revision_two = self.root / "Manuscript_r2.docx"
+        source.write_bytes(b"source manuscript bytes")
+        revision_one.write_bytes(b"verified first revision")
+        revision_two.write_bytes(b"rebased second revision")
+
+        def task(operation_input, operation_output):
+            return {
+                "task_id": "T1",
+                "sequence": 1,
+                "stage": "revision",
+                "task_type": "local_revision",
+                "title": "Revise target after upstream change",
+                "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_comment_id": "C1",
+                    "source_excerpt": "Please revise the target sentence.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Revise the target sentence using the updated manuscript.",
+                "proposed_response": "We revised the target sentence against the updated manuscript.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "action": "replace",
+                    "evidence_ids": ["E1"],
+                }],
+                "dependencies": [],
+                "target_groups": ["Manuscript|word/document.xml|p_idx=1"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "requires_user_approval": True,
+                "status": "ready",
+                "patch_id": "T1",
+                "patch_operations": [{
+                    "operation_id": "T1-OP1",
+                    "document": "Manuscript",
+                    "input_file": str(operation_input),
+                    "output_file": str(operation_output),
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "find": "old target wording",
+                    "replace": "new target wording",
+                    "evidence_ids": ["E1"],
+                }],
+            }
+
+        old_task = task(source, revision_one)
+        old_workflow = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-rebase",
+            "source_files": [{
+                "role": "Manuscript",
+                "file": str(source),
+                "sha256": sha256_file(source),
+            }],
+            "documents": [],
+            "object_registry": [],
+            "tasks": [old_task],
+            "events": [{
+                "event_id": "EV-T1-READY-1",
+                "task_id": "T1",
+                "timestamp_utc": "2026-11-14T12:00:00+08:00",
+                "event_type": "status_transition",
+                "from_status": "recheck_required",
+                "to_status": "ready",
+                "reason": "Author approved the original target scope.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(old_task),
+            }],
+        }
+        prior_operation = PatchOperation.from_mapping(old_task["patch_operations"][0])
+        prior_patch = Patch(
+            patch_id="T1",
+            task_id="T1",
+            reviewer="Reviewer",
+            comment="Please revise the target sentence.",
+            proposed_response="We revised the target sentence against the updated manuscript.",
+            operations=[prior_operation],
+            status="verified",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="PF-T1",
+            approval_fingerprint="b" * 64,
+            apply_report_ids=["AP-T1"],
+            verification_report_id="VF-T1",
+            verified_output_hashes=[{
+                "path": str(revision_one),
+                "sha256": sha256_file(revision_one),
+            }],
+        )
+        prior_unit = ResponseUnit(
+            response_unit_id="RU-T1-C1",
+            reviewer="Reviewer",
+            comment_id="C1",
+            comment_text="Please revise the target sentence.",
+            response_text="We revised the target sentence against the updated manuscript.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["T1"],
+        )
+        timestamp = "2026-11-14T12:00:00+08:00"
+        prior_ledger = RevisionLedger(
+            revision_round_id="round-rebase",
+            patches=[prior_patch],
+            response_units=[prior_unit],
+            events=[
+                RevisionEvent("EV-PF-T1", "T1", "patch", "preflight", timestamp, "Preflight"),
+                RevisionEvent("EV-AP-T1", "T1", "patch", "approval", timestamp, "Human Author"),
+                RevisionEvent("EV-DO-T1", "T1", "patch", "patch_applied", timestamp, "DOCX Writer"),
+                RevisionEvent("EV-VE-T1", "T1", "patch", "verification", timestamp, "Human Author"),
+            ],
+            workflow_ledger_fingerprint=canonical_fingerprint(old_workflow),
+            workflow_task_fingerprints={
+                "T1": workflow_scope_fingerprint(old_task),
+            },
+        )
+        workflow_path = self.root / "workflow_rebase.json"
+        revision_path = self.root / "revision_rebase.json"
+        workflow_path.write_text(json.dumps(old_workflow), encoding="utf-8")
+        cli.write_json_atomic(revision_path, prior_ledger.to_dict())
+
+        new_task = task(revision_one, revision_two)
+        new_workflow = {
+            **old_workflow,
+            "tasks": [new_task],
+            "events": [{
+                "event_id": "EV-T1-READY-2",
+                "task_id": "T1",
+                "timestamp_utc": "2026-11-14T13:00:00+08:00",
+                "event_type": "status_transition",
+                "from_status": "recheck_required",
+                "to_status": "ready",
+                "reason": "Author approved the refreshed Patch scope.",
+                "actor": "Human Author",
+                "fingerprint": workflow_scope_fingerprint(new_task),
+            }],
+        }
+        workflow_path.write_text(json.dumps(new_workflow), encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_build_revision_ledger(Namespace(
+                workflow_ledger=str(workflow_path),
+                document_paths=None,
+                reviewer_comments=None,
+                reviewer_map=None,
+                task_ids=["T1"],
+                out=str(revision_path),
+            )), 0)
+
+        merged = revision_ledger_from_mapping(
+            json.loads(revision_path.read_text(encoding="utf-8"))
+        )
+        patches = {patch.patch_id: patch for patch in merged.patches}
+        self.assertEqual(patches["T1"].status, "superseded")
+        self.assertEqual(patches["T1-r2"].status, "planned")
+        self.assertEqual(patches["T1-r2"].supersedes_patch_id, "T1")
+        self.assertEqual(patches["T1-r2"].operations[0].input_file, str(revision_one))
+        self.assertEqual(patches["T1-r2"].operations[0].output_file, str(revision_two))
+        unit = merged.response_units[0]
+        self.assertEqual(unit.linked_patch_ids, ["T1-r2"])
+        self.assertEqual(unit.status, "draft")
+        self.assertFalse(unit.semantic_review_confirmed)
+        self.assertEqual(
+            merged.documents[0].revision_id,
+            prior_ledger.documents[0].revision_id if prior_ledger.documents else
+            merged.documents[0].revision_id,
+        )
+
     def test_workflow_task_authorization_parser_requires_explicit_plan_approval(self):
         parser = cli.build_parser()
         with self.assertRaises(SystemExit):

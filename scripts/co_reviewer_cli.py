@@ -1649,7 +1649,15 @@ def cmd_build_revision_ledger(args):
                 )
                 if same_patch_scope:
                     if prior.status == "planned":
-                        # Idempotent rerun: the exact planned Patch is already recorded.
+                        # Idempotent rerun: keep the existing Patch and rewrite
+                        # incoming ResponseUnit links to its canonical ID. The
+                        # workflow task's patch_id may have been re-numbered.
+                        for unit in ledger.response_units:
+                            if patch.patch_id in unit.linked_patch_ids:
+                                unit.linked_patch_ids = [
+                                    prior.patch_id if item == patch.patch_id else item
+                                    for item in unit.linked_patch_ids
+                                ]
                         superseded_in_addition.add(patch.patch_id)
                         continue
                     raise ValueError(
