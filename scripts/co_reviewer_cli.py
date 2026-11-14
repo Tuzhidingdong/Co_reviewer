@@ -2405,7 +2405,7 @@ def cmd_record_manual_response_locations(args):
             if (
                 not isinstance(locator_text, str)
                 or not locator_text.strip()
-                or any(character in locator_text for character in "\\r\\n\\t")
+                or any(character in locator_text for character in "\r\n\t")
             ):
                 raise ValueError(
                     f"Manual locator text for {unit_id}/{operation_id} must be non-empty and single-line."
