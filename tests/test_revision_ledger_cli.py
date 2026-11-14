@@ -204,18 +204,30 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "stage": "revision",
                 "task_type": "local_revision",
                 "title": "Clarify the statement",
-                "source_comment_ids": ["C2"],
+                "source_comment_ids": ["C2", "C3"],
                 "target_documents": ["Manuscript"],
-                "evidence": [{
-                    "evidence_id": "E2",
-                    "document": "Reviewers",
-                    "part": "word/comments.xml",
-                    "p_idx": 0,
-                    "source_comment_id": "C2",
-                    "source_excerpt": "Please clarify this statement.",
-                    "evidence_type": "reviewer_comment",
-                    "match_status": "confirmed",
-                }],
+                "evidence": [
+                    {
+                        "evidence_id": "E2",
+                        "document": "Reviewers",
+                        "part": "word/comments.xml",
+                        "p_idx": 0,
+                        "source_comment_id": "C2",
+                        "source_excerpt": "Please clarify this statement.",
+                        "evidence_type": "reviewer_comment",
+                        "match_status": "confirmed",
+                    },
+                    {
+                        "evidence_id": "E3",
+                        "document": "Reviewers",
+                        "part": "word/comments.xml",
+                        "p_idx": 1,
+                        "source_comment_id": "C3",
+                        "source_excerpt": "Please clarify the sample details too.",
+                        "evidence_type": "reviewer_comment",
+                        "match_status": "confirmed",
+                    },
+                ],
                 "proposed_action": "Clarify the statement at the evidenced location.",
                 "targets": [{
                     "document": "Manuscript",
@@ -256,12 +268,21 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         authorized_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
         self.assertEqual(authorized_workflow["tasks"][0]["status"], "ready")
         self.assertEqual(len(authorized_workflow["events"]), 1)
+        reviewer_map_path = self.root / "reviewer_map.json"
+        reviewer_map_path.write_text(json.dumps({
+            "T2": {
+                "comment_ids": {
+                    "C2": "Reviewer 1",
+                    "C3": "Reviewer 2",
+                }
+            }
+        }), encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_build_revision_ledger(Namespace(
                 workflow_ledger=str(workflow_path),
                 document_paths=None,
                 reviewer_comments=None,
-                reviewer_map=None,
+                reviewer_map=str(reviewer_map_path),
                 out=str(self.ledger_path),
             )), 0)
         saved = revision_ledger_from_mapping(
@@ -269,7 +290,11 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(len(saved.patches), 1)
         self.assertEqual(saved.patches[0].operations[0].find, "old phrase")
-        self.assertEqual(len(saved.response_units), 1)
+        self.assertEqual(saved.patches[0].reviewer, "Reviewer 1 / Reviewer 2")
+        self.assertEqual(
+            {unit.comment_id: unit.reviewer for unit in saved.response_units},
+            {"C2": "Reviewer 1", "C3": "Reviewer 2"},
+        )
 
     def test_preflight_and_approval_parsers_accept_revision_ledger(self):
         parser = cli.build_parser()
