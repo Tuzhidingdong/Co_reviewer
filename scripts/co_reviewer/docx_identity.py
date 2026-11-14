@@ -257,7 +257,7 @@ def _part_descriptors(part: str, root: ET._Element) -> tuple[list[dict[str, Any]
         style_id = _attr(ppr.find("w:pStyle", NS) if ppr is not None else None, "val")
         table = _ancestor(paragraph, "tbl")
         table_index = next(
-            (index for index, item in enumerate(tables) if item is table),
+            (index for index, item in enumerate(tables) if item == table),
             None,
         )
         payload = {
@@ -462,6 +462,13 @@ def build_document_identity_manifest(
 
     prior_documents: dict[str, Mapping[str, Any]] = {}
     prior_roles: dict[str, int] = Counter()
+    if previous_manifest is not None and (
+        not isinstance(previous_manifest, Mapping)
+        or previous_manifest.get("schema_version") != "0.5.1"
+        or not isinstance(previous_manifest.get("documents"), list)
+        or not isinstance(previous_manifest.get("objects"), list)
+    ):
+        raise DocxIdentityError("Previous identity manifest must be a valid v0.5.1 documents/objects manifest.")
     if isinstance(previous_manifest, Mapping):
         for row in previous_manifest.get("documents", []):
             if isinstance(row, Mapping):
@@ -657,10 +664,14 @@ def validate_manifest_sources(
             errors.append(f"Identity manifest contains duplicate role {role}.")
         by_role[role] = row
     plan_rows = plan.get("source_files", [])
-    plan_by_role = {
-        _role(row.get("role")): row
-        for row in plan_rows if isinstance(row, Mapping)
-    }
+    plan_by_role: dict[str, Mapping[str, Any]] = {}
+    for row in plan_rows:
+        if not isinstance(row, Mapping):
+            continue
+        role = _role(row.get("role"))
+        if role in plan_by_role:
+            errors.append(f"Decision plan contains more than one source file for role {role}; a role-specific identity is ambiguous.")
+        plan_by_role[role] = row
     for role, source in plan_by_role.items():
         record = by_role.get(role)
         if record is None:
@@ -677,11 +688,57 @@ def validate_manifest_sources(
             + ", ".join(sorted(extra_roles))
         )
 
-    document_versions = {
-        (row.get("document_id"), row.get("revision_id"))
-        for row in documents if isinstance(row, Mapping)
-    }
+    document_versions: set[tuple[Any, Any]] = set()
+    document_ids: set[str] = set()
+    for index, row in enumerate(documents):
+        if not isinstance(row, Mapping):
+            continue
+        document_id = row.get("document_id")
+        revision_id = row.get("revision_id")
+        if not isinstance(document_id, str) or not document_id:
+            errors.append(f"Identity manifest documents[{index}].document_id must be non-empty.")
+            continue
+        if document_id in document_ids:
+            errors.append(f"Identity manifest reuses document_id {document_id} for multiple logical documents.")
+        document_ids.add(document_id)
+        document_versions.add((document_id, revision_id))
+        dimensions = row.get("dimensions")
+        profile = row.get("citation_profile")
+        try:
+            if not isinstance(dimensions, Mapping) or not isinstance(profile, Mapping):
+                raise IdentityValidationError("dimensions and citation_profile must be objects.")
+            citation_profile = CitationProfile(
+                mode=profile.get("mode"),
+                style_name=profile.get("style_name"),
+                numbering_scope=profile.get("numbering_scope"),
+                marker_examples=tuple(profile.get("marker_examples", [])),
+                reference_labels=tuple(profile.get("reference_labels", [])),
+                detection_method=profile.get("detection_method"),
+                evidence_fingerprint=profile.get("evidence_fingerprint"),
+                profile_version=profile.get("profile_version", "1"),
+            )
+            DocumentIdentity(
+                document_id=document_id,
+                revision_id=revision_id,
+                role=row.get("role"),
+                source_sha256=row.get("source_sha256"),
+                content_sha256=dimensions.get("content_sha256"),
+                structure_sha256=dimensions.get("structure_sha256"),
+                formatting_sha256=dimensions.get("formatting_sha256"),
+                citation_sha256=dimensions.get("citation_sha256"),
+                citation_profile=citation_profile,
+            )
+            expected_revision_id = canonical_fingerprint({
+                "document_id": document_id,
+                "source_sha256": row.get("source_sha256"),
+            })
+            if revision_id != expected_revision_id:
+                errors.append(f"Identity manifest revision_id is inconsistent for role {_role(row.get('role'))}.")
+        except (IdentityValidationError, TypeError, ValueError) as exc:
+            errors.append(f"Identity manifest documents[{index}] is invalid: {exc}")
+
     object_keys: set[tuple[Any, Any, Any]] = set()
+    object_ids: set[tuple[Any, Any, str]] = set()
     for index, row in enumerate(objects):
         if not isinstance(row, Mapping):
             errors.append(f"Identity manifest objects[{index}] must be an object.")
@@ -692,6 +749,35 @@ def validate_manifest_sources(
         object_keys.add(key)
         if (row.get("document_id"), row.get("revision_id")) not in document_versions:
             errors.append(f"Identity manifest object {row.get('object_id')} references an unknown document revision.")
+            continue
+        try:
+            record = DocumentObjectIdentity(
+                object_id=row.get("object_id"),
+                document_id=row.get("document_id"),
+                revision_id=row.get("revision_id"),
+                object_type=row.get("object_type"),
+                part=row.get("part"),
+                object_fingerprint=row.get("object_fingerprint"),
+                native_id=row.get("native_id"),
+                parent_object_id=row.get("parent_object_id"),
+                location_hint=row.get("location_hint"),
+            )
+            object_ids.add((record.document_id, record.revision_id, record.object_id))
+        except (IdentityValidationError, TypeError, ValueError) as exc:
+            errors.append(f"Identity manifest objects[{index}] is invalid: {exc}")
+
+    for index, row in enumerate(objects):
+        if not isinstance(row, Mapping) or not row.get("parent_object_id"):
+            continue
+        parent_key = (
+            row.get("document_id"),
+            row.get("revision_id"),
+            row.get("parent_object_id"),
+        )
+        if parent_key not in object_ids:
+            errors.append(
+                f"Identity manifest object {row.get('object_id')} has an unknown parent object."
+            )
     return errors
 
 

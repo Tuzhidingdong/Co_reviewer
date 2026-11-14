@@ -160,6 +160,17 @@ class DocxIdentityRegistryTests(unittest.TestCase):
             len([row for row in manifest["objects"] if row["object_type"] == "table"]),
             1,
         )
+        table_object = next(row for row in manifest["objects"] if row["object_type"] == "table")
+        cell_paragraphs = [
+            row for row in manifest["objects"]
+            if row["object_type"] == "table_cell_paragraph"
+        ]
+        self.assertEqual(len(cell_paragraphs), 2)
+        self.assertTrue(all(row["parent_object_id"] == table_object["object_id"] for row in cell_paragraphs))
+        self.assertEqual(
+            sorted(row["location_hint"]["cell_idx"] for row in cell_paragraphs),
+            [0, 1],
+        )
 
     def test_target_locations_resolve_to_stable_refs_and_validate_against_source(self):
         path = self._docx(
@@ -194,6 +205,24 @@ class DocxIdentityRegistryTests(unittest.TestCase):
             }),
             [],
         )
+
+    def test_format_only_change_does_not_change_content_or_structure_identity(self):
+        from docx.shared import Pt
+
+        first = self._docx("plain.docx", ["Same visible text."])
+        first_manifest, _ = build_document_identity_manifest(_inventory(first))
+        second_path = self.root / "formatted.docx"
+        document = Document()
+        paragraph = document.add_paragraph("Same visible text.")
+        paragraph.runs[0].font.name = "Arial"
+        paragraph.runs[0].font.size = Pt(11)
+        document.save(second_path)
+        second_manifest, _ = build_document_identity_manifest(_inventory(second_path))
+        first_dimensions = first_manifest["documents"][0]["dimensions"]
+        second_dimensions = second_manifest["documents"][0]["dimensions"]
+        self.assertEqual(first_dimensions["content_sha256"], second_dimensions["content_sha256"])
+        self.assertEqual(first_dimensions["structure_sha256"], second_dimensions["structure_sha256"])
+        self.assertNotEqual(first_dimensions["formatting_sha256"], second_dimensions["formatting_sha256"])
 
     def test_stale_inventory_hash_is_rejected_before_identity_generation(self):
         path = self._docx("stale.docx", ["Original."])

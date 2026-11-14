@@ -1661,16 +1661,23 @@ def cmd_build_document_identity(args):
         Path(args.previous_manifest).expanduser().resolve()
         if args.previous_manifest else None
     )
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     protected_inputs = {inventory_path}
     if previous_path:
         protected_inputs.add(previous_path)
+    inventory_rows = (
+        inventory.get("documents", [])
+        if isinstance(inventory, dict) else inventory
+    )
+    for row in inventory_rows if isinstance(inventory_rows, list) else []:
+        if isinstance(row, dict) and isinstance(row.get("file"), str):
+            protected_inputs.add(Path(row["file"]).expanduser().resolve())
     if output_path in protected_inputs:
-        raise ValueError("Identity manifest output must not overwrite an input file.")
+        raise ValueError("Identity manifest output must not overwrite an inventory or source DOCX file.")
     if output_path.exists():
         raise FileExistsError(
             f"Refusing to overwrite an existing identity manifest: {output_path}"
         )
-    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     previous = (
         json.loads(previous_path.read_text(encoding="utf-8"))
         if previous_path else None
