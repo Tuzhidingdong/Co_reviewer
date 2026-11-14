@@ -17,9 +17,9 @@
     "schema_version": { "const": "0.5.1" },
     "location_map_id": { "type": "string", "minLength": 1 },
     "generated_at_utc": { "type": "string", "format": "date-time" },
-    "generator": { "const": "co-reviewer-word-pdf-mapper-v1" },
+    "generator": { "enum": ["co-reviewer-word-pdf-mapper-v1", "co-reviewer-manual-locator-v1"] },
     "revision_ledger_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "line_numbering_policy": { "const": "continuous-per-document-v1" },
+    "line_numbering_policy": { "enum": ["continuous-per-document-v1", "manual-explicit-locator-v1"] },
     "documents": {
       "type": "array",
       "minItems": 0,
@@ -121,6 +121,8 @@
                 "operation_id",
                 "locator_id",
                 "source_clean_sha256",
+                "mapping_method",
+                "locator_text",
                 "location_map_id",
                 "mapping_fingerprint"
               ],
@@ -130,17 +132,44 @@
                 "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
                 "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
                 "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                "page": { "type": "integer", "minimum": 1 },
-                "line_start": { "type": "integer", "minimum": 1 },
-                "line_end": { "type": "integer", "minimum": 1 },
+                "page": { "type": ["integer", "null"], "minimum": 1 },
+                "line_start": { "type": ["integer", "null"], "minimum": 1 },
+                "line_end": { "type": ["integer", "null"], "minimum": 1 },
                 "target_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
                 "patch_id": { "type": ["string", "null"] },
                 "operation_id": { "type": ["string", "null"] },
                 "locator_id": { "type": "string", "minLength": 1 },
                 "source_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "mapping_method": { "enum": ["word_com", "manual"] },
+                "locator_text": { "type": ["string", "null"] },
                 "location_map_id": { "type": "string", "minLength": 1 },
                 "mapping_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
               },
+              "allOf": [
+                {
+                  "if": {
+                    "required": ["mapping_method"],
+                    "properties": { "mapping_method": { "const": "word_com" } }
+                  },
+                  "then": {
+                    "properties": {
+                      "page": { "type": "integer", "minimum": 1 },
+                      "line_start": { "type": "integer", "minimum": 1 },
+                      "line_end": { "type": "integer", "minimum": 1 }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["mapping_method"],
+                    "properties": { "mapping_method": { "const": "manual" } }
+                  },
+                  "then": {
+                    "required": ["locator_text"],
+                    "properties": { "locator_text": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              ],
               "additionalProperties": false
             }
           }
