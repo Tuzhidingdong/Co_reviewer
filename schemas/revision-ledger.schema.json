@@ -765,6 +765,54 @@
         },
         {
           "if": {
+            "required": ["disposition"],
+            "properties": { "disposition": { "enum": ["revised", "reply_only", "clarification_needed"] } }
+          },
+          "then": {
+            "properties": {
+              "location_requirement": { "not": { "const": "existing_anchor_required" } }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["disposition"],
+            "properties": { "disposition": { "enum": ["no_change", "reply_only", "clarification_needed"] } }
+          },
+          "then": {
+            "properties": {
+              "location_requirement": { "not": { "const": "manual_required" } }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["disposition", "location_requirement"],
+            "properties": {
+              "disposition": { "const": "revised" },
+              "location_requirement": { "const": "not_required" }
+            }
+          },
+          "then": false
+        },
+        {
+          "if": {
+            "required": ["status", "location_requirement"],
+            "properties": {
+              "status": { "enum": ["location_mapped", "completed"] },
+              "location_requirement": { "const": "manual_required" }
+            }
+          },
+          "then": {
+            "properties": {
+              "final_locations": {
+                "items": { "properties": { "mapping_method": { "const": "manual" } } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
             "required": ["status", "location_requirement"],
             "properties": {
               "status": { "enum": ["location_mapped", "completed"] },
