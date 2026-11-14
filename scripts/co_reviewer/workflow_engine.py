@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
-from .identity import DocumentIdentity, DocumentObjectIdentity, TargetRef
+from .identity import CitationProfile, DocumentIdentity, DocumentObjectIdentity, TargetRef
 
 WORKFLOW_STATUSES = frozenset({
     "identified",
@@ -915,6 +915,82 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                 errors.append(f"{prefix} duplicates source {role}/{file_path}.")
             seen_sources.add(source_key)
 
+    documents = ledger.get("documents", [])
+    if not isinstance(documents, list):
+        errors.append("Workflow ledger documents must be an array.")
+        documents = []
+    document_versions: dict[tuple[str, str], DocumentIdentity] = {}
+    for index, row in enumerate(documents):
+        prefix = f"Workflow ledger documents[{index}]"
+        if not isinstance(row, Mapping):
+            errors.append(f"{prefix} must be an object.")
+            continue
+        dimensions = row.get("dimensions")
+        profile_data = row.get("citation_profile")
+        try:
+            if not isinstance(dimensions, Mapping) or not isinstance(profile_data, Mapping):
+                raise IdentityValidationError("dimensions and citation_profile must be objects.")
+            profile = CitationProfile(
+                mode=profile_data.get("mode"),
+                style_name=profile_data.get("style_name"),
+                numbering_scope=profile_data.get("numbering_scope"),
+                marker_examples=tuple(profile_data.get("marker_examples", [])),
+                reference_labels=tuple(profile_data.get("reference_labels", [])),
+                detection_method=profile_data.get("detection_method"),
+                evidence_fingerprint=profile_data.get("evidence_fingerprint"),
+                profile_version=profile_data.get("profile_version", "1"),
+            )
+            identity = DocumentIdentity(
+                document_id=row.get("document_id"),
+                revision_id=row.get("revision_id"),
+                role=row.get("role"),
+                source_sha256=row.get("source_sha256"),
+                content_sha256=dimensions.get("content_sha256"),
+                structure_sha256=dimensions.get("structure_sha256"),
+                formatting_sha256=dimensions.get("formatting_sha256"),
+                citation_sha256=dimensions.get("citation_sha256"),
+                citation_profile=profile,
+                identity_version=row.get("identity_version", "0.5.1"),
+            )
+            key = (identity.document_id, identity.revision_id)
+            if key in document_versions:
+                errors.append(f"{prefix} duplicates document revision {key}.")
+            document_versions[key] = identity
+        except (IdentityValidationError, TypeError, ValueError) as exc:
+            errors.append(f"{prefix} is invalid: {exc}")
+
+    objects = ledger.get("object_registry", [])
+    if not isinstance(objects, list):
+        errors.append("Workflow ledger object_registry must be an array.")
+        objects = []
+    object_records: dict[tuple[str, str, str], DocumentObjectIdentity] = {}
+    for index, row in enumerate(objects):
+        prefix = f"Workflow ledger object_registry[{index}]"
+        if not isinstance(row, Mapping):
+            errors.append(f"{prefix} must be an object.")
+            continue
+        try:
+            item = DocumentObjectIdentity(
+                object_id=row.get("object_id"),
+                document_id=row.get("document_id"),
+                revision_id=row.get("revision_id"),
+                object_type=row.get("object_type"),
+                part=row.get("part"),
+                object_fingerprint=row.get("object_fingerprint"),
+                native_id=row.get("native_id"),
+                parent_object_id=row.get("parent_object_id"),
+                location_hint=row.get("location_hint"),
+            )
+            document_key = (item.document_id, item.revision_id)
+            if document_key not in document_versions:
+                errors.append(f"{prefix} refers to an unknown document revision.")
+            object_key = (item.document_id, item.revision_id, item.object_id)
+            if object_key in object_records:
+                errors.append(f"{prefix} duplicates object identity {object_key}.")
+            object_records[object_key] = item
+        except (IdentityValidationError, TypeError, ValueError) as exc:
+            errors.append(f"{prefix} is invalid: {exc}")
+
     tasks = ledger.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         errors.append("Workflow ledger tasks must be a non-empty array.")
@@ -928,8 +1004,53 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             errors.append(f"Task {task_id} has unsupported task_type {task_type!r}.")
         if not isinstance(task.get("target_groups"), (list, tuple)):
             errors.append(f"Task {task_id} target_groups must be an array.")
-        if task_type == "response_only" and task.get("target_groups") != []:
-            errors.append(f"Response-only task {task_id} cannot have document target groups.")
+        target_refs = task.get("target_refs", [])
+        if not isinstance(target_refs, list):
+            errors.append(f"Task {task_id} target_refs must be an array.")
+            target_refs = []
+        expected_groups: set[str] = set()
+        for ref_index, row in enumerate(target_refs):
+            prefix = f"Task {task_id} target_refs[{ref_index}]"
+            if not isinstance(row, Mapping):
+                errors.append(f"{prefix} must be an object.")
+                continue
+            try:
+                target_ref = TargetRef(
+                    document_id=row.get("document_id"),
+                    revision_id=row.get("revision_id"),
+                    object_id=row.get("object_id"),
+                    object_type=row.get("object_type"),
+                    part=row.get("part"),
+                    object_fingerprint=row.get("object_fingerprint"),
+                    start_offset=row.get("start_offset"),
+                    end_offset=row.get("end_offset"),
+                    location_hint=row.get("location_hint"),
+                )
+                key = (
+                    target_ref.document_id,
+                    target_ref.revision_id,
+                    target_ref.object_id,
+                )
+                registered = object_records.get(key)
+                if registered is None:
+                    errors.append(f"{prefix} is not present in the object registry.")
+                elif (
+                    registered.object_type != target_ref.object_type
+                    or registered.part != target_ref.part
+                    or registered.object_fingerprint != target_ref.object_fingerprint
+                ):
+                    errors.append(f"{prefix} does not match the registered object fingerprint/type/part.")
+                expected_groups.add(
+                    f"{target_ref.document_id}|object={target_ref.object_id}"
+                )
+            except (IdentityValidationError, TypeError, ValueError) as exc:
+                errors.append(f"{prefix} is invalid: {exc}")
+        if target_refs and not expected_groups.issubset(set(task.get("target_groups", []))):
+            errors.append(f"Task {task_id} target_groups omit one or more stable TargetRefs.")
+        if task_type == "response_only" and (
+            task.get("target_groups") != [] or target_refs
+        ):
+            errors.append(f"Response-only task {task_id} cannot have document targets.")
 
     errors.extend(validate_workflow_tasks(tasks))
 
@@ -972,6 +1093,10 @@ def build_workflow_ledger(
     decision_plan: Mapping[str, Any],
     revision_round_id: str,
     created_at_utc: str,
+    *,
+    document_identities: Sequence[Any] | None = None,
+    object_registry: Sequence[Any] | None = None,
+    target_refs_by_task: Mapping[str, Sequence[Any]] | None = None,
 ) -> dict[str, Any]:
     """Create a durable Workflow Ledger from a validated decision-plan payload."""
     if not isinstance(decision_plan, Mapping):
@@ -980,12 +1105,25 @@ def build_workflow_ledger(
         raise WorkflowValidationError("revision_round_id must be non-empty.")
     if not _is_aware_timestamp(created_at_utc):
         raise WorkflowValidationError("created_at_utc must be timezone-aware.")
-    tasks = workflow_tasks_from_decision_plan(decision_plan.get("tasks"))
+    documents = [
+        _identity_record_payload(item, "document_identities")
+        for item in (document_identities or [])
+    ]
+    objects = [
+        _identity_record_payload(item, "object_registry")
+        for item in (object_registry or [])
+    ]
+    tasks = workflow_tasks_from_decision_plan(
+        decision_plan.get("tasks"),
+        target_refs_by_task=target_refs_by_task,
+    )
     ledger = {
         "schema_version": "0.5.1",
         "revision_round_id": revision_round_id.strip(),
         "created_at_utc": created_at_utc,
         "source_files": copy.deepcopy(decision_plan.get("source_files", [])),
+        "documents": documents,
+        "object_registry": objects,
         "tasks": tasks,
         "events": [],
     }
