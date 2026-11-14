@@ -183,10 +183,18 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         workflow = {
             "schema_version": "0.5.1",
             "revision_round_id": "round-build-cli",
+            "source_files": [],
+            "documents": [],
+            "object_registry": [],
+            "events": [],
             "tasks": [{
                 "task_id": "T2",
+                "sequence": 1,
+                "stage": "revision",
                 "task_type": "local_revision",
+                "title": "Clarify the statement",
                 "source_comment_ids": ["C2"],
+                "target_documents": ["Manuscript"],
                 "evidence": [{
                     "evidence_id": "E2",
                     "document": "Reviewers",
@@ -195,7 +203,9 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "source_comment_id": "C2",
                     "source_excerpt": "Please clarify this statement.",
                     "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
                 }],
+                "proposed_action": "Clarify the statement at the evidenced location.",
                 "targets": [{
                     "document": "Manuscript",
                     "part": "word/document.xml",
@@ -203,6 +213,13 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "action": "replace",
                     "evidence_ids": ["E2"],
                 }],
+                "dependencies": [],
+                "target_groups": ["Manuscript|word/document.xml|p_idx=0"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "requires_user_approval": True,
+                "status": "planned",
                 "patch_operations": [{
                     "operation_id": "OP-2",
                     "document": "Manuscript",
