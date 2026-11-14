@@ -19,6 +19,7 @@ from co_reviewer.workflow_engine import (
     transition_task,
     validate_workflow_ledger,
     validate_workflow_tasks,
+    workflow_scope_fingerprint,
     workflow_tasks_from_decision_plan,
 )
 
@@ -450,6 +451,49 @@ class WorkflowEngineTests(unittest.TestCase):
         }
         errors = validate_workflow_ledger(ledger)
         self.assertTrue(any("does not match the registered object fingerprint" in error for error in errors))
+
+    def test_workflow_ledger_rejects_ready_without_author_event_or_valid_scope_fingerprint(self):
+        task = {
+            "task_id": "T1",
+            "sequence": 1,
+            "stage": "revision",
+            "task_type": "local_revision",
+            "title": "Revise section",
+            "dependencies": [],
+            "target_groups": ["Manuscript|word/document.xml|p_idx=0"],
+            "targets": [],
+            "patch_operations": [],
+            "status": "ready",
+        }
+        ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-ready-audit",
+            "documents": [],
+            "object_registry": [],
+            "source_files": [],
+            "tasks": [task],
+            "events": [],
+        }
+        self.assertTrue(any(
+            "without an explicit author-authorization event" in error
+            for error in validate_workflow_ledger(ledger)
+        ))
+        ledger["events"] = [{
+            "event_id": "EV-READY-1",
+            "task_id": "T1",
+            "timestamp_utc": STAMP,
+            "event_type": "status_transition",
+            "from_status": "planned",
+            "to_status": "ready",
+            "actor": "Human Author",
+            "fingerprint": "0" * 64,
+        }]
+        self.assertTrue(any(
+            "fingerprint does not match" in error
+            for error in validate_workflow_ledger(ledger)
+        ))
+        ledger["events"][0]["fingerprint"] = workflow_scope_fingerprint(task)
+        self.assertEqual(validate_workflow_ledger(ledger), [])
 
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
