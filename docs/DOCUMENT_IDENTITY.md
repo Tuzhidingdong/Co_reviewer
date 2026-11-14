@@ -10,7 +10,7 @@ python scripts/co_reviewer_cli.py build-document-identity `
   --out document_identity_manifest.json
 ```
 
-The command reads the actual source DOCX packages, verifies that each file SHA-256 matches the inventory, computes the five document identity dimensions, and registers Word paragraphs, tables, reviewer comments, headers/footers, footnotes and endnotes.
+The command reads the actual source DOCX packages, verifies that each file SHA-256 matches the inventory, then cross-checks every inventory paragraph's part, p_idx, visible text and available paraId against the parsed DOCX before computing the five document identity dimensions. It registers Word paragraphs, tables, reviewer comments, headers/footers, footnotes and endnotes. A stale paragraph map is rejected rather than trusted.
 
 ## Carry object identity into the next revision round
 
