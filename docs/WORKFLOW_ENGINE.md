@@ -43,6 +43,10 @@ The legacy revision_plan.schema.json and validate_plan() remain DOCX-edit-only. 
 
 ## Current anchor and migration limits
 
-The current decision-plan adapter identifies a provisional target group as document|part|p_idx. This is only a bridge from the v0.3 inventory model. It is not a persistent identity. P0 identity work must replace paragraph indexes with stable internal object IDs and bind target groups to document/object fingerprints.
+The identity layer now defines five distinct document dimensions: exact source bytes, normalized visible content, document structure, formatting state and citation state. A CitationProfile records the explicit citation mode, style label, numbering scope, examples, reference labels, detection method and optional evidence fingerprint. These dimensions are independent; a content edit need not be mistaken for a formatting or citation edit.
 
-The Workflow Engine is now used by pending decision-plan validation and scheduling summaries. The old CLI revision-item apply/verify commands remain compatible and are not yet fully migrated to the ledger. Word COM pagination, final PDF line mapping, patch supersession and the complete ResponseUnit renderer remain later integration stages.
+Persistent object IDs are represented by DocumentObjectIdentity records and are kept separate from location hints such as paragraph indexes. TargetRef binds a task to a document revision, object ID, object fingerprint, Word part and optional character offsets. The Workflow Ledger can persist document identities and an object registry; it validates that each TargetRef resolves to the matching registered object and revision.
+
+When TargetRefs are supplied to build_workflow_ledger(), the scheduler prefers stable document/object groups (document_id|object=object_id). Unmigrated tasks fall back to document|part|p_idx groups. The p_idx fallback is provisional and should disappear once the parser/registry migration is complete. Generated object IDs must be persisted in the object registry and reused only when the object mapping across revisions has been confirmed.
+
+The Workflow Engine is used by pending decision-plan validation, ledger creation/validation and scheduling summaries. The old CLI revision-item apply/verify commands remain compatible and are not yet fully migrated to the ledger. Typed Patch/RevisionLedger execution, Working Clean View, Word COM pagination, final PDF line mapping and the complete ResponseUnit renderer remain later integration stages.
