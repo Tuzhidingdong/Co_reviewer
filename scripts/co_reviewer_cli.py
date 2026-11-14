@@ -2176,10 +2176,12 @@ def cmd_build_document_identity(args):
             if row.get("role") in {"Manuscript", "SI"}:
                 baseline = inspect_clean_baseline(row["file"])
                 if not baseline["clean"]:
+                    issue_details = json.dumps(baseline["issues"], ensure_ascii=False, indent=2)
                     raise ValueError(
                         f"Initial {row['role']} baseline is not clean; document identity registration is blocked. "
                         f"Unresolved Word markup: {baseline['blocking_counts']}. "
-                        "Resolve existing Track Changes and comments before starting this review round."
+                        "Resolve existing Track Changes and comments before starting this review round.\n"
+                        f"Exact package/paragraph positions and excerpts:\n{issue_details}"
                     )
     if output_path in protected_inputs:
         raise ValueError("Identity manifest output must not overwrite an inventory or source DOCX file.")
