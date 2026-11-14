@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .identity import TargetRef, revision_item_fingerprint
+from .identity import TargetRef, revision_item_fingerprint, sha256_file
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _PATCH_ACTIONS = frozenset({"replace"})
@@ -339,10 +339,11 @@ class RevisionEvent:
 
 @dataclass(frozen=True)
 class ResponseLocation:
-    """A final output location backed by a frozen PDF/render mapping report."""
+    """A final output location backed by exact DOCX, PDF and mapping-file versions."""
 
     document: str
     output_file: str
+    pdf_file: str
     page: int
     line_start: int
     line_end: int
@@ -353,6 +354,9 @@ class ResponseLocation:
     def __post_init__(self) -> None:
         _text(self.document, "document")
         _safe_docx_path(self.output_file, "output_file")
+        pdf_path = _text(self.pdf_file, "pdf_file")
+        if Path(pdf_path).suffix.casefold() != ".pdf":
+            raise RevisionModelError("pdf_file must point to a .pdf file.")
         for name in ("page", "line_start", "line_end"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -367,6 +371,7 @@ class ResponseLocation:
         return {
             "document": self.document,
             "output_file": self.output_file,
+            "pdf_file": self.pdf_file,
             "page": self.page,
             "line_start": self.line_start,
             "line_end": self.line_end,
@@ -610,6 +615,24 @@ class RevisionLedger:
     ) -> None:
         if not isinstance(location_map, Mapping):
             raise RevisionModelError("Location map must be an object.")
+        location_map_file = _text(
+            location_map.get("location_map_file"), "location_map_file"
+        )
+        location_map_file_sha256 = _sha256(
+            location_map.get("location_map_file_sha256"),
+            "location_map_file_sha256",
+        )
+        map_path = Path(location_map_file).expanduser().resolve()
+        if not map_path.is_file():
+            raise RevisionModelError(f"Location map file does not exist: {map_path}")
+        try:
+            actual_map_sha256 = sha256_file(map_path)
+        except OSError as exc:
+            raise RevisionModelError(f"Cannot hash location map file {map_path}: {exc}") from exc
+        if actual_map_sha256 != location_map_file_sha256:
+            raise RevisionModelError(
+                f"Location map file changed after it was read: {map_path}"
+            )
         mappings = location_map.get("response_units")
         if not isinstance(mappings, list):
             raise RevisionModelError("Location map must contain a response_units array.")
@@ -632,6 +655,7 @@ class RevisionLedger:
                 ResponseLocation(
                     document=row.get("document"),
                     output_file=row.get("output_file"),
+                    pdf_file=row.get("pdf_file"),
                     page=row.get("page"),
                     line_start=row.get("line_start"),
                     line_end=row.get("line_end"),
@@ -643,6 +667,22 @@ class RevisionLedger:
             ]
             if len(final_locations) != len(raw_locations):
                 raise RevisionModelError(f"{unit_id} contains malformed final location entries.")
+            for final_location in final_locations:
+                pdf_path = Path(final_location.pdf_file).expanduser().resolve()
+                if not pdf_path.is_file():
+                    raise RevisionModelError(
+                        f"Final mapped PDF does not exist for {unit_id}: {pdf_path}"
+                    )
+                try:
+                    actual_pdf_sha256 = sha256_file(pdf_path)
+                except OSError as exc:
+                    raise RevisionModelError(
+                        f"Cannot hash final mapped PDF {pdf_path}: {exc}"
+                    ) from exc
+                if actual_pdf_sha256 != final_location.pdf_sha256:
+                    raise RevisionModelError(
+                        f"Final mapped PDF changed after line mapping for {unit_id}: {pdf_path}"
+                    )
             unit.record_final_locations(location_fingerprint, final_locations)
             self.events.append(RevisionEvent(
                 event_id=str(uuid.uuid4()),
@@ -653,6 +693,8 @@ class RevisionLedger:
                 actor=actor,
                 details={
                     "location_map_id": location_map.get("location_map_id", ""),
+                    "location_map_file": str(map_path),
+                    "location_map_file_sha256": location_map_file_sha256,
                     "location_map_fingerprint": location_fingerprint,
                     "final_locations": [item.to_dict() for item in final_locations],
                 },
@@ -1271,6 +1313,7 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             ResponseLocation(
                 document=item.get("document"),
                 output_file=item.get("output_file"),
+                pdf_file=item.get("pdf_file"),
                 page=item.get("page"),
                 line_start=item.get("line_start"),
                 line_end=item.get("line_end"),
