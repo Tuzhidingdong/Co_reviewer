@@ -67,6 +67,49 @@ function Add-QualityLog {
     Add-Content -LiteralPath $LogPath -Value $Message -Encoding UTF8
 }
 
+function ConvertTo-WindowsCommandLineArgument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    # ProcessStartInfo.ArgumentList is unavailable in Windows PowerShell 5.1
+    # on .NET Framework. This fallback follows Windows CRT backslash/quote rules.
+    $Builder = [System.Text.StringBuilder]::new()
+    [void]$Builder.Append('"')
+    $Backslashes = 0
+
+    foreach ($Character in $Value.ToCharArray()) {
+        if ($Character -eq [char]92) {
+            $Backslashes++
+            continue
+        }
+        if ($Character -eq [char]34) {
+            if ($Backslashes -gt 0) {
+                [void]$Builder.Append(('\' * (($Backslashes * 2) + 1)))
+            }
+            else {
+                [void]$Builder.Append('\')
+            }
+            [void]$Builder.Append('"')
+            $Backslashes = 0
+            continue
+        }
+        if ($Backslashes -gt 0) {
+            [void]$Builder.Append(('\' * $Backslashes))
+            $Backslashes = 0
+        }
+        [void]$Builder.Append($Character)
+    }
+
+    if ($Backslashes -gt 0) {
+        [void]$Builder.Append(('\' * ($Backslashes * 2)))
+    }
+    [void]$Builder.Append('"')
+    return $Builder.ToString()
+}
+
 function Invoke-QualityCheck {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -89,8 +132,17 @@ function Invoke-QualityCheck {
     $ProcessInfo.CreateNoWindow = $true
     $ProcessInfo.RedirectStandardOutput = $true
     $ProcessInfo.RedirectStandardError = $true
-    foreach ($Argument in $PythonArgs) {
-        [void]$ProcessInfo.ArgumentList.Add([string]$Argument)
+    $ArgumentListProperty = $ProcessInfo.GetType().GetProperty("ArgumentList")
+    if ($null -ne $ArgumentListProperty) {
+        foreach ($Argument in $PythonArgs) {
+            [void]$ProcessInfo.ArgumentList.Add([string]$Argument)
+        }
+    }
+    else {
+        $QuotedArguments = foreach ($Argument in $PythonArgs) {
+            ConvertTo-WindowsCommandLineArgument -Value ([string]$Argument)
+        }
+        $ProcessInfo.Arguments = $QuotedArguments -join ' '
     }
 
     $Process = [System.Diagnostics.Process]::new()
