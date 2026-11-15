@@ -98,6 +98,60 @@ def _require_word_page_count(value: Any, role: str) -> int:
     return value
 
 
+def _require_consistent_sequence_audits(payloads: list[Any], role: str) -> dict[str, Any]:
+    """Require every location map for the same final document to attest the same valid SEQ audit."""
+    if not payloads:
+        raise ReleaseGateError(f"Figure/Table SEQ audit records are missing for {role}.")
+    audits = [_require_successful_sequence_audit(payload, role) for payload in payloads]
+    fingerprints = {
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for payload in audits
+    }
+    if len(fingerprints) != 1:
+        raise ReleaseGateError(
+            f"Location maps contain inconsistent Figure/Table SEQ audit records for the same final document {role}."
+        )
+    return audits[0]
+
+
+def _require_bound_final_quality_report(
+    payload: Any,
+    *,
+    role: str,
+    docx_path: str,
+    docx_sha256: str,
+    pdf_path: str,
+    pdf_sha256: str,
+    word_page_count: int,
+) -> str:
+    """Bind a Word final quality report to the exact final DOCX/PDF pair and Word pagination."""
+    status = _require_release_quality_status(payload, f"Final Word Clean DOCX for {role}")
+    docx_metrics = payload.get("docx")
+    pdf_metrics = payload.get("pdf")
+    if not isinstance(docx_metrics, Mapping) or not isinstance(pdf_metrics, Mapping):
+        raise ReleaseGateError(
+            f"Final Word Clean DOCX quality report for {role} must include DOCX and PDF metric objects."
+        )
+    if (
+        docx_metrics.get("docx_sha256") != docx_sha256
+        or not isinstance(docx_metrics.get("docx_file"), str)
+        or Path(docx_metrics["docx_file"]).expanduser().resolve() != Path(docx_path).expanduser().resolve()
+    ):
+        raise ReleaseGateError(
+            f"Final DOCX quality report is not bound to the current Word Clean file for {role}."
+        )
+    if (
+        pdf_metrics.get("sha256") != pdf_sha256
+        or not isinstance(pdf_metrics.get("file"), str)
+        or Path(pdf_metrics["file"]).expanduser().resolve() != Path(pdf_path).expanduser().resolve()
+        or pdf_metrics.get("word_page_count") != word_page_count
+    ):
+        raise ReleaseGateError(
+            f"Final DOCX quality report is not bound to the current PDF and Word page count for {role}."
+        )
+    return status
+
+
 def _docx_text(path: Path) -> str:
     try:
         document = Document(str(path))
@@ -680,25 +734,37 @@ def build_final_release_manifest(
         if len(page_counts) != 1:
             raise ReleaseGateError(f"Word COM page count is inconsistent across location maps for {role}.")
         final_record["word_page_count"] = next(iter(page_counts))
-        final_record["sequence_audit"] = _require_successful_sequence_audit(
-            matching_rows[0].get("sequence_audit"), role
+        final_record["sequence_audit"] = _require_consistent_sequence_audits(
+            [row.get("sequence_audit") for row in matching_rows], role
         )
-        quality_rows = [
-            row for row in matching_rows
-            if isinstance(row.get("quality_report_file"), str)
-        ]
-        if not quality_rows:
-            raise ReleaseGateError(f"Final Word Clean DOCX quality report is missing for {role}.")
-        quality_row = quality_rows[0]
-        quality_path = Path(quality_row["quality_report_file"]).expanduser().resolve()
-        if not quality_path.is_file() or sha256_file(quality_path) != quality_row.get("quality_report_sha256"):
-            raise ReleaseGateError(f"Final Word Clean DOCX quality report is missing or stale: {quality_path}.")
-        quality_payload = json.loads(quality_path.read_text(encoding="utf-8"))
-        quality_status = _require_release_quality_status(
-            quality_payload, f"Final Word Clean DOCX for {role}"
-        )
-        if quality_payload.get("docx", {}).get("docx_sha256") != final_record["final_clean_sha256"]:
-            raise ReleaseGateError(f"Final DOCX quality report is bound to another file for {role}.")
+        quality_records: list[tuple[dict[str, Any], Path, dict[str, Any], str]] = []
+        if any(
+            not isinstance(row.get("quality_report_file"), str)
+            or not isinstance(row.get("quality_report_sha256"), str)
+            for row in matching_rows
+        ):
+            raise ReleaseGateError(
+                f"Every final Word location map must carry a hash-bound DOCX quality report for {role}."
+            )
+        for row in matching_rows:
+            quality_path = Path(row["quality_report_file"]).expanduser().resolve()
+            if not quality_path.is_file() or sha256_file(quality_path) != row["quality_report_sha256"]:
+                raise ReleaseGateError(f"Final Word Clean DOCX quality report is missing or stale: {quality_path}.")
+            try:
+                quality_payload = json.loads(quality_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ReleaseGateError(f"Cannot read final DOCX quality report {quality_path}: {exc}") from exc
+            quality_status = _require_bound_final_quality_report(
+                quality_payload,
+                role=role,
+                docx_path=final_record["final_clean_file"],
+                docx_sha256=final_record["final_clean_sha256"],
+                pdf_path=final_record["final_pdf_file"],
+                pdf_sha256=final_record["final_pdf_sha256"],
+                word_page_count=final_record["word_page_count"],
+            )
+            quality_records.append((row, quality_path, quality_payload, quality_status))
+        quality_row, quality_path, quality_payload, quality_status = quality_records[0]
         final_quality = audit_docx_quality(
             final_record["final_clean_file"],
             profile="word-final-clean",

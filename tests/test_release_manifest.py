@@ -15,6 +15,8 @@ from co_reviewer.release_manifest import (
     ReleaseGateError,
     _require_release_quality_status,
     _require_successful_sequence_audit,
+    _require_consistent_sequence_audits,
+    _require_bound_final_quality_report,
     _require_word_page_count,
     audit_patch_operation_deltas,
     build_final_release_manifest,
@@ -188,6 +190,68 @@ class ReleaseManifestGateTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ReleaseGateError, "positive integer"):
                     _require_word_page_count(value, "Manuscript")
+
+    def test_final_sequence_audits_from_all_maps_must_agree(self):
+        passing = {
+            "status": "pass",
+            "detected": {"Figure": [{"value": 1}], "Table": []},
+            "issues": [],
+            "manual_review": [],
+        }
+        self.assertEqual(
+            _require_consistent_sequence_audits([passing, dict(passing)], "Manuscript"),
+            passing,
+        )
+        conflicting = {
+            "status": "manual_review",
+            "detected": {"Figure": [{"value": 1}], "Table": []},
+            "issues": [],
+            "manual_review": [{"reason": "Different audit outcome."}],
+        }
+        with self.assertRaisesRegex(ReleaseGateError, "inconsistent Figure/Table SEQ audit"):
+            _require_consistent_sequence_audits([passing, conflicting], "Manuscript")
+
+    def test_final_docx_quality_report_must_bind_docx_pdf_and_page_count(self):
+        payload = {
+            "status": "PASS",
+            "docx": {"docx_file": "/tmp/Manuscript.docx", "docx_sha256": "a" * 64},
+            "pdf": {
+                "file": "/tmp/Manuscript.pdf",
+                "sha256": "b" * 64,
+                "word_page_count": 4,
+            },
+        }
+        self.assertEqual(
+            _require_bound_final_quality_report(
+                payload,
+                role="Manuscript",
+                docx_path="/tmp/Manuscript.docx",
+                docx_sha256="a" * 64,
+                pdf_path="/tmp/Manuscript.pdf",
+                pdf_sha256="b" * 64,
+                word_page_count=4,
+            ),
+            "PASS",
+        )
+        for mutation in (
+            {"docx": {"docx_file": "/tmp/other.docx", "docx_sha256": "a" * 64}},
+            {"pdf": {"file": "/tmp/other.pdf", "sha256": "b" * 64, "word_page_count": 4}},
+            {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "c" * 64, "word_page_count": 4}},
+            {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "b" * 64, "word_page_count": 5}},
+        ):
+            broken = dict(payload)
+            broken.update(mutation)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(ReleaseGateError):
+                    _require_bound_final_quality_report(
+                        broken,
+                        role="Manuscript",
+                        docx_path="/tmp/Manuscript.docx",
+                        docx_sha256="a" * 64,
+                        pdf_path="/tmp/Manuscript.pdf",
+                        pdf_sha256="b" * 64,
+                        word_page_count=4,
+                    )
 
     def test_deterministic_patch_delta_audit_surfaces_numbers_units_refs_and_sample_ids(self):
         operation = SimpleNamespace(
