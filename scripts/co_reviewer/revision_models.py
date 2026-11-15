@@ -2505,12 +2505,21 @@ def response_units_to_legacy_plan(
     response_units: Sequence[ResponseUnit],
     patches: Sequence[Patch] = (),
 ) -> dict[str, Any]:
-    """Adapt ResponseUnits to the current renderer without inventing DOCX targets."""
+    """Adapt ResponseUnits and exact PatchOperation excerpts for deterministic rendering."""
     patch_by_id = {item.patch_id: item for item in patches}
+    operation_owners = {
+        operation.operation_id: (patch, operation)
+        for patch in patches
+        for operation in patch.operations
+    }
     revision_items = []
     for unit in response_units:
         linked_patches = [patch_by_id[item] for item in unit.linked_patch_ids if item in patch_by_id]
         targets = copy.deepcopy(unit.linked_targets)
+        location_by_id = {
+            location.locator_id: location
+            for location in unit.final_locations
+        }
         if unit.final_locations:
             for location in unit.final_locations:
                 targets.append({
@@ -2518,6 +2527,73 @@ def response_units_to_legacy_plan(
                     "location": location.display_text,
                     "output_file": location.output_file,
                 })
+
+        quoted_changes: list[dict[str, Any]] = []
+        for operation_id in unit.linked_operation_ids:
+            owner = operation_owners.get(operation_id)
+            if owner is None:
+                raise RevisionModelError(
+                    f"ResponseUnit {unit.response_unit_id} links unknown PatchOperation {operation_id}; "
+                    "the Response Letter renderer will not infer operation ownership."
+                )
+            patch, operation = owner
+            if patch.patch_id not in unit.linked_patch_ids or unit.comment_id not in operation.source_comment_ids:
+                raise RevisionModelError(
+                    f"PatchOperation {operation_id} is not explicitly attributed to "
+                    f"ResponseUnit {unit.response_unit_id}/{unit.comment_id}."
+                )
+            locator_id = (
+                f"manual:{operation_id}"
+                if unit.location_requirement == "manual_required"
+                else operation_id
+            )
+            location = location_by_id.get(locator_id)
+            if location is not None and location.document != operation.document:
+                raise RevisionModelError(
+                    f"ResponseUnit {unit.response_unit_id} location role does not match PatchOperation {operation_id}."
+                )
+            is_deletion = not bool(operation.replace.strip())
+            quote_text = operation.find if is_deletion else operation.replace
+            quoted_changes.append({
+                "patch_id": patch.patch_id,
+                "operation_id": operation_id,
+                "document": operation.document,
+                "action": "removed_text" if is_deletion else "revised_text",
+                "quote_text": quote_text,
+                "location": location.display_text if location is not None else None,
+                "location_status": (
+                    "manual_confirmed" if location is not None and location.mapping_method == "manual"
+                    else "word_com_confirmed" if location is not None
+                    else "location_pending"
+                ),
+                "output_file": location.output_file if location is not None else operation.output_file,
+                "verified": patch.status == "verified",
+            })
+
+        if unit.disposition == "no_change":
+            locator_id = (
+                f"manual:anchor:{unit.anchor_evidence_id}"
+                if unit.location_requirement == "manual_required"
+                else f"anchor:{unit.anchor_evidence_id}"
+            )
+            location = location_by_id.get(locator_id)
+            if unit.anchor_source_excerpt:
+                quoted_changes.append({
+                    "patch_id": None,
+                    "operation_id": None,
+                    "document": unit.anchor_document,
+                    "action": "existing_text",
+                    "quote_text": unit.anchor_source_excerpt,
+                    "location": location.display_text if location is not None else None,
+                    "location_status": (
+                        "manual_confirmed" if location is not None and location.mapping_method == "manual"
+                        else "word_com_confirmed" if location is not None
+                        else "location_pending"
+                    ),
+                    "output_file": location.output_file if location is not None else None,
+                    "verified": unit.semantic_review_confirmed,
+                })
+
         final_is_mapped = (
             unit.status in {"location_mapped", "completed"}
             and unit.semantic_review_confirmed
@@ -2543,6 +2619,9 @@ def response_units_to_legacy_plan(
             "proposed_response": unit.response_text,
             "status": status,
             "targets": targets,
+            "quoted_changes": quoted_changes,
+            "disposition": unit.disposition,
+            "resolution_reason": unit.resolution_reason,
         })
     return {"revision_items": revision_items}
 
