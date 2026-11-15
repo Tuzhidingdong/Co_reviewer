@@ -5,11 +5,8 @@ import json
 import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
 from types import SimpleNamespace
-
-from docx import Document
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -25,7 +22,7 @@ from co_reviewer.revision_models import (
     RevisionLedger,
     response_units_to_legacy_plan,
 )
-from co_reviewer.workflow_engine import build_workflow_ledger
+from co_reviewer.workflow_engine import build_workflow_ledger, transition_task
 from response_letter_docx import render_response_docx
 
 
@@ -75,6 +72,20 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "round-release-tests",
             STAMP,
         )
+        task = self.workflow["tasks"][0]
+        ready_task = transition_task(task, "ready")
+        completed_task = transition_task(
+            ready_task,
+            "completed",
+            evidence={
+                "completion_record_id": "synthetic-response-only-completion",
+                "completion_record_fingerprint": hashlib.sha256(
+                    b"synthetic-response-only-completion"
+                ).hexdigest(),
+                "completed_at_utc": STAMP,
+            },
+        )
+        self.workflow["tasks"][0] = completed_task
         self.revision_path = self.root / "revision_ledger.json"
         self.workflow_path = self.root / "workflow_ledger.json"
         self.revision_path.write_text("{}", encoding="utf-8")
