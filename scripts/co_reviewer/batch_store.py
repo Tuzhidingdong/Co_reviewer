@@ -234,14 +234,22 @@ def publish_active_pointers(
         current = pointers.get(role)
         if current is None:
             raise BatchStoreError(f"No active parent pointer for document role {role}.")
-        if current["file"] != str(Path(record["parent_file"]).expanduser().resolve()) or current["sha256"] != record["parent_sha256"]:
-            raise BatchStoreError(
-                f"Active pointer for {role} changed after batch preparation; refusing stale publish."
-            )
         output_path = Path(record["output_file"]).expanduser().resolve()
         if not output_path.is_file():
             raise BatchStoreError(f"Batch output for {role} is missing: {output_path}")
         output_sha = sha256_file(output_path)
+        already_published = (
+            current.get("batch_id") == batch_id
+            and current["file"] == str(output_path)
+            and current["sha256"] == output_sha
+        )
+        if not already_published and (
+            current["file"] != str(Path(record["parent_file"]).expanduser().resolve())
+            or current["sha256"] != record["parent_sha256"]
+        ):
+            raise BatchStoreError(
+                f"Active pointer for {role} changed after batch preparation; refusing stale publish."
+            )
         linked_patches = [
             patch for patch in revision_ledger.patches
             if patch.status != "superseded"
@@ -283,7 +291,15 @@ def publish_active_pointers(
     task_ids = list(intent.get("selected_task_ids", []))
     events = list(updated.get("events", []))
     now = _timestamp()
+    already_recorded = {
+        event.get("task_id") for event in events
+        if isinstance(event, Mapping)
+        and event.get("event_type") == "batch_published"
+        and event.get("batch_id") == batch_id
+    }
     for task_id in task_ids:
+        if task_id in already_recorded:
+            continue
         events.append({
             "event_id": str(uuid.uuid4()),
             "task_id": task_id,
@@ -325,11 +341,19 @@ def rollback_active_pointers(
     for role, record in intent["documents"].items():
         current = pointers.get(role)
         output_path = str(Path(record["output_file"]).expanduser().resolve())
-        if current is None or current.get("batch_id") != batch_id or current["file"] != output_path:
+        parent_path = Path(record["parent_file"]).expanduser().resolve()
+        already_rolled_back = (
+            current is not None
+            and current["file"] == str(parent_path)
+            and current["sha256"] == record["parent_sha256"]
+            and current.get("batch_id") == record.get("parent_batch_id")
+        )
+        if not already_rolled_back and (
+            current is None or current.get("batch_id") != batch_id or current["file"] != output_path
+        ):
             raise BatchStoreError(
                 f"Active pointer for {role} no longer points to batch {batch_id}; refusing rollback."
             )
-        parent_path = Path(record["parent_file"]).expanduser().resolve()
         if not parent_path.is_file() or sha256_file(parent_path) != record["parent_sha256"]:
             raise BatchStoreError(
                 f"Parent output for {role} is unavailable or changed; cannot restore its pointer."
