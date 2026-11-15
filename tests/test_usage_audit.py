@@ -135,6 +135,8 @@ class UsageAuditTests(unittest.TestCase):
         self.assertEqual(report["model_context_scopes"]["excerpt"], 1)
         self.assertEqual(report["model_context_scopes"]["none"], 0)
         self.assertEqual(report["model_call_outcomes"]["succeeded"], 1)
+        self.assertEqual(report["model_call_duration_ms"]["sum"], 25)
+        self.assertEqual(report["by_stage"]["decision_synthesis"]["duration_ms"]["observed_events"], 1)
         self.assertEqual(report["model_call_outcomes"]["failed"], 0)
 
     def test_model_call_event_rejects_invalid_context_status_duration_and_error_metadata(self):

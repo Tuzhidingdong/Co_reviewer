@@ -253,11 +253,21 @@ def build_usage_report(events: list[dict[str, Any]], errors: list[dict[str, Any]
             measured = [row for row in rows if row["token_usage"]["source"] == "measured"]
             estimated = [row for row in rows if row["token_usage"]["source"] == "estimated"]
             unavailable = [row for row in rows if row["token_usage"]["source"] == "unavailable"]
+            duration_values = [
+                row["duration_ms"] for row in rows
+                if isinstance(row.get("duration_ms"), int) and not isinstance(row.get("duration_ms"), bool)
+            ]
             result[key] = {
                 "events": len(rows),
                 "measured_events": len(measured),
                 "estimated_events": len(estimated),
                 "unavailable_events": len(unavailable),
+                "succeeded_calls": sum(1 for row in rows if row.get("call_status") == "succeeded"),
+                "failed_calls": sum(1 for row in rows if row.get("call_status") == "failed"),
+                "duration_ms": {
+                    "sum": sum(duration_values) if duration_values else None,
+                    "observed_events": len(duration_values),
+                },
                 "measured": _bucket_totals(measured),
                 "estimated": _bucket_totals(estimated),
             }
@@ -277,6 +287,19 @@ def build_usage_report(events: list[dict[str, Any]], errors: list[dict[str, Any]
             for outcome in ("succeeded", "failed", "unknown")
         },
         "usage_extraction_error_events": sum(1 for row in model_events if row.get("usage_extraction_error_type")),
+        "model_call_duration_ms": {
+            "sum": sum(
+                row["duration_ms"] for row in model_events
+                if isinstance(row.get("duration_ms"), int) and not isinstance(row.get("duration_ms"), bool)
+            ) if any(
+                isinstance(row.get("duration_ms"), int) and not isinstance(row.get("duration_ms"), bool)
+                for row in model_events
+            ) else None,
+            "observed_events": sum(
+                1 for row in model_events
+                if isinstance(row.get("duration_ms"), int) and not isinstance(row.get("duration_ms"), bool)
+            ),
+        },
         "invalid_lines": errors or [],
         "token_accounting_note": (
             "Token buckets are reported independently. Do not sum input/cache buckets or "

@@ -74,7 +74,7 @@ Append it using:
 
 The five token buckets are retained separately. `reasoning_relation` must describe whether reasoning is included in output or separately billable; an `unknown` relationship is never silently combined.
 
-`audit-usage` groups model events by stage, actor and provider/model. It also detects repeated programmatic full-document extractions by source SHA-256 and lists explicit `context_scope` counts. It does not turn filesystem access into an LLM-read claim.
+`audit-usage` groups model events by stage, actor and provider/model, reports actual caller-supplied model context scope, call outcomes and observed durations, and separately reports programmatic read scopes and repeated full-document extractions by source SHA-256. A programmatic `document_read` event never proves that the model saw the file.
 
 ## Optional cost estimate
 
