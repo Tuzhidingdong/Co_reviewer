@@ -146,13 +146,13 @@ After all batches for the round have been published, create Working Clean Views,
 
 ## Clean views, final Word/PDF locations and Response Letter
 
-After the in-scope Patch batches are verified, produce separate accepted-changes projections:
+After **all** document-changing batches have been published, create separate accepted-changes projections from the active Marked DOCX outputs:
 
     python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
 
 Working Clean Views are intermediate review projections, not final Word-layout Clean deliverables. Inspect Marked and Working Clean DOCX files together and check claims, sample identities, numerical values, units, figures/tables and cross-references across Manuscript and SI.
 
-After the author confirms each ResponseUnit's wording and semantic consistency, record that review:
+After the author confirms each ResponseUnit's wording and scientific/semantic consistency, record that review:
 
     python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-T1-1 --semantic-review-confirmed --actor "Human Author"
 
@@ -160,18 +160,24 @@ On Windows with Microsoft Word installed and the optional Word/PDF dependencies,
 
     python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
 
-The page and line references must come from real Word COM pagination and corresponding PDFs. XML paragraph indices are not page/line numbers. If Word COM is unavailable or a target is unsupported for reliable location mapping, leave the ResponseUnit incomplete and report the blocker.
+The page and line references must come from real Word COM pagination and corresponding PDF artifacts. XML paragraph indices are not page/line numbers. The mapper refreshes Word SEQ/REF/PAGE/PAGEREF fields, repaginates and checks native Figure/Table SEQ continuity. Unsupported chapter-reset/non-native numbering is marked for manual review; actual table-cell and non-body locators require explicit author-confirmed manual location records. Do not infer a page or line from paragraph indices or PDF text extraction.
 
-Only after the author accepts readiness and PDF-backed location evidence is attached, complete the relevant ResponseUnits:
+For a table/non-body target, provide an explicit author-confirmed locator against the exact Word/PDF export:
+
+    python scripts/co_reviewer_cli.py record-manual-response-locations --ledger revision_ledger.json --word-map word_pdf_final/response_location_map.json --input manual_locations.json --out word_pdf_final/manual_location_map.json
+
+Only after final locations are attached and the author accepts readiness, complete each relevant ResponseUnit. A conceptual `reply_only` unit with `location_requirement=not_required` can be completed after semantic review without fabricating a manuscript location:
 
     python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-T1-1 --ready-for-submission-confirmed --actor "Human Author"
 
-Render Response Letter files from the RevisionLedger:
+Create the final release package only after every active Patch is verified, every Workflow task/comment is resolved, and every ResponseUnit is completed:
 
-    python scripts/co_reviewer_cli.py render-response --revision-ledger revision_ledger.json --out output/Response_to_Reviewers.md
-    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out output/Response_to_Reviewers.docx --manuscript-title "Manuscript title" --author "Corresponding Author"
+    python scripts/co_reviewer_cli.py create-release-package --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --manuscript-title "Manuscript title" --author "Corresponding Author"
 
-A semantically reviewed ResponseUnit without final PDF mapping is still location-pending, not submission-ready. Keep draft/location-pending/completed labels intact. Never invent response wording or page/line locations.
+The command writes a new `runs/release-{id}/` directory containing `Response_to_Reviewers.md`, `Response_to_Reviewers.docx`, its DOCX quality report and `final_release_manifest.json`. It rechecks active pointers, immutable batch receipts, verified PatchOperation excerpts, response attribution, final DOCX/PDF hashes, Word page counts, sequence audits and quality reports. If any gate fails, no manifest is produced; the incomplete release directory is retained, and the next attempt must use a new directory.
+
+The Response Letter automatically quotes actual replacement/deleted text from each exact linked PatchOperation and places it below the author's response argument with its verified final document location. No model call is made to rewrite or repeat the manuscript body text. Draft/location-pending labels remain visible before final completion. Never invent response wording or page/line locations.
+
 
 ## Local automated checks on Windows
 
