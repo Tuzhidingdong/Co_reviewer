@@ -57,7 +57,7 @@ Automated JSON Schema meta-schema validation for every repository schema and Dra
 
 ## Current verification blocker
 
-The latest inspected Actions run at this report refresh is Run #1132, associated with commit daa1acc. All four Ubuntu/Windows matrix jobs report runner_id=0, an empty runner name and zero steps. No Python compilation, unit test, PowerShell script or Word COM step ran. The run therefore provides no evidence of a code pass or code failure.
+The latest inspected Actions run at this report refresh is Run #1134, associated with commit 72c64a6. All four Ubuntu/Windows matrix jobs report runner_id=0, an empty runner name and zero steps. No Python compilation, unit test, PowerShell script or Word COM step ran. The run therefore provides no evidence of a code pass or code failure. The follow-up fixture-import commit 1e2d6c4 skipped CI and therefore has no test result.
 
 Earlier runs show the same pre-runner failure pattern. Identical retries are not a useful code-debugging loop and have not been repeated as a substitute for test results.
 
