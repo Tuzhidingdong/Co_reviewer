@@ -54,14 +54,46 @@ def _require_release_quality_status(payload: Any, label: str) -> str:
 
 
 def _require_successful_sequence_audit(payload: Any, role: str) -> dict[str, Any]:
-    """Require a recognised Word-native SEQ result; manual-review is explicit and allowed."""
+    """Require a structurally complete and internally consistent Word-native SEQ result."""
     if not isinstance(payload, Mapping) or payload.get("status") not in {"pass", "manual_review"}:
         status = payload.get("status") if isinstance(payload, Mapping) else None
         raise ReleaseGateError(
             f"Figure/Table SEQ audit for {role} has unsupported or blocking status {status!r}; "
             "expected pass or manual_review."
         )
+    detected = payload.get("detected")
+    issues = payload.get("issues")
+    manual_review = payload.get("manual_review")
+    if (
+        not isinstance(detected, Mapping)
+        or set(detected) != {"Figure", "Table"}
+        or any(not isinstance(detected.get(name), list) for name in ("Figure", "Table"))
+        or not isinstance(issues, list)
+        or not isinstance(manual_review, list)
+    ):
+        raise ReleaseGateError(
+            f"Figure/Table SEQ audit for {role} is structurally incomplete; "
+            "detected Figure/Table arrays, issues and manual_review arrays are required."
+        )
+    status = payload["status"]
+    if status == "pass" and (issues or manual_review):
+        raise ReleaseGateError(
+            f"Figure/Table SEQ audit for {role} claims pass but still contains issues or manual-review findings."
+        )
+    if status == "manual_review" and (issues or not manual_review):
+        raise ReleaseGateError(
+            f"Figure/Table SEQ audit for {role} has inconsistent manual_review status or findings."
+        )
     return dict(payload)
+
+
+def _require_word_page_count(value: Any, role: str) -> int:
+    """Require a positive integer Word COM page count; bool is not an integer here."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ReleaseGateError(
+            f"Word COM page count for {role} must be a positive integer, got {value!r}."
+        )
+    return value
 
 
 def _docx_text(path: Path) -> str:
@@ -607,9 +639,12 @@ def build_final_release_manifest(
         ]
         if not matching_rows:
             raise ReleaseGateError(f"Location map does not match final DOCX/PDF hashes for {role}.")
-        page_counts = {row.get("word_page_count") for row in matching_rows}
-        if len(page_counts) != 1 or not isinstance(next(iter(page_counts)), int):
-            raise ReleaseGateError(f"Word COM page count is missing or inconsistent for {role}.")
+        page_counts = {
+            _require_word_page_count(row.get("word_page_count"), role)
+            for row in matching_rows
+        }
+        if len(page_counts) != 1:
+            raise ReleaseGateError(f"Word COM page count is inconsistent across location maps for {role}.")
         final_record["word_page_count"] = next(iter(page_counts))
         final_record["sequence_audit"] = _require_successful_sequence_audit(
             matching_rows[0].get("sequence_audit"), role

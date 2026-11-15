@@ -15,6 +15,7 @@ from co_reviewer.release_manifest import (
     ReleaseGateError,
     _require_release_quality_status,
     _require_successful_sequence_audit,
+    _require_word_page_count,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
@@ -150,17 +151,43 @@ class ReleaseManifestGateTests(unittest.TestCase):
                     _require_release_quality_status({"status": status}, "Synthetic DOCX")
 
     def test_release_gate_rejects_unknown_or_failed_sequence_audit_statuses(self):
+        manual_review = {
+            "status": "manual_review",
+            "detected": {"Figure": [], "Table": []},
+            "issues": [],
+            "manual_review": [{"reason": "No native SEQ fields were found."}],
+        }
         self.assertEqual(
-            _require_successful_sequence_audit(
-                {"status": "manual_review", "detected": {}, "issues": [], "manual_review": []},
-                "Manuscript",
-            )["status"],
+            _require_successful_sequence_audit(manual_review, "Manuscript")["status"],
             "manual_review",
         )
-        for status in ("fail", "FAIL", "BLOCKED", None):
-            with self.subTest(status=status):
-                with self.assertRaisesRegex(ReleaseGateError, "expected pass or manual_review"):
-                    _require_successful_sequence_audit({"status": status}, "Manuscript")
+        passing = {
+            "status": "pass",
+            "detected": {"Figure": [{"value": 1}], "Table": [{"value": 1}]},
+            "issues": [],
+            "manual_review": [],
+        }
+        self.assertEqual(_require_successful_sequence_audit(passing, "Manuscript")["status"], "pass")
+        for payload in (
+            {"status": "fail", "detected": {"Figure": [], "Table": []}, "issues": [{}], "manual_review": []},
+            {"status": "FAIL", "detected": {"Figure": [], "Table": []}, "issues": [], "manual_review": []},
+            {"status": "BLOCKED", "detected": {"Figure": [], "Table": []}, "issues": [], "manual_review": []},
+            {"status": None, "detected": {"Figure": [], "Table": []}, "issues": [], "manual_review": []},
+            {"status": "manual_review", "detected": {}, "issues": [], "manual_review": []},
+            {"status": "manual_review", "detected": {"Figure": [], "Table": []}, "issues": [], "manual_review": []},
+            {"status": "manual_review", "detected": {"Figure": [], "Table": []}, "issues": [{}], "manual_review": [{}]},
+            {"status": "pass", "detected": {"Figure": [], "Table": []}, "issues": [], "manual_review": [{}]},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ReleaseGateError):
+                    _require_successful_sequence_audit(payload, "Manuscript")
+
+    def test_word_page_count_requires_positive_non_boolean_integer(self):
+        self.assertEqual(_require_word_page_count(1, "Manuscript"), 1)
+        for value in (True, False, 0, -1, 1.0, "1", None):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ReleaseGateError, "positive integer"):
+                    _require_word_page_count(value, "Manuscript")
 
     def test_deterministic_patch_delta_audit_surfaces_numbers_units_refs_and_sample_ids(self):
         operation = SimpleNamespace(
