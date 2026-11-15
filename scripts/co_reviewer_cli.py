@@ -3133,12 +3133,22 @@ def cmd_publish_batch(args):
     publish_intent_path = batch_dir / "batch_publish_intent.json"
     if publish_intent_path.exists():
         prior_intent = json.loads(publish_intent_path.read_text(encoding="utf-8"))
+        prior_pointers = prior_intent.get("active_documents_to_publish")
         if (
             prior_intent.get("batch_id") != intent["batch_id"]
-            or prior_intent.get("active_documents_to_publish") != receipt["active_documents"]
             or prior_intent.get("revision_ledger_sha256") != receipt["revision_ledger_sha256"]
+            or not isinstance(prior_pointers, dict)
+            or set(prior_pointers) != set(receipt["active_documents"])
+            or any(
+                prior_pointers[role].get("file") != value.get("file")
+                or prior_pointers[role].get("sha256") != value.get("sha256")
+                or prior_pointers[role].get("batch_id") != value.get("batch_id")
+                for role, value in receipt["active_documents"].items()
+            )
         ):
             raise ValueError("Existing batch publication intent does not match the verified outputs.")
+        receipt["active_documents"] = prior_pointers
+        updated.setdefault("active_documents", {}).update(prior_pointers)
     else:
         write_json_new(publish_intent_path, {
             "schema_version": "1.0",
@@ -3175,8 +3185,21 @@ def cmd_rollback_batch(args):
     rollback_intent_path = batch_dir / "batch_rollback_intent.json"
     if rollback_intent_path.exists():
         prior_intent = json.loads(rollback_intent_path.read_text(encoding="utf-8"))
-        if prior_intent.get("batch_id") != receipt["batch_id"] or prior_intent.get("restored_active_documents") != receipt["restored_active_documents"]:
+        prior_pointers = prior_intent.get("restored_active_documents")
+        if (
+            prior_intent.get("batch_id") != receipt["batch_id"]
+            or not isinstance(prior_pointers, dict)
+            or set(prior_pointers) != set(receipt["restored_active_documents"])
+            or any(
+                prior_pointers[role].get("file") != value.get("file")
+                or prior_pointers[role].get("sha256") != value.get("sha256")
+                or prior_pointers[role].get("batch_id") != value.get("batch_id")
+                for role, value in receipt["restored_active_documents"].items()
+            )
+        ):
             raise ValueError("Existing batch rollback intent differs from the requested parent pointers.")
+        receipt["restored_active_documents"] = prior_pointers
+        updated.setdefault("active_documents", {}).update(prior_pointers)
     else:
         write_json_new(rollback_intent_path, {
             "schema_version": "1.0",
