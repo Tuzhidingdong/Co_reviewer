@@ -297,8 +297,9 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "all_selected_task_ids": ["T1"],
             "documents": {
                 "Manuscript": {
-                    "parent_file": str(self.source),
-                    "parent_sha256": source_sha,
+                    "parent_file": parent_pointer["file"],
+                    "parent_sha256": parent_pointer["sha256"],
+                    "parent_batch_id": parent_pointer["batch_id"],
                     "output_file": str(output_path),
                 }
             },
@@ -586,6 +587,11 @@ class ReleaseManifestGateTests(unittest.TestCase):
             output_path = documents_dir / "Manuscript.marked.docx"
             output_path.write_bytes(f"synthetic output {batch_id}".encode("utf-8"))
             output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
+            parent_pointer = active_pointer or {
+                "file": str(self.source.resolve()),
+                "sha256": source_sha,
+                "batch_id": None,
+            }
             operation = SimpleNamespace(document="Manuscript", output_file=str(output_path))
             revision.patches.append(SimpleNamespace(
                 patch_id=patch_id,
@@ -622,8 +628,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 "patch_ids": [patch_id],
                 "documents": {
                     "Manuscript": {
-                        "input_file": str(self.source),
-                        "input_sha256": source_sha,
+                        "input_file": parent_pointer["file"],
+                        "input_sha256": parent_pointer["sha256"],
                         "output_file": str(output_path),
                     }
                 },
@@ -666,15 +672,17 @@ class ReleaseManifestGateTests(unittest.TestCase):
             workflow_events.append({
                 "task_id": task_id,
                 "event_type": "batch_published",
+                "timestamp_utc": STAMP,
+                "actor": "Co_Reviewer Batch Publisher",
                 "batch_id": batch_id,
                 "documents": pointer_map,
             })
             if rolled_back:
                 restored = {
                     "Manuscript": {
-                        "file": str(self.source.resolve()),
-                        "sha256": source_sha,
-                        "batch_id": None,
+                        "file": parent_pointer["file"],
+                        "sha256": parent_pointer["sha256"],
+                        "batch_id": parent_pointer["batch_id"],
                         "updated_at_utc": STAMP,
                     }
                 }
@@ -705,6 +713,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 workflow_events.append({
                     "task_id": task_id,
                     "event_type": "batch_rolled_back",
+                    "timestamp_utc": STAMP,
+                    "actor": "Co_Reviewer Batch Rollback",
                     "batch_id": batch_id,
                     "documents": restored,
                 })
@@ -713,8 +723,14 @@ class ReleaseManifestGateTests(unittest.TestCase):
 
         add_batch("batch-old-001", "T1", "P1", rolled_back=True)
         add_batch("batch-current-002", "T2", "P2", rolled_back=False)
+        add_batch("batch-next-003", "T3", "P3", rolled_back=False)
         workflow_ledger = {
-            "tasks": [{"task_id": "T1"}, {"task_id": "T2"}],
+            "source_files": [{
+                "role": "Manuscript",
+                "file": str(self.source),
+                "sha256": source_sha,
+            }],
+            "tasks": [{"task_id": "T1"}, {"task_id": "T2"}, {"task_id": "T3"}],
             "events": workflow_events,
         }
         records = _collect_release_batch_history(
@@ -726,11 +742,69 @@ class ReleaseManifestGateTests(unittest.TestCase):
         )
         self.assertEqual(
             [row["batch_id"] for row in records],
-            ["batch-current-002", "batch-old-001"],
+            ["batch-old-001", "batch-current-002", "batch-next-003"],
         )
         status_by_batch = {row["batch_id"]: row["publication_status"] for row in records}
         self.assertEqual(status_by_batch["batch-old-001"], "rolled_back")
         self.assertEqual(status_by_batch["batch-current-002"], "published")
+        self.assertEqual(status_by_batch["batch-next-003"], "published")
+        self.assertEqual(
+            next(row for row in records if row["batch_id"] == "batch-next-003")["parent_documents"]["Manuscript"]["batch_id"],
+            "batch-current-002",
+        )
+        self.assertEqual(
+            [row["publication_sequence"] for row in records],
+            [1, 2, 3],
+        )
+
+        next_batch_dir = self.root / "runs" / "batch-batch-next-003"
+        next_intent_path = next_batch_dir / "batch_intent.json"
+        next_scope_path = next_batch_dir / "batch_scope.json"
+        next_publish_intent_path = next_batch_dir / "batch_publish_intent.json"
+        next_receipt_path = next_batch_dir / "batch_published.json"
+        originals = {
+            path: path.read_bytes()
+            for path in (next_intent_path, next_scope_path, next_publish_intent_path, next_receipt_path)
+        }
+        tampered_next_intent = json.loads(originals[next_intent_path])
+        tampered_next_intent["documents"]["Manuscript"].update({
+            "parent_file": str(self.source.resolve()),
+            "parent_sha256": source_sha,
+            "parent_batch_id": None,
+        })
+        next_intent_path.write_text(json.dumps(tampered_next_intent, ensure_ascii=False), encoding="utf-8")
+        next_intent_sha = hashlib.sha256(next_intent_path.read_bytes()).hexdigest()
+        tampered_next_scope = json.loads(originals[next_scope_path])
+        tampered_next_scope["batch_intent_sha256"] = next_intent_sha
+        tampered_next_scope["documents"]["Manuscript"].update({
+            "input_file": str(self.source.resolve()),
+            "input_sha256": source_sha,
+        })
+        next_scope_path.write_text(json.dumps(tampered_next_scope, ensure_ascii=False), encoding="utf-8")
+        next_scope_sha = hashlib.sha256(next_scope_path.read_bytes()).hexdigest()
+        tampered_publish_intent = json.loads(originals[next_publish_intent_path])
+        tampered_publish_intent.update({
+            "batch_intent_sha256": next_intent_sha,
+            "batch_scope_sha256": next_scope_sha,
+        })
+        next_publish_intent_path.write_text(json.dumps(tampered_publish_intent, ensure_ascii=False), encoding="utf-8")
+        tampered_receipt = json.loads(originals[next_receipt_path])
+        tampered_receipt.update({
+            "batch_intent_sha256": next_intent_sha,
+            "batch_scope_sha256": next_scope_sha,
+        })
+        next_receipt_path.write_text(json.dumps(tampered_receipt, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseGateError, "parent pointer does not match the preceding published/rollback state"):
+            _collect_release_batch_history(
+                workflow_ledger,
+                {"Manuscript": active_pointer},
+                revision_ledger=revision,
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+            )
+        for path, payload in originals.items():
+            path.write_bytes(payload)
+
         rolled_back_record = next(row for row in records if row["batch_id"] == "batch-old-001")
         self.assertIn("rollback_intent", rolled_back_record)
         self.assertIn("rollback_receipt", rolled_back_record)

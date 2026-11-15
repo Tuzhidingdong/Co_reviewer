@@ -71,4 +71,4 @@ Earlier runs show the same pre-runner failure pattern. Identical retries are not
 
 ## Verdict
 
-The P1 implementation is substantially aligned with its declared mainline. The remaining deviations are now explicit: a material but purposeful mapper adaptation, an intentionally unintegrated external Usage Adapter seam, and acceptance/validation that has not run. The code and test additions should not be treated as accepted until the runner and local Word/PowerShell gates complete.
+The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviations are now explicit: a material but purposeful mapper adaptation, an intentionally unintegrated external Usage Adapter seam, and acceptance/validation that has not run. The code and test additions should not be treated as accepted until the runner and local Word/PowerShell gates complete.

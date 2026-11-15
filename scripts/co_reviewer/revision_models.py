@@ -1087,6 +1087,77 @@ class RevisionLedger:
         event_ids = [event.event_id for event in self.events]
         if len(event_ids) != len(set(event_ids)):
             errors.append("RevisionLedger contains duplicate event_id values.")
+        superseded_events_by_patch: dict[str, list[RevisionEvent]] = {}
+        replacement_events_by_patch: dict[str, list[RevisionEvent]] = {}
+        for event in self.events:
+            if event.subject_type != "patch":
+                continue
+            if event.event_type == "patch_superseded":
+                superseded_events_by_patch.setdefault(event.subject_id, []).append(event)
+            elif event.event_type == "patch_created_as_replacement":
+                replacement_events_by_patch.setdefault(event.subject_id, []).append(event)
+
+        allowed_superseded_predecessor_states = {
+            "planned", "preflighted", "approved", "applied", "verified", "abandoned"
+        }
+        for predecessor_id, replacement_id in successor_by_patch.items():
+            predecessor = patch_by_id[predecessor_id]
+            predecessor_events = superseded_events_by_patch.get(predecessor_id, [])
+            replacement_events = replacement_events_by_patch.get(replacement_id, [])
+            if predecessor.status != "superseded":
+                errors.append(
+                    f"Patch supersession event lineage requires predecessor {predecessor_id} "
+                    "to remain in superseded state."
+                )
+            if len(predecessor_events) != 1 or len(replacement_events) != 1:
+                errors.append(
+                    f"Patch supersession event lineage for {predecessor_id} -> {replacement_id} "
+                    "must contain exactly one predecessor and one replacement event."
+                )
+                continue
+            predecessor_event = predecessor_events[0]
+            replacement_event = replacement_events[0]
+            previous_status = predecessor_event.details.get("previous_status")
+            reason = predecessor_event.details.get("reason")
+            if (
+                predecessor_event.details.get("replacement_patch_id") != replacement_id
+                or replacement_event.details.get("supersedes_patch_id") != predecessor_id
+                or previous_status not in allowed_superseded_predecessor_states
+                or not isinstance(reason, str)
+                or not reason.strip()
+                or replacement_event.details.get("reason") != reason
+                or predecessor_event.timestamp_utc != replacement_event.timestamp_utc
+                or predecessor_event.actor != replacement_event.actor
+                or predecessor_event.subject_type != "patch"
+                or replacement_event.subject_type != "patch"
+            ):
+                errors.append(
+                    f"Patch supersession event lineage for {predecessor_id} -> {replacement_id} "
+                    "does not match the immutable Patch relationship."
+                )
+
+        for predecessor_id, event_rows in superseded_events_by_patch.items():
+            expected_replacement_id = successor_by_patch.get(predecessor_id)
+            if (
+                len(event_rows) != 1
+                or expected_replacement_id is None
+                or event_rows[0].details.get("replacement_patch_id") != expected_replacement_id
+            ):
+                errors.append(
+                    f"Patch supersession event lineage contains an orphan or duplicate predecessor event for {predecessor_id}."
+                )
+        for replacement_id, event_rows in replacement_events_by_patch.items():
+            replacement = patch_by_id.get(replacement_id)
+            if (
+                len(event_rows) != 1
+                or replacement is None
+                or not replacement.supersedes_patch_id
+                or event_rows[0].details.get("supersedes_patch_id") != replacement.supersedes_patch_id
+            ):
+                errors.append(
+                    f"Patch supersession event lineage contains an orphan or duplicate replacement event for {replacement_id}."
+                )
+
         recovery_events_by_patch: dict[str, list[RevisionEvent]] = {}
         for event in self.events:
             if (

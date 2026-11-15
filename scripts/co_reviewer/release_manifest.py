@@ -605,7 +605,9 @@ def _collect_release_batch_history(
         raise ReleaseGateError("Workflow Ledger events must be an array.")
     published: dict[str, list[Mapping[str, Any]]] = {}
     rolled_back: dict[str, list[Mapping[str, Any]]] = {}
-    for row in events:
+    published_positions: dict[str, list[int]] = {}
+    rolled_back_positions: dict[str, list[int]] = {}
+    for event_index, row in enumerate(events):
         if not isinstance(row, Mapping):
             continue
         event_type = row.get("event_type")
@@ -615,7 +617,9 @@ def _collect_release_batch_history(
         if not isinstance(batch_id, str) or not batch_id.strip():
             raise ReleaseGateError(f"{event_type} Workflow event is missing batch_id.")
         target = published if event_type == "batch_published" else rolled_back
+        positions = published_positions if event_type == "batch_published" else rolled_back_positions
         target.setdefault(batch_id, []).append(row)
+        positions.setdefault(batch_id, []).append(event_index)
     orphan_rollbacks = sorted(set(rolled_back) - set(published))
     if orphan_rollbacks:
         raise ReleaseGateError(
@@ -629,6 +633,7 @@ def _collect_release_batch_history(
     }
     records: list[dict[str, Any]] = []
     by_batch_id: dict[str, dict[str, Any]] = {}
+    timeline_entries: list[tuple[int, str, str, dict[str, dict[str, Any]], dict[str, dict[str, Any]]]] = []
     workflow_path = Path(workflow_ledger_path).expanduser().resolve()
     for batch_id in sorted(published):
         publish_events = published[batch_id]
@@ -727,6 +732,27 @@ def _collect_release_batch_history(
             revision_ledger_path=revision_ledger_path,
             workflow_task_ids=workflow_task_ids,
         )
+        raw_intent_documents = intent_payload.get("documents")
+        if not isinstance(raw_intent_documents, Mapping) or not raw_intent_documents:
+            raise ReleaseGateError(f"Batch {batch_id} has no immutable parent document records.")
+        raw_parent_documents: dict[str, dict[str, Any]] = {}
+        for role, row in raw_intent_documents.items():
+            if not isinstance(role, str) or not role.strip() or not isinstance(row, Mapping):
+                raise ReleaseGateError(f"Batch {batch_id} has malformed parent document evidence for {role}.")
+            parent_batch_id = row.get("parent_batch_id")
+            if parent_batch_id is not None and (
+                not isinstance(parent_batch_id, str) or not parent_batch_id.strip()
+            ):
+                raise ReleaseGateError(f"Batch {batch_id} has an invalid parent batch ID for {role}.")
+            raw_parent_documents[role] = {
+                "file": row.get("parent_file"),
+                "sha256": row.get("parent_sha256"),
+                "batch_id": parent_batch_id,
+            }
+        parent_documents = _pointer_projection(
+            raw_parent_documents,
+            f"batch {batch_id} immutable parent documents",
+        )
         record: dict[str, Any] = {
             "batch_id": batch_id,
             "directory": str(batch_dir),
@@ -734,6 +760,7 @@ def _collect_release_batch_history(
             "scope": _sha_record(scope_path),
             "publish_intent": _sha_record(publish_intent_path),
             "publish_receipt": _sha_record(publish_receipt_path),
+            "parent_documents": parent_documents,
             "selected_task_ids": list(intent_payload.get("selected_task_ids", [])),
             "all_selected_task_ids": list(all_task_ids),
             "patch_ids": list(scope_payload.get("patch_ids", [])),
@@ -787,6 +814,7 @@ def _collect_release_batch_history(
                 or rollback_receipt.get("rollback_intent_sha256") != sha256_file(rollback_intent_path)
                 or _pointer_projection(rollback_intent.get("restored_active_documents"), f"batch {batch_id} rollback intent") != restored
                 or rollback_documents[0] != restored
+                or restored != parent_documents
             ):
                 raise ReleaseGateError(f"Batch {batch_id} rollback receipt/intent does not attest Workflow rollback events.")
             for role, pointer in restored.items():
@@ -799,6 +827,82 @@ def _collect_release_batch_history(
 
         records.append(record)
         by_batch_id[batch_id] = record
+        timeline_entries.append((
+            min(published_positions[batch_id]),
+            "publish",
+            batch_id,
+            parent_documents,
+            published_documents,
+        ))
+        if rollback_events:
+            timeline_entries.append((
+                min(rolled_back_positions[batch_id]),
+                "rollback",
+                batch_id,
+                published_documents,
+                restored,
+            ))
+
+    # Reconstruct active document pointers in append-only Workflow event order.
+    # A batch may only publish from the exact parent version produced by the
+    # preceding publication/rollback transaction for each document role.
+    source_files = workflow_ledger.get("source_files")
+    if not isinstance(source_files, list) or not source_files:
+        raise ReleaseGateError("Workflow Ledger source_files are required to reconstruct the initial document versions.")
+    replayed_pointers: dict[str, dict[str, Any]] = {}
+    for source in source_files:
+        if not isinstance(source, Mapping):
+            raise ReleaseGateError("Workflow Ledger contains a malformed initial source document record.")
+        role, file_value, digest = source.get("role"), source.get("file"), source.get("sha256")
+        if (
+            not isinstance(role, str) or not role.strip()
+            or role in replayed_pointers
+            or not isinstance(file_value, str) or not file_value.strip()
+            or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+        ):
+            raise ReleaseGateError("Workflow Ledger initial source document roles/paths/hashes are invalid or duplicated.")
+        source_path = Path(file_value).expanduser().resolve()
+        if not source_path.is_file() or sha256_file(source_path) != digest:
+            raise ReleaseGateError(f"Initial source document for {role} is missing or stale: {source_path}.")
+        replayed_pointers[role] = {
+            "file": str(source_path),
+            "sha256": digest,
+            "batch_id": None,
+        }
+
+    timeline_entries.sort(key=lambda row: row[0])
+    ordered_publications = sorted(published, key=lambda batch_id: min(published_positions[batch_id]))
+    publication_sequence = {batch_id: index for index, batch_id in enumerate(ordered_publications, start=1)}
+    for batch_id, record in by_batch_id.items():
+        record["publication_sequence"] = publication_sequence[batch_id]
+
+    for _, transition_type, batch_id, before_pointers, after_pointers in timeline_entries:
+        if set(before_pointers) != set(after_pointers):
+            raise ReleaseGateError(
+                f"Batch {batch_id} {transition_type} transition does not cover the same document roles on both sides."
+            )
+        mismatched_roles = sorted(
+            role for role, expected_parent in before_pointers.items()
+            if replayed_pointers.get(role) != expected_parent
+        )
+        if mismatched_roles:
+            phase = "parent" if transition_type == "publish" else "published"
+            raise ReleaseGateError(
+                f"Batch {batch_id} {phase} pointer does not match the preceding published/rollback state "
+                f"for document role(s): " + ", ".join(mismatched_roles)
+            )
+        replayed_pointers.update(after_pointers)
+
+    final_active_pointers = _pointer_projection(
+        active_documents,
+        "final Workflow Ledger active documents",
+    )
+    if replayed_pointers != final_active_pointers:
+        raise ReleaseGateError(
+            "Final Workflow Ledger active document pointers do not equal the state reconstructed from "
+            "the initial source documents and complete batch publication/rollback history."
+        )
+    records.sort(key=lambda record: record["publication_sequence"])
 
     for role, pointer in active_documents.items():
         active_batch_id = pointer.get("batch_id")
@@ -1445,6 +1549,7 @@ def build_final_release_manifest(
             "patch_id": patch.patch_id,
             "task_id": patch.task_id,
             "status": patch.status,
+            "supersedes_patch_id": patch.supersedes_patch_id,
             "operation_ids": [operation.operation_id for operation in patch.operations],
             "source_comment_ids": sorted({
                 comment_id
@@ -1485,6 +1590,12 @@ def build_final_release_manifest(
         "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,
         "patches": patch_records,
+        "patch_supersession_events": [
+            event.to_dict()
+            for event in revision_ledger.events
+            if event.subject_type == "patch"
+            and event.event_type in {"patch_superseded", "patch_created_as_replacement"}
+        ],
         "response_units": response_records,
         "deterministic_change_audit": deterministic_change_audit,
         "location_maps": [

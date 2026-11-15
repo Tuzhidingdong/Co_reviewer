@@ -971,6 +971,9 @@ class RevisionModelsTests(unittest.TestCase):
                 "response_reopened_after_patch_supersession",
             ],
         )
+        ledger.events[1].details["supersedes_patch_id"] = "P404"
+        with self.assertRaisesRegex(RevisionModelError, "supersession event lineage"):
+            ledger.validate_or_raise()
 
     def test_patch_supersession_refuses_to_rebase_from_wrong_source(self):
         previous = Patch(
@@ -1213,6 +1216,33 @@ class RevisionModelsTests(unittest.TestCase):
                     status="superseded",
                 ),
                 patch,
+            ],
+            events=[
+                RevisionEvent(
+                    event_id="event-patch-superseded-P1",
+                    subject_id="P1",
+                    subject_type="patch",
+                    event_type="patch_superseded",
+                    timestamp_utc="2026-11-15T08:00:00+08:00",
+                    actor="Human Author",
+                    details={
+                        "replacement_patch_id": "P2",
+                        "reason": "Round-trip supersession fixture.",
+                        "previous_status": "planned",
+                    },
+                ),
+                RevisionEvent(
+                    event_id="event-patch-replacement-P2",
+                    subject_id="P2",
+                    subject_type="patch",
+                    event_type="patch_created_as_replacement",
+                    timestamp_utc="2026-11-15T08:00:00+08:00",
+                    actor="Human Author",
+                    details={
+                        "supersedes_patch_id": "P1",
+                        "reason": "Round-trip supersession fixture.",
+                    },
+                ),
             ],
         )
         restored = revision_ledger_from_mapping(ledger.to_dict())
