@@ -158,6 +158,80 @@ def audit_patch_operation_deltas(
     return rows
 
 
+def build_final_docx_consistency_audit(revision_ledger: RevisionLedger) -> dict[str, Any]:
+    """Run the existing deterministic Figure/Table reference audit on current Working Clean files."""
+    from co_reviewer_cli import inspect_docx
+    from review_audit import audit_figure_table_numbering
+
+    reports: list[dict[str, Any]] = []
+    package_errors: list[dict[str, Any]] = []
+    for document in revision_ledger.documents:
+        if document.role not in {"Manuscript", "SI"}:
+            continue
+        if not document.working_clean_file or not document.working_clean_sha256:
+            package_errors.append({
+                "document": document.role,
+                "reason": "No current hash-bound Working Clean View is registered.",
+            })
+            continue
+        source = Path(document.working_clean_file).expanduser().resolve()
+        if not source.is_file() or sha256_file(source) != document.working_clean_sha256:
+            package_errors.append({
+                "document": document.role,
+                "file": str(source),
+                "reason": "Working Clean View is missing or has changed since registration.",
+            })
+            continue
+        report = inspect_docx(str(source))
+        report["role"] = document.role
+        reports.append(report)
+        if report.get("errors"):
+            package_errors.append({
+                "document": document.role,
+                "file": str(source),
+                "reason": "DOCX inspection reported errors.",
+                "errors": report["errors"],
+            })
+
+    numbering = audit_figure_table_numbering(reports)
+    blocking: list[dict[str, Any]] = list(package_errors)
+    for row in numbering.get("unresolved_references", []):
+        blocking.append({"category": "unresolved_figure_table_reference", **row})
+    for row in numbering.get("ambiguous_references", []):
+        blocking.append({"category": "ambiguous_figure_table_reference", **row})
+    for row in numbering.get("duplicate_captions_within_documents", []):
+        blocking.append({"category": "duplicate_caption_within_document", **row})
+    for role, row in numbering.get("by_document", {}).items():
+        for gap in row.get("numbering_gaps", []):
+            blocking.append({"category": "figure_table_numbering_gap", "document": role, **gap})
+        for mention in row.get("out_of_order_first_mentions", []):
+            blocking.append({"category": "out_of_order_figure_table_first_mention", "document": role, **mention})
+    for row in numbering.get("duplicate_labels_across_documents", []):
+        if row.get("classification") == "cross_document_same_label_different_captions":
+            blocking.append({"category": "cross_document_caption_label_collision", **row})
+    return {
+        "schema_version": "1.0",
+        "status": "BLOCKED" if blocking else "PASS",
+        "scope": "Deterministic textual Figure/Table caption and reference consistency in current Manuscript/SI Working Clean Views.",
+        "documents_checked": [row.get("role") for row in reports],
+        "figure_table_audit": numbering,
+        "blocking_findings": blocking,
+        "review_flags": {
+            "unreferenced_captions": numbering.get("unreferenced_captions", []),
+            "cross_document_caption_reproductions": [
+                row for row in numbering.get("duplicate_labels_across_documents", [])
+                if row.get("classification") == "cross_document_caption_reproduction"
+            ],
+            "caption_text_identity_groups": numbering.get("caption_text_identity_groups", []),
+        },
+        "limitations": [
+            "Textual caption/reference analysis cannot verify embedded figure-image contents or floating text boxes.",
+            "Repeated captions are not proof that underlying visual objects are identical.",
+            "Numeric values, units, sample identities and citation semantics remain covered by the explicit Patch/ResponseUnit semantic-review gate; this audit does not infer scientific equivalence.",
+        ],
+    }
+
+
 def build_final_release_manifest(
     revision_ledger: RevisionLedger,
     workflow_ledger: Mapping[str, Any],
@@ -400,6 +474,14 @@ def build_final_release_manifest(
             "working_clean_sha256": document.working_clean_sha256,
         }
 
+    consistency_audit = build_final_docx_consistency_audit(revision_ledger)
+    if consistency_audit["status"] != "PASS":
+        raise ReleaseGateError(
+            "Deterministic Figure/Table cross-document audit found blocking issue(s): "
+            + str(len(consistency_audit["blocking_findings"]))
+            + ". Inspect the Working Clean View audit details before final release."
+        )
+
     final_documents: dict[str, dict[str, Any]] = {}
     location_maps: dict[str, dict[str, Any]] = {}
     for unit in revision_ledger.response_units:
@@ -610,6 +692,7 @@ def build_final_release_manifest(
         "active_documents": active_records,
         "batches": [batch_records_by_id[key] for key in sorted(batch_records_by_id)],
         "marked_documents": marked_documents,
+        "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,
         "patches": patch_records,
         "response_units": response_records,
