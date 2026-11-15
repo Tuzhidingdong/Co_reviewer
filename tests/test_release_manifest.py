@@ -342,6 +342,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
             {"pdf": {"file": "/tmp/other.pdf", "sha256": "b" * 64, "word_page_count": 4}},
             {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "c" * 64, "word_page_count": 4}},
             {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "b" * 64, "word_page_count": 5}},
+            {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "b" * 64, "word_page_count": True}},
+            {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "b" * 64, "word_page_count": 4.0}},
         ):
             broken = dict(payload)
             broken.update(mutation)

@@ -247,11 +247,14 @@ def _require_bound_final_quality_report(
         raise ReleaseGateError(
             f"Final DOCX quality report is not bound to the current Word Clean file for {role}."
         )
+    quality_page_count = _require_word_page_count(
+        pdf_metrics.get("word_page_count"), role
+    )
     if (
         pdf_metrics.get("sha256") != pdf_sha256
         or not isinstance(pdf_metrics.get("file"), str)
         or Path(pdf_metrics["file"]).expanduser().resolve() != Path(pdf_path).expanduser().resolve()
-        or pdf_metrics.get("word_page_count") != word_page_count
+        or quality_page_count != word_page_count
     ):
         raise ReleaseGateError(
             f"Final DOCX quality report is not bound to the current PDF and Word page count for {role}."
