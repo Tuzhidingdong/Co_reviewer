@@ -48,7 +48,6 @@
     },
     "marked_documents": {
       "type": "object",
-      "minProperties": 1,
       "additionalProperties": {
         "type": "object",
         "required": [
@@ -70,7 +69,6 @@
     },
     "final_documents": {
       "type": "object",
-      "minProperties": 1,
       "additionalProperties": {
         "type": "object",
         "required": [
