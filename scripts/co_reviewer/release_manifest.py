@@ -311,7 +311,7 @@ def build_final_release_manifest(
         )
 
     response_plan = response_units_to_legacy_plan(revision_ledger.response_units, revision_ledger.patches)
-    from co_reviewer_cli import render_response_letter
+    from .response_renderer import render_response_letter
     expected_response_md = render_response_letter(response_plan)
     stored_response_md = response_md_path.read_text(encoding="utf-8")
     if stored_response_md != expected_response_md:
