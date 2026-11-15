@@ -136,6 +136,17 @@ def create_batch_intent(
     if unknown_roles:
         raise BatchStoreError("No active document pointer exists for: " + ", ".join(unknown_roles))
     workflow_file = Path(workflow_path).expanduser().resolve()
+    if not workflow_file.is_file():
+        raise BatchStoreError(f"Workflow Ledger file does not exist: {workflow_file}")
+    workflow_sha_at_prepare = sha256_file(workflow_file)
+    try:
+        workflow_on_disk = json.loads(workflow_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BatchStoreError(f"Cannot read Workflow Ledger {workflow_file}: {exc}") from exc
+    if workflow_on_disk != json.loads(json.dumps(workflow, ensure_ascii=False)):
+        raise BatchStoreError(
+            "The in-memory Workflow Ledger differs from the current file on disk; reload it before preparing a batch."
+        )
     base = Path(runs_dir).expanduser() if runs_dir else workflow_file.parent / "runs"
     if not base.is_absolute():
         base = workflow_file.parent / base
@@ -166,7 +177,7 @@ def create_batch_intent(
         "batch_id": batch_id,
         "revision_round_id": workflow.get("revision_round_id"),
         "workflow_ledger_file": str(workflow_file),
-        "workflow_ledger_sha256_at_prepare": sha256_file(workflow_file),
+        "workflow_ledger_sha256_at_prepare": workflow_sha_at_prepare,
         "created_at_utc": _timestamp(),
         "selected_task_ids": list(dict.fromkeys(selected_task_ids)),
         "status": "prepared",
@@ -179,6 +190,10 @@ def create_batch_intent(
         },
     }
     write_json_new(batch_dir / "batch_intent.json", intent)
+    if sha256_file(workflow_file) != workflow_sha_at_prepare:
+        raise BatchStoreError(
+            "Workflow Ledger changed while the batch intent was being prepared; this batch remains uncommitted and must not be used."
+        )
     return {**intent, "batch_dir": str(batch_dir), "batch_intent_file": str(batch_dir / "batch_intent.json")}
 
 
