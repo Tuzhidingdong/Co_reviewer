@@ -1322,7 +1322,7 @@ class RevisionLedger:
                 ],
             }
             for patch in self.patches
-            if patch.status not in {"superseded", "blocked"}
+            if patch.status not in {"superseded", "blocked", "abandoned"}
         }
         actual = {
             item.get("id"): item
@@ -1335,8 +1335,8 @@ class RevisionLedger:
         unexpected = set(actual) - set(expected)
         if unexpected:
             raise RevisionModelError(
-                "Legacy revision plan contains Patch IDs that are unknown, superseded "
-                "or blocked in the RevisionLedger: " + ", ".join(sorted(unexpected))
+                "Legacy revision plan contains Patch IDs that are unknown, superseded, blocked "
+                "or abandoned in the RevisionLedger: " + ", ".join(sorted(unexpected))
             )
         # A legacy plan is a single executable batch, not a serialization of
         # every active Patch in the round. Validate every item it contains while
@@ -1345,7 +1345,7 @@ class RevisionLedger:
             expected_item = expected.get(patch_id)
             if not isinstance(expected_item, Mapping) or not isinstance(actual_item, Mapping):
                 raise RevisionModelError(
-                    f"Legacy revision plan item {patch_id} is unknown, blocked, superseded or invalid."
+                    f"Legacy revision plan item {patch_id} is unknown, blocked, superseded, abandoned or invalid."
                 )
             for field_name in ("reviewer", "comment", "proposed_response"):
                 if actual_item.get(field_name, "") != expected_item[field_name]:
@@ -1941,7 +1941,7 @@ class RevisionLedger:
             existing_replacements = [
                 patch for patch in existing_task_patches
                 if patch.supersedes_patch_id
-                and patch.status not in {"superseded", "blocked"}
+                and patch.status not in {"superseded", "blocked", "abandoned"}
             ]
             incoming_units = [
                 unit for unit in addition.response_units

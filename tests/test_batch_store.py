@@ -301,12 +301,39 @@ class BatchStoreTests(unittest.TestCase):
                 {"P1": "abandoned"},
                 final_workflow,
             )
-        write_json_new(batch_dir / "batch_recovered.json", {
+        receipt = {
+            "schema_version": "1.0",
             "status": "recovered",
             "recovery_id": recovery_intent["recovery_id"],
             "batch_id": intent["batch_id"],
+            "workflow_ledger_sha256": recovery_intent["workflow_ledger_sha256_after"],
+            "revision_ledger_sha256": recovery_intent["revision_ledger_sha256_after"],
+            "batch_recovery_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_recovery_intent.json").read_bytes()
+            ).hexdigest(),
+            "batch_intent_sha256": recovery_intent["batch_intent_sha256"],
+            "batch_scope_sha256": recovery_intent["batch_scope_sha256"],
+            "selected_task_ids": recovery_intent["selected_task_ids"],
             "patch_ids": ["P1"],
-        })
+            "parent_documents": recovery_intent["parent_documents"],
+            "failed_output_files": recovery_intent["failed_output_files"],
+            "retained_artifacts": recovery_intent["artifact_inventory"],
+            "retained_batch_files": True,
+        }
+        receipt_path = batch_dir / "batch_recovered.json"
+        write_json_new(receipt_path, {**receipt, "retained_artifacts": []})
+        with self.assertRaisesRegex(BatchStoreError, "receipt does not attest"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+            )
+        receipt_path.write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         assert_no_uncommitted_role_batches(
             self.runs_dir,

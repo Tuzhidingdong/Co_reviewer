@@ -114,6 +114,82 @@ def load_active_document_pointers(workflow: Mapping[str, Any]) -> dict[str, dict
     return result
 
 
+def _validate_recovered_batch_receipt(
+    batch_dir: str | Path,
+    intent: Mapping[str, Any],
+    patch_status_by_id: Mapping[str, str],
+) -> dict[str, Any]:
+    """Fail closed unless the recovery receipt matches its staged evidence."""
+    root = Path(batch_dir).expanduser().resolve()
+    receipt_path = root / "batch_recovered.json"
+    intent_path = root / "batch_recovery_intent.json"
+    scope_path = root / "batch_scope.json"
+    if not receipt_path.is_file() or not intent_path.is_file() or not scope_path.is_file():
+        raise BatchStoreError(
+            f"Recovered batch {intent.get('batch_id')} is missing its receipt, recovery intent or scope."
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        recovery = json.loads(intent_path.read_text(encoding="utf-8"))
+        scope = json.loads(scope_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BatchStoreError(f"Cannot read recovered batch receipt/intent/scope: {exc}") from exc
+    if not all(isinstance(value, Mapping) for value in (receipt, recovery, scope)):
+        raise BatchStoreError("Recovered batch receipt, recovery intent and scope must be JSON objects.")
+
+    intent_sha = sha256_file(root / "batch_intent.json")
+    scope_sha = sha256_file(scope_path)
+    recovery_sha = sha256_file(intent_path)
+    if (
+        receipt.get("status") != "recovered"
+        or recovery.get("status") != "prepared"
+        or receipt.get("batch_id") != intent.get("batch_id")
+        or recovery.get("batch_id") != intent.get("batch_id")
+        or receipt.get("recovery_id") != recovery.get("recovery_id")
+        or scope.get("batch_id") != intent.get("batch_id")
+        or scope.get("batch_intent_sha256") != intent_sha
+        or receipt.get("batch_intent_sha256") != intent_sha
+        or recovery.get("batch_intent_sha256") != intent_sha
+        or receipt.get("batch_scope_sha256") != scope_sha
+        or recovery.get("batch_scope_sha256") != scope_sha
+        or receipt.get("batch_recovery_intent_sha256") != recovery_sha
+    ):
+        raise BatchStoreError(
+            f"Recovered batch {intent.get('batch_id')} receipt does not match its immutable intent/scope hashes."
+        )
+
+    patch_ids = recovery.get("patch_ids")
+    if (
+        not isinstance(patch_ids, list)
+        or not patch_ids
+        or len(patch_ids) != len(set(patch_ids))
+        or receipt.get("patch_ids") != patch_ids
+        or scope.get("patch_ids") != patch_ids
+    ):
+        raise BatchStoreError("Recovered batch Patch ownership differs across receipt, scope and recovery intent.")
+    for patch_id in patch_ids:
+        if patch_status_by_id.get(patch_id) not in {"abandoned", "superseded"}:
+            raise BatchStoreError(
+                f"Recovered batch {intent.get('batch_id')} Patch {patch_id} is missing or not abandoned/superseded in the RevisionLedger."
+            )
+
+    artifact_inventory = _batch_artifact_inventory(root)
+    if (
+        recovery.get("artifact_inventory") != artifact_inventory
+        or receipt.get("retained_artifacts") != artifact_inventory
+        or receipt.get("parent_documents") != recovery.get("parent_documents")
+        or receipt.get("failed_output_files") != recovery.get("failed_output_files")
+        or receipt.get("selected_task_ids") != recovery.get("selected_task_ids")
+        or receipt.get("workflow_ledger_sha256") != recovery.get("workflow_ledger_sha256_after")
+        or receipt.get("revision_ledger_sha256") != recovery.get("revision_ledger_sha256_after")
+        or receipt.get("retained_batch_files") is not True
+    ):
+        raise BatchStoreError(
+            f"Recovered batch {intent.get('batch_id')} receipt does not attest the current retained artifacts and staged Ledger hashes."
+        )
+    return dict(receipt)
+
+
 def assert_no_uncommitted_role_batches(
     runs_dir: str | Path,
     roles: Sequence[str],
@@ -131,12 +207,16 @@ def assert_no_uncommitted_role_batches(
     for batch_dir in sorted(root.glob("batch-*")):
         if not batch_dir.is_dir():
             continue
-        if (batch_dir / "batch_published.json").is_file() or (batch_dir / "batch_rollback.json").is_file() or (batch_dir / "batch_recovered.json").is_file():
+        if (batch_dir / "batch_published.json").is_file() or (batch_dir / "batch_rollback.json").is_file():
             continue
         intent_path = batch_dir / "batch_intent.json"
         if not intent_path.is_file():
             continue
         intent = read_batch_intent(batch_dir)
+        recovery_receipt = batch_dir / "batch_recovered.json"
+        if recovery_receipt.is_file():
+            _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+            continue
         overlap = requested_roles.intersection(intent.get("documents", {}))
         if not overlap:
             continue
@@ -702,18 +782,12 @@ def recover_unpublished_batch(
 
     receipt_path = root / "batch_recovered.json"
     if receipt_path.is_file():
-        try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise BatchStoreError(f"Cannot read existing recovery receipt: {exc}") from exc
-        if not isinstance(receipt, Mapping) or receipt.get("status") != "recovered":
-            raise BatchStoreError("Existing batch recovery receipt is malformed.")
-        patch_ids = receipt.get("patch_ids")
-        patch_by_id = {patch.patch_id: patch for patch in revision_ledger.patches}
-        if not isinstance(patch_ids, list) or not patch_ids:
-            raise BatchStoreError("Existing recovery receipt has no Patch IDs.")
-        for patch_id in patch_ids:
-            patch = patch_by_id.get(patch_id)
+        intent = read_batch_intent(root)
+        patch_status_by_id = {
+            patch.patch_id: patch.status for patch in revision_ledger.patches
+        }
+        receipt = _validate_recovered_batch_receipt(root, intent, patch_status_by_id)
+        for patch_id in receipt["patch_ids"]:
             has_event = any(
                 event.subject_type == "patch"
                 and event.subject_id == patch_id
@@ -721,13 +795,9 @@ def recover_unpublished_batch(
                 and event.details.get("recovery_id") == receipt.get("recovery_id")
                 for event in revision_ledger.events
             )
-            if (
-                patch is None
-                or not has_event
-                or patch.status not in {"abandoned", "superseded"}
-            ):
+            if not has_event:
                 raise BatchStoreError(
-                    "Existing recovery receipt does not match the RevisionLedger recovery lineage."
+                    "Existing recovery receipt does not match the RevisionLedger recovery event lineage."
                 )
         return dict(workflow), revision_ledger, dict(receipt), False, False, True
 

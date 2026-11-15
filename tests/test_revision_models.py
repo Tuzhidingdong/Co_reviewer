@@ -583,6 +583,23 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(unit.status, "completed")
         self.assertEqual(unit.validate_location_evidence(), [])
 
+
+    def test_abandoned_patch_cannot_be_replayed_from_an_old_legacy_plan(self):
+        patch = Patch(
+            patch_id="P-ABANDONED",
+            task_id="T-ABANDONED",
+            reviewer="Reviewer 1",
+            comment="Please clarify the statement.",
+            proposed_response="We clarified the statement.",
+            operations=[_operation()],
+            status="planned",
+        )
+        ledger = RevisionLedger("round-abandoned-plan", patches=[patch])
+        stale_plan = ledger.to_legacy_revision_plan()
+        patch.status = "abandoned"
+        with self.assertRaisesRegex(RevisionModelError, "abandoned in the RevisionLedger"):
+            ledger.assert_legacy_plan_matches(stale_plan)
+
     def test_revision_ledger_rejects_reviewer_facing_plan_drift(self):
         patch = Patch(
             patch_id="T1",
