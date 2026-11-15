@@ -3278,6 +3278,118 @@ def cmd_rollback_batch(args):
     return 0
 
 
+def cmd_create_release_package(args):
+    """Create Response Letter artifacts and a manifest only after the release gate is ready."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be distinct files.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    ledger = _load_revision_ledger(revision_path)
+
+    from co_reviewer.workflow_engine import validate_workflow_ledger
+    workflow_errors = validate_workflow_ledger(workflow)
+    if workflow_errors:
+        raise ValueError("Workflow Ledger is invalid:\n- " + "\n- ".join(workflow_errors))
+    ledger.validate_or_raise()
+    if workflow.get("revision_round_id") != ledger.revision_round_id:
+        raise ValueError("Workflow Ledger and RevisionLedger belong to different review rounds.")
+    pending_patches = [
+        patch.patch_id for patch in ledger.patches
+        if patch.status not in {"verified", "superseded"}
+    ]
+    if pending_patches:
+        raise ValueError(
+            "Final release is blocked by non-verified Patch(es): "
+            + ", ".join(sorted(pending_patches))
+        )
+    pending_units = [
+        unit.response_unit_id for unit in ledger.response_units
+        if unit.status != "completed"
+    ]
+    if pending_units:
+        raise ValueError(
+            "Final release is blocked by incomplete ResponseUnit(s): "
+            + ", ".join(sorted(pending_units))
+        )
+    if not workflow.get("active_documents"):
+        raise ValueError("Publish all verified batches before generating a final release package.")
+
+    if args.out_dir:
+        release_dir = Path(args.out_dir).expanduser()
+        if not release_dir.is_absolute():
+            release_dir = workflow_path.parent / release_dir
+        release_dir = release_dir.resolve()
+    else:
+        release_id = (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            + "-"
+            + uuid.uuid4().hex[:8]
+        )
+        release_dir = (
+            workflow_path.parent / "runs" / f"release-{release_id}"
+        ).resolve()
+    if release_dir.exists():
+        raise FileExistsError(
+            f"Release output directory already exists; use a new release directory: {release_dir}"
+        )
+    release_dir.mkdir(parents=True, exist_ok=False)
+
+    response_plan = response_units_to_legacy_plan(ledger.response_units, ledger.patches)
+    markdown = render_response_letter(response_plan)
+    markdown_path = release_dir / "Response_to_Reviewers.md"
+    with markdown_path.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(markdown)
+
+    try:
+        from response_letter_docx import render_response_docx
+    except ImportError as exc:
+        raise ValueError(
+            "Final release package requires python-docx; install project requirements."
+        ) from exc
+    docx_path = release_dir / "Response_to_Reviewers.docx"
+    render_response_docx(
+        response_plan,
+        docx_path,
+        manuscript_title=args.manuscript_title,
+        author=args.author,
+    )
+    quality_path = release_dir / "Response_to_Reviewers.quality.json"
+    response_quality = audit_docx_quality(docx_path, profile="response-letter")
+    if response_quality["status"] == "FAIL":
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(quality_path, response_quality)
+        raise ValueError(
+            "Generated Response Letter failed deterministic quality checks: "
+            + json.dumps(response_quality["summary"], ensure_ascii=False)
+        )
+    from co_reviewer.batch_store import write_json_new
+    write_json_new(quality_path, response_quality)
+
+    from co_reviewer.release_manifest import build_final_release_manifest
+    manifest = build_final_release_manifest(
+        ledger,
+        workflow,
+        revision_ledger_path=revision_path,
+        workflow_ledger_path=workflow_path,
+        response_letter_md=markdown_path,
+        response_letter_docx=docx_path,
+        response_letter_quality=quality_path,
+    )
+    manifest_path = release_dir / "final_release_manifest.json"
+    manifest_sha = write_json_new(manifest_path, manifest)
+
+    print(f"[RELEASE READY] {ledger.revision_round_id}")
+    print(f"[RELEASE PACKAGE] {release_dir}")
+    print(f"[RESPONSE MARKDOWN] {markdown_path}")
+    print(f"[RESPONSE DOCX] {docx_path}")
+    print(f"[QUALITY REPORT] {quality_path} | {response_quality['status']}")
+    print(f"[FINAL RELEASE MANIFEST] {manifest_path}")
+    print(f"[MANIFEST SHA-256] {manifest_sha}")
+    print("[GATE] Active pointers, verified PatchOperations, completed ResponseUnits, final Word/PDF hashes, SEQ audit and exact Response Letter excerpts were rechecked.")
+    return 0
+
+
 def cmd_response(args):
     if getattr(args, "revision_ledger", None):
         ledger = _load_revision_ledger(args.revision_ledger)
@@ -3384,6 +3496,13 @@ def build_parser():
     vfy.add_argument("--apply-report", help="Apply report path; defaults inside the plan's batch directory when applicable.")
     vfy.add_argument("--out", help="Verification report path; defaults inside the plan's batch directory when applicable.")
     vfy.set_defaults(func=cmd_verify)
+    release = sub.add_parser("create-release-package", help="Build final Response Letter files and hash-bound release manifest after all final gates pass.")
+    release.add_argument("--workflow-ledger", required=True)
+    release.add_argument("--revision-ledger", required=True)
+    release.add_argument("--out-dir", help="New release output directory; defaults to a unique runs/release-{id} directory.")
+    release.add_argument("--manuscript-title", default="")
+    release.add_argument("--author", default="")
+    release.set_defaults(func=cmd_create_release_package)
     rsp = sub.add_parser("render-response", help="Render a conservative Response Letter from revision items or ResponseUnits.")
     rsp_inputs = rsp.add_mutually_exclusive_group(required=True)
     rsp_inputs.add_argument("--plan", help="Legacy revision plan.")
