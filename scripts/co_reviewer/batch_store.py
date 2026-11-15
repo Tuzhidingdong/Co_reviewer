@@ -873,7 +873,14 @@ def create_batch_intent(
 
 
 def read_batch_intent(batch_dir: str | Path) -> dict[str, Any]:
-    root = Path(batch_dir).expanduser().resolve()
+    requested_root = Path(batch_dir).expanduser()
+    if requested_root.is_symlink():
+        raise BatchStoreError(
+            f"Batch directory must not be a symbolic link: {requested_root}"
+        )
+    root = requested_root.resolve()
+    if not root.is_dir():
+        raise BatchStoreError(f"Batch directory does not exist: {root}")
     intent_path = root / "batch_intent.json"
     if not intent_path.is_file():
         raise BatchStoreError(f"Batch intent does not exist: {intent_path}")
@@ -1335,7 +1342,12 @@ def recover_unpublished_batch(
     import copy
     from .revision_models import RevisionEvent
 
-    root = Path(batch_dir).expanduser().resolve()
+    requested_root = Path(batch_dir).expanduser()
+    if requested_root.is_symlink():
+        raise BatchStoreError(
+            f"Batch directory must not be a symbolic link: {requested_root}"
+        )
+    root = requested_root.resolve()
     workflow_file = Path(workflow_path).expanduser().resolve()
     ledger_file = Path(revision_ledger_path).expanduser().resolve()
     if workflow_file == ledger_file:
