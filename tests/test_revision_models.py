@@ -95,7 +95,8 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertIn("location_mapped", response["properties"]["status"]["enum"])
         self.assertTrue(any(
             isinstance(condition.get("then"), dict)
-            and "final_locations" in condition["then"].get("required", [])
+            and "location_map_fingerprint" in condition["then"].get("required", [])
+            and condition["then"].get("properties", {}).get("final_locations", {}).get("minItems") == 1
             for condition in response["allOf"]
         ))
 
@@ -541,7 +542,7 @@ class RevisionModelsTests(unittest.TestCase):
         )
         draft_plan = response_units_to_legacy_plan([unit])
         final_plan = response_units_to_legacy_plan([mapped], [patch])
-        self.assertEqual(draft_plan["revision_items"][0]["status"], "planned")
+        self.assertEqual(draft_plan["revision_items"][0]["status"], "location_pending")
         self.assertEqual(final_plan["revision_items"][0]["status"], "verified")
         self.assertIn("Page 3, lines 12-15", final_plan["revision_items"][0]["targets"][0]["location"])
 
