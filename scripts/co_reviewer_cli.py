@@ -1748,6 +1748,33 @@ def cmd_build_revision_ledger(args):
             "RevisionLedger can only be built from the current conflict-free ready batch. "
             "Unavailable task ID(s): " + ", ".join(sorted(unavailable))
         )
+
+    selected_roles = sorted({
+        operation.get("document")
+        for task in workflow.get("tasks", [])
+        if isinstance(task, dict) and task.get("task_id") in selected_task_ids
+        for operation in task.get("patch_operations", [])
+        if isinstance(operation, dict) and isinstance(operation.get("document"), str)
+    })
+    batch_intent = None
+    batch_document_paths: dict[str, dict[str, str]] = {}
+    if selected_roles:
+        from co_reviewer.batch_store import create_batch_intent
+        batch_intent = create_batch_intent(
+            workflow,
+            workflow_path,
+            selected_task_ids,
+            selected_roles,
+            runs_dir=getattr(args, "runs_dir", None),
+            batch_id=getattr(args, "batch_id", None),
+        )
+        for role, record in batch_intent["documents"].items():
+            batch_document_paths[role] = {
+                "input_file": record["parent_file"],
+                "output_file": record["output_file"],
+                "source_sha256": record["parent_sha256"],
+            }
+
     document_paths = (
         json.loads(Path(args.document_paths).read_text(encoding="utf-8"))
         if args.document_paths else {}
@@ -1780,12 +1807,15 @@ def cmd_build_revision_ledger(args):
             "RevisionLedger output must not overwrite the Workflow Ledger or any auxiliary input."
         )
 
+    effective_document_paths = dict(document_paths)
+    effective_document_paths.update(batch_document_paths)
     ledger = build_revision_ledger(
         workflow,
-        document_paths=document_paths,
+        document_paths=effective_document_paths,
         reviewer_comments_by_id=reviewer_comments,
         reviewer_by_task=reviewer_map,
         selected_task_ids=selected_task_ids,
+        force_document_paths=bool(batch_document_paths),
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
@@ -1940,8 +1970,35 @@ def cmd_build_revision_ledger(args):
             allow_scope_refresh_for_task_ids=sorted(changed_scope_tasks),
         )
         ledger = existing_ledger
+    if batch_intent is not None:
+        from co_reviewer.batch_store import write_json_new
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": batch_intent["batch_id"],
+            "revision_round_id": ledger.revision_round_id,
+            "revision_ledger_file": str(output_path),
+            "selected_task_ids": list(selected_task_ids),
+            "patch_ids": [
+                patch.patch_id for patch in ledger.patches
+                if patch.task_id in selected_task_ids
+            ],
+            "documents": {
+                role: {
+                    "input_file": record["parent_file"],
+                    "input_sha256": record["parent_sha256"],
+                    "output_file": record["output_file"],
+                }
+                for role, record in batch_intent["documents"].items()
+            },
+        }
+        write_json_new(Path(batch_intent["batch_dir"]) / "batch_scope.json", scope)
     write_json_atomic(output_path, ledger.to_dict())
     print(f"[BATCH] Selected ready task(s): {', '.join(selected_task_ids)}")
+    if batch_intent is not None:
+        print(f"[IMMUTABLE BATCH] {batch_intent['batch_id']}")
+        print(f"[BATCH DIRECTORY] {batch_intent['batch_dir']}")
+        print(f"[BATCH INTENT] {batch_intent['batch_intent_file']}")
+        print(f"[NEXT] Export plan with --batch-dir \"{batch_intent['batch_dir']}\"; never redirect output DOCX paths outside this batch.")
     print(f"[LEDGER] {len(ledger.patches)} Patch record(s); {len(ledger.response_units)} ResponseUnit(s).")
     print(f"[OK] RevisionLedger: {output_path}")
     return 0
