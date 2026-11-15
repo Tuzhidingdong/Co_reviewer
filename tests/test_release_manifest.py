@@ -5,12 +5,17 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.docx_quality import audit_docx_quality
-from co_reviewer.release_manifest import ReleaseGateError, build_final_release_manifest
+from co_reviewer.release_manifest import (
+    ReleaseGateError,
+    audit_patch_operation_deltas,
+    build_final_release_manifest,
+)
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.revision_models import (
     ResponseUnit,
@@ -113,6 +118,40 @@ class ReleaseManifestGateTests(unittest.TestCase):
             response_letter_docx=self.root / "missing.docx",
             response_letter_quality=self.root / "missing-quality.json",
         )
+
+    def test_deterministic_patch_delta_audit_surfaces_numbers_units_refs_and_sample_ids(self):
+        operation = SimpleNamespace(
+            operation_id="OP-DELTA-01",
+            document="Manuscript",
+            source_comment_ids=["C1"],
+            find="The conductivity was 1.2 mS cm-1 in Figure 2 [1] for sample A1.",
+            replace="The conductivity was 1.4 S m-1 in Figure 3 [2] for sample A2.",
+        )
+        patch = SimpleNamespace(
+            patch_id="P-DELTA-01",
+            status="verified",
+            operations=[operation],
+        )
+        unit = SimpleNamespace(
+            response_unit_id="RU-C1",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            linked_operation_ids=["OP-DELTA-01"],
+            status="completed",
+            semantic_review_confirmed=True,
+        )
+        report = audit_patch_operation_deltas(
+            SimpleNamespace(patches=[patch], response_units=[unit])
+        )
+        self.assertEqual(report[0]["review_status"], "human_semantic_review_completed")
+        self.assertIn("numeric_values", report[0]["changed_categories"])
+        self.assertIn("units", report[0]["changed_categories"])
+        self.assertIn("figure_table_equation_references", report[0]["changed_categories"])
+        self.assertIn("citation_markers", report[0]["changed_categories"])
+        self.assertIn("sample_or_component_identifiers", report[0]["changed_categories"])
+        self.assertEqual(report[0]["deltas"]["numeric_values"]["removed"], ["1.2"])
+        self.assertEqual(report[0]["deltas"]["numeric_values"]["added"], ["1.4"])
+        self.assertIn("do not assert scientific correctness", report[0]["interpretation"])
 
     def test_release_is_blocked_until_every_response_unit_is_completed(self):
         with self.assertRaisesRegex(ReleaseGateError, "explicitly completed"):
