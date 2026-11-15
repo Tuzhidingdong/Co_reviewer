@@ -535,7 +535,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 published_batch_ids=set(),
                 revision_ledger_path=self.revision_path,
                 workflow_ledger_path=self.workflow_path,
-                workflow_task_ids={"T2"},
+                workflow_task_ids={"T1"},
             )
 
         recovery_intent_path = self.root / "runs" / "batch-recovery-003" / "batch_recovery_intent.json"
