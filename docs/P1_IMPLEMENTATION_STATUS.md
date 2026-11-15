@@ -91,7 +91,8 @@ These tests are present in the repository but have **not been established as pas
 ## Validation status and remaining boundary
 
 - The four relevant JSON Schema files (`workflow-ledger`, `final-release-manifest`, `revision-ledger`, `response-location-map`) were parsed as JSON successfully. This is a JSON syntax check only, not a full JSON Schema validation.
-- A GitHub Actions run was triggered for the latest branch head. Both Python matrix jobs ended in failure, but GitHub returned no job steps and the job-log endpoint returned 404. There is no evidence that a runner executed the Python test suite; the result cannot be attributed to a test failure or treated as a pass.
+- The existing Windows matrix runs the PowerShell 5.1 quality-check script and remains the Windows-specific gate. A separate Ubuntu Python-unit matrix (Python 3.10 and 3.13) has been added to isolate compile/unit-test execution from Windows runner allocation; this does not replace the Windows job or Word GUI/COM acceptance.
+- The earlier GitHub Actions runs for commits `77488b8` and `a7f1831` ended in failure before runner assignment (`runner_id=0`, empty `runner_name`, zero steps). Retrying the failed Windows jobs reproduced the same condition. No Python test process started, so these results cannot be attributed to code failures or treated as test passes.
 - No real manuscript, Worker, model call, local Word COM run or final Windows acceptance was performed.
 - The final acceptance boundary remains: run the complete synthetic suite on the target Windows/Python environment, then perform the user's own Word GUI/COM acceptance. Do not describe static inspection or schema parsing as final acceptance.
 - P2 Usage Adapter is not included here. It still depends on locating/attaching the actual Supervisor/Worker model invocation wrapper; no complete automatic token capture claim is made.
