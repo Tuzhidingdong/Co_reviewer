@@ -3087,6 +3087,8 @@ def cmd_publish_batch(args):
         raise ValueError("Batch scope full task IDs differ from the immutable intent.")
     if Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
         raise ValueError("RevisionLedger path does not match the immutable batch scope.")
+    batch_intent_sha256 = sha256_file(batch_dir / "batch_intent.json")
+    batch_scope_sha256 = sha256_file(scope_path)
     ledger = _load_revision_ledger(revision_path)
     workflow_sha_before = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -3154,6 +3156,8 @@ def cmd_publish_batch(args):
     # Validate and stage the receipt before replacing the sole mutable active pointer file.
     receipt["revision_ledger_file"] = str(revision_path)
     receipt["revision_ledger_sha256"] = sha256_file(revision_path)
+    receipt["batch_intent_sha256"] = batch_intent_sha256
+    receipt["batch_scope_sha256"] = batch_scope_sha256
     publish_intent_path = batch_dir / "batch_publish_intent.json"
     if publish_intent_path.exists():
         prior_intent = json.loads(publish_intent_path.read_text(encoding="utf-8"))
@@ -3161,6 +3165,8 @@ def cmd_publish_batch(args):
         if (
             prior_intent.get("batch_id") != intent["batch_id"]
             or prior_intent.get("revision_ledger_sha256") != receipt["revision_ledger_sha256"]
+            or prior_intent.get("batch_intent_sha256") != batch_intent_sha256
+            or prior_intent.get("batch_scope_sha256") != batch_scope_sha256
             or not isinstance(prior_pointers, dict)
             or set(prior_pointers) != set(receipt["active_documents"])
             or any(
@@ -3180,6 +3186,8 @@ def cmd_publish_batch(args):
             "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
             "active_documents_to_publish": receipt["active_documents"],
             "revision_ledger_sha256": receipt["revision_ledger_sha256"],
+            "batch_intent_sha256": batch_intent_sha256,
+            "batch_scope_sha256": batch_scope_sha256,
         })
     current_active = workflow.get("active_documents", {})
     pointers_already_committed = all(
@@ -3216,6 +3224,20 @@ def cmd_rollback_batch(args):
         existing_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         print(f"[ALREADY ROLLED BACK] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
         return 0
+    intent_path = batch_dir / "batch_intent.json"
+    scope_path = batch_dir / "batch_scope.json"
+    if not intent_path.is_file() or not scope_path.is_file():
+        raise ValueError("Batch rollback requires its immutable intent and scope records.")
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    scope = json.loads(scope_path.read_text(encoding="utf-8"))
+    if (
+        intent.get("batch_id") != batch_dir.name.removeprefix("batch-")
+        or scope.get("batch_id") != intent.get("batch_id")
+        or scope.get("batch_intent_sha256") != sha256_file(intent_path)
+    ):
+        raise ValueError("Batch rollback intent/scope integrity check failed.")
+    batch_intent_sha256 = sha256_file(intent_path)
+    batch_scope_sha256 = sha256_file(scope_path)
     from co_reviewer.batch_store import rollback_active_pointers, write_json_new
     workflow_sha_before = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -3225,12 +3247,16 @@ def cmd_rollback_batch(args):
         workflow, workflow_path, batch_dir, reason=args.reason
     )
     receipt["reason"] = args.reason
+    receipt["batch_intent_sha256"] = batch_intent_sha256
+    receipt["batch_scope_sha256"] = batch_scope_sha256
     rollback_intent_path = batch_dir / "batch_rollback_intent.json"
     if rollback_intent_path.exists():
         prior_intent = json.loads(rollback_intent_path.read_text(encoding="utf-8"))
         prior_pointers = prior_intent.get("restored_active_documents")
         if (
             prior_intent.get("batch_id") != receipt["batch_id"]
+            or prior_intent.get("batch_intent_sha256") != batch_intent_sha256
+            or prior_intent.get("batch_scope_sha256") != batch_scope_sha256
             or not isinstance(prior_pointers, dict)
             or set(prior_pointers) != set(receipt["restored_active_documents"])
             or any(
@@ -3247,6 +3273,8 @@ def cmd_rollback_batch(args):
         write_json_new(rollback_intent_path, {
             "schema_version": "1.0",
             "batch_id": receipt["batch_id"],
+            "batch_intent_sha256": batch_intent_sha256,
+            "batch_scope_sha256": batch_scope_sha256,
             "reason": args.reason,
             "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
             "restored_active_documents": receipt["restored_active_documents"],
