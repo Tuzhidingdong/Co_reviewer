@@ -4,8 +4,11 @@ import hashlib
 import json
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.batch_store import (
     BatchStoreError,
@@ -120,7 +123,10 @@ class BatchStoreTests(unittest.TestCase):
         self.assertEqual(pointer["batch_id"], "run-001")
         self.assertEqual(receipt["status"], "published")
         self.assertEqual(validate_workflow_ledger(updated), [])
-        self.assertEqual(self.workflow.get("active_documents"), self.workflow.get("active_documents"))
+        self.assertEqual(
+            self.workflow["active_documents"]["Manuscript"]["file"],
+            str(self.source),
+        )
 
     def test_publish_rejects_unverified_patch_without_changing_parent_ledger(self):
         intent = self._intent()
