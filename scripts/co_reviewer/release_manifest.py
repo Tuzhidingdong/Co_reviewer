@@ -1004,8 +1004,6 @@ def _collect_recovered_batch_history(
 
 
 def build_final_release_manifest(
-
-def build_final_release_manifest(
     revision_ledger: RevisionLedger,
     workflow_ledger: Mapping[str, Any],
     *,
