@@ -1767,6 +1767,26 @@ def cmd_build_revision_ledger(args):
     })
     batch_intent = None
     batch_document_paths: dict[str, dict[str, str]] = {}
+    if selected_roles and output_path.exists():
+        existing_before_build = _load_revision_ledger(output_path)
+        unfinished = [
+            patch for patch in existing_before_build.patches
+            if patch.task_id in selected_task_ids and patch.status == "planned"
+        ]
+        if unfinished:
+            details = []
+            for patch in unfinished:
+                batch_roots = {
+                    next((parent for parent in Path(operation.output_file).resolve().parents
+                          if (parent / "batch_intent.json").is_file()), None)
+                    for operation in patch.operations
+                }
+                details.append(f"{patch.patch_id} (existing batch: {', '.join(str(item) for item in sorted((x for x in batch_roots if x), key=str)) or 'unknown'})")
+            raise ValueError(
+                "Selected task(s) already have planned Patches. Resume the recorded batch; "
+                "do not allocate a second batch for the same unexecuted operations. "
+                + "; ".join(details)
+            )
     if selected_roles:
         from co_reviewer.batch_store import create_batch_intent
         batch_intent = create_batch_intent(
@@ -1990,6 +2010,13 @@ def cmd_build_revision_ledger(args):
             "patch_ids": [
                 patch.patch_id for patch in ledger.patches
                 if patch.task_id in selected_task_ids
+                and patch.status != "superseded"
+                and any(
+                    Path(operation.output_file).expanduser().resolve()
+                    == Path(batch_intent["documents"][operation.document]["output_file"]).expanduser().resolve()
+                    for operation in patch.operations
+                    if operation.document in batch_intent["documents"]
+                )
             ],
             "documents": {
                 role: {
@@ -3018,7 +3045,9 @@ def cmd_publish_batch(args):
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     if (batch_dir / "batch_published.json").exists():
-        raise FileExistsError(f"Batch already has a publication receipt: {batch_dir / 'batch_published.json'}")
+        existing_receipt = json.loads((batch_dir / "batch_published.json").read_text(encoding="utf-8"))
+        print(f"[ALREADY PUBLISHED] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        return 0
     from co_reviewer.batch_store import (
         publish_active_pointers,
         read_batch_intent,
@@ -3037,6 +3066,17 @@ def cmd_publish_batch(args):
     expected_patch_ids = set(scope.get("patch_ids", []))
     if not expected_patch_ids:
         raise ValueError("Batch scope contains no Patch IDs.")
+    for role, record in scope.get("documents", {}).items():
+        intent_record = intent["documents"].get(role)
+        if (
+            not isinstance(intent_record, dict)
+            or Path(record.get("input_file", "")).expanduser().resolve()
+            != Path(intent_record["parent_file"]).expanduser().resolve()
+            or record.get("input_sha256") != intent_record["parent_sha256"]
+            or Path(record.get("output_file", "")).expanduser().resolve()
+            != Path(intent_record["output_file"]).expanduser().resolve()
+        ):
+            raise ValueError(f"Batch scope path/hash contract differs from its intent for role {role}.")
     patch_by_id = {patch.patch_id: patch for patch in ledger.patches}
     missing = sorted(expected_patch_ids - set(patch_by_id))
     if missing:
@@ -3059,13 +3099,23 @@ def cmd_publish_batch(args):
     # Validate and stage the receipt before replacing the sole mutable active pointer file.
     receipt["revision_ledger_file"] = str(revision_path)
     receipt["revision_ledger_sha256"] = sha256_file(revision_path)
-    write_json_new(batch_dir / "batch_publish_intent.json", {
-        "schema_version": "1.0",
-        "batch_id": intent["batch_id"],
-        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
-        "active_documents_to_publish": receipt["active_documents"],
-        "revision_ledger_sha256": receipt["revision_ledger_sha256"],
-    })
+    publish_intent_path = batch_dir / "batch_publish_intent.json"
+    if publish_intent_path.exists():
+        prior_intent = json.loads(publish_intent_path.read_text(encoding="utf-8"))
+        if (
+            prior_intent.get("batch_id") != intent["batch_id"]
+            or prior_intent.get("active_documents_to_publish") != receipt["active_documents"]
+            or prior_intent.get("revision_ledger_sha256") != receipt["revision_ledger_sha256"]
+        ):
+            raise ValueError("Existing batch publication intent does not match the verified outputs.")
+    else:
+        write_json_new(publish_intent_path, {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+            "active_documents_to_publish": receipt["active_documents"],
+            "revision_ledger_sha256": receipt["revision_ledger_sha256"],
+        })
     write_json_atomic(workflow_path, updated)
     write_json_new(batch_dir / "batch_published.json", receipt)
     print(f"[PUBLISHED] Batch {intent['batch_id']}")
@@ -3084,18 +3134,26 @@ def cmd_rollback_batch(args):
         raise ValueError("Only a batch with a committed batch_published.json receipt can be rolled back.")
     receipt_path = batch_dir / "batch_rollback.json"
     if receipt_path.exists():
-        raise FileExistsError(f"Batch already has a rollback receipt: {receipt_path}")
+        existing_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        print(f"[ALREADY ROLLED BACK] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        return 0
     from co_reviewer.batch_store import rollback_active_pointers, write_json_new
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     updated, receipt = rollback_active_pointers(workflow, workflow_path, batch_dir)
     receipt["reason"] = args.reason
-    write_json_new(batch_dir / "batch_rollback_intent.json", {
-        "schema_version": "1.0",
-        "batch_id": receipt["batch_id"],
-        "reason": args.reason,
-        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
-        "restored_active_documents": receipt["restored_active_documents"],
-    })
+    rollback_intent_path = batch_dir / "batch_rollback_intent.json"
+    if rollback_intent_path.exists():
+        prior_intent = json.loads(rollback_intent_path.read_text(encoding="utf-8"))
+        if prior_intent.get("batch_id") != receipt["batch_id"] or prior_intent.get("restored_active_documents") != receipt["restored_active_documents"]:
+            raise ValueError("Existing batch rollback intent differs from the requested parent pointers.")
+    else:
+        write_json_new(rollback_intent_path, {
+            "schema_version": "1.0",
+            "batch_id": receipt["batch_id"],
+            "reason": args.reason,
+            "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+            "restored_active_documents": receipt["restored_active_documents"],
+        })
     # Restore every document-role pointer in one atomic Workflow Ledger replace.
     write_json_atomic(workflow_path, updated)
     write_json_new(receipt_path, receipt)
