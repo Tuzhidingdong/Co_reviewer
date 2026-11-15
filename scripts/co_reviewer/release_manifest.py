@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -123,10 +124,40 @@ def build_final_release_manifest(
             + ", ".join(sorted(incomplete_units))
         )
 
+    response_units_by_task_comment: dict[tuple[str, str], list[Any]] = {}
+    for unit in revision_ledger.response_units:
+        for task_id in unit.linked_task_ids:
+            response_units_by_task_comment.setdefault((task_id, unit.comment_id), []).append(unit)
+    for task_id, task in workflow_tasks.items():
+        if task.get("status") in {"blocked", "recheck_required"}:
+            raise ReleaseGateError(
+                f"Workflow task {task_id} is {task.get('status')}; resolve or recheck it before final release."
+            )
+        comment_ids = task.get("source_comment_ids", [])
+        if not isinstance(comment_ids, list):
+            raise ReleaseGateError(f"Workflow task {task_id} source_comment_ids must be an array.")
+        if not comment_ids:
+            if task.get("status") not in {"verified", "completed"}:
+                raise ReleaseGateError(
+                    f"Workflow task {task_id} has no ResponseUnit comments but is not verified/completed."
+                )
+            continue
+        for raw_comment_id in comment_ids:
+            comment_id = str(raw_comment_id)
+            candidates = response_units_by_task_comment.get((task_id, comment_id), [])
+            if len(candidates) != 1 or candidates[0].status != "completed":
+                raise ReleaseGateError(
+                    f"Workflow task {task_id} comment {comment_id} must map to exactly one completed ResponseUnit."
+                )
+
     for unit in revision_ledger.response_units:
         if unit.disposition == "clarification_needed":
             raise ReleaseGateError(
                 f"clarification_needed ResponseUnit {unit.response_unit_id} cannot be released."
+            )
+        if unit.disposition == "revised" and not unit.linked_operation_ids:
+            raise ReleaseGateError(
+                f"Revised ResponseUnit {unit.response_unit_id} has no exact linked PatchOperation."
             )
         for patch_id in unit.linked_patch_ids:
             patch = patch_by_id.get(patch_id)
@@ -375,7 +406,7 @@ def build_final_release_manifest(
         "schema_version": "1.0",
         "release_status": "READY",
         "revision_round_id": revision_ledger.revision_round_id,
-        "generated_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "source_ledgers": {
             "revision_ledger": _sha_record(revision_path),
             "workflow_ledger": _sha_record(workflow_path),
