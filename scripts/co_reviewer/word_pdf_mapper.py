@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -87,6 +88,40 @@ def _validate_mapping_phrase(value: Any) -> str:
             "Automatic Word mapping requires a single-paragraph phrase without tabs."
         )
     return value
+
+
+def _normalise_pdf_text(value: str) -> str:
+    """Normalise PDF-extracted text for page-level presence checks only."""
+    value = unicodedata.normalize("NFKC", value).replace("\u00ad", "")
+    value = value.replace("\u00a0", " ")
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _verify_pdf_page_text(pdf_path: Path, phrase: str, page_number: int) -> None:
+    """Confirm a Word-reported page contains the target phrase; never derive coordinates."""
+    try:
+        import fitz
+    except ImportError as exc:
+        raise WordPdfMappingError(
+            "PyMuPDF is required to verify target text on the Word-reported PDF page. "
+            'Install with pip install -e ".[word-pdf]".'
+        ) from exc
+    try:
+        with fitz.open(str(pdf_path)) as pdf:
+            if page_number < 1 or page_number > pdf.page_count:
+                raise WordPdfMappingError(
+                    f"Word page {page_number} is outside the exported PDF ({pdf.page_count} pages)."
+                )
+            actual_text = pdf.load_page(page_number - 1).get_text("text")
+    except WordPdfMappingError:
+        raise
+    except Exception as exc:
+        raise WordPdfMappingError(f"Cannot inspect exported PDF {pdf_path}: {exc}") from exc
+    if _normalise_pdf_text(phrase) not in _normalise_pdf_text(actual_text):
+        raise WordPdfMappingError(
+            f"The target phrase is not extractable from PDF page {page_number}: {pdf_path}. "
+            "The Word page/line result is not being recorded."
+        )
 
 
 def _phrase_occurrences(paragraphs: Sequence[str], phrase: str) -> int:
@@ -810,8 +845,11 @@ def generate_word_pdf_location_map(
                 output_docx = out_dir / f"{safe_names[role]}.final-clean.docx"
                 output_pdf = out_dir / f"{safe_names[role]}.final-clean.pdf"
                 positions, refreshed_fields, word_page_count, sequence_audit = _export_one_document(
-                    word, source_docx, output_docx, jobs_by_role[role]
+                    word, source_docx, output_docx, output_pdf, jobs_by_role[role]
                 )
+                for job in jobs_by_role[role]:
+                    page_number, _, _ = positions[job.key]
+                    _verify_pdf_page_text(output_pdf, job.phrase, page_number)
                 positions_by_role[role] = positions
                 document_outputs[role] = {
                     "source_working_clean_file": str(source_docx),

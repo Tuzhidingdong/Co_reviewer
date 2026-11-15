@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import co_reviewer_cli as cli
 from co_reviewer.identity import sha256_file
@@ -23,6 +24,8 @@ from co_reviewer.word_pdf_mapper import (
     WordPdfMappingError,
     _audit_sequence_fields,
     _read_word_position,
+    _normalise_pdf_text,
+    _verify_pdf_page_text,
     _reusable_role_mapping,
     _validate_mapping_phrase,
     assert_location_map_matches_ledger,
@@ -150,6 +153,45 @@ class WordPdfMapperContractTests(unittest.TestCase):
             documents=[self.document],
             patches=[patch],
             response_units=[self._unit(status=unit_status)],
+        )
+
+    def test_pdf_page_text_is_only_a_corroborating_check_for_word_positions(self):
+        class FakePage:
+            def __init__(self, text):
+                self.text = text
+
+            def get_text(self, mode):
+                self.assert_mode = mode
+                return self.text
+
+        class FakePdf:
+            page_count = 2
+
+            def __init__(self, page_text):
+                self.page_text = page_text
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def load_page(self, index):
+                self.loaded_index = index
+                return FakePage(self.page_text)
+
+        fake_fitz = SimpleNamespace(open=lambda path: FakePdf("Target phrase appears here."))
+        with patch.dict("sys.modules", {"fitz": fake_fitz}):
+            _verify_pdf_page_text(self.pdf, "Target phrase", 2)
+            fake_fitz.open = lambda path: FakePdf("Different page text")
+            with self.assertRaisesRegex(WordPdfMappingError, "not extractable from PDF page"):
+                _verify_pdf_page_text(self.pdf, "Target phrase", 2)
+            with self.assertRaisesRegex(WordPdfMappingError, "outside the exported PDF"):
+                _verify_pdf_page_text(self.pdf, "Target phrase", 3)
+
+        self.assertEqual(
+            _normalise_pdf_text("Alpha\u00a0 beta\nGAMMA"),
+            "alpha beta gamma",
         )
 
     def test_mapping_jobs_bind_exact_operation_to_current_clean_role(self):
