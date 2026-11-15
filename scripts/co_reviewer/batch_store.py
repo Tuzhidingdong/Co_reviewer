@@ -1524,6 +1524,11 @@ def recover_unpublished_batch(
                 "Existing recovery intent no longer matches the batch, active parent, "
                 "retained artifacts or staged Workflow Ledger."
             )
+        _validate_recovery_workflow_invalidation_evidence(
+            recovery_intent,
+            intent,
+            workflow_after,
+        )
         if workflow_sha_now not in {
             recovery_intent.get("workflow_ledger_sha256_before"),
             recovery_intent.get("workflow_ledger_sha256_after"),
