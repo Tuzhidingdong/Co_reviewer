@@ -118,12 +118,15 @@ def assert_no_uncommitted_role_batches(
     roles: Sequence[str],
     selected_task_ids: Sequence[str],
     patch_status_by_id: Mapping[str, str],
+    workflow: Mapping[str, Any],
 ) -> None:
-    """Prevent two uncommitted batches from branching from the same active role pointer."""
+    """Prevent competing batches from branching from the same active document-role version."""
     root = Path(runs_dir).expanduser().resolve()
     if not root.exists():
         return
     requested_roles = set(roles)
+    active_pointers = load_active_document_pointers(workflow)
+    new_task_ids = set(selected_task_ids)
     for batch_dir in sorted(root.glob("batch-*")):
         if not batch_dir.is_dir():
             continue
@@ -136,19 +139,41 @@ def assert_no_uncommitted_role_batches(
         overlap = requested_roles.intersection(intent.get("documents", {}))
         if not overlap:
             continue
+
+        # An uncommitted intent must still be based on the currently active parent.
+        # If not, it may have had its pointer update committed before the receipt
+        # was written; do not branch another batch until that receipt is recovered.
+        for role in overlap:
+            parent = intent["documents"][role]
+            current = active_pointers.get(role)
+            if (
+                current is None
+                or current["file"] != str(Path(parent["parent_file"]).expanduser().resolve())
+                or current["sha256"] != parent["parent_sha256"]
+                or current.get("batch_id") != parent.get("parent_batch_id")
+            ):
+                raise BatchStoreError(
+                    f"Uncommitted batch {intent['batch_id']} no longer has its parent active pointer for {role}; "
+                    "recover its publish/rollback receipt before creating another batch."
+                )
+
+        old_task_ids = set(intent.get("all_selected_task_ids", intent["selected_task_ids"]))
+        if old_task_ids and old_task_ids.issubset(new_task_ids):
+            # The scheduler only yields tasks with current ready authorization.
+            # Rebuilding the full set uses RevisionLedger Patch supersession lineage.
+            continue
+
         scope_path = batch_dir / "batch_scope.json"
         if not scope_path.is_file():
             raise BatchStoreError(
-                f"Uncommitted batch {intent['batch_id']} has no batch_scope.json and reserves document role(s) "
+                f"Uncommitted batch {intent['batch_id']} has no scope record and reserves "
                 + ", ".join(sorted(overlap))
-                + "; inspect and abandon/resolve this incomplete batch before creating another."
+                + "; reselect/re-authorize the entire original task set before retrying."
             )
         try:
             scope = json.loads(scope_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise BatchStoreError(
-                f"Cannot inspect uncommitted batch scope {scope_path}: {exc}"
-            ) from exc
+            raise BatchStoreError(f"Cannot inspect uncommitted batch scope {scope_path}: {exc}") from exc
         if (
             not isinstance(scope, Mapping)
             or scope.get("batch_id") != intent["batch_id"]
@@ -158,18 +183,11 @@ def assert_no_uncommitted_role_batches(
                 f"Uncommitted batch {intent['batch_id']} has an invalid or stale scope record; "
                 "resolve it before creating another batch for " + ", ".join(sorted(overlap))
             )
-        old_task_ids = set(intent.get("all_selected_task_ids", intent["selected_task_ids"]))
-        new_task_ids = set(selected_task_ids)
-        if old_task_ids and old_task_ids.issubset(new_task_ids):
-            # The Workflow scheduler supplies only tasks that have received
-            # current ready authorization; build_revision_ledger will enforce
-            # exact supersession/reapproval before this new batch is written.
-            continue
         patch_ids = scope.get("patch_ids")
         if not isinstance(patch_ids, list) or not patch_ids:
             raise BatchStoreError(
                 f"Uncommitted batch {intent['batch_id']} has no resolvable Patch IDs; "
-                "reselect the entire original task set with fresh authorization or resolve this batch."
+                "reselect the entire original task set or resolve the existing batch."
             )
         unknown = [patch_id for patch_id in patch_ids if patch_id not in patch_status_by_id]
         active = [
