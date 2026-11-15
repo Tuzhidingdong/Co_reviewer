@@ -117,11 +117,13 @@ class BatchStoreTests(unittest.TestCase):
             assert_no_uncommitted_role_batches(
                 self.runs_dir,
                 ["Manuscript"],
+                ["T2"],
                 {"P1": "planned"},
             )
         assert_no_uncommitted_role_batches(
             self.runs_dir,
             ["Manuscript"],
+            ["T2"],
             {"P1": "superseded"},
         )
 
