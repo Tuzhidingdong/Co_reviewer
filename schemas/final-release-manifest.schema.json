@@ -12,6 +12,7 @@
     "active_documents",
     "batches",
     "marked_documents",
+    "deterministic_consistency_audit",
     "final_documents",
     "patches",
     "response_units",
@@ -97,6 +98,21 @@
         },
         "additionalProperties": false
       }
+    },
+    "deterministic_consistency_audit": {
+      "type": "object",
+      "required": ["schema_version", "status", "scope", "documents_checked", "figure_table_audit", "blocking_findings", "review_flags", "limitations"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "status": { "const": "PASS" },
+        "scope": { "type": "string", "minLength": 1 },
+        "documents_checked": { "type": "array", "items": { "type": "string" } },
+        "figure_table_audit": { "type": "object" },
+        "blocking_findings": { "type": "array", "maxItems": 0 },
+        "review_flags": { "type": "object" },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
     },
     "final_documents": {
       "type": "object",
