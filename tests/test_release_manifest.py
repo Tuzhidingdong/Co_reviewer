@@ -7,6 +7,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
+
+from docx import Document
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -194,8 +197,30 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertEqual(manifest["release_status"], "READY")
         self.assertEqual(manifest["final_documents"], {})
         self.assertEqual(manifest["location_maps"], [])
+        self.assertEqual(manifest["deterministic_consistency_audit"]["status"], "PASS")
         self.assertEqual(manifest["response_units"][0]["location_methods"], [])
         self.assertTrue(manifest["checks"]["response_letter_contains_verified_patch_excerpts"])
+
+    def test_final_consistency_audit_blocks_unresolved_figure_reference(self):
+        source = self.root / "synthetic_manuscript.docx"
+        document = Document()
+        document.add_paragraph("Figure 1: An example caption.")
+        document.add_paragraph("The results are presented in Figure 2.")
+        document.save(source)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        revision_ledger = SimpleNamespace(documents=[
+            SimpleNamespace(
+                role="Manuscript",
+                working_clean_file=str(source),
+                working_clean_sha256=digest,
+            )
+        ])
+        report = build_final_docx_consistency_audit(revision_ledger)
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertTrue(any(
+            row.get("category") == "unresolved_figure_table_reference"
+            for row in report["blocking_findings"]
+        ))
 
     def test_release_is_blocked_when_a_workflow_comment_has_no_matching_response_unit(self):
         with self.assertRaisesRegex(ReleaseGateError, "comment C1 must map to exactly one completed ResponseUnit"):
