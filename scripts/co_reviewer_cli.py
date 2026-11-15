@@ -2841,6 +2841,7 @@ def cmd_apply(args):
             raise FileExistsError(
                 f"Immutable batch apply report already exists; start a new batch instead of overwriting: {report_path}"
             )
+    output_plan_path = _batch_plan_snapshot(batch_dir, "applied") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if batch_dir is not None:
         for item in plan.get("revision_items", []):
@@ -2889,15 +2890,22 @@ def cmd_apply(args):
         revision_ledger.record_legacy_apply_reports(reports, plan)
         ledger_payload = revision_ledger.to_dict()
 
-    # Validate all ledger transitions before writing the plan/report artifacts.
-    write_json_atomic(report_path, report_history)
-    write_json_atomic(plan_path, plan)
+    # Batch artifacts are written once. Later states use a new immutable snapshot.
+    if batch_dir is not None:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(report_path, report_history)
+        write_json_new(output_plan_path, plan)
+    else:
+        write_json_atomic(report_path, report_history)
+        write_json_atomic(plan_path, plan)
     if ledger_payload is not None:
         write_json_atomic(args.revision_ledger, ledger_payload)
         print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     for r in reports: print(f"[DONE] {r['output_file']}: {r['edits_applied']}/{r['edits_requested']} edits")
     print(f"[STATE] Plan updated: {len(applied_ids)} revision item(s) marked applied.")
-    print(f"[OK] report: {args.report}")
+    if batch_dir is not None:
+        print(f"[NEXT PLAN] {output_plan_path}")
+    print(f"[OK] report: {report_path}")
     return 0
 
 
