@@ -87,6 +87,16 @@ def validate_usage_event(event: Mapping[str, Any]) -> dict[str, Any]:
         usage = dict(usage)
         usage.setdefault("source", "unavailable")
         usage.setdefault("reasoning_relation", "unknown")
+        result.setdefault("context_scope", "unknown")
+        if result["context_scope"] not in {"none", "excerpt", "digest", "full_text", "unknown"}:
+            raise UsageAuditError("model_usage.context_scope must be none/excerpt/digest/full_text/unknown.")
+        if "call_status" in result and result["call_status"] not in {"succeeded", "failed"}:
+            raise UsageAuditError("model_usage.call_status must be succeeded or failed.")
+        if "duration_ms" in result:
+            _validate_nonnegative_int(result["duration_ms"], "duration_ms")
+        for field in ("error_type", "usage_extraction_error_type"):
+            if field in result and (not isinstance(result[field], str) or not result[field].strip()):
+                raise UsageAuditError(f"{field} must be a non-empty exception type name.")
         if usage["source"] not in TOKEN_SOURCES:
             raise UsageAuditError("token_usage.source must be measured, estimated or unavailable.")
         if usage["reasoning_relation"] not in REASONING_RELATIONS:
