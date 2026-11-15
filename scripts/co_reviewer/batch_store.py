@@ -151,7 +151,9 @@ def _validate_recovered_batch_receipt(
     scope_sha = sha256_file(scope_path)
     recovery_sha = sha256_file(intent_path)
     if (
-        receipt.get("status") != "recovered"
+        receipt.get("schema_version") != "1.0"
+        or recovery.get("schema_version") != "1.0"
+        or receipt.get("status") != "recovered"
         or recovery.get("status") != "prepared"
         or receipt.get("batch_id") != intent.get("batch_id")
         or recovery.get("batch_id") != intent.get("batch_id")
@@ -321,11 +323,54 @@ def _validate_recovered_batch_receipt(
         or scope.get("patch_ids") != patch_ids
     ):
         raise BatchStoreError("Recovered batch Patch ownership differs across receipt, scope and recovery intent.")
+    patch_statuses_before = recovery.get("patch_statuses_before")
+    allowed_before_statuses = {"planned", "preflighted", "approved", "applied", "abandoned"}
+    if (
+        not isinstance(patch_statuses_before, Mapping)
+        or set(patch_statuses_before) != set(patch_ids)
+        or any(status not in allowed_before_statuses for status in patch_statuses_before.values())
+    ):
+        raise BatchStoreError(
+            "Recovered batch original Patch status inventory does not cover its exact Patch set."
+        )
     for patch_id in patch_ids:
         if patch_status_by_id.get(patch_id) not in {"abandoned", "superseded"}:
             raise BatchStoreError(
                 f"Recovered batch {intent.get('batch_id')} Patch {patch_id} is missing or not abandoned/superseded in the RevisionLedger."
             )
+
+    revision_events = recovery.get("revision_events")
+    if not isinstance(revision_events, list) or len(revision_events) != len(patch_ids):
+        raise BatchStoreError("Recovered batch intent has an incomplete RevisionLedger recovery event set.")
+    event_subject_ids = [
+        row.get("subject_id") for row in revision_events if isinstance(row, Mapping)
+    ]
+    event_ids = [
+        row.get("event_id") for row in revision_events if isinstance(row, Mapping)
+    ]
+    if (
+        len(event_subject_ids) != len(patch_ids)
+        or set(event_subject_ids) != set(patch_ids)
+        or any(not isinstance(event_id, str) or not event_id.strip() for event_id in event_ids)
+        or len(event_ids) != len(set(event_ids))
+        or any(
+            row.get("subject_type") != "patch"
+            or row.get("event_type") != "patch_abandoned_after_batch_recovery"
+            or row.get("actor") != recovery.get("actor")
+            or row.get("timestamp_utc") != recovery.get("created_at_utc")
+            or not isinstance(row.get("details"), Mapping)
+            or row["details"].get("recovery_id") != recovery.get("recovery_id")
+            or row["details"].get("batch_id") != intent.get("batch_id")
+            or row["details"].get("reason") != recovery.get("reason")
+            or row["details"].get("batch_intent_sha256") != intent_sha
+            or row["details"].get("batch_scope_sha256") != scope_sha
+            for row in revision_events
+            if isinstance(row, Mapping)
+        )
+    ):
+        raise BatchStoreError(
+            "Recovered batch RevisionLedger recovery events do not exactly match its staged Patch lineage."
+        )
 
     artifact_inventory = _batch_artifact_inventory(root)
     if (
