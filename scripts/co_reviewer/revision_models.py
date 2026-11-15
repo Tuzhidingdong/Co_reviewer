@@ -23,7 +23,7 @@ _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _PATCH_ACTIONS = frozenset({"replace"})
 _PATCH_STATES = frozenset({
     "planned", "preflighted", "approved", "applied",
-    "verified", "superseded", "blocked",
+    "verified", "superseded", "blocked", "abandoned",
 })
 _RESPONSE_STATES = frozenset({
     "draft", "blocked", "verified", "location_mapped", "completed",
@@ -935,7 +935,7 @@ class RevisionLedger:
                     errors.append(
                         f"Patch {patch.patch_id} cannot supersede a Patch from another task."
                     )
-                if previous.status not in {"superseded", "applied", "verified"}:
+                if previous.status not in {"superseded", "applied", "verified", "abandoned"}:
                     errors.append(
                         f"Patch {patch.patch_id} has supersession lineage but predecessor "
                         f"{previous.patch_id} is still {previous.status}."
@@ -1064,6 +1064,27 @@ class RevisionLedger:
         event_ids = [event.event_id for event in self.events]
         if len(event_ids) != len(set(event_ids)):
             errors.append("RevisionLedger contains duplicate event_id values.")
+        recovery_events_by_patch: dict[str, list[RevisionEvent]] = {}
+        for event in self.events:
+            if (
+                event.subject_type == "patch"
+                and event.event_type == "patch_abandoned_after_batch_recovery"
+            ):
+                recovery_events_by_patch.setdefault(event.subject_id, []).append(event)
+        for patch in self.patches:
+            if patch.status == "abandoned":
+                recovery_events = recovery_events_by_patch.get(patch.patch_id, [])
+                if len(recovery_events) != 1:
+                    errors.append(
+                        f"Abandoned Patch {patch.patch_id} must have exactly one failed-batch recovery event."
+                    )
+                elif (
+                    not recovery_events[0].details.get("recovery_id")
+                    or not recovery_events[0].details.get("batch_id")
+                ):
+                    errors.append(
+                        f"Abandoned Patch {patch.patch_id} has an incomplete failed-batch recovery event."
+                    )
         known_response_units = set(response_ids)
         for event in self.events:
             if event.subject_type == "patch" and event.subject_id not in known_patches:
@@ -1425,6 +1446,54 @@ class RevisionLedger:
                     raise RevisionModelError(
                         f"Replacement operation {operation.operation_id} must use the prior Patch output "
                         f"as its input for {operation.document}."
+                    )
+        elif previous.status == "abandoned":
+            recovery_events = [
+                event for event in self.events
+                if event.subject_type == "patch"
+                and event.subject_id == previous_patch_id
+                and event.event_type == "patch_abandoned_after_batch_recovery"
+            ]
+            if len(recovery_events) != 1:
+                raise RevisionModelError(
+                    f"Abandoned Patch {previous_patch_id} lacks one unambiguous recovery record."
+                )
+            details = recovery_events[0].details
+            parent_documents = details.get("parent_documents")
+            failed_outputs = details.get("failed_output_files")
+            if not isinstance(parent_documents, Mapping) or not isinstance(failed_outputs, Mapping):
+                raise RevisionModelError(
+                    f"Abandoned Patch {previous_patch_id} has no recorded active-parent lineage."
+                )
+            for operation in replacement.operations:
+                parent = parent_documents.get(operation.document)
+                old_outputs = failed_outputs.get(operation.document)
+                if not isinstance(parent, Mapping) or not isinstance(old_outputs, list):
+                    raise RevisionModelError(
+                        f"Recovery record for Patch {previous_patch_id} does not cover "
+                        f"document role {operation.document}."
+                    )
+                if _canonical_path(operation.output_file) in {
+                    _canonical_path(value) for value in old_outputs if isinstance(value, str)
+                }:
+                    raise RevisionModelError(
+                        f"Replacement operation {operation.operation_id} reuses a failed batch output."
+                    )
+                if _canonical_path(operation.input_file) != _canonical_path(parent.get("file", "")):
+                    raise RevisionModelError(
+                        f"Recovered replacement operation {operation.operation_id} must restart from "
+                        f"the recorded active parent for {operation.document}."
+                    )
+                parent_path = Path(operation.input_file).expanduser().resolve()
+                if not parent_path.is_file() or sha256_file(parent_path) != parent.get("sha256"):
+                    raise RevisionModelError(
+                        f"Recorded active parent for {operation.document} is missing or changed; "
+                        "the recovered Patch cannot be rebased."
+                    )
+                if operation.source_sha256 not in {None, parent.get("sha256")}:
+                    raise RevisionModelError(
+                        f"Replacement operation {operation.operation_id} source hash differs from "
+                        f"the recovered active parent for {operation.document}."
                     )
 
         replacement_operations_by_unit: dict[str, list[PatchOperation]] = {}
@@ -1923,46 +1992,78 @@ class RevisionLedger:
 
             advanced_source_hash: str | None = None
             if revision_changed or input_changed:
+                recovery_parent = None
                 if incoming_input != current_output:
-                    raise RevisionModelError(
-                        f"Document {incoming.document_id} rebase input must be the previous "
-                        f"RevisionDocument output: {current.output_file}."
-                    )
-                predecessor_hashes: list[str] = []
-                for previous_patch in self.patches:
-                    if previous_patch.status not in {"verified", "superseded"}:
-                        continue
-                    if not any(
-                        operation.document == current.role
-                        and _canonical_path(operation.output_file) == current_output
-                        for operation in previous_patch.operations
-                    ):
-                        continue
-                    predecessor_hashes.extend(
-                        entry["sha256"]
-                        for entry in previous_patch.verified_output_hashes
-                        if isinstance(entry, Mapping)
-                        and isinstance(entry.get("path"), str)
-                        and _canonical_path(entry["path"]) == current_output
-                        and isinstance(entry.get("sha256"), str)
-                    )
-                if current.output_sha256:
-                    predecessor_hashes.append(current.output_sha256)
-                if not predecessor_hashes:
-                    raise RevisionModelError(
-                        f"Document {incoming.document_id} cannot advance revisions without "
-                        "a verified SHA-256 for the previous DOCX output."
-                    )
-                if len(set(predecessor_hashes)) != 1:
-                    raise RevisionModelError(
-                        f"Document {incoming.document_id} has conflicting verified hashes "
-                        "for its previous output."
-                    )
-                expected_input_hash = predecessor_hashes[0]
+                    for recovery_event in self.events:
+                        if (
+                            recovery_event.subject_type != "patch"
+                            or recovery_event.event_type != "patch_abandoned_after_batch_recovery"
+                        ):
+                            continue
+                        parent_rows = recovery_event.details.get("parent_documents")
+                        failed_rows = recovery_event.details.get("failed_output_files")
+                        parent_row = parent_rows.get(current.role) if isinstance(parent_rows, Mapping) else None
+                        failed_paths = failed_rows.get(current.role) if isinstance(failed_rows, Mapping) else None
+                        if (
+                            isinstance(parent_row, Mapping)
+                            and isinstance(failed_paths, list)
+                            and current_output in {
+                                _canonical_path(value) for value in failed_paths if isinstance(value, str)
+                            }
+                        ):
+                            recovery_parent = parent_row
+                            break
+                    if recovery_parent is None:
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} rebase input must be the previous "
+                            f"RevisionDocument output: {current.output_file}, unless a matching "
+                            "failed-batch recovery event explicitly restores the active parent."
+                        )
+                    if incoming_input != _canonical_path(str(recovery_parent.get("file", ""))):
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} recovered rebase must use its recorded active parent."
+                        )
+                    expected_input_hash = recovery_parent.get("sha256")
+                    if not isinstance(expected_input_hash, str) or not _SHA256_RE.fullmatch(expected_input_hash):
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} recovery record has no valid active-parent SHA-256."
+                        )
+                else:
+                    predecessor_hashes: list[str] = []
+                    for previous_patch in self.patches:
+                        if previous_patch.status not in {"verified", "superseded"}:
+                            continue
+                        if not any(
+                            operation.document == current.role
+                            and _canonical_path(operation.output_file) == current_output
+                            for operation in previous_patch.operations
+                        ):
+                            continue
+                        predecessor_hashes.extend(
+                            entry["sha256"]
+                            for entry in previous_patch.verified_output_hashes
+                            if isinstance(entry, Mapping)
+                            and isinstance(entry.get("path"), str)
+                            and _canonical_path(entry["path"]) == current_output
+                            and isinstance(entry.get("sha256"), str)
+                        )
+                    if current.output_sha256:
+                        predecessor_hashes.append(current.output_sha256)
+                    if not predecessor_hashes:
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} cannot advance revisions without "
+                            "a verified SHA-256 for the previous DOCX output."
+                        )
+                    if len(set(predecessor_hashes)) != 1:
+                        raise RevisionModelError(
+                            f"Document {incoming.document_id} has conflicting verified hashes "
+                            "for its previous output."
+                        )
+                    expected_input_hash = predecessor_hashes[0]
                 if incoming.source_sha256 and incoming.source_sha256 != expected_input_hash:
                     raise RevisionModelError(
                         f"Document {incoming.document_id} new source identity does not match "
-                        "the previous verified DOCX output."
+                        "the previous verified output or explicitly recovered active parent."
                     )
                 advanced_source_hash = expected_input_hash
                 input_path = Path(incoming.input_file).expanduser().resolve()
@@ -1979,7 +2080,7 @@ class RevisionLedger:
                 if actual_input_hash != expected_input_hash:
                     raise RevisionModelError(
                         f"Document {incoming.document_id} rebased input file changed "
-                        "after the predecessor Patch was verified."
+                        "after the predecessor Patch was verified or recovered."
                     )
             elif (
                 current.source_sha256

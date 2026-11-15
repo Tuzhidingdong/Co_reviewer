@@ -34,9 +34,23 @@ python scripts/co_reviewer_cli.py publish-batch --workflow-ledger workflow_ledge
 
 Use the exact `[NEXT PLAN]` snapshot path reported by each command. Do not copy later-stage data back into an earlier snapshot.
 
-### P1-4 recovery boundary still open
+### P1-4 failed unpublished-batch recovery
 
-Published-batch rollback is implemented and non-destructive. An uncommitted batch whose Apply step has already created partial DOCX outputs is retained, and the role reservation prevents another batch from silently branching from the same active parent. However, there is not yet a dedicated one-command recovery path that explicitly reconciles a failed, unpublished batch's RevisionDocument/Patch lineage back to the still-active parent before allocating a fresh batch directory. The current Patch supersession rules preserve predecessor-output lineage for applied/verified Patches. Treat this as an unresolved recovery edge case: do not delete or reuse the partial outputs, and do not claim that a fresh batch can always be rebuilt automatically after a partial Apply failure. Resolve the lineage explicitly before continuing that document role.
+The dedicated `recover-failed-batch` command now closes the previous recovery boundary:
+
+```powershell
+python scripts/co_reviewer_cli.py recover-failed-batch --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir "runs/batch-{id}" --reason "Explain why this unpublished Apply batch is being abandoned."
+```
+
+- Recovery is allowed only when there is no publish/rollback intent or receipt and every active document pointer still matches the immutable batch parent path, SHA-256 and parent batch ID.
+- The command validates the immutable intent/scope, exact RevisionLedger path and round, selected task/Patch ownership, operation input/output paths and source hashes. Verified Patches are never abandoned.
+- Before changing either Ledger, it writes an immutable recovery intent containing the exact post-recovery Workflow Ledger snapshot, both before/after Ledger hashes, recovery events, active-parent hashes and a SHA-256/size inventory of every retained batch artifact, including partial DOCX outputs.
+- It marks affected Workflow tasks and downstream dependents `recheck_required`, so previous ready authorization cannot be reused. The RevisionLedger marks each failed-batch Patch `abandoned` and appends one recovery event per Patch. Active document pointers remain unchanged.
+- Workflow Ledger and RevisionLedger are replaced atomically as individual files, with a staged recovery intent and exact after-hashes. If interrupted between the two writes, rerunning the command resumes the same staged transaction; it does not replay Apply or generate new Patch IDs. The final `batch_recovered.json` receipt is written only after both Ledger hashes match the staged intent.
+- The abandoned Patch remains in history. A replacement Patch may supersede it only when its input path and SHA-256 exactly match the active parent recorded in the recovery event, and its output path differs from every failed-batch output. RevisionDocument rebasing accepts the parent reset only when the same recovery event proves the previous output belonged to the failed batch. Normal applied/verified Patch supersession still requires the predecessor output.
+- Recovered batches release their document-role reservation only after the recovery receipt exists. All partial outputs and evidence remain available for audit. The author must reauthorize the invalidated Workflow task(s) and use a new batch directory.
+
+This closes the implementation gap for an unpublished partial Apply. It does not make an incomplete DOCX valid, automatically retry the edit, or certify the replacement Patch; preflight, explicit approval, Track Changes application, verification and publication remain separate gates.
 
 ## P1-5 — Response Renderer and Final Release Gate
 

@@ -194,7 +194,8 @@
             "applied",
             "verified",
             "superseded",
-            "blocked"
+            "blocked",
+            "abandoned"
           ]
         },
         "supersedes_patch_id": {

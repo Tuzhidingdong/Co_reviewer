@@ -310,7 +310,13 @@ A published batch can be rolled back without deleting any Marked DOCX, Clean DOC
 python scripts/co_reviewer_cli.py rollback-batch --workflow-ledger workflow_ledger.json --batch-dir "runs/batch-<id>" --reason "Explain why this committed batch is being rolled back."
 ```
 
-Rollback restores all parent active pointers atomically and marks the affected tasks/dependents `recheck_required`. If an uncommitted batch has already created a partial output, do not reuse or overwrite that output. Preserve the failed batch as evidence. The current supersession model preserves predecessor-output lineage for applied/verified Patches, so do not assume that a new batch can automatically reset to the still-active parent. Reconcile the RevisionDocument/Patch lineage explicitly before allocating a fresh batch; a dedicated one-command failed-unpublished-batch recovery path is still outstanding. A second batch must never silently reuse the failed batch's files.
+Rollback restores all parent active pointers atomically and marks the affected tasks/dependents `recheck_required`. For an unpublished batch whose Apply step failed or left partial outputs, use the explicit recovery command:
+
+```powershell
+python scripts/co_reviewer_cli.py recover-failed-batch --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir "runs/batch-{id}" --reason "Explain why the failed Apply batch is being abandoned."
+```
+
+Recovery fails closed when a publish/rollback transaction exists, an active parent path/hash/batch ID has changed, intent/scope ownership is invalid, or any Patch is already verified. It stages and hashes the Workflow Ledger recheck, Patch abandonment events and retained batch artifact inventory before writing either Ledger. If interrupted between Ledger writes, rerun the same recovery command; it resumes the staged transaction. It never changes active document pointers or deletes/reuses partial outputs. Reauthorize the invalidated Workflow tasks, then build a fresh batch. A replacement Patch may restart from the recorded active parent only when the recovery event proves its path and SHA-256; ordinary applied/verified supersession must continue from its predecessor output. Never reuse a failed output path.
 
 Publication and rollback use intent/receipt records so a retry after an interrupted pointer update can finish the receipt without overwriting later Workflow Ledger edits. If a concurrent Workflow Ledger update is detected before pointer replacement, the command fails closed.
 

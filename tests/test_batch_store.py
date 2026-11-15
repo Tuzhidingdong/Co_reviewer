@@ -16,9 +16,11 @@ from co_reviewer.batch_store import (
     create_batch_intent,
     load_active_document_pointers,
     publish_active_pointers,
+    recover_unpublished_batch,
     rollback_active_pointers,
     write_json_new,
 )
+from co_reviewer.revision_models import Patch, PatchOperation, RevisionDocument, RevisionLedger
 from co_reviewer.workflow_engine import build_workflow_ledger, validate_workflow_ledger
 
 
@@ -154,6 +156,221 @@ class BatchStoreTests(unittest.TestCase):
             {"P1": "applied"},
             self.workflow,
         )
+
+
+    def test_partial_unpublished_batch_recovery_is_idempotent_and_rebases_from_parent(self):
+        intent = self._intent()
+        batch_dir = Path(intent["batch_dir"])
+        output = Path(intent["documents"]["Manuscript"]["output_file"])
+        partial_bytes = b"partial DOCX written before Apply failed"
+        output.write_bytes(partial_bytes)
+        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        revision_path = self.root / "revision_ledger.json"
+        operation = PatchOperation.from_mapping({
+            "operation_id": "P1-OP1",
+            "document": "Manuscript",
+            "input_file": str(self.source),
+            "output_file": str(output),
+            "part": "word/document.xml",
+            "find": "old phrase",
+            "replace": "new phrase",
+            "p_idx": 0,
+            "location": "Synthetic paragraph",
+            "source_sha256": source_sha,
+            "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
+        })
+        patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Synthetic reviewer comment.",
+            proposed_response="Synthetic response.",
+            operations=[operation],
+            status="approved",
+            preflight_fingerprint="a" * 64,
+            preflight_report_id="preflight-P1",
+            approval_fingerprint="b" * 64,
+        )
+        document = RevisionDocument(
+            document_id="Manuscript",
+            revision_id="revision-1",
+            role="Manuscript",
+            input_file=str(self.source),
+            output_file=str(output),
+            source_sha256=source_sha,
+        )
+        ledger = RevisionLedger(
+            "round-batch-tests",
+            documents=[document],
+            patches=[patch],
+        )
+        revision_path.write_text(
+            json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "revision_round_id": "round-batch-tests",
+            "revision_ledger_file": str(revision_path.resolve()),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "batch_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_intent.json").read_bytes()
+            ).hexdigest(),
+            "patch_ids": ["P1"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.source.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output.resolve()),
+                }
+            },
+        }
+        (batch_dir / "batch_scope.json").write_text(
+            json.dumps(scope, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        first_workflow, first_ledger, recovery_intent, workflow_changed, ledger_changed, already = recover_unpublished_batch(
+            self.workflow,
+            self.workflow_path,
+            ledger,
+            revision_path,
+            batch_dir,
+            actor="Human Author",
+            reason="Synthetic partial Apply failure.",
+        )
+        self.assertTrue(workflow_changed)
+        self.assertTrue(ledger_changed)
+        self.assertFalse(already)
+        self.assertEqual(first_ledger.patches[0].status, "abandoned")
+        self.assertEqual(first_workflow["tasks"][0]["status"], "recheck_required")
+        self.assertEqual(output.read_bytes(), partial_bytes)
+
+        # Simulate a crash after the first atomic file replacement (Workflow Ledger).
+        self.workflow_path.write_text(
+            json.dumps(first_workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        resumed_workflow, resumed_ledger, resumed_intent, workflow_changed, ledger_changed, already = recover_unpublished_batch(
+            first_workflow,
+            self.workflow_path,
+            ledger,
+            revision_path,
+            batch_dir,
+            actor="Human Author",
+            reason="This retry must use the staged reason.",
+        )
+        self.assertFalse(workflow_changed)
+        self.assertTrue(ledger_changed)
+        self.assertFalse(already)
+        self.assertEqual(resumed_intent["recovery_id"], recovery_intent["recovery_id"])
+        revision_path.write_text(
+            json.dumps(resumed_ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        # A second retry after both Ledger writes must not mutate either Ledger.
+        final_workflow, final_ledger, final_intent, workflow_changed, ledger_changed, already = recover_unpublished_batch(
+            resumed_workflow,
+            self.workflow_path,
+            resumed_ledger,
+            revision_path,
+            batch_dir,
+            actor="Human Author",
+            reason="Idempotent receipt completion.",
+        )
+        self.assertFalse(workflow_changed)
+        self.assertFalse(ledger_changed)
+        self.assertFalse(already)
+        self.assertEqual(final_intent["recovery_id"], recovery_intent["recovery_id"])
+        self.assertEqual(final_ledger.patches[0].status, "abandoned")
+        self.assertEqual(
+            load_active_document_pointers(final_workflow)["Manuscript"]["file"],
+            str(self.source.resolve()),
+        )
+
+        # Do not allow a new batch between the staged Ledger writes and final receipt.
+        with self.assertRaisesRegex(BatchStoreError, "staged recovery transaction"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+            )
+        write_json_new(batch_dir / "batch_recovered.json", {
+            "status": "recovered",
+            "recovery_id": recovery_intent["recovery_id"],
+            "batch_id": intent["batch_id"],
+            "patch_ids": ["P1"],
+        })
+
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T1"],
+            {"P1": "abandoned"},
+            final_workflow,
+        )
+        next_intent = create_batch_intent(
+            final_workflow,
+            self.workflow_path,
+            ["T1"],
+            ["Manuscript"],
+            runs_dir=self.runs_dir,
+            batch_id="run-002",
+        )
+        next_output = Path(next_intent["documents"]["Manuscript"]["output_file"])
+        self.assertNotEqual(next_output, output)
+        self.assertEqual(next_intent["documents"]["Manuscript"]["parent_sha256"], source_sha)
+
+        replacement_operation = PatchOperation.from_mapping({
+            "operation_id": "P2-OP1",
+            "document": "Manuscript",
+            "input_file": str(self.source),
+            "output_file": str(next_output),
+            "part": "word/document.xml",
+            "find": "old phrase",
+            "replace": "corrected phrase",
+            "p_idx": 0,
+            "location": "Synthetic paragraph",
+            "source_sha256": source_sha,
+            "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
+        })
+        replacement = Patch(
+            patch_id="P2",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Synthetic reviewer comment.",
+            proposed_response="Reapproved response.",
+            operations=[replacement_operation],
+            supersedes_patch_id="P1",
+        )
+        final_ledger.supersede_patch(
+            "P1",
+            replacement,
+            actor="Human Author",
+            reason="Re-authorized from the unchanged active parent.",
+        )
+        self.assertEqual(final_ledger.patches[0].status, "superseded")
+        self.assertEqual(final_ledger.patches[1].operations[0].input_file, str(self.source))
+        incoming_document = RevisionDocument(
+            document_id="Manuscript",
+            revision_id="revision-2",
+            role="Manuscript",
+            input_file=str(self.source),
+            output_file=str(next_output),
+            source_sha256=source_sha,
+        )
+        final_ledger.merge_batch(
+            RevisionLedger("round-batch-tests", documents=[incoming_document])
+        )
+        self.assertEqual(final_ledger.documents[0].input_file, str(self.source))
+        self.assertEqual(final_ledger.documents[0].output_file, str(next_output))
 
     def test_active_pointer_rejects_source_changed_outside_ledger(self):
         load_active_document_pointers(self.workflow)

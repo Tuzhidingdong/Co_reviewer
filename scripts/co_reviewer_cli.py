@@ -3159,6 +3159,93 @@ def cmd_status(args):
         print(f"- {item['id']} | {item['reviewer']} | {item['status']} | {targets} target(s)")
     return 0
 
+def cmd_recover_failed_batch(args):
+    """Recover an unpublished partial Apply without moving active document pointers."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    ledger = _load_revision_ledger(revision_path)
+    from co_reviewer.batch_store import recover_unpublished_batch, write_json_new
+
+    recovered_workflow, recovered_ledger, recovery_intent, workflow_changed, ledger_changed, already_recovered = recover_unpublished_batch(
+        workflow,
+        workflow_path,
+        ledger,
+        revision_path,
+        batch_dir,
+        actor=args.actor,
+        reason=args.reason,
+    )
+    if already_recovered:
+        print(f"[ALREADY RECOVERED] Batch {recovery_intent.get('batch_id')}")
+        print(f"[RECEIPT] {batch_dir / 'batch_recovered.json'}")
+        return 0
+
+    if workflow_changed:
+        current_sha = sha256_file(workflow_path)
+        before_sha = recovery_intent["workflow_ledger_sha256_before"]
+        after_sha = recovery_intent["workflow_ledger_sha256_after"]
+        if current_sha == before_sha:
+            write_json_atomic(workflow_path, recovered_workflow)
+        elif current_sha != after_sha:
+            raise ValueError(
+                "Workflow Ledger changed during recovery; active parent pointers were not changed."
+            )
+        if sha256_file(workflow_path) != after_sha:
+            raise ValueError("Workflow Ledger recovery write did not match its staged SHA-256.")
+
+    if ledger_changed:
+        current_sha = sha256_file(revision_path)
+        before_sha = recovery_intent["revision_ledger_sha256_before"]
+        after_sha = recovery_intent["revision_ledger_sha256_after"]
+        if current_sha == before_sha:
+            write_json_atomic(revision_path, recovered_ledger.to_dict())
+        elif current_sha != after_sha:
+            raise ValueError(
+                "RevisionLedger changed during recovery; staged Patch lineage was not overwritten."
+            )
+        if sha256_file(revision_path) != after_sha:
+            raise ValueError("RevisionLedger recovery write did not match its staged SHA-256.")
+
+    receipt_path = batch_dir / "batch_recovered.json"
+    receipt = {
+        "schema_version": "1.0",
+        "status": "recovered",
+        "recovery_id": recovery_intent["recovery_id"],
+        "batch_id": recovery_intent["batch_id"],
+        "recovered_at_utc": datetime.now(timezone.utc).isoformat(),
+        "actor": recovery_intent["actor"],
+        "reason": recovery_intent["reason"],
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_ledger_sha256": recovery_intent["workflow_ledger_sha256_after"],
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256": recovery_intent["revision_ledger_sha256_after"],
+        "batch_recovery_intent_sha256": sha256_file(batch_dir / "batch_recovery_intent.json"),
+        "batch_intent_sha256": recovery_intent["batch_intent_sha256"],
+        "batch_scope_sha256": recovery_intent["batch_scope_sha256"],
+        "selected_task_ids": recovery_intent["selected_task_ids"],
+        "patch_ids": recovery_intent["patch_ids"],
+        "parent_documents": recovery_intent["parent_documents"],
+        "failed_output_files": recovery_intent["failed_output_files"],
+        "retained_artifacts": recovery_intent["artifact_inventory"],
+        "retained_batch_files": True,
+    }
+    write_json_new(receipt_path, receipt)
+    print(f"[RECOVERED] Unpublished batch {receipt['batch_id']} was safely abandoned.")
+    print("[PARENT] All active document pointers remain unchanged.")
+    print("[WORKFLOW] Affected tasks and downstream dependents now require recheck and fresh author authorization.")
+    print("[RETAINED] Partial DOCX outputs, plans and reports were not deleted or reused.")
+    print("[LEDGER] A recovery event was recorded for every failed-batch Patch.")
+    print("[NEXT] Re-authorize the affected task(s), then build a new batch from the active parent.")
+    print(f"[RECEIPT] {receipt_path}")
+    print(f"[OK] Workflow Ledger: {workflow_path}")
+    print(f"[OK] RevisionLedger: {revision_path}")
+    return 0
+
+
 def cmd_publish_batch(args):
     """Atomically publish all verified document outputs as the new active revision."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
@@ -3665,6 +3752,13 @@ def build_parser():
     bl.add_argument("--runs-dir", help="Append-only batch root; defaults to runs/ beside the Workflow Ledger.")
     bl.add_argument("--batch-id", help="Optional unique batch ID; existing batch directories are never reused.")
     bl.set_defaults(func=cmd_build_revision_ledger)
+    rec = sub.add_parser("recover-failed-batch", help="Abandon an unpublished failed Apply, retain its artifacts and require renewed author approval.")
+    rec.add_argument("--workflow-ledger", required=True)
+    rec.add_argument("--revision-ledger", required=True)
+    rec.add_argument("--batch-dir", required=True)
+    rec.add_argument("--reason", required=True, help="Why the failed, unpublished batch is being abandoned.")
+    rec.add_argument("--actor", default="Human Author")
+    rec.set_defaults(func=cmd_recover_failed_batch)
     pub = sub.add_parser("publish-batch", help="Atomically switch Workflow Ledger active document pointers after all batch Patches are verified.")
     pub.add_argument("--workflow-ledger", required=True)
     pub.add_argument("--revision-ledger", required=True)
