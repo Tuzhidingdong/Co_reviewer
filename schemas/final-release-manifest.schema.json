@@ -15,6 +15,7 @@
     "deterministic_consistency_audit",
     "final_documents",
     "patches",
+    "patch_operation_change_inventory",
     "response_units",
     "deterministic_change_audit",
     "location_maps",
@@ -175,6 +176,26 @@
           "operation_ids": { "type": "array", "items": { "type": "string" } },
           "source_comment_ids": { "type": "array", "items": { "type": "string" } },
           "verified_output_hashes": { "type": "array" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "patch_operation_change_inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["patch_id", "task_id", "operation_id", "document", "source_comment_ids", "status", "marker_categories", "changed_categories", "author_semantic_review_required", "interpretation_policy"],
+        "properties": {
+          "patch_id": { "type": "string", "minLength": 1 },
+          "task_id": { "type": "string", "minLength": 1 },
+          "operation_id": { "type": "string", "minLength": 1 },
+          "document": { "type": "string", "minLength": 1 },
+          "source_comment_ids": { "type": "array", "items": { "type": "string" } },
+          "status": { "enum": ["planned", "preflighted", "approved", "applied", "verified", "blocked", "superseded"] },
+          "marker_categories": { "type": "object" },
+          "changed_categories": { "type": "array", "items": { "enum": ["numeric_literals", "citation_markers", "figure_table_reference_markers", "identifier_candidates"] } },
+          "author_semantic_review_required": { "type": "boolean" },
+          "interpretation_policy": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
