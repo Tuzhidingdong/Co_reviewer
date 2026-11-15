@@ -34,8 +34,9 @@ from co_reviewer.document_engine import (
     apply_document, RevisionDocumentEngine,
 )
 from co_reviewer.identity import (
-    sha256_file, revision_targets_fingerprint, revision_item_fingerprint,
-    revision_verification_fingerprint, DocumentIdentityAndHash,
+    sha256_file, canonical_fingerprint, revision_targets_fingerprint,
+    revision_item_fingerprint, revision_verification_fingerprint,
+    DocumentIdentityAndHash,
 )
 from co_reviewer.revision_models import (
     RevisionEvent,
@@ -3657,7 +3658,12 @@ def cmd_response_docx(args):
     except ImportError as exc:
         raise ValueError("DOCX response output requires python-docx; install project requirements.") from exc
     output_path = Path(args.out).expanduser().resolve()
-    quality_path = Path(args.quality_report).expanduser().resolve() if args.quality_report else output_path.with_suffix(".quality.json")
+    quality_report_value = getattr(args, "quality_report", None)
+    quality_path = (
+        Path(quality_report_value).expanduser().resolve()
+        if quality_report_value
+        else output_path.with_suffix(".quality.json")
+    )
     source_path = Path(args.revision_ledger or args.plan).expanduser().resolve()
     if quality_path in {output_path, source_path}:
         raise ValueError("DOCX quality report must be distinct from the Response Letter and its input plan/ledger.")

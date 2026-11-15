@@ -88,7 +88,7 @@ class ResponseRendererPatchExcerptTests(unittest.TestCase):
         markdown = render_response_letter(plan)
         self.assertIn(self.operation.replace, markdown)
         self.assertIn("PatchOperation OP-RESULT-01", markdown)
-        self.assertNotIn("model-generated", markdown.lower())
+        self.assertIn("no model-generated replacement text is used", markdown.lower())
 
     def test_patch_operation_delta_audit_surfaces_numeric_unit_citation_and_identifier_changes(self):
         operation = PatchOperation.from_mapping({

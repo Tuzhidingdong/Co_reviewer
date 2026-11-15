@@ -146,7 +146,7 @@ def build_unique_location_phrase(
     """Create a <=255-character unique Word Find phrase by expanding local word flanks.
 
     A zero-width span represents a deletion boundary and starts with the last
-    four words on the left plus the first four words on the right. When no span
+    four words on the left plus a two-word right-side cue and four following words. When no span
     is supplied, a compact anchor is chosen from the middle of an existing
     paragraph (used for no-change responses).
     """
@@ -165,7 +165,7 @@ def build_unique_location_phrase(
             left = [i for i, token in enumerate(tokens) if token.end() <= start]
             right = [i for i, token in enumerate(tokens) if token.start() >= end]
             first = max(0, (left[-1] - 3) if left else (right[0] if right else 0))
-            last = min(len(tokens) - 1, (right[0] + 3) if right else (left[-1] if left else len(tokens) - 1))
+            last = min(len(tokens) - 1, (right[0] + 5) if right else (left[-1] if left else len(tokens) - 1))
         else:
             overlap = [
                 i for i, token in enumerate(tokens)

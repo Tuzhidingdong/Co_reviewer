@@ -592,6 +592,7 @@ class BatchStoreTests(unittest.TestCase):
                 ["T1"],
                 {"P1": "abandoned"},
                 final_workflow,
+                revision_events=final_ledger.events,
             )
         receipt_path.write_text(
             json.dumps(receipt, ensure_ascii=False, indent=2),

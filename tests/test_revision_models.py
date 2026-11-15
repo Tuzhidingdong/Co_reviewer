@@ -412,6 +412,7 @@ class RevisionModelsTests(unittest.TestCase):
             "targets": [operation.to_legacy_target()],
         }
         legacy_item["targets"][0]["source_sha256"] = HASH_A
+        legacy_item["targets"][0]["location_phrase"] = "revised phrase"
         legacy_item["preflight_fingerprint"] = revision_targets_fingerprint(legacy_item)
         preflight_report = {
             "preflight_items": [{

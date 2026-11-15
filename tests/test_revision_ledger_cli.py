@@ -218,10 +218,16 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(plan["revision_items"][0]["status"], "location_pending")
 
     def test_build_revision_ledger_cli_persists_exact_patch_operations(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        source_sha = sha256_file(self.input)
         workflow = {
             "schema_version": "0.5.1",
             "revision_round_id": "round-build-cli",
-            "source_files": [],
+            "source_files": [{
+                "role": "Manuscript",
+                "file": str(self.input),
+                "sha256": source_sha,
+            }],
             "documents": [],
             "object_registry": [],
             "events": [],
@@ -273,7 +279,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "patch_operations": [{
                     "operation_id": "OP-2",
                     "document": "Manuscript",
-                    "input_file": "Manuscript.docx",
+                    "input_file": str(self.input),
                     "output_file": "Manuscript_revised.docx",
                     "part": "word/document.xml",
                     "p_idx": 0,
@@ -1032,6 +1038,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         cli.write_json_atomic(revision_path, prior_ledger.to_dict())
 
         new_task = task(revision_one, revision_two)
+        new_task["patch_operations"][0]["operation_id"] = "T1-R2-OP1"
         new_workflow = {
             **old_workflow,
             "source_files": [{

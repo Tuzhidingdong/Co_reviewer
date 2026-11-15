@@ -344,6 +344,12 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
         ledger = revision_ledger_from_mapping(
             json.loads(revision_ledger_path.read_text(encoding="utf-8"))
         )
+        outputs_by_role = {
+            operation.document: Path(operation.output_file)
+            for operation in ledger.patches[0].operations
+        }
+        manuscript_output = outputs_by_role["Manuscript"]
+        si_output = outputs_by_role["SI"]
         self.assertEqual(len(ledger.patches), 1)
         self.assertEqual(len(ledger.patches[0].operations), 2)
         self.assertEqual(len(ledger.response_units), 1)

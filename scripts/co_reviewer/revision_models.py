@@ -1607,6 +1607,29 @@ class RevisionLedger:
                 )
             replacement_operations_by_unit[unit.response_unit_id] = matched_operations
 
+        existing_operation_ids = {
+            operation.operation_id
+            for existing_patch in self.patches
+            for operation in existing_patch.operations
+        }
+        replacement_operation_ids = [
+            operation.operation_id for operation in replacement.operations
+        ]
+        seen_replacement_operation_ids: set[str] = set()
+        duplicate_operation_ids: set[str] = set()
+        for operation_id in replacement_operation_ids:
+            if operation_id in seen_replacement_operation_ids:
+                duplicate_operation_ids.add(operation_id)
+            seen_replacement_operation_ids.add(operation_id)
+        duplicate_operation_ids.update(
+            existing_operation_ids.intersection(seen_replacement_operation_ids)
+        )
+        if duplicate_operation_ids:
+            raise RevisionModelError(
+                "Replacement PatchOperation operation_id values must be globally unique: "
+                + ", ".join(sorted(duplicate_operation_ids))
+            )
+
         now = datetime.now(timezone.utc).isoformat()
         previous_status = previous.status
         previous.status = "superseded"
@@ -1757,7 +1780,7 @@ class RevisionLedger:
                 updated_operations.append(replace(
                     operation,
                     source_sha256=source_hash,
-                    location_phrase=phrase,
+                    location_phrase=phrase if requires_automatic_locator else None,
                     p_idx=target.get("p_idx"),
                 ))
             patch.operations = updated_operations
@@ -2380,7 +2403,7 @@ class RevisionLedger:
 
         self.patches.extend(
             patch for patch in addition.patches
-            if patch.patch_id not in existing_patch_ids
+            if patch.patch_id not in existing_patch_by_id
         )
         known_event_ids = {event.event_id for event in self.events}
         for event in addition.events:

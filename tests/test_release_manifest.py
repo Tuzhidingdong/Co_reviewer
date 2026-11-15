@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docx import Document
 from jsonschema import Draft202012Validator, FormatChecker
 from types import SimpleNamespace
 
@@ -26,6 +27,7 @@ from co_reviewer.release_manifest import (
     _collect_release_batch_history,
     _collect_recovered_batch_history,
     audit_patch_operation_deltas,
+    build_final_docx_consistency_audit,
     build_final_release_manifest,
 )
 from co_reviewer.batch_store import _batch_artifact_inventory, _prepare_recovery_workflow
@@ -131,7 +133,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
     def _call(self, unit):
         ledger = RevisionLedger(
             revision_round_id="round-release-tests",
-            response_units=[unit],
+            response_units=[] if unit is None else [unit],
         )
         self.revision_path.write_text(
             json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
@@ -285,7 +287,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
         documents_dir.mkdir(parents=True)
         output_path = documents_dir / "Manuscript.marked.docx"
         output_path.write_bytes(b"partial failed Apply artifact")
-        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        parent_pointer = self.workflow["active_documents"]["Manuscript"]
+        source_sha = parent_pointer["sha256"]
         output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
 
         intent = {
@@ -318,8 +321,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "patch_ids": ["P-RECOVER"],
             "documents": {
                 "Manuscript": {
-                    "input_file": str(self.source),
-                    "input_sha256": source_sha,
+                    "input_file": parent_pointer["file"],
+                    "input_sha256": parent_pointer["sha256"],
                     "output_file": str(output_path),
                 }
             },
@@ -328,7 +331,11 @@ class ReleaseManifestGateTests(unittest.TestCase):
         scope_path.write_text(json.dumps(scope, ensure_ascii=False), encoding="utf-8")
         scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
         parent_documents = {
-            "Manuscript": {"file": str(self.source), "sha256": source_sha, "batch_id": None},
+            "Manuscript": {
+                "file": parent_pointer["file"],
+                "sha256": parent_pointer["sha256"],
+                "batch_id": parent_pointer["batch_id"],
+            },
         }
         failed_output_files = {"Manuscript": [str(output_path)]}
         workflow_for_recovery = build_workflow_ledger(
@@ -608,8 +615,9 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 "all_selected_task_ids": [task_id],
                 "documents": {
                     "Manuscript": {
-                        "parent_file": str(self.source),
-                        "parent_sha256": source_sha,
+                        "parent_file": parent_pointer["file"],
+                        "parent_sha256": parent_pointer["sha256"],
+                        "parent_batch_id": parent_pointer["batch_id"],
                         "output_file": str(output_path),
                     }
                 },
@@ -1092,7 +1100,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
 
     def test_release_is_blocked_when_a_workflow_comment_has_no_matching_response_unit(self):
         with self.assertRaisesRegex(ReleaseGateError, "comment C1 must map to exactly one completed ResponseUnit"):
-            self._call(self._unit(status="completed", comment_id="C2"))
+            self._call(None)
 
 
 if __name__ == "__main__":

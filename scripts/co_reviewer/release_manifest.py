@@ -409,20 +409,24 @@ def _token_delta(
 
     old_tokens = extract(before or "")
     new_tokens = extract(after or "")
-    old_counts: dict[str, int] = {}
-    new_counts: dict[str, int] = {}
-    for token in old_tokens:
-        normalized = _normalise_whitespace(token).casefold()
-        old_counts[normalized] = old_counts.get(normalized, 0) + 1
-    for token in new_tokens:
-        normalized = _normalise_whitespace(token).casefold()
-        new_counts[normalized] = new_counts.get(normalized, 0) + 1
+    def grouped(tokens: list[str]) -> dict[str, list[str]]:
+        by_key: dict[str, list[str]] = {}
+        for token in tokens:
+            display_value = _normalise_whitespace(token)
+            key = display_value.casefold()
+            by_key.setdefault(key, []).append(display_value)
+        return by_key
+
+    old_by_key = grouped(old_tokens)
+    new_by_key = grouped(new_tokens)
     removed: list[str] = []
     added: list[str] = []
-    for key, count in old_counts.items():
-        removed.extend([key] * max(0, count - new_counts.get(key, 0)))
-    for key, count in new_counts.items():
-        added.extend([key] * max(0, count - old_counts.get(key, 0)))
+    for key, old_values in old_by_key.items():
+        excess = max(0, len(old_values) - len(new_by_key.get(key, [])))
+        removed.extend(old_values[:excess])
+    for key, new_values in new_by_key.items():
+        excess = max(0, len(new_values) - len(old_by_key.get(key, [])))
+        added.extend(new_values[:excess])
     return {"removed": sorted(removed), "added": sorted(added)}
 
 
