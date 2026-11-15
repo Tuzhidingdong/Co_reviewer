@@ -1724,13 +1724,13 @@ def cmd_sync_workflow_ledger(args):
             task_units.append(candidates[0])
         if not task_units:
             continue
-        active_patches = [
+        task_patches = [
             patch for patch in revision_ledger.patches
-            if patch.task_id == task_id and patch.status not in {"superseded", "blocked"}
+            if patch.task_id == task_id and patch.status != "superseded"
         ]
-        if current_status == "ready" and active_patches:
+        if current_status == "ready" and task_patches:
             continue
-        if any(patch.status != "verified" for patch in active_patches):
+        if any(patch.status != "verified" for patch in task_patches):
             continue
         completion_payload = {
             "task_id": task_id,
