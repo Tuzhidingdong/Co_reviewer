@@ -3162,17 +3162,9 @@ def cmd_publish_batch(args):
             "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
             + ", ".join(unverified)
         )
-    scoped_tasks = set(intent.get("all_selected_task_ids", intent["selected_task_ids"]))
-    pending_units = [
-        unit.response_unit_id for unit in ledger.response_units
-        if scoped_tasks.intersection(unit.linked_task_ids)
-        and unit.status != "completed"
-    ]
-    if pending_units:
-        raise ValueError(
-            "Complete semantic review and final Word/PDF locations for every ResponseUnit in the batch before publishing: "
-            + ", ".join(sorted(pending_units))
-        )
+    # Final ResponseUnit completion and final Word/PDF locations are round-level
+    # release gates. They are intentionally deferred until every batch is published,
+    # because a later batch can shift pagination for an entire document role.
     if set(scope.get("documents", {})) != set(intent.get("documents", {})):
         raise ValueError("Batch scope document roles differ from the prepared batch intent.")
     updated, receipt = publish_active_pointers(
