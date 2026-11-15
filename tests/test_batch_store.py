@@ -648,6 +648,10 @@ class BatchStoreTests(unittest.TestCase):
                     revision_events=final_ledger.events,
             )
         recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
+        # Rebind the receipt to the exact restored immutable intent bytes.
+        receipt["batch_recovery_intent_sha256"] = hashlib.sha256(
+            recovery_intent_path.read_bytes()
+        ).hexdigest()
         receipt_path.write_text(
             json.dumps(receipt, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -695,6 +699,10 @@ class BatchStoreTests(unittest.TestCase):
                     revision_events=final_ledger.events,
             )
         recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
+        # Rebind the receipt to the exact restored immutable intent bytes.
+        receipt["batch_recovery_intent_sha256"] = hashlib.sha256(
+            recovery_intent_path.read_bytes()
+        ).hexdigest()
         receipt_path.write_text(
             json.dumps(receipt, ensure_ascii=False, indent=2),
             encoding="utf-8",
