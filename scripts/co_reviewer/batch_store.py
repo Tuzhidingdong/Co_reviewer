@@ -158,10 +158,95 @@ def _validate_recovered_batch_receipt(
             f"Recovered batch {intent.get('batch_id')} receipt does not match its immutable intent/scope hashes."
         )
 
+    expected_ledger_paths = {
+        "workflow_ledger_file": intent.get("workflow_ledger_file"),
+        "revision_ledger_file": scope.get("revision_ledger_file"),
+    }
+    for field, expected_value in expected_ledger_paths.items():
+        receipt_value = receipt.get(field)
+        recovery_value = recovery.get(field)
+        if (
+            not isinstance(expected_value, str)
+            or not expected_value.strip()
+            or not isinstance(receipt_value, str)
+            or not receipt_value.strip()
+            or not isinstance(recovery_value, str)
+            or not recovery_value.strip()
+            or Path(receipt_value).expanduser().resolve() != Path(expected_value).expanduser().resolve()
+            or Path(recovery_value).expanduser().resolve() != Path(expected_value).expanduser().resolve()
+        ):
+            raise BatchStoreError(
+                "Recovered batch ledger file paths differ between the immutable batch records, recovery intent and receipt."
+            )
+
+    ledger_hash_fields = (
+        "workflow_ledger_sha256_before",
+        "workflow_ledger_sha256_after",
+        "revision_ledger_sha256_before",
+        "revision_ledger_sha256_after",
+    )
+    if any(
+        not isinstance(recovery.get(field), str)
+        or re.fullmatch(r"[a-f0-9]{64}", recovery[field]) is None
+        for field in ledger_hash_fields
+    ):
+        raise BatchStoreError("Recovered batch recovery intent contains an invalid staged Ledger SHA-256.")
+
+    intent_documents = intent.get("documents")
+    if not isinstance(intent_documents, Mapping) or not intent_documents:
+        raise BatchStoreError("Recovered batch intent has no document-role records.")
+    expected_parent_documents: dict[str, dict[str, Any]] = {}
+    expected_failed_output_files: dict[str, list[str]] = {}
+    for role, row in intent_documents.items():
+        if not isinstance(role, str) or not isinstance(row, Mapping):
+            raise BatchStoreError("Recovered batch intent has malformed document-role records.")
+        parent_file = row.get("parent_file")
+        parent_sha = row.get("parent_sha256")
+        output_file = row.get("output_file")
+        if (
+            not isinstance(parent_file, str)
+            or not parent_file.strip()
+            or not isinstance(parent_sha, str)
+            or re.fullmatch(r"[a-f0-9]{64}", parent_sha) is None
+            or not isinstance(output_file, str)
+            or not output_file.strip()
+        ):
+            raise BatchStoreError(f"Recovered batch intent has invalid parent/output evidence for {role}.")
+        expected_parent_documents[role] = {
+            "file": str(Path(parent_file).expanduser().resolve()),
+            "sha256": parent_sha,
+            "batch_id": row.get("parent_batch_id"),
+        }
+        expected_failed_output_files[role] = [
+            str(Path(output_file).expanduser().resolve())
+        ]
+
+    selected_task_ids = recovery.get("selected_task_ids")
+    batch_task_ids = recovery.get("batch_task_ids")
+    expected_selected_task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+    expected_batch_task_ids = intent.get("selected_task_ids")
+
+    def valid_task_ids(values: Any) -> bool:
+        return (
+            isinstance(values, list)
+            and bool(values)
+            and all(isinstance(value, str) and value.strip() for value in values)
+            and len(values) == len(set(values))
+        )
+
+    if (
+        not valid_task_ids(selected_task_ids)
+        or not valid_task_ids(batch_task_ids)
+        or selected_task_ids != expected_selected_task_ids
+        or batch_task_ids != expected_batch_task_ids
+    ):
+        raise BatchStoreError("Recovered batch task sets differ from its immutable batch intent.")
+
     patch_ids = recovery.get("patch_ids")
     if (
         not isinstance(patch_ids, list)
         or not patch_ids
+        or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
         or len(patch_ids) != len(set(patch_ids))
         or receipt.get("patch_ids") != patch_ids
         or scope.get("patch_ids") != patch_ids
@@ -177,15 +262,17 @@ def _validate_recovered_batch_receipt(
     if (
         recovery.get("artifact_inventory") != artifact_inventory
         or receipt.get("retained_artifacts") != artifact_inventory
-        or receipt.get("parent_documents") != recovery.get("parent_documents")
-        or receipt.get("failed_output_files") != recovery.get("failed_output_files")
-        or receipt.get("selected_task_ids") != recovery.get("selected_task_ids")
+        or recovery.get("parent_documents") != expected_parent_documents
+        or receipt.get("parent_documents") != expected_parent_documents
+        or recovery.get("failed_output_files") != expected_failed_output_files
+        or receipt.get("failed_output_files") != expected_failed_output_files
+        or receipt.get("selected_task_ids") != selected_task_ids
         or receipt.get("workflow_ledger_sha256") != recovery.get("workflow_ledger_sha256_after")
         or receipt.get("revision_ledger_sha256") != recovery.get("revision_ledger_sha256_after")
         or receipt.get("retained_batch_files") is not True
     ):
         raise BatchStoreError(
-            f"Recovered batch {intent.get('batch_id')} receipt does not attest the current retained artifacts and staged Ledger hashes."
+            f"Recovered batch {intent.get('batch_id')} receipt does not attest the immutable parent/output scope, retained artifacts and staged Ledger hashes."
         )
     return dict(receipt)
 

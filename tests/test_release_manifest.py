@@ -325,7 +325,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         scope_path.write_text(json.dumps(scope, ensure_ascii=False), encoding="utf-8")
         scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
         parent_documents = {
-            "Manuscript": {"file": str(self.source), "sha256": source_sha},
+            "Manuscript": {"file": str(self.source), "sha256": source_sha, "batch_id": None},
         }
         failed_output_files = {"Manuscript": [str(output_path)]}
         recovery_id = "recovery-synthetic-003"

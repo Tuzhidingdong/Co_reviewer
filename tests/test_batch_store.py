@@ -306,6 +306,8 @@ class BatchStoreTests(unittest.TestCase):
             "status": "recovered",
             "recovery_id": recovery_intent["recovery_id"],
             "batch_id": intent["batch_id"],
+            "workflow_ledger_file": recovery_intent["workflow_ledger_file"],
+            "revision_ledger_file": recovery_intent["revision_ledger_file"],
             "workflow_ledger_sha256": recovery_intent["workflow_ledger_sha256_after"],
             "revision_ledger_sha256": recovery_intent["revision_ledger_sha256_after"],
             "batch_recovery_intent_sha256": hashlib.sha256(
@@ -330,6 +332,26 @@ class BatchStoreTests(unittest.TestCase):
                 {"P1": "abandoned"},
                 final_workflow,
             )
+        receipt_path.write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        for ledger_field in ("workflow_ledger_file", "revision_ledger_file"):
+            tampered_receipt = dict(receipt)
+            tampered_receipt[ledger_field] = str(self.root / "forged-ledger.json")
+            receipt_path.write_text(
+                json.dumps(tampered_receipt, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(BatchStoreError, "ledger file paths differ"):
+                assert_no_uncommitted_role_batches(
+                    self.runs_dir,
+                    ["Manuscript"],
+                    ["T1"],
+                    {"P1": "abandoned"},
+                    final_workflow,
+                )
         receipt_path.write_text(
             json.dumps(receipt, ensure_ascii=False, indent=2),
             encoding="utf-8",
