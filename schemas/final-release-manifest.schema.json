@@ -15,6 +15,7 @@
     "final_documents",
     "patches",
     "response_units",
+    "deterministic_change_audit",
     "location_maps",
     "artifacts",
     "checks"
@@ -191,6 +192,66 @@
         "additionalProperties": false
       }
     },
+    "deterministic_change_audit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "patch_id",
+          "operation_id",
+          "document",
+          "source_comment_ids",
+          "linked_response_unit_ids",
+          "human_reviewers",
+          "review_status",
+          "changed_categories",
+          "deltas",
+          "interpretation"
+        ],
+        "properties": {
+          "patch_id": { "type": "string", "minLength": 1 },
+          "operation_id": { "type": "string", "minLength": 1 },
+          "document": { "type": "string", "minLength": 1 },
+          "source_comment_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "linked_response_unit_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "human_reviewers": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "review_status": { "const": "human_semantic_review_completed" },
+          "changed_categories": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "numeric_values",
+                "units",
+                "figure_table_equation_references",
+                "citation_markers",
+                "sample_or_component_identifiers"
+              ]
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "required": [
+              "numeric_values",
+              "units",
+              "figure_table_equation_references",
+              "citation_markers",
+              "sample_or_component_identifiers"
+            ],
+            "additionalProperties": {
+              "type": "object",
+              "required": ["removed", "added"],
+              "properties": {
+                "removed": { "type": "array", "items": { "type": "string" } },
+                "added": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "interpretation": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
     "location_maps": {
       "type": "array",
       "items": { "$ref": "#/$defs/fileRecord" }
@@ -228,7 +289,8 @@
         "active_pointers_match_marked_docx",
         "all_final_clean_docx_pdf_hashes_valid",
         "all_word_quality_reports_pass",
-        "response_letter_contains_verified_patch_excerpts"
+        "response_letter_contains_verified_patch_excerpts",
+        "numeric_unit_reference_deltas_surfaced_for_human_review"
       ],
       "properties": {
         "all_active_patches_verified": { "const": true },
@@ -236,7 +298,8 @@
         "active_pointers_match_marked_docx": { "const": true },
         "all_final_clean_docx_pdf_hashes_valid": { "const": true },
         "all_word_quality_reports_pass": { "const": true },
-        "response_letter_contains_verified_patch_excerpts": { "const": true }
+        "response_letter_contains_verified_patch_excerpts": { "const": true },
+        "numeric_unit_reference_deltas_surfaced_for_human_review": { "const": true }
       },
       "additionalProperties": false
     }
