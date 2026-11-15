@@ -236,7 +236,7 @@ def build_usage_report(events: list[dict[str, Any]], errors: list[dict[str, Any]
         "cache_hits": sum(1 for row in document_events if row["document_read"].get("cache_status") == "hit"),
         "cache_misses": sum(1 for row in document_events if row["document_read"].get("cache_status") == "miss"),
         "full_text_extractions": sum(1 for row in document_events if row["document_read"].get("full_text_extracted") is True),
-        "model_context_scopes": {
+        "programmatic_read_context_scopes": {
             scope: sum(1 for row in document_events if row["document_read"].get("context_scope", "unknown") == scope)
             for scope in ("none", "excerpt", "digest", "full_text", "unknown")
         },
@@ -268,6 +268,15 @@ def build_usage_report(events: list[dict[str, Any]], errors: list[dict[str, Any]
         "generated_at_utc": _utc_now(),
         "event_count": len(events),
         "model_usage_event_count": len(model_events),
+        "model_context_scopes": {
+            scope: sum(1 for row in model_events if row.get("context_scope", "unknown") == scope)
+            for scope in ("none", "excerpt", "digest", "full_text", "unknown")
+        },
+        "model_call_outcomes": {
+            outcome: sum(1 for row in model_events if row.get("call_status", "unknown") == outcome)
+            for outcome in ("succeeded", "failed", "unknown")
+        },
+        "usage_extraction_error_events": sum(1 for row in model_events if row.get("usage_extraction_error_type")),
         "invalid_lines": errors or [],
         "token_accounting_note": (
             "Token buckets are reported independently. Do not sum input/cache buckets or "
@@ -275,8 +284,8 @@ def build_usage_report(events: list[dict[str, Any]], errors: list[dict[str, Any]
             "Unavailable values are null, never zero."
         ),
         "model_context_note": (
-            "Only document_read.context_scope events with explicit evidence describe model-context "
-            "exposure. Filesystem reads and DOCX parsing do not prove model input."
+            "model_usage.context_scope is supplied by the actual model caller and describes its explicit dispatch scope. "
+            "documents.programmatic_read_context_scopes describes Co_Reviewer file parsing only; it does not prove model input."
         ),
         "documents": doc_summary,
         "by_stage": group_summary(by_stage),

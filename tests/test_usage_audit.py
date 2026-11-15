@@ -81,7 +81,7 @@ class UsageAuditTests(unittest.TestCase):
         self.assertEqual(report["documents"]["full_text_extractions"], 2)
         self.assertEqual(report["documents"]["cache_hits"], 1)
         self.assertEqual(report["documents"]["repeated_full_reads_by_sha256"][0]["extraction_count"], 2)
-        self.assertEqual(report["documents"]["model_context_scopes"]["none"], 3)
+        self.assertEqual(report["documents"]["programmatic_read_context_scopes"]["none"], 3)
 
     def test_model_usage_buckets_are_aggregated_separately(self):
         record_usage_event(self.ledger, {
@@ -107,6 +107,51 @@ class UsageAuditTests(unittest.TestCase):
         self.assertEqual(totals["cache_read_tokens"]["sum"], 20)
         self.assertEqual(totals["reasoning_tokens"]["sum"], 10)
         self.assertIn("Do not sum", report["token_accounting_note"])
+
+    def test_model_context_scope_and_call_outcomes_are_reported_separately_from_file_reads(self):
+        record_usage_event(self.ledger, {
+            "event_type": "document_read",
+            "stage": "parse_inventory",
+            "actor": "system",
+            "document_read": {
+                "cache_status": "miss",
+                "context_scope": "none",
+            },
+        })
+        record_usage_event(self.ledger, {
+            "event_type": "model_usage",
+            "stage": "decision_synthesis",
+            "actor": "supervisor",
+            "provider": "provider-x",
+            "model": "model-y",
+            "context_scope": "excerpt",
+            "call_status": "succeeded",
+            "duration_ms": 25,
+            "token_usage": {"source": "unavailable"},
+        })
+        events, errors = read_usage_events(self.ledger)
+        report = build_usage_report(events, errors)
+        self.assertEqual(report["documents"]["programmatic_read_context_scopes"]["none"], 1)
+        self.assertEqual(report["model_context_scopes"]["excerpt"], 1)
+        self.assertEqual(report["model_context_scopes"]["none"], 0)
+        self.assertEqual(report["model_call_outcomes"]["succeeded"], 1)
+        self.assertEqual(report["model_call_outcomes"]["failed"], 0)
+
+    def test_model_call_event_rejects_invalid_context_status_duration_and_error_metadata(self):
+        base = {
+            "event_type": "model_usage",
+            "token_usage": {"source": "unavailable"},
+        }
+        invalid_rows = (
+            {"context_scope": "guess"},
+            {"call_status": "maybe"},
+            {"duration_ms": True},
+            {"error_type": ""},
+        )
+        for row in invalid_rows:
+            with self.subTest(row=row):
+                with self.assertRaises(UsageAuditError):
+                    validate_usage_event({**base, **row})
 
     def test_rejects_negative_counts_and_unknown_reasoning_semantics(self):
         with self.assertRaises(UsageAuditError):

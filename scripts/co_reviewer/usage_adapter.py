@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
 
-from .usage_audit import TOKEN_BUCKETS, TOKEN_SOURCES, UsageAuditError, record_usage_event
+from .usage_audit import ACTORS, STAGES, TOKEN_BUCKETS, TOKEN_SOURCES, UsageAuditError, record_usage_event
 
 T = TypeVar("T")
 _CONTEXT_SCOPES = {"none", "excerpt", "digest", "full_text", "unknown"}
@@ -88,6 +88,10 @@ def invoke_with_usage(
     actor = _nonempty(actor, "actor")
     provider = _nonempty(provider, "provider")
     model = _nonempty(model, "model")
+    if stage not in STAGES:
+        raise UsageAuditError(f"Unsupported model-call stage: {stage!r}.")
+    if actor not in ACTORS:
+        raise UsageAuditError(f"Unsupported model-call actor: {actor!r}.")
     if context_scope not in _CONTEXT_SCOPES:
         raise UsageAuditError("Invalid explicit context_scope.")
     if reasoning_relation not in _REASONING_RELATIONS:
