@@ -1271,6 +1271,16 @@ def write_json_atomic(path: str | Path, data: Any) -> None:
         if tmp and os.path.exists(tmp):
             os.unlink(tmp)
 
+def _batch_plan_snapshot(batch_dir: Path, stage: str) -> Path:
+    from co_reviewer.batch_store import BatchStoreError
+    target = batch_dir / f"revision_plan.{stage}.json"
+    if target.exists():
+        raise BatchStoreError(
+            f"Immutable batch already contains the {stage} plan snapshot; allocate a new batch instead: {target}"
+        )
+    return target
+
+
 def cmd_preflight(args):
     plan_path = Path(args.plan).expanduser().resolve()
     batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
@@ -1283,6 +1293,7 @@ def cmd_preflight(args):
             raise ValueError("Preflight report for an immutable batch must be written inside its batch directory.")
         if report_path.exists():
             raise FileExistsError(f"Preflight report already exists for this immutable batch: {report_path}")
+    output_plan_path = _batch_plan_snapshot(batch_dir, "preflighted") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     validate_apply_artifact_paths(plan, plan_path, report_path)
 
@@ -1302,10 +1313,14 @@ def cmd_preflight(args):
             report, plan, report_id=report_id, actor=args.author
         )
 
-    # Prepare all three artifacts in memory before persisting the updated state.
-    # Each file is atomically replaced; rerunning preflight is safe if a write is interrupted.
-    write_json_atomic(plan_path, plan)
-    write_json_atomic(report_path, report)
+    # Batch plans/reports are append-only snapshots; the original plan remains unchanged.
+    if batch_dir is not None:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(output_plan_path, plan)
+        write_json_new(report_path, report)
+    else:
+        write_json_atomic(plan_path, plan)
+        write_json_atomic(report_path, report)
     if revision_ledger is not None:
         write_json_atomic(ledger_path, revision_ledger.to_dict())
     print(f"[PREFLIGHT] {report['targets_preflighted']}/{report['targets_total']} target(s) are safe to apply.")
@@ -1313,6 +1328,8 @@ def cmd_preflight(args):
     if report["approval_scope_changed_items"]:
         print("[REAPPROVAL] Source versions or preflighted target scopes changed for already-approved item(s): " + ", ".join(report["approval_scope_changed_items"]))
     print(f"[OK] report: {report_path}")
+    if batch_dir is not None:
+        print(f"[NEXT PLAN] {output_plan_path}")
     print("[NOTE] Preflight does not edit DOCX files or grant approval.")
     return 0
 
