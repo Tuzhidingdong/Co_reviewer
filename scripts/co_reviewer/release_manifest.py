@@ -910,12 +910,13 @@ def _collect_recovered_batch_history(
         selected_task_ids = recovery_intent.get("selected_task_ids")
         batch_task_ids = recovery_intent.get("batch_task_ids")
         intent_all_task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
-        valid_task_list = lambda values: (
-            isinstance(values, list)
-            and bool(values)
-            and all(isinstance(value, str) and value.strip() for value in values)
-            and len(values) == len(set(values))
-        )
+        def valid_task_list(values: Any) -> bool:
+            return (
+                isinstance(values, list)
+                and bool(values)
+                and all(isinstance(value, str) and value.strip() for value in values)
+                and len(values) == len(set(values))
+            )
         if (
             not valid_task_list(selected_task_ids)
             or not valid_task_list(batch_task_ids)
