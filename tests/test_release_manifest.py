@@ -18,6 +18,7 @@ from co_reviewer.release_manifest import (
     _require_consistent_sequence_audits,
     _require_bound_final_quality_report,
     _require_word_page_count,
+    _validate_release_batch_scope,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
@@ -210,6 +211,72 @@ class ReleaseManifestGateTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ReleaseGateError, "inconsistent Figure/Table SEQ audit"):
             _require_consistent_sequence_audits([passing, conflicting], "Manuscript")
+
+    def test_release_batch_scope_must_match_ledger_patch_task_and_document_ownership(self):
+        parent = self.root / "parent.docx"
+        output = self.root / "batch" / "documents" / "Manuscript.marked.docx"
+        intent = {
+            "batch_id": "batch-01",
+            "revision_round_id": "round-release-tests",
+            "selected_task_ids": ["T1"],
+            "all_selected_task_ids": ["T1", "T2"],
+            "documents": {
+                "Manuscript": {
+                    "parent_file": str(parent),
+                    "parent_sha256": "a" * 64,
+                    "output_file": str(output),
+                }
+            },
+        }
+        scope = {
+            "batch_id": "batch-01",
+            "revision_round_id": "round-release-tests",
+            "revision_ledger_file": str(self.revision_path),
+            "selected_task_ids": ["T1", "T2"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P1"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(parent),
+                    "input_sha256": "a" * 64,
+                    "output_file": str(output),
+                }
+            },
+        }
+        operation = SimpleNamespace(document="Manuscript", output_file=str(output))
+        patch = SimpleNamespace(patch_id="P1", task_id="T1", status="verified", operations=[operation])
+        ledger = SimpleNamespace(revision_round_id="round-release-tests", patches=[patch])
+        self.assertEqual(
+            _validate_release_batch_scope(
+                intent, scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+            ),
+            ["P1"],
+        )
+
+        bad_patch_scope = dict(scope, patch_ids=[])
+        with self.assertRaisesRegex(ReleaseGateError, "Patch ownership"):
+            _validate_release_batch_scope(
+                intent, bad_patch_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+            )
+        bad_task_scope = dict(scope, batch_task_ids=["T2"])
+        with self.assertRaisesRegex(ReleaseGateError, "task ownership"):
+            _validate_release_batch_scope(
+                intent, bad_task_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+            )
+        bad_document_scope = dict(
+            scope,
+            documents={
+                "Manuscript": {
+                    "input_file": str(parent),
+                    "input_sha256": "b" * 64,
+                    "output_file": str(output),
+                }
+            },
+        )
+        with self.assertRaisesRegex(ReleaseGateError, "document hash scope"):
+            _validate_release_batch_scope(
+                intent, bad_document_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+            )
 
     def test_final_docx_quality_report_must_bind_docx_pdf_and_page_count(self):
         payload = {

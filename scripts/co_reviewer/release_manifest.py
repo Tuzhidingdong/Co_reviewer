@@ -98,6 +98,106 @@ def _require_word_page_count(value: Any, role: str) -> int:
     return value
 
 
+def _validate_release_batch_scope(
+    intent: Mapping[str, Any],
+    scope: Mapping[str, Any],
+    *,
+    revision_ledger: RevisionLedger,
+    revision_ledger_path: str | Path,
+) -> list[str]:
+    """Cross-check immutable batch task/document/Patch ownership against the current ledger."""
+    batch_id = intent.get("batch_id")
+    if scope.get("batch_id") != batch_id:
+        raise ReleaseGateError(f"Batch {batch_id} scope/intent IDs differ.")
+    if (
+        intent.get("revision_round_id") != revision_ledger.revision_round_id
+        or scope.get("revision_round_id") != revision_ledger.revision_round_id
+    ):
+        raise ReleaseGateError(f"Batch {batch_id} belongs to another revision round.")
+    batch_task_ids = intent.get("selected_task_ids")
+    all_task_ids = intent.get("all_selected_task_ids", batch_task_ids)
+    scope_batch_task_ids = scope.get("batch_task_ids")
+    scope_all_task_ids = scope.get("selected_task_ids")
+    for label, values in (
+        ("intent selected_task_ids", batch_task_ids),
+        ("intent all_selected_task_ids", all_task_ids),
+        ("scope batch_task_ids", scope_batch_task_ids),
+        ("scope selected_task_ids", scope_all_task_ids),
+    ):
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) or not value.strip() for value in values)
+            or len(values) != len(set(values))
+        ):
+            raise ReleaseGateError(f"Batch {batch_id} has invalid {label}.")
+    if scope_batch_task_ids != batch_task_ids or scope_all_task_ids != all_task_ids:
+        raise ReleaseGateError(f"Batch {batch_id} task ownership differs between intent and scope.")
+    if not set(batch_task_ids).issubset(set(all_task_ids)):
+        raise ReleaseGateError(f"Batch {batch_id} document-changing tasks are outside its full task selection.")
+    ledger_path = Path(revision_ledger_path).expanduser().resolve()
+    if (
+        not isinstance(scope.get("revision_ledger_file"), str)
+        or Path(scope["revision_ledger_file"]).expanduser().resolve() != ledger_path
+    ):
+        raise ReleaseGateError(f"Batch {batch_id} scope points to another RevisionLedger file.")
+    intent_documents = intent.get("documents")
+    scope_documents = scope.get("documents")
+    if (
+        not isinstance(intent_documents, Mapping)
+        or not intent_documents
+        or not isinstance(scope_documents, Mapping)
+        or set(scope_documents) != set(intent_documents)
+    ):
+        raise ReleaseGateError(f"Batch {batch_id} document-role scope differs from its immutable intent.")
+    for role, intent_row in intent_documents.items():
+        scope_row = scope_documents.get(role)
+        if not isinstance(intent_row, Mapping) or not isinstance(scope_row, Mapping):
+            raise ReleaseGateError(f"Batch {batch_id} has malformed document scope for {role}.")
+        expected_pairs = (
+            ("parent_file", "input_file"),
+            ("parent_sha256", "input_sha256"),
+            ("output_file", "output_file"),
+        )
+        for intent_key, scope_key in expected_pairs:
+            left, right = intent_row.get(intent_key), scope_row.get(scope_key)
+            if intent_key.endswith("file"):
+                if (
+                    not isinstance(left, str)
+                    or not left.strip()
+                    or not isinstance(right, str)
+                    or not right.strip()
+                    or Path(left).expanduser().resolve() != Path(right).expanduser().resolve()
+                ):
+                    raise ReleaseGateError(f"Batch {batch_id} document path scope differs for {role}.")
+            elif left != right:
+                raise ReleaseGateError(f"Batch {batch_id} document hash scope differs for {role}.")
+    expected_patch_ids = [
+        patch.patch_id
+        for patch in revision_ledger.patches
+        if patch.task_id in set(batch_task_ids)
+        and patch.status != "superseded"
+        and any(
+            operation.document in intent_documents
+            and Path(operation.output_file).expanduser().resolve()
+            == Path(intent_documents[operation.document]["output_file"]).expanduser().resolve()
+            for operation in patch.operations
+        )
+    ]
+    actual_patch_ids = scope.get("patch_ids")
+    if (
+        not isinstance(actual_patch_ids, list)
+        or any(not isinstance(value, str) or not value.strip() for value in actual_patch_ids)
+        or len(actual_patch_ids) != len(set(actual_patch_ids))
+        or actual_patch_ids != expected_patch_ids
+    ):
+        raise ReleaseGateError(
+            f"Batch {batch_id} Patch ownership does not match current RevisionLedger operations; "
+            f"expected {expected_patch_ids}, received {actual_patch_ids!r}."
+        )
+    return expected_patch_ids
+
+
 def _require_consistent_sequence_audits(payloads: list[Any], role: str) -> dict[str, Any]:
     """Require every location map for the same final document to attest the same valid SEQ audit."""
     if not payloads:
@@ -488,6 +588,12 @@ def build_final_release_manifest(
             or receipt_payload.get("batch_scope_sha256") != scope_sha256
         ):
             raise ReleaseGateError(f"Active batch {batch_id} has inconsistent or stale immutable records.")
+        _validate_release_batch_scope(
+            intent_payload,
+            scope_payload,
+            revision_ledger=revision_ledger,
+            revision_ledger_path=revision_path,
+        )
         receipt_pointer = receipt_payload.get("active_documents", {}).get(role)
         if not isinstance(receipt_pointer, Mapping) or (
             receipt_pointer.get("file") != pointer["file"]
