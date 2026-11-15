@@ -560,7 +560,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
                     "batch_scope_sha256": scope_sha,
                     "restored_active_documents": restored,
                 }
-                (batch_dir / "batch_rollback_intent.json").write_text(
+                rollback_intent_path = batch_dir / "batch_rollback_intent.json"
+                rollback_intent_path.write_text(
                     json.dumps(rollback_intent, ensure_ascii=False), encoding="utf-8"
                 )
                 rollback_receipt = {
@@ -571,6 +572,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
                     "selected_task_ids": [task_id],
                     "batch_intent_sha256": intent_sha,
                     "batch_scope_sha256": scope_sha,
+                    "rollback_intent_sha256": hashlib.sha256(rollback_intent_path.read_bytes()).hexdigest(),
                     "restored_active_documents": restored,
                 }
                 (batch_dir / "batch_rollback.json").write_text(
@@ -609,6 +611,18 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertIn("rollback_intent", rolled_back_record)
         self.assertIn("rollback_receipt", rolled_back_record)
         self.assertEqual(rolled_back_record["all_selected_task_ids"], ["T1"])
+        rollback_intent_path = self.root / "runs" / "batch-batch-old-001" / "batch_rollback_intent.json"
+        tampered_intent = json.loads(rollback_intent_path.read_text(encoding="utf-8"))
+        tampered_intent["reason"] = "Changed after receipt creation."
+        rollback_intent_path.write_text(json.dumps(tampered_intent, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseGateError, "rollback receipt/intent"):
+            _collect_release_batch_history(
+                workflow_ledger,
+                {"Manuscript": active_pointer},
+                revision_ledger=revision,
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+            )
 
     def test_release_batch_scope_must_match_ledger_patch_task_and_document_ownership(self):
         parent = self.root / "parent.docx"

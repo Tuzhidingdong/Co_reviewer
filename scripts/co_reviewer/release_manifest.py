@@ -784,6 +784,7 @@ def _collect_release_batch_history(
                 or rollback_receipt.get("batch_scope_sha256") != scope_sha
                 or rollback_intent.get("batch_intent_sha256") != intent_sha
                 or rollback_intent.get("batch_scope_sha256") != scope_sha
+                or rollback_receipt.get("rollback_intent_sha256") != sha256_file(rollback_intent_path)
                 or _pointer_projection(rollback_intent.get("restored_active_documents"), f"batch {batch_id} rollback intent") != restored
                 or rollback_documents[0] != restored
             ):

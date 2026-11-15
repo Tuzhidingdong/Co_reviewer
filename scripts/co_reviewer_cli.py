@@ -3461,6 +3461,7 @@ def cmd_rollback_batch(args):
             "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
             "restored_active_documents": receipt["restored_active_documents"],
         })
+    receipt["rollback_intent_sha256"] = sha256_file(rollback_intent_path)
     # Restore every document-role pointer in one atomic Workflow Ledger replace.
     current_active = workflow.get("active_documents", {})
     pointers_already_restored = all(
