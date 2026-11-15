@@ -1760,8 +1760,12 @@ def cmd_build_revision_ledger(args):
     })
     batch_intent = None
     batch_document_paths: dict[str, dict[str, str]] = {}
+    existing_patch_statuses: dict[str, str] = {}
     if selected_roles and output_path.exists():
         existing_before_build = _load_revision_ledger(output_path)
+        existing_patch_statuses = {
+            patch.patch_id: patch.status for patch in existing_before_build.patches
+        }
         unfinished = [
             patch for patch in existing_before_build.patches
             if patch.task_id in selected_task_ids and patch.status in {"planned", "preflighted", "approved", "applied"}
@@ -1781,7 +1785,20 @@ def cmd_build_revision_ledger(args):
                 + "; ".join(details)
             )
     if selected_roles:
-        from co_reviewer.batch_store import create_batch_intent
+        from co_reviewer.batch_store import (
+            assert_no_uncommitted_role_batches,
+            create_batch_intent,
+        )
+        runs_root = (
+            Path(getattr(args, "runs_dir")).expanduser()
+            if getattr(args, "runs_dir", None)
+            else workflow_path.parent / "runs"
+        )
+        assert_no_uncommitted_role_batches(
+            runs_root,
+            selected_roles,
+            existing_patch_statuses,
+        )
         batch_intent = create_batch_intent(
             workflow,
             workflow_path,
