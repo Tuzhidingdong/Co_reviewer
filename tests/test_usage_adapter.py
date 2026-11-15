@@ -119,6 +119,18 @@ class UsageAdapterTests(unittest.TestCase):
             self._invoke(lambda: called.append(True), context_scope="guessed")
         self.assertEqual(called, [])
 
+    def test_invalid_stage_and_actor_are_rejected_before_model_call(self):
+        cases = (
+            ({"stage": "invented_stage"}, "stage"),
+            ({"actor": "invisible_worker"}, "actor"),
+        )
+        for overrides, field in cases:
+            called = []
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, field):
+                    self._invoke(lambda: called.append(True), **overrides)
+                self.assertEqual(called, [])
+
 
 if __name__ == "__main__":
     unittest.main()

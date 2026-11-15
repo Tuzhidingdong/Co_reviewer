@@ -155,6 +155,22 @@ class UsageAuditTests(unittest.TestCase):
                 with self.assertRaises(UsageAuditError):
                     validate_usage_event({**base, **row})
 
+    def test_measured_or_estimated_usage_requires_at_least_one_observed_bucket(self):
+        for source in ("measured", "estimated"):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(UsageAuditError, "at least one numeric token bucket"):
+                    validate_usage_event({
+                        "event_type": "model_usage",
+                        "token_usage": {"source": source},
+                    })
+                # Partial measurements remain valid and do not fabricate zeros.
+                event = validate_usage_event({
+                    "event_type": "model_usage",
+                    "token_usage": {"source": source, "input_tokens": 7},
+                })
+                self.assertEqual(event["token_usage"]["input_tokens"], 7)
+                self.assertIsNone(event["token_usage"]["output_tokens"])
+
     def test_rejects_negative_counts_and_unknown_reasoning_semantics(self):
         with self.assertRaises(UsageAuditError):
             validate_usage_event({

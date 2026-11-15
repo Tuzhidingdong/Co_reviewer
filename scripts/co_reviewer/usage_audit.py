@@ -104,11 +104,17 @@ def validate_usage_event(event: Mapping[str, Any]) -> dict[str, Any]:
         for bucket in TOKEN_BUCKETS:
             usage.setdefault(bucket, None)
             _validate_nonnegative_int(usage[bucket], bucket)
-        if usage["source"] == "unavailable" and any(
+        has_numeric_counts = any(
             usage[bucket] is not None for bucket in TOKEN_BUCKETS
-        ):
+        )
+        if usage["source"] == "unavailable" and has_numeric_counts:
             raise UsageAuditError(
                 "Unavailable token events cannot contain numeric token counts."
+            )
+        if usage["source"] in {"measured", "estimated"} and not has_numeric_counts:
+            raise UsageAuditError(
+                "Measured/estimated token events must contain at least one numeric token bucket; "
+                "use source=unavailable when all buckets are null."
             )
         result["token_usage"] = usage
 
