@@ -1721,21 +1721,12 @@ def cmd_sync_workflow_ledger(args):
                     shared_groups = synchronized_groups.intersection(
                         set(predecessor_task.get("target_groups", []))
                     )
-                    shared_roles = {
-                        group.split("|", 1)[0]
-                        for group in shared_groups
-                        if isinstance(group, str) and "|" in group
-                    }
-                    if not shared_roles:
+                    if not shared_groups:
                         continue
-                    follows_predecessor_output = all(
-                        any(
-                            Path(operation.output_file).expanduser().resolve()
-                            in current_inputs_by_role.get(role, set())
-                            for operation in predecessor.operations
-                            if operation.document == role
-                        )
-                        for role in shared_roles
+                    follows_predecessor_output = any(
+                        Path(operation.output_file).expanduser().resolve()
+                        in current_inputs_by_role.get(operation.document, set())
+                        for operation in predecessor.operations
                     )
                     if not follows_predecessor_output:
                         continue
