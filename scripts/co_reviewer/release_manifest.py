@@ -563,6 +563,259 @@ def build_final_docx_consistency_audit(revision_ledger: RevisionLedger) -> dict[
     }
 
 
+def _pointer_projection(value: Any, label: str) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping) or not value:
+        raise ReleaseGateError(f"{label} must be a non-empty document pointer object.")
+    projected: dict[str, dict[str, Any]] = {}
+    for role, row in value.items():
+        if not isinstance(role, str) or not role.strip() or not isinstance(row, Mapping):
+            raise ReleaseGateError(f"{label} contains an invalid document-role pointer.")
+        file_path = row.get("file")
+        digest = row.get("sha256")
+        batch_id = row.get("batch_id")
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ReleaseGateError(f"{label}[{role}] requires a file path.")
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ReleaseGateError(f"{label}[{role}] requires a valid SHA-256.")
+        if batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()):
+            raise ReleaseGateError(f"{label}[{role}] has an invalid batch_id.")
+        projected[role] = {
+            "file": str(Path(file_path).expanduser().resolve()),
+            "sha256": digest,
+            "batch_id": batch_id,
+        }
+    return projected
+
+
+def _collect_release_batch_history(
+    workflow_ledger: Mapping[str, Any],
+    active_documents: Mapping[str, Any],
+    *,
+    revision_ledger: RevisionLedger,
+    revision_ledger_path: str | Path,
+    workflow_ledger_path: str | Path,
+) -> list[dict[str, Any]]:
+    """Seal every published batch in the round, including batches later rolled back."""
+    events = workflow_ledger.get("events", [])
+    if not isinstance(events, list):
+        raise ReleaseGateError("Workflow Ledger events must be an array.")
+    published: dict[str, list[Mapping[str, Any]]] = {}
+    rolled_back: dict[str, list[Mapping[str, Any]]] = {}
+    for row in events:
+        if not isinstance(row, Mapping):
+            continue
+        event_type = row.get("event_type")
+        if event_type not in {"batch_published", "batch_rolled_back"}:
+            continue
+        batch_id = row.get("batch_id")
+        if not isinstance(batch_id, str) or not batch_id.strip():
+            raise ReleaseGateError(f"{event_type} Workflow event is missing batch_id.")
+        target = published if event_type == "batch_published" else rolled_back
+        target.setdefault(batch_id, []).append(row)
+    orphan_rollbacks = sorted(set(rolled_back) - set(published))
+    if orphan_rollbacks:
+        raise ReleaseGateError(
+            "Workflow Ledger contains rollback events without a published batch: "
+            + ", ".join(orphan_rollbacks)
+        )
+    workflow_task_ids = {
+        row.get("task_id")
+        for row in workflow_ledger.get("tasks", [])
+        if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
+    }
+    records: list[dict[str, Any]] = []
+    by_batch_id: dict[str, dict[str, Any]] = {}
+    workflow_path = Path(workflow_ledger_path).expanduser().resolve()
+    for batch_id in sorted(published):
+        publish_events = published[batch_id]
+        event_task_ids = [row.get("task_id") for row in publish_events]
+        if (
+            any(not isinstance(value, str) or not value.strip() for value in event_task_ids)
+            or len(event_task_ids) != len(set(event_task_ids))
+        ):
+            raise ReleaseGateError(f"Batch {batch_id} has duplicate or invalid publication task events.")
+        event_documents = [
+            _pointer_projection(row.get("documents"), f"batch {batch_id} publication event documents")
+            for row in publish_events
+        ]
+        if any(value != event_documents[0] for value in event_documents[1:]):
+            raise ReleaseGateError(f"Batch {batch_id} publication events disagree on document outputs.")
+        published_documents = event_documents[0]
+        batch_directories: set[Path] = set()
+        for role, pointer in published_documents.items():
+            if pointer["batch_id"] != batch_id:
+                raise ReleaseGateError(f"Batch {batch_id} event pointer for {role} declares another batch.")
+            output_path = Path(pointer["file"])
+            if output_path.parent.name != "documents":
+                raise ReleaseGateError(f"Batch {batch_id} output for {role} is outside its documents directory.")
+            batch_directories.add(output_path.parent.parent)
+        if len(batch_directories) != 1:
+            raise ReleaseGateError(f"Batch {batch_id} output documents do not share one batch directory.")
+        batch_dir = next(iter(batch_directories))
+        if batch_dir.name != f"batch-{batch_id}":
+            raise ReleaseGateError(f"Batch {batch_id} event paths do not resolve to their declared batch directory.")
+
+        intent_path = batch_dir / "batch_intent.json"
+        scope_path = batch_dir / "batch_scope.json"
+        publish_intent_path = batch_dir / "batch_publish_intent.json"
+        publish_receipt_path = batch_dir / "batch_published.json"
+        required = {
+            "intent": intent_path,
+            "scope": scope_path,
+            "publish_intent": publish_intent_path,
+            "publish_receipt": publish_receipt_path,
+        }
+        for label, path in required.items():
+            if not path.is_file():
+                raise ReleaseGateError(f"Published batch {batch_id} is missing {label}: {path}.")
+        try:
+            intent_payload = json.loads(intent_path.read_text(encoding="utf-8"))
+            scope_payload = json.loads(scope_path.read_text(encoding="utf-8"))
+            publish_intent_payload = json.loads(publish_intent_path.read_text(encoding="utf-8"))
+            publish_receipt = json.loads(publish_receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReleaseGateError(f"Cannot read published batch {batch_id} records: {exc}") from exc
+
+        intent_sha = sha256_file(intent_path)
+        scope_sha = sha256_file(scope_path)
+        expected_round = revision_ledger.revision_round_id
+        all_task_ids = intent_payload.get("all_selected_task_ids", intent_payload.get("selected_task_ids"))
+        if (
+            intent_payload.get("batch_id") != batch_id
+            or scope_payload.get("batch_id") != batch_id
+            or publish_intent_payload.get("batch_id") != batch_id
+            or publish_receipt.get("batch_id") != batch_id
+            or publish_receipt.get("status") != "published"
+            or intent_payload.get("revision_round_id") != expected_round
+            or not isinstance(intent_payload.get("workflow_ledger_file"), str)
+            or Path(intent_payload["workflow_ledger_file"]).expanduser().resolve() != workflow_path
+            or publish_receipt.get("workflow_ledger_file") is None
+            or Path(publish_receipt["workflow_ledger_file"]).expanduser().resolve() != workflow_path
+            or publish_receipt.get("revision_ledger_file") is None
+            or Path(publish_receipt["revision_ledger_file"]).expanduser().resolve()
+               != Path(revision_ledger_path).expanduser().resolve()
+            or not isinstance(publish_receipt.get("revision_ledger_sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", publish_receipt["revision_ledger_sha256"])
+            or scope_payload.get("batch_intent_sha256") != intent_sha
+            or publish_intent_payload.get("batch_intent_sha256") != intent_sha
+            or publish_receipt.get("batch_intent_sha256") != intent_sha
+            or publish_intent_payload.get("batch_scope_sha256") != scope_sha
+            or publish_receipt.get("batch_scope_sha256") != scope_sha
+            or publish_intent_payload.get("revision_ledger_sha256") != publish_receipt.get("revision_ledger_sha256")
+        ):
+            raise ReleaseGateError(f"Batch {batch_id} has inconsistent or stale publication intent/receipt records.")
+        if (
+            not isinstance(all_task_ids, list)
+            or any(not isinstance(value, str) or not value.strip() for value in all_task_ids)
+            or len(all_task_ids) != len(set(all_task_ids))
+            or set(event_task_ids) != set(all_task_ids)
+            or publish_receipt.get("selected_task_ids") != all_task_ids
+        ):
+            raise ReleaseGateError(f"Batch {batch_id} publication events do not cover its exact selected task set.")
+        if _pointer_projection(publish_receipt.get("active_documents"), f"batch {batch_id} publish receipt") != published_documents:
+            raise ReleaseGateError(f"Batch {batch_id} published receipt does not attest all Workflow publication events.")
+        if _pointer_projection(publish_intent_payload.get("active_documents_to_publish"), f"batch {batch_id} publish intent") != published_documents:
+            raise ReleaseGateError(f"Batch {batch_id} publish intent does not attest all Workflow publication events.")
+        _validate_release_batch_scope(
+            intent_payload,
+            scope_payload,
+            revision_ledger=revision_ledger,
+            revision_ledger_path=revision_ledger_path,
+            workflow_task_ids=workflow_task_ids,
+        )
+        record: dict[str, Any] = {
+            "batch_id": batch_id,
+            "directory": str(batch_dir),
+            "intent": _sha_record(intent_path),
+            "scope": _sha_record(scope_path),
+            "publish_intent": _sha_record(publish_intent_path),
+            "publish_receipt": _sha_record(publish_receipt_path),
+            "selected_task_ids": list(intent_payload.get("selected_task_ids", [])),
+            "all_selected_task_ids": list(all_task_ids),
+            "patch_ids": list(scope_payload.get("patch_ids", [])),
+            "documents": {
+                role: {"file": pointer["file"], "sha256": pointer["sha256"]}
+                for role, pointer in published_documents.items()
+            },
+            "publication_status": "published",
+        }
+
+        rollback_events = rolled_back.get(batch_id, [])
+        rollback_intent_path = batch_dir / "batch_rollback_intent.json"
+        rollback_receipt_path = batch_dir / "batch_rollback.json"
+        if rollback_events or rollback_intent_path.exists() or rollback_receipt_path.exists():
+            if not rollback_events or not rollback_intent_path.is_file() or not rollback_receipt_path.is_file():
+                raise ReleaseGateError(f"Batch {batch_id} has an incomplete rollback event/intent/receipt chain.")
+            rollback_task_ids = [row.get("task_id") for row in rollback_events]
+            if (
+                any(not isinstance(value, str) or not value.strip() for value in rollback_task_ids)
+                or len(rollback_task_ids) != len(set(rollback_task_ids))
+                or set(rollback_task_ids) != set(all_task_ids)
+            ):
+                raise ReleaseGateError(f"Batch {batch_id} rollback events do not cover its exact selected task set.")
+            rollback_documents = [
+                _pointer_projection(row.get("documents"), f"batch {batch_id} rollback event documents")
+                for row in rollback_events
+            ]
+            if any(value != rollback_documents[0] for value in rollback_documents[1:]):
+                raise ReleaseGateError(f"Batch {batch_id} rollback events disagree on restored parent pointers.")
+            try:
+                rollback_intent = json.loads(rollback_intent_path.read_text(encoding="utf-8"))
+                rollback_receipt = json.loads(rollback_receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ReleaseGateError(f"Cannot read batch {batch_id} rollback records: {exc}") from exc
+            restored = _pointer_projection(
+                rollback_receipt.get("restored_active_documents"),
+                f"batch {batch_id} rollback receipt",
+            )
+            if (
+                rollback_intent.get("batch_id") != batch_id
+                or rollback_receipt.get("batch_id") != batch_id
+                or rollback_receipt.get("status") != "rolled_back"
+                or rollback_receipt.get("retained_batch_files") is not True
+                or rollback_receipt.get("workflow_ledger_file") is None
+                or Path(rollback_receipt["workflow_ledger_file"]).expanduser().resolve() != workflow_path
+                or rollback_receipt.get("selected_task_ids") != all_task_ids
+                or rollback_receipt.get("batch_intent_sha256") != intent_sha
+                or rollback_receipt.get("batch_scope_sha256") != scope_sha
+                or rollback_intent.get("batch_intent_sha256") != intent_sha
+                or rollback_intent.get("batch_scope_sha256") != scope_sha
+                or _pointer_projection(rollback_intent.get("restored_active_documents"), f"batch {batch_id} rollback intent") != restored
+                or rollback_documents[0] != restored
+            ):
+                raise ReleaseGateError(f"Batch {batch_id} rollback receipt/intent does not attest Workflow rollback events.")
+            for role, pointer in restored.items():
+                parent_path = Path(pointer["file"])
+                if not parent_path.is_file() or sha256_file(parent_path) != pointer["sha256"]:
+                    raise ReleaseGateError(f"Batch {batch_id} rollback parent for {role} is missing or stale.")
+            record["rollback_intent"] = _sha_record(rollback_intent_path)
+            record["rollback_receipt"] = _sha_record(rollback_receipt_path)
+            record["publication_status"] = "rolled_back"
+
+        records.append(record)
+        by_batch_id[batch_id] = record
+
+    for role, pointer in active_documents.items():
+        active_batch_id = pointer.get("batch_id")
+        if active_batch_id is None:
+            continue
+        record = by_batch_id.get(active_batch_id)
+        if record is None:
+            raise ReleaseGateError(f"Active document {role} refers to unpublished or unrecorded batch {active_batch_id}.")
+        if record["publication_status"] != "published":
+            raise ReleaseGateError(f"Active document {role} still points to batch {active_batch_id}, which was rolled back.")
+        batch_pointer = record["documents"].get(role)
+        if batch_pointer is None or (
+            Path(batch_pointer["file"]).expanduser().resolve()
+            != Path(pointer["file"]).expanduser().resolve()
+            or batch_pointer["sha256"] != pointer["sha256"]
+        ):
+            raise ReleaseGateError(f"Active document {role} pointer differs from its publication history.")
+    return records
+
+
+def build_final_release_manifest(
+
 def build_final_release_manifest(
     revision_ledger: RevisionLedger,
     workflow_ledger: Mapping[str, Any],
@@ -608,79 +861,13 @@ def build_final_release_manifest(
             "Workflow Ledger has no committed active_documents pointers. Publish the verified batches first."
         )
     active_documents = load_active_document_pointers(workflow_ledger)
-    batch_records_by_id: dict[str, dict[str, Any]] = {}
-    for role, pointer in active_documents.items():
-        batch_id = pointer.get("batch_id")
-        if batch_id is None:
-            continue
-        active_file = Path(pointer["file"]).expanduser().resolve()
-        batch_dir = active_file.parents[1]
-        if batch_dir.name != f"batch-{batch_id}":
-            raise ReleaseGateError(
-                f"Active document {role} path does not belong to its declared batch_id {batch_id}."
-            )
-        required_batch_files = {
-            "intent": batch_dir / "batch_intent.json",
-            "scope": batch_dir / "batch_scope.json",
-            "publish_receipt": batch_dir / "batch_published.json",
-        }
-        for name, artifact_path in required_batch_files.items():
-            if not artifact_path.is_file():
-                raise ReleaseGateError(
-                    f"Active batch {batch_id} is missing its immutable {name} record: {artifact_path}."
-                )
-        try:
-            intent_payload = json.loads(required_batch_files["intent"].read_text(encoding="utf-8"))
-            scope_payload = json.loads(required_batch_files["scope"].read_text(encoding="utf-8"))
-            receipt_payload = json.loads(required_batch_files["publish_receipt"].read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ReleaseGateError(f"Cannot read active batch records for {batch_id}: {exc}") from exc
-        intent_sha256 = sha256_file(required_batch_files["intent"])
-        scope_sha256 = sha256_file(required_batch_files["scope"])
-        if (
-            intent_payload.get("batch_id") != batch_id
-            or scope_payload.get("batch_id") != batch_id
-            or receipt_payload.get("batch_id") != batch_id
-            or receipt_payload.get("status") != "published"
-            or scope_payload.get("batch_intent_sha256") != intent_sha256
-            or receipt_payload.get("batch_intent_sha256") != intent_sha256
-            or receipt_payload.get("batch_scope_sha256") != scope_sha256
-        ):
-            raise ReleaseGateError(f"Active batch {batch_id} has inconsistent or stale immutable records.")
-        _validate_release_batch_scope(
-            intent_payload,
-            scope_payload,
-            revision_ledger=revision_ledger,
-            revision_ledger_path=revision_path,
-            workflow_task_ids={
-                row.get("task_id")
-                for row in workflow_ledger.get("tasks", [])
-                if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
-            },
-        )
-        receipt_pointer = receipt_payload.get("active_documents", {}).get(role)
-        if not isinstance(receipt_pointer, Mapping) or (
-            receipt_pointer.get("file") != pointer["file"]
-            or receipt_pointer.get("sha256") != pointer["sha256"]
-            or receipt_pointer.get("batch_id") != batch_id
-        ):
-            raise ReleaseGateError(
-                f"Active batch publication receipt does not attest the Workflow Ledger pointer for {role}."
-            )
-        batch_records_by_id.setdefault(batch_id, {
-            "batch_id": batch_id,
-            "directory": str(batch_dir),
-            "intent": _sha_record(required_batch_files["intent"]),
-            "scope": _sha_record(required_batch_files["scope"]),
-            "publish_receipt": _sha_record(required_batch_files["publish_receipt"]),
-            "selected_task_ids": list(intent_payload.get("selected_task_ids", [])),
-            "patch_ids": list(scope_payload.get("patch_ids", [])),
-            "documents": {},
-        })
-        batch_records_by_id[batch_id]["documents"][role] = {
-            "file": pointer["file"],
-            "sha256": pointer["sha256"],
-        }
+    batch_records = _collect_release_batch_history(
+        workflow_ledger,
+        active_documents,
+        revision_ledger=revision_ledger,
+        revision_ledger_path=revision_path,
+        workflow_ledger_path=workflow_path,
+    )
     workflow_tasks = {
         row.get("task_id"): row
         for row in workflow_ledger.get("tasks", [])
@@ -1077,7 +1264,7 @@ def build_final_release_manifest(
             "workflow_ledger": _sha_record(workflow_path),
         },
         "active_documents": active_records,
-        "batches": [batch_records_by_id[key] for key in sorted(batch_records_by_id)],
+        "batches": batch_records,
         "marked_documents": marked_documents,
         "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,

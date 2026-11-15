@@ -53,14 +53,19 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["batch_id", "directory", "intent", "scope", "publish_receipt", "selected_task_ids", "patch_ids", "documents"],
+        "required": ["batch_id", "directory", "intent", "scope", "publish_intent", "publish_receipt", "selected_task_ids", "all_selected_task_ids", "patch_ids", "documents", "publication_status"],
         "properties": {
           "batch_id": { "type": "string", "minLength": 1 },
           "directory": { "type": "string", "minLength": 1 },
           "intent": { "$ref": "#/$defs/fileRecord" },
           "scope": { "$ref": "#/$defs/fileRecord" },
           "publish_receipt": { "$ref": "#/$defs/fileRecord" },
+          "publish_intent": { "$ref": "#/$defs/fileRecord" },
+          "publication_status": { "enum": ["published", "rolled_back"] },
+          "rollback_intent": { "$ref": "#/$defs/fileRecord" },
+          "rollback_receipt": { "$ref": "#/$defs/fileRecord" },
           "selected_task_ids": { "type": "array", "items": { "type": "string" } },
+          "all_selected_task_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
           "patch_ids": { "type": "array", "items": { "type": "string" } },
           "documents": {
             "type": "object",
@@ -75,6 +80,12 @@
             }
           }
         },
+        "allOf": [
+          {
+            "if": { "properties": { "publication_status": { "const": "rolled_back" } }, "required": ["publication_status"] },
+            "then": { "required": ["rollback_intent", "rollback_receipt"] }
+          }
+        ],
         "additionalProperties": false
       }
     },
