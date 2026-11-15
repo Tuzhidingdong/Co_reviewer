@@ -480,7 +480,24 @@ class ReleaseManifestGateTests(unittest.TestCase):
         recovery_intent_schema = json.loads(
             (Path(__file__).resolve().parents[1] / "schemas" / "batch-recovery-intent.schema.json").read_text(encoding="utf-8")
         )
-        Draft202012Validator(recovery_intent_schema, format_checker=FormatChecker()).validate(recovery_intent)
+        recovery_intent_validator = Draft202012Validator(
+            recovery_intent_schema,
+            format_checker=FormatChecker(),
+        )
+        recovery_intent_validator.validate(recovery_intent)
+        for required_payload_hash in (
+            "workflow_ledger_payload_sha256_before",
+            "revision_ledger_payload_sha256_before",
+        ):
+            incomplete_intent = dict(recovery_intent)
+            incomplete_intent.pop(required_payload_hash)
+            self.assertTrue(
+                any(
+                    required_payload_hash in error.message
+                    for error in recovery_intent_validator.iter_errors(incomplete_intent)
+                ),
+                f"Recovery intent schema must require {required_payload_hash}.",
+            )
         recovery_intent_sha = hashlib.sha256(recovery_intent_path.read_bytes()).hexdigest()
         recovery_receipt = {
             "schema_version": "1.0",
