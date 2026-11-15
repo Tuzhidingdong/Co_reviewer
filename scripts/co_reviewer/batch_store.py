@@ -1208,9 +1208,26 @@ def _validate_recovery_workflow_invalidation_evidence(
     expected_reason = (
         f"Unpublished batch {batch_id} abandoned after Apply failure: {reason}"
     )
+    staged_errors = validate_workflow_ledger(workflow_after)
+    if staged_errors:
+        raise BatchStoreError(
+            "Recovered batch Workflow after-image is invalid: " + "; ".join(staged_errors)
+        )
     task_rows = workflow_after.get("tasks")
     if not isinstance(task_rows, list):
         raise BatchStoreError("Recovered batch Workflow after-image has no task array.")
+    from .workflow_engine import invalidate_affected_tasks, WorkflowValidationError
+    try:
+        _, expected_impacted_ids = invalidate_affected_tasks(
+            task_rows,
+            selected_task_ids,
+            expected_reason,
+        )
+    except WorkflowValidationError as exc:
+        raise BatchStoreError(
+            f"Cannot reconstruct failed-batch downstream invalidation scope: {exc}"
+        ) from exc
+    expected_affected_task_ids = sorted(set(selected_task_ids) | set(expected_impacted_ids))
     affected_task_ids = sorted({
         row.get("task_id")
         for row in task_rows
@@ -1219,11 +1236,17 @@ def _validate_recovery_workflow_invalidation_evidence(
         and row.get("status") == "recheck_required"
         and row.get("invalidation_reason") == expected_reason
     })
-    if not set(selected_task_ids).issubset(affected_task_ids):
-        missing = sorted(set(selected_task_ids) - set(affected_task_ids))
+    if affected_task_ids != expected_affected_task_ids:
+        missing = sorted(set(expected_affected_task_ids) - set(affected_task_ids))
+        extra = sorted(set(affected_task_ids) - set(expected_affected_task_ids))
+        details = []
+        if missing:
+            details.append("missing=" + ", ".join(missing))
+        if extra:
+            details.append("unexpected=" + ", ".join(extra))
         raise BatchStoreError(
-            "Recovered batch Workflow after-image does not invalidate every selected task: "
-            + ", ".join(missing)
+            "Recovered batch Workflow after-image does not exactly reflect the selected, conflicting and downstream DAG scope ("
+            + "; ".join(details) + ")."
         )
     declared_affected = recovery.get("invalidated_task_ids")
     if declared_affected is not None and declared_affected != affected_task_ids:
