@@ -4,6 +4,12 @@
 
 Co_Reviewer coordinates revisions across reviewer comments, the manuscript, and Supporting Information (SI). It turns each reviewer comment into a revision item, links that item to one or more document edits, and produces auditable Word files with native Track Changes.
 
+## v0.5.1 P0/P1 implementation
+
+The current implementation branch extends the original revision engine with typed Patches/ResponseUnits, immutable revision batches, atomic active-document publication, deterministic Response Letter excerpts and a final release manifest. For the current end-to-end command sequence, use [docs/WORKFLOW.md](docs/WORKFLOW.md) and the repository [SKILL.md](SKILL.md). Implementation and validation boundaries are recorded in [docs/P1_IMPLEMENTATION_STATUS.md](docs/P1_IMPLEMENTATION_STATUS.md).
+
+**Important:** older examples later in this README show the legacy revision-plan adapter. On the P1 implementation branch, do not send Marked DOCX outputs to a shared/reused path. Use the `runs/batch-{id}/` lifecycle documented above; publish a batch only after its Patch and Workflow task verification passes. Final page/line mapping is a round-level step after all document batches are published.
+
 ## What it does
 
 - Inspects DOCX comments, native Word selection ranges, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
