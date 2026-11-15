@@ -404,6 +404,10 @@ def build_final_release_manifest(
                     f"Workflow task {task_id} has no ResponseUnit comments but is not verified/completed."
                 )
             continue
+        if task.get("status") != "completed":
+            raise ReleaseGateError(
+                f"Workflow task {task_id} has reviewer comments but is not completed in the Workflow Ledger."
+            )
         for raw_comment_id in comment_ids:
             comment_id = str(raw_comment_id)
             candidates = response_units_by_task_comment.get((task_id, comment_id), [])
