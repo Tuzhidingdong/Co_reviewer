@@ -2703,12 +2703,29 @@ def cmd_supersede_patch(args):
 
 def cmd_export_revision_plan(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
-    output_path = Path(args.out).expanduser().resolve()
+    ledger = _load_revision_ledger(ledger_path)
+    batch_dir = Path(args.batch_dir).expanduser().resolve() if getattr(args, "batch_dir", None) else None
+    if batch_dir is not None:
+        from co_reviewer.batch_store import read_batch_intent
+        intent = read_batch_intent(batch_dir)
+        scope_ledger_roles = {
+            operation.document
+            for patch in ledger.patches
+            if patch.status == "planned"
+            for operation in patch.operations
+        }
+        if scope_ledger_roles != set(intent["documents"]):
+            raise ValueError("The selected Batch directory does not match the planned Patch document roles.")
+        output_value = args.out or str(batch_dir / "revision_plan.json")
+    else:
+        output_value = args.out or "revision_plan.json"
+    output_path = Path(output_value).expanduser().resolve()
     if output_path == ledger_path:
         raise ValueError("Legacy revision plan output must not overwrite the RevisionLedger.")
+    if batch_dir is not None and batch_dir not in output_path.parents:
+        raise ValueError("An immutable-batch revision plan must be written inside its batch directory.")
     if output_path.exists():
         raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
-    ledger = _load_revision_ledger(ledger_path)
     plan = ledger.to_legacy_revision_plan()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(output_path, plan)
@@ -2719,9 +2736,32 @@ def cmd_export_revision_plan(args):
 
 
 def cmd_apply(args):
-    plan_path = Path(args.plan)
-    report_path = Path(args.report)
+    plan_path = Path(args.plan).expanduser().resolve()
+    batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    report_value = args.report or (
+        str(batch_dir / "apply_report.json") if batch_dir is not None else "revision_apply_report.json"
+    )
+    report_path = Path(report_value).expanduser().resolve()
+    if batch_dir is not None:
+        if batch_dir not in report_path.parents:
+            raise ValueError("Apply report for an immutable batch must be written inside its batch directory.")
+        if report_path.exists():
+            raise FileExistsError(
+                f"Immutable batch apply report already exists; start a new batch instead of overwriting: {report_path}"
+            )
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if batch_dir is not None:
+        for item in plan.get("revision_items", []):
+            for target in item.get("targets", []):
+                output_file = Path(target["output_file"]).expanduser().resolve()
+                if batch_dir not in output_file.parents:
+                    raise ValueError(
+                        f"Batch output escapes its immutable directory: {output_file}"
+                    )
+                if output_file.exists():
+                    raise FileExistsError(
+                        f"Batch output already exists; no in-place retry is permitted: {output_file}"
+                    )
     validate_apply_artifact_paths(plan, plan_path, report_path)
     revision_ledger = None
     if getattr(args, "revision_ledger", None):
