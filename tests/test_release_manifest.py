@@ -328,6 +328,13 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "Manuscript": {"file": str(self.source), "sha256": source_sha, "batch_id": None},
         }
         failed_output_files = {"Manuscript": [str(output_path)]}
+        workflow_after = json.loads(json.dumps(self.workflow, ensure_ascii=False))
+        workflow_after["tasks"][0]["status"] = "recheck_required"
+        workflow_after["tasks"][0]["recheck_from"] = "completed"
+        workflow_after["tasks"][0]["invalidation_reason"] = "Synthetic failed-batch recovery."
+        workflow_after_sha = hashlib.sha256(
+            json.dumps(workflow_after, ensure_ascii=False, indent=2).encode("utf-8")
+        ).hexdigest()
         recovery_id = "recovery-synthetic-003"
         event = RevisionEvent(
             event_id="event-recovery-003",
@@ -357,7 +364,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "workflow_ledger_file": str(self.workflow_path),
             "revision_ledger_file": str(self.revision_path),
             "workflow_ledger_sha256_before": "1" * 64,
-            "workflow_ledger_sha256_after": "2" * 64,
+            "workflow_after": workflow_after,
+            "workflow_ledger_sha256_after": workflow_after_sha,
             "revision_ledger_sha256_before": "3" * 64,
             "revision_ledger_sha256_after": "4" * 64,
             "batch_intent_sha256": intent_sha,
@@ -379,7 +387,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "recovery_id": recovery_id,
             "batch_id": batch_id,
             "workflow_ledger_file": str(self.workflow_path),
-            "workflow_ledger_sha256": "2" * 64,
+            "workflow_ledger_sha256": workflow_after_sha,
             "revision_ledger_file": str(self.revision_path),
             "revision_ledger_sha256": "4" * 64,
             "batch_recovery_intent_sha256": recovery_intent_sha,

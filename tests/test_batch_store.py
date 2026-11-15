@@ -357,6 +357,38 @@ class BatchStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        recovery_intent_path = batch_dir / "batch_recovery_intent.json"
+        original_recovery_intent = recovery_intent_path.read_text(encoding="utf-8")
+        tampered_recovery_intent = json.loads(original_recovery_intent)
+        tampered_recovery_intent["workflow_after"]["active_documents"]["Manuscript"]["file"] = str(
+            self.root / "forged-parent.docx"
+        )
+        recovery_intent_path.write_text(
+            json.dumps(tampered_recovery_intent, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tampered_receipt = dict(receipt)
+        tampered_receipt["batch_recovery_intent_sha256"] = hashlib.sha256(
+            recovery_intent_path.read_bytes()
+        ).hexdigest()
+        receipt_path.write_text(
+            json.dumps(tampered_receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(BatchStoreError, "snapshot hash"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+            )
+        recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
         assert_no_uncommitted_role_batches(
             self.runs_dir,
             ["Manuscript"],

@@ -242,6 +242,44 @@ def _validate_recovered_batch_receipt(
     ):
         raise BatchStoreError("Recovered batch task sets differ from its immutable batch intent.")
 
+    workflow_after = recovery.get("workflow_after")
+    if (
+        not isinstance(workflow_after, Mapping)
+        or workflow_after.get("revision_round_id") != intent.get("revision_round_id")
+        or _json_payload_sha256(workflow_after) != recovery.get("workflow_ledger_sha256_after")
+    ):
+        raise BatchStoreError("Recovered batch staged Workflow Ledger snapshot hash or revision round is invalid.")
+
+    snapshot_active_documents = workflow_after.get("active_documents")
+    if not isinstance(snapshot_active_documents, Mapping):
+        raise BatchStoreError("Recovered batch staged Workflow Ledger snapshot has no active document pointers.")
+    for role, parent in expected_parent_documents.items():
+        pointer = snapshot_active_documents.get(role)
+        if (
+            not isinstance(pointer, Mapping)
+            or not isinstance(pointer.get("file"), str)
+            or Path(pointer["file"]).expanduser().resolve() != Path(parent["file"]).expanduser().resolve()
+            or pointer.get("sha256") != parent["sha256"]
+            or pointer.get("batch_id") != parent["batch_id"]
+        ):
+            raise BatchStoreError(
+                f"Recovered batch staged Workflow Ledger snapshot changed the active parent pointer for {role}."
+            )
+
+    snapshot_tasks = {
+        row.get("task_id"): row
+        for row in workflow_after.get("tasks", [])
+        if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
+    } if isinstance(workflow_after.get("tasks"), list) else {}
+    if any(
+        task_id not in snapshot_tasks
+        or snapshot_tasks[task_id].get("status") != "recheck_required"
+        for task_id in selected_task_ids
+    ):
+        raise BatchStoreError(
+            "Recovered batch staged Workflow Ledger snapshot does not require recheck for every selected task."
+        )
+
     patch_ids = recovery.get("patch_ids")
     if (
         not isinstance(patch_ids, list)
