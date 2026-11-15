@@ -81,9 +81,27 @@ _UNIT_TOKEN = re.compile(
 )
 
 
-def _token_delta(before: str, after: str, pattern: re.Pattern[str]) -> dict[str, list[str]]:
-    old_tokens = pattern.findall(before or "")
-    new_tokens = pattern.findall(after or "")
+def _token_delta(
+    before: str,
+    after: str,
+    pattern: re.Pattern[str],
+    *,
+    exclude_patterns: tuple[re.Pattern[str], ...] = (),
+) -> dict[str, list[str]]:
+    def extract(value: str) -> list[str]:
+        excluded = [
+            match.span()
+            for excluded_pattern in exclude_patterns
+            for match in excluded_pattern.finditer(value or "")
+        ]
+        return [
+            match.group(0)
+            for match in pattern.finditer(value or "")
+            if not any(start < match.end() and match.start() < end for start, end in excluded)
+        ]
+
+    old_tokens = extract(before or "")
+    new_tokens = extract(after or "")
     old_counts: dict[str, int] = {}
     new_counts: dict[str, int] = {}
     for token in old_tokens:
@@ -130,7 +148,17 @@ def audit_patch_operation_deltas(
                     f"PatchOperation {operation.operation_id} has no complete human-reviewed ResponseUnit link."
                 )
             categories = {
-                "numeric_values": _token_delta(operation.find, operation.replace, _NUMERIC_TOKEN),
+                "numeric_values": _token_delta(
+                    operation.find,
+                    operation.replace,
+                    _NUMERIC_TOKEN,
+                    exclude_patterns=(
+                        _UNIT_TOKEN,
+                        _FIGURE_TABLE_TOKEN,
+                        _CITATION_TOKEN,
+                        _SAMPLE_TOKEN,
+                    ),
+                ),
                 "units": _token_delta(operation.find, operation.replace, _UNIT_TOKEN),
                 "figure_table_equation_references": _token_delta(operation.find, operation.replace, _FIGURE_TABLE_TOKEN),
                 "citation_markers": _token_delta(operation.find, operation.replace, _CITATION_TOKEN),
