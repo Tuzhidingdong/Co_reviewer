@@ -177,6 +177,132 @@ class BatchStoreTests(unittest.TestCase):
             self.workflow,
         )
 
+    def test_role_lock_rejects_receipts_without_a_complete_transaction_chain(self):
+        cases = (
+            ("batch_published.json", "publication intent and receipt"),
+            ("batch_rollback.json", "publication chain"),
+        )
+        for receipt_name, expected_error in cases:
+            with self.subTest(receipt=receipt_name):
+                intent = self._intent(batch_id=f"receipt-{receipt_name.split('.')[0]}")
+                batch_dir = Path(intent["batch_dir"])
+                (batch_dir / receipt_name).write_text(
+                    json.dumps({"batch_id": intent["batch_id"], "status": "published"}),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(BatchStoreError, expected_error):
+                    assert_no_uncommitted_role_batches(
+                        self.runs_dir,
+                        ["Manuscript"],
+                        ["T2"],
+                        {},
+                        self.workflow,
+                    )
+
+    def test_hash_bound_publication_and_rollback_chains_release_role_reservation(self):
+        intent = self._intent()
+        batch_dir = Path(intent["batch_dir"])
+        output = Path(intent["documents"]["Manuscript"]["output_file"])
+        output.write_bytes(b"verified synthetic published DOCX")
+        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+        revision_path = self.root / "revision_ledger.json"
+        revision_path.write_text("{}", encoding="utf-8")
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "revision_ledger_file": str(revision_path.resolve()),
+            "batch_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_intent.json").read_bytes()
+            ).hexdigest(),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P1"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.source.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output.resolve()),
+                }
+            },
+        }
+        write_json_new(batch_dir / "batch_scope.json", scope)
+        patch = SimpleNamespace(
+            patch_id="P1",
+            status="verified",
+            operations=[SimpleNamespace(document="Manuscript", output_file=str(output))],
+            verified_output_hashes=[{"path": str(output), "sha256": output_sha}],
+        )
+        published_workflow, publish_receipt = publish_active_pointers(
+            self.workflow,
+            self.workflow_path,
+            batch_dir,
+            SimpleNamespace(patches=[patch]),
+        )
+        intent_sha = hashlib.sha256((batch_dir / "batch_intent.json").read_bytes()).hexdigest()
+        scope_sha = hashlib.sha256((batch_dir / "batch_scope.json").read_bytes()).hexdigest()
+        revision_sha = hashlib.sha256(revision_path.read_bytes()).hexdigest()
+        publish_receipt.update({
+            "revision_ledger_file": str(revision_path.resolve()),
+            "revision_ledger_sha256": revision_sha,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+        })
+        publish_intent = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "prepared_at_utc": STAMP,
+            "active_documents_to_publish": publish_receipt["active_documents"],
+            "revision_ledger_sha256": revision_sha,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+        }
+        write_json_new(batch_dir / "batch_publish_intent.json", publish_intent)
+        write_json_new(batch_dir / "batch_published.json", publish_receipt)
+
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T2"],
+            {"P1": "verified"},
+            published_workflow,
+        )
+
+        reason = "Synthetic rollback for transaction-chain test."
+        rolled_back_workflow, rollback_receipt = rollback_active_pointers(
+            published_workflow,
+            self.workflow_path,
+            batch_dir,
+            reason=reason,
+        )
+        rollback_intent = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+            "reason": reason,
+            "prepared_at_utc": STAMP,
+            "restored_active_documents": rollback_receipt["restored_active_documents"],
+        }
+        write_json_new(batch_dir / "batch_rollback_intent.json", rollback_intent)
+        rollback_receipt.update({
+            "reason": reason,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+            "rollback_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_rollback_intent.json").read_bytes()
+            ).hexdigest(),
+        })
+        write_json_new(batch_dir / "batch_rollback.json", rollback_receipt)
+
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T2"],
+            {"P1": "verified"},
+            rolled_back_workflow,
+        )
+
     def test_full_reauthorized_task_set_can_rebase_to_a_new_batch_directory(self):
         intent = self._intent()
         batch_dir = Path(intent["batch_dir"])
