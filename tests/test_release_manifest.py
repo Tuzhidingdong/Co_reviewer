@@ -21,6 +21,7 @@ from co_reviewer.release_manifest import (
     _require_word_page_count,
     _validate_release_batch_scope,
     _validate_response_unit_task_attribution,
+    _collect_release_batch_history,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
@@ -271,6 +272,168 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 [SimpleNamespace(response_unit_id="RU-EXTRA", comment_id="C2", linked_task_ids=["T1"])],
                 task_map,
             )
+
+    def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):
+        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        revision = SimpleNamespace(revision_round_id="round-release-tests", patches=[])
+        workflow_events = []
+        active_pointer = None
+
+        def add_batch(batch_id, task_id, patch_id, rolled_back):
+            nonlocal active_pointer
+            batch_dir = self.root / "runs" / f"batch-{batch_id}"
+            documents_dir = batch_dir / "documents"
+            documents_dir.mkdir(parents=True)
+            output_path = documents_dir / "Manuscript.marked.docx"
+            output_path.write_bytes(f"synthetic output {batch_id}".encode("utf-8"))
+            output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
+            operation = SimpleNamespace(document="Manuscript", output_file=str(output_path))
+            revision.patches.append(SimpleNamespace(
+                patch_id=patch_id,
+                task_id=task_id,
+                status="superseded" if rolled_back else "verified",
+                operations=[operation],
+            ))
+            intent = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": "round-release-tests",
+                "workflow_ledger_file": str(self.workflow_path),
+                "selected_task_ids": [task_id],
+                "all_selected_task_ids": [task_id],
+                "documents": {
+                    "Manuscript": {
+                        "parent_file": str(self.source),
+                        "parent_sha256": source_sha,
+                        "output_file": str(output_path),
+                    }
+                },
+            }
+            intent_path = batch_dir / "batch_intent.json"
+            intent_path.write_text(json.dumps(intent, ensure_ascii=False), encoding="utf-8")
+            intent_sha = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+            scope = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": "round-release-tests",
+                "revision_ledger_file": str(self.revision_path),
+                "selected_task_ids": [task_id],
+                "batch_task_ids": [task_id],
+                "batch_intent_sha256": intent_sha,
+                "patch_ids": [patch_id],
+                "documents": {
+                    "Manuscript": {
+                        "input_file": str(self.source),
+                        "input_sha256": source_sha,
+                        "output_file": str(output_path),
+                    }
+                },
+            }
+            scope_path = batch_dir / "batch_scope.json"
+            scope_path.write_text(json.dumps(scope, ensure_ascii=False), encoding="utf-8")
+            scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
+            published_pointer = {
+                "file": str(output_path.resolve()),
+                "sha256": output_sha,
+                "batch_id": batch_id,
+                "updated_at_utc": STAMP,
+            }
+            pointer_map = {"Manuscript": published_pointer}
+            revision_sha = "a" * 64
+            publish_intent = {
+                "batch_id": batch_id,
+                "revision_ledger_sha256": revision_sha,
+                "batch_intent_sha256": intent_sha,
+                "batch_scope_sha256": scope_sha,
+                "active_documents_to_publish": pointer_map,
+            }
+            (batch_dir / "batch_publish_intent.json").write_text(
+                json.dumps(publish_intent, ensure_ascii=False), encoding="utf-8"
+            )
+            publish_receipt = {
+                "batch_id": batch_id,
+                "status": "published",
+                "workflow_ledger_file": str(self.workflow_path),
+                "revision_ledger_file": str(self.revision_path),
+                "revision_ledger_sha256": revision_sha,
+                "batch_intent_sha256": intent_sha,
+                "batch_scope_sha256": scope_sha,
+                "selected_task_ids": [task_id],
+                "active_documents": pointer_map,
+            }
+            (batch_dir / "batch_published.json").write_text(
+                json.dumps(publish_receipt, ensure_ascii=False), encoding="utf-8"
+            )
+            workflow_events.append({
+                "task_id": task_id,
+                "event_type": "batch_published",
+                "batch_id": batch_id,
+                "documents": pointer_map,
+            })
+            if rolled_back:
+                restored = {
+                    "Manuscript": {
+                        "file": str(self.source.resolve()),
+                        "sha256": source_sha,
+                        "batch_id": None,
+                        "updated_at_utc": STAMP,
+                    }
+                }
+                rollback_intent = {
+                    "batch_id": batch_id,
+                    "batch_intent_sha256": intent_sha,
+                    "batch_scope_sha256": scope_sha,
+                    "restored_active_documents": restored,
+                }
+                (batch_dir / "batch_rollback_intent.json").write_text(
+                    json.dumps(rollback_intent, ensure_ascii=False), encoding="utf-8"
+                )
+                rollback_receipt = {
+                    "batch_id": batch_id,
+                    "status": "rolled_back",
+                    "retained_batch_files": True,
+                    "workflow_ledger_file": str(self.workflow_path),
+                    "selected_task_ids": [task_id],
+                    "batch_intent_sha256": intent_sha,
+                    "batch_scope_sha256": scope_sha,
+                    "restored_active_documents": restored,
+                }
+                (batch_dir / "batch_rollback.json").write_text(
+                    json.dumps(rollback_receipt, ensure_ascii=False), encoding="utf-8"
+                )
+                workflow_events.append({
+                    "task_id": task_id,
+                    "event_type": "batch_rolled_back",
+                    "batch_id": batch_id,
+                    "documents": restored,
+                })
+            else:
+                active_pointer = published_pointer
+
+        add_batch("batch-old-001", "T1", "P1", rolled_back=True)
+        add_batch("batch-current-002", "T2", "P2", rolled_back=False)
+        workflow_ledger = {
+            "tasks": [{"task_id": "T1"}, {"task_id": "T2"}],
+            "events": workflow_events,
+        }
+        records = _collect_release_batch_history(
+            workflow_ledger,
+            {"Manuscript": active_pointer},
+            revision_ledger=revision,
+            revision_ledger_path=self.revision_path,
+            workflow_ledger_path=self.workflow_path,
+        )
+        self.assertEqual(
+            [row["batch_id"] for row in records],
+            ["batch-current-002", "batch-old-001"],
+        )
+        status_by_batch = {row["batch_id"]: row["publication_status"] for row in records}
+        self.assertEqual(status_by_batch["batch-old-001"], "rolled_back")
+        self.assertEqual(status_by_batch["batch-current-002"], "published")
+        rolled_back_record = next(row for row in records if row["batch_id"] == "batch-old-001")
+        self.assertIn("rollback_intent", rolled_back_record)
+        self.assertIn("rollback_receipt", rolled_back_record)
+        self.assertEqual(rolled_back_record["all_selected_task_ids"], ["T1"])
 
     def test_release_batch_scope_must_match_ledger_patch_task_and_document_ownership(self):
         parent = self.root / "parent.docx"
