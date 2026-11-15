@@ -1766,24 +1766,6 @@ def cmd_build_revision_ledger(args):
         existing_patch_statuses = {
             patch.patch_id: patch.status for patch in existing_before_build.patches
         }
-        unfinished = [
-            patch for patch in existing_before_build.patches
-            if patch.task_id in selected_task_ids and patch.status in {"planned", "preflighted", "approved", "applied"}
-        ]
-        if unfinished:
-            details = []
-            for patch in unfinished:
-                batch_roots = {
-                    next((parent for parent in Path(operation.output_file).resolve().parents
-                          if (parent / "batch_intent.json").is_file()), None)
-                    for operation in patch.operations
-                }
-                details.append(f"{patch.patch_id} (existing batch: {', '.join(str(item) for item in sorted((x for x in batch_roots if x), key=str)) or 'unknown'})")
-            raise ValueError(
-                "Selected task(s) already have planned Patches. Resume the recorded batch; "
-                "do not allocate a second batch for the same unexecuted operations. "
-                + "; ".join(details)
-            )
     if selected_roles:
         from co_reviewer.batch_store import (
             assert_no_uncommitted_role_batches,
@@ -1797,6 +1779,7 @@ def cmd_build_revision_ledger(args):
         assert_no_uncommitted_role_batches(
             runs_root,
             selected_roles,
+            selected_task_ids,
             existing_patch_statuses,
         )
         batch_intent = create_batch_intent(
