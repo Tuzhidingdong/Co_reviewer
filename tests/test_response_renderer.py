@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from docx import Document
 
@@ -15,7 +16,7 @@ from co_reviewer.revision_models import (
     ResponseUnit,
     response_units_to_legacy_plan,
 )
-from co_reviewer.release_manifest import build_patch_operation_change_inventory
+from co_reviewer.release_manifest import audit_patch_operation_deltas
 from co_reviewer.response_renderer import render_response_letter
 from response_letter_docx import render_response_docx
 
@@ -89,7 +90,7 @@ class ResponseRendererPatchExcerptTests(unittest.TestCase):
         self.assertIn("PatchOperation OP-RESULT-01", markdown)
         self.assertNotIn("model-generated", markdown.lower())
 
-    def test_patch_operation_inventory_surfaces_numeric_citation_and_cross_reference_deltas(self):
+    def test_patch_operation_delta_audit_surfaces_numeric_unit_citation_and_identifier_changes(self):
         operation = PatchOperation.from_mapping({
             "operation_id": "OP-MARKERS-01",
             "document": "Manuscript",
@@ -109,19 +110,33 @@ class ResponseRendererPatchExcerptTests(unittest.TestCase):
             proposed_response="The result and reference were updated.",
             operations=[operation],
         )
-        inventory = build_patch_operation_change_inventory(
-            type("LedgerView", (), {"patches": [patch]})()
+        response_unit = SimpleNamespace(
+            response_unit_id="RU-MARKERS-C1",
+            linked_operation_ids=["OP-MARKERS-01"],
+            reviewer="Reviewer 1",
+            status="completed",
+            semantic_review_confirmed=True,
+            comment_id="C-Reviewer-1",
+        )
+        inventory = audit_patch_operation_deltas(
+            SimpleNamespace(response_units=[response_unit], patches=[patch])
         )
         row = inventory[0]
-        categories = row["marker_categories"]
-        self.assertEqual(categories["numeric_literals"]["removed_values"], ["1.2"])
-        self.assertEqual(categories["numeric_literals"]["added_values"], ["1.5", "2"])
-        self.assertEqual(categories["citation_markers"]["removed_values"], ["[4]"])
-        self.assertEqual(categories["citation_markers"]["added_values"], ["[5]"])
-        self.assertEqual(categories["figure_table_reference_markers"]["added_values"], ["Fig. 2"])
-        self.assertEqual(categories["identifier_candidates"]["before"][0]["value"], "AB-12")
-        self.assertTrue(row["author_semantic_review_required"])
-        self.assertIn("numeric_literals", row["changed_categories"])
+        self.assertEqual(row["review_status"], "human_semantic_review_completed")
+        self.assertEqual(row["deltas"]["numeric_values"]["removed"], ["1.2"])
+        self.assertEqual(row["deltas"]["numeric_values"]["added"], ["1.5"])
+        self.assertEqual(row["deltas"]["units"], {"removed": [], "added": []})
+        self.assertEqual(row["deltas"]["citation_markers"]["removed"], ["[4]"])
+        self.assertEqual(row["deltas"]["citation_markers"]["added"], ["[5]"])
+        self.assertEqual(
+            row["deltas"]["figure_table_equation_references"]["added"],
+            ["Fig. 2"],
+        )
+        self.assertEqual(
+            row["deltas"]["sample_or_component_identifiers"],
+            {"removed": [], "added": []},
+        )
+        self.assertIn("numeric_values", row["changed_categories"])
         self.assertIn("citation_markers", row["changed_categories"])
 
     def test_docx_response_contains_the_same_exact_patch_excerpt(self):
