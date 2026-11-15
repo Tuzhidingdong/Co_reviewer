@@ -1684,8 +1684,82 @@ def cmd_sync_workflow_ledger(args):
             for task in workflow.get("tasks", [])
             if isinstance(task, dict)
         }
+        # A later immutable batch may deliberately continue from the exact output
+        # of an already verified Patch. Such a predecessor remains a verified
+        # historical step; do not create a same-target recheck loop solely because
+        # the later Patch shares its paragraph/object target. If its ResponseUnit
+        # already has final location evidence, keep the conservative invalidation
+        # path so stale final locations cannot survive a new document revision.
+        preserve_verified_predecessors: set[str] = set()
+        for synchronized_task_id in synchronized:
+            synchronized_patches = [
+                patch for patch in revision_ledger.patches
+                if patch.task_id == synchronized_task_id and patch.status == "verified"
+            ]
+            synchronized_task = previous_tasks.get(synchronized_task_id)
+            if not synchronized_task:
+                continue
+            synchronized_groups = set(synchronized_task.get("target_groups", []))
+            for current_patch in synchronized_patches:
+                current_inputs_by_role: dict[str, set[Path]] = defaultdict(set)
+                for operation in current_patch.operations:
+                    current_inputs_by_role[operation.document].add(
+                        Path(operation.input_file).expanduser().resolve()
+                    )
+                for predecessor in revision_ledger.patches:
+                    if (
+                        predecessor.task_id == synchronized_task_id
+                        or predecessor.status != "verified"
+                    ):
+                        continue
+                    predecessor_task = previous_tasks.get(predecessor.task_id)
+                    if (
+                        not predecessor_task
+                        or predecessor_task.get("status") not in {"verified", "completed"}
+                    ):
+                        continue
+                    shared_groups = synchronized_groups.intersection(
+                        set(predecessor_task.get("target_groups", []))
+                    )
+                    shared_roles = {
+                        group.split("|", 1)[0]
+                        for group in shared_groups
+                        if isinstance(group, str) and "|" in group
+                    }
+                    if not shared_roles:
+                        continue
+                    follows_predecessor_output = all(
+                        any(
+                            Path(operation.output_file).expanduser().resolve()
+                            in current_inputs_by_role.get(role, set())
+                            for operation in predecessor.operations
+                            if operation.document == role
+                        )
+                        for role in shared_roles
+                    )
+                    if not follows_predecessor_output:
+                        continue
+                    linked_units = [
+                        unit for unit in revision_ledger.response_units
+                        if predecessor.task_id in unit.linked_task_ids
+                    ]
+                    has_final_locations = any(
+                        unit.location_requirement != "not_required"
+                        and (
+                            unit.status in {"location_mapped", "completed"}
+                            or bool(unit.location_map_fingerprint)
+                            or bool(unit.final_locations)
+                        )
+                        for unit in linked_units
+                    )
+                    if not has_final_locations:
+                        preserve_verified_predecessors.add(predecessor.task_id)
+
         updated_tasks, invalidated = invalidate_affected_tasks(
-            workflow.get("tasks", []), synchronized, reason
+            workflow.get("tasks", []),
+            synchronized,
+            reason,
+            preserve_verified_conflict_task_ids=sorted(preserve_verified_predecessors),
         )
         workflow["tasks"] = updated_tasks
         current_tasks = {

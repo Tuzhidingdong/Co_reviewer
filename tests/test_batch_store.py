@@ -613,6 +613,7 @@ class BatchStoreTests(unittest.TestCase):
                     ["T1"],
                     {"P1": "abandoned"},
                     final_workflow,
+                    revision_events=final_ledger.events,
                 )
         receipt_path.write_text(
             json.dumps(receipt, ensure_ascii=False, indent=2),
@@ -644,6 +645,7 @@ class BatchStoreTests(unittest.TestCase):
                 ["T1"],
                 {"P1": "abandoned"},
                 final_workflow,
+                    revision_events=final_ledger.events,
             )
         recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
         receipt_path.write_text(
@@ -690,6 +692,7 @@ class BatchStoreTests(unittest.TestCase):
                 ["T1"],
                 {"P1": "abandoned"},
                 final_workflow,
+                    revision_events=final_ledger.events,
             )
         recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
         receipt_path.write_text(

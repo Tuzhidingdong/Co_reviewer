@@ -1080,7 +1080,10 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(patches["T1-r2"].status, "planned")
         self.assertEqual(patches["T1-r2"].supersedes_patch_id, "T1")
         self.assertEqual(patches["T1-r2"].operations[0].input_file, str(revision_one))
-        self.assertEqual(patches["T1-r2"].operations[0].output_file, str(revision_two))
+        rebased_output = Path(patches["T1-r2"].operations[0].output_file)
+        self.assertEqual(rebased_output.parent.name, "documents")
+        self.assertEqual(rebased_output.parents[1].parent, self.root / "runs")
+        self.assertEqual(rebased_output, Path(merged.documents[0].output_file))
         unit = merged.response_units[0]
         self.assertEqual(unit.linked_patch_ids, ["T1-r2"])
         self.assertEqual(unit.status, "draft")
@@ -1088,7 +1091,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(merged.documents[0].document_id, "doc-manuscript")
         self.assertEqual(merged.documents[0].revision_id, updated_identity.revision_id)
         self.assertEqual(merged.documents[0].input_file, str(revision_one))
-        self.assertEqual(merged.documents[0].output_file, str(revision_two))
+        self.assertEqual(Path(merged.documents[0].output_file), rebased_output)
         self.assertEqual(merged.documents[0].source_sha256, sha256_file(revision_one))
 
     def test_same_round_document_revision_cannot_skip_previous_verified_output(self):

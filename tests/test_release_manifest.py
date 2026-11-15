@@ -30,7 +30,11 @@ from co_reviewer.release_manifest import (
     build_final_docx_consistency_audit,
     build_final_release_manifest,
 )
-from co_reviewer.batch_store import _batch_artifact_inventory, _prepare_recovery_workflow
+from co_reviewer.batch_store import (
+    _batch_artifact_inventory,
+    _json_payload_sha256,
+    _prepare_recovery_workflow,
+)
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.revision_models import (
     ResponseUnit,
@@ -449,10 +453,16 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "workflow_ledger_sha256_before": hashlib.sha256(
                 self.workflow_path.read_bytes()
             ).hexdigest(),
+            "workflow_ledger_payload_sha256_before": _json_payload_sha256(self.workflow),
             "workflow_after": workflow_after,
             "workflow_ledger_sha256_after": workflow_after_sha,
-            "revision_ledger_sha256_before": "3" * 64,
+            "revision_ledger_sha256_before": hashlib.sha256(
+                self.revision_path.read_bytes()
+            ).hexdigest(),
             "revision_ledger_sha256_after": "4" * 64,
+            "revision_ledger_payload_sha256_before": _json_payload_sha256(
+                json.loads(self.revision_path.read_text(encoding="utf-8"))
+            ),
             "batch_intent_sha256": intent_sha,
             "batch_scope_sha256": scope_sha,
             "selected_task_ids": ["T1"],

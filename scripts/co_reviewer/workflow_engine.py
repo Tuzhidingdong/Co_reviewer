@@ -756,6 +756,8 @@ def invalidate_affected_tasks(
     tasks: Any,
     changed_task_ids: Sequence[str],
     reason: str,
+    *,
+    preserve_verified_conflict_task_ids: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Invalidate same-target conflict peers and all transitive dependents."""
     if not isinstance(reason, str) or not reason.strip():
@@ -772,6 +774,21 @@ def invalidate_affected_tasks(
     unknown = changed - set(by_id)
     if unknown:
         raise WorkflowValidationError("Unknown changed task(s): " + ", ".join(sorted(unknown)))
+    if not isinstance(preserve_verified_conflict_task_ids, (list, tuple, set)):
+        raise WorkflowValidationError(
+            "preserve_verified_conflict_task_ids must be a sequence of verified task IDs."
+        )
+    preserved = set(preserve_verified_conflict_task_ids)
+    invalid_preserved = sorted(
+        task_id for task_id in preserved
+        if task_id not in by_id
+        or by_id[task_id].get("status") not in {"verified", "completed"}
+    )
+    if invalid_preserved:
+        raise WorkflowValidationError(
+            "Only existing verified/completed task IDs may be preserved as sequential predecessors: "
+            + ", ".join(invalid_preserved)
+        )
 
     schedule = build_workflow_schedule(rows)
     component_of = {
@@ -791,7 +808,10 @@ def invalidate_affected_tasks(
         if task_id in changed:
             continue
         groups, _ = _string_list(task.get("target_groups", []), "target_groups", task_id)
-        if any(component_of.get(group) in changed_components for group in groups):
+        if (
+            task_id not in preserved
+            and any(component_of.get(group) in changed_components for group in groups)
+        ):
             conflicting.add(task_id)
 
     dependents: dict[str, list[str]] = defaultdict(list)
