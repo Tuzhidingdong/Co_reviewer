@@ -1762,7 +1762,7 @@ def cmd_build_revision_ledger(args):
         existing_before_build = _load_revision_ledger(output_path)
         unfinished = [
             patch for patch in existing_before_build.patches
-            if patch.task_id in selected_task_ids and patch.status == "planned"
+            if patch.task_id in selected_task_ids and patch.status in {"planned", "preflighted", "approved", "applied"}
         ]
         if unfinished:
             details = []
@@ -2780,6 +2780,8 @@ def cmd_apply(args):
     output_plan_path = _batch_plan_snapshot(batch_dir, "applied") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if batch_dir is not None:
+        if report_path == output_plan_path:
+            raise ValueError("Apply report and applied-plan snapshot must use different paths.")
         for item in plan.get("revision_items", []):
             for target in item.get("targets", []):
                 output_file = Path(target["output_file"]).expanduser().resolve()
