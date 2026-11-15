@@ -158,6 +158,84 @@ def audit_patch_operation_deltas(
     return rows
 
 
+_NUMERIC_MARKER_RE = re.compile(
+    r"(?<![A-Za-z0-9])[-+−]?\\d+(?:,\\d{3})*(?:\\.\\d+)?(?:[eE][-+]?\\d+)?"
+)
+_CITATION_MARKER_RE = re.compile(
+    r"\\[\\s*\\d+(?:\\s*[,;\\-–]\\s*\\d+)*\\s*\\]"
+    r"|\\([A-Z][A-Za-z'’\\-]+(?:\\s+et\\s+al\\.)?,?\\s+\\d{4}[a-z]?\\)"
+)
+_CROSS_REFERENCE_MARKER_RE = re.compile(
+    r"\\b(?:Fig(?:ure)?\\.?|Table|Scheme|Eq(?:uation)?\\.?)\\s*S?\\d+[A-Za-z]?\\b",
+    re.IGNORECASE,
+)
+_IDENTIFIER_CANDIDATE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Z]{1,5}[-_]\\d{1,5}[A-Za-z]?|[A-Za-z]{1,8}[-_]\\d{1,5}[A-Za-z]?|[A-Z]{1,5}\\d{1,5}[A-Za-z]?)(?![A-Za-z0-9])"
+)
+
+
+def _marker_records(text: str, pattern: re.Pattern[str], *, context_radius: int = 32) -> list[dict[str, Any]]:
+    records = []
+    for match in pattern.finditer(text or ""):
+        start, end = match.span()
+        context = (text[max(0, start - context_radius):min(len(text), end + context_radius)]).strip()
+        records.append({
+            "value": match.group(0),
+            "start_offset": start,
+            "end_offset": end,
+            "context_sha256": __import__("hashlib").sha256(context.encode("utf-8")).hexdigest(),
+        })
+    return records
+
+
+def build_patch_operation_change_inventory(revision_ledger: RevisionLedger) -> list[dict[str, Any]]:
+    """Inventory lexical semantic markers around exact approved PatchOperation deltas."""
+    inventory: list[dict[str, Any]] = []
+    for patch in revision_ledger.patches:
+        for operation in patch.operations:
+            before = operation.find
+            after = operation.replace
+            category_patterns = {
+                "numeric_literals": _NUMERIC_MARKER_RE,
+                "citation_markers": _CITATION_MARKER_RE,
+                "figure_table_reference_markers": _CROSS_REFERENCE_MARKER_RE,
+                "identifier_candidates": _IDENTIFIER_CANDIDATE_RE,
+            }
+            category_rows: dict[str, dict[str, Any]] = {}
+            for category, pattern in category_patterns.items():
+                before_rows = _marker_records(before, pattern)
+                after_rows = _marker_records(after, pattern)
+                before_values = [row["value"] for row in before_rows]
+                after_values = [row["value"] for row in after_rows]
+                category_rows[category] = {
+                    "before": before_rows,
+                    "after": after_rows,
+                    "added_values": sorted(set(after_values) - set(before_values)),
+                    "removed_values": sorted(set(before_values) - set(after_values)),
+                }
+            changed_categories = [
+                category for category, row in category_rows.items()
+                if row["added_values"] or row["removed_values"]
+            ]
+            inventory.append({
+                "patch_id": patch.patch_id,
+                "task_id": patch.task_id,
+                "operation_id": operation.operation_id,
+                "document": operation.document,
+                "source_comment_ids": list(operation.source_comment_ids),
+                "status": patch.status,
+                "marker_categories": category_rows,
+                "changed_categories": changed_categories,
+                "author_semantic_review_required": bool(changed_categories),
+                "interpretation_policy": (
+                    "Lexical inventory only. Added/removed numbers, nearby context, identifier candidates "
+                    "and citation/figure/table markers are surfaced for author review; this is not a "
+                    "scientific equivalence, unit-conversion or sample-identity judgment."
+                ),
+            })
+    return inventory
+
+
 def build_final_docx_consistency_audit(revision_ledger: RevisionLedger) -> dict[str, Any]:
     """Run the existing deterministic Figure/Table reference audit on current Working Clean files."""
     from co_reviewer_cli import inspect_docx
@@ -655,6 +733,7 @@ def build_final_release_manifest(
         }
         for role, pointer in active_documents.items()
     }
+    operation_change_inventory = build_patch_operation_change_inventory(revision_ledger)
     patch_records = [
         {
             "patch_id": patch.patch_id,
@@ -699,6 +778,7 @@ def build_final_release_manifest(
         "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,
         "patches": patch_records,
+        "patch_operation_change_inventory": operation_change_inventory,
         "response_units": response_records,
         "deterministic_change_audit": deterministic_change_audit,
         "location_maps": [
