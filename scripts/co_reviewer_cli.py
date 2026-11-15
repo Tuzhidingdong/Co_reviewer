@@ -1688,6 +1688,82 @@ def cmd_sync_workflow_ledger(args):
             reason=reason,
         )
 
+    # Response-only/no-change tasks have no executable Patch to synchronize.
+    # Complete them only when every reviewer comment has one completed,
+    # semantically confirmed ResponseUnit. Patch-bearing tasks keep the full
+    # Preflight -> Approval -> Apply -> Verify chain above.
+    units_by_task_comment: dict[tuple[str, str], list[Any]] = {}
+    for unit in revision_ledger.response_units:
+        for linked_task_id in unit.linked_task_ids:
+            units_by_task_comment.setdefault((linked_task_id, unit.comment_id), []).append(unit)
+    for task_id, task in task_by_id.items():
+        current_status = task.get("status")
+        if current_status not in {"ready", "verified"}:
+            continue
+        comment_ids = task.get("source_comment_ids", [])
+        if not isinstance(comment_ids, list) or not comment_ids:
+            continue
+        task_units = []
+        for raw_comment_id in comment_ids:
+            candidates = units_by_task_comment.get((task_id, str(raw_comment_id)), [])
+            if (
+                len(candidates) != 1
+                or candidates[0].status != "completed"
+                or not candidates[0].semantic_review_confirmed
+                or candidates[0].disposition == "clarification_needed"
+            ):
+                task_units = []
+                break
+            task_units.append(candidates[0])
+        if not task_units:
+            continue
+        active_patches = [
+            patch for patch in revision_ledger.patches
+            if patch.task_id == task_id and patch.status not in {"superseded", "blocked"}
+        ]
+        if current_status == "ready" and active_patches:
+            continue
+        if any(patch.status != "verified" for patch in active_patches):
+            continue
+        completion_payload = {
+            "task_id": task_id,
+            "response_unit_ids": sorted(unit.response_unit_id for unit in task_units),
+            "response_fingerprints": sorted(
+                canonical_fingerprint({
+                    "response_unit_id": unit.response_unit_id,
+                    "response_text": unit.response_text,
+                    "disposition": unit.disposition,
+                    "final_location_fingerprint": unit.final_location_fingerprint,
+                })
+                for unit in task_units
+            ),
+        }
+        completion_fingerprint = canonical_fingerprint(completion_payload)
+        previous_status = current_status
+        completed_task = transition_task(
+            task,
+            "completed",
+            evidence={
+                "completion_record_id": "response-units:" + completion_fingerprint[:20],
+                "completion_record_fingerprint": completion_fingerprint,
+                "completed_at_utc": now,
+            },
+        )
+        task.clear()
+        task.update(completed_task)
+        workflow.setdefault("events", []).append({
+            "event_id": str(uuid.uuid4()),
+            "task_id": task_id,
+            "timestamp_utc": now,
+            "event_type": "status_transition",
+            "from_status": previous_status,
+            "to_status": "completed",
+            "reason": "Every reviewer comment has exactly one completed, semantically confirmed ResponseUnit.",
+            "actor": "Co_Reviewer ResponseUnit Synchronizer",
+            "fingerprint": workflow_scope_fingerprint(task),
+        })
+        synchronized.append(task_id)
+
     errors = validate_workflow_ledger(workflow)
     if errors:
         raise ValueError(
