@@ -181,15 +181,11 @@ The Response Letter automatically quotes actual replacement/deleted text from ea
 
 ## Local automated checks on Windows
 
-From PowerShell at any working directory, run:
+From Windows PowerShell 5.1, change to the repository root and run:
 
-    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe"
+    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Anaconda\python.exe" -InstallDependencies
 
-Replace the interpreter path with the intended Python 3.10+ environment. To install dependencies into that environment before the checks:
-
-    .\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe" -InstallDependencies
-
-This runs Python compilation, the complete unit suite and CLI entry-point checks. It does not automate Microsoft Word's visual/compatibility acceptance.
+Replace the interpreter path when your Python 3.10+ environment is installed elsewhere. The script installs the test extra, compiles `scripts` and `tests`, runs the complete unit suite and checks CLI entry points. It writes a persistent log and prints its path. It does not automate Microsoft Word's visual/COM acceptance.
 
 ## Response Letter DOCX
 

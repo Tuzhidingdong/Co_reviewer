@@ -53,17 +53,15 @@ Automated JSON Schema meta-schema validation for every repository schema and Dra
 
 ## Current verification blocker
 
-The latest executed Actions runs are #1133 and #1134 for commit 72c64a6. All four matrix jobs in each run failed before runner assignment (`runner_id=0`, empty runner name, zero steps). No Python compilation, unit test or PowerShell step ran. The follow-up fixture-import commit 1e2d6c4 and docs commit 331e77a skipped CI. No code pass/fail conclusion can be drawn from these runs. The immediate next validation is the user's local Windows PowerShell 5.1 quality-check script, followed by Word GUI/COM acceptance.
+The latest executed Actions runs are #1133 and #1134 for commit 72c64a6. All four matrix jobs in each run failed before runner assignment (`runner_id=0`, empty runner name, zero steps). No Python compilation, unit test or PowerShell step ran. The follow-up fixture-import commit 1e2d6c4, docs commit 331e77a and scope-convergence commit dab5681 skipped CI. No code pass/fail conclusion can be drawn from these runs. The immediate next validation is the user's local Windows PowerShell 5.1 quality-check script, followed by Word GUI/COM acceptance.
 
 Earlier runs show the same pre-runner failure pattern. Identical retries are not a useful code-debugging loop and have not been repeated as a substitute for test results.
 
 ## Closure checklist
 
 1. Use the existing Windows/Python environment to execute the complete synthetic suite with `scripts/run_quality_checks.ps1`; Actions has repeatedly failed before runner assignment and identical retries are not useful.
-2. Execute the Windows PowerShell 5.1 quality-check script on the target environment and inspect its persistent log.
-3. Perform the user's own Microsoft Word COM/GUI acceptance: open the generated Marked and final Clean DOCX/PDF outputs, verify native Track Changes and actual page/line mapping.
-4. Execute the newly added full JSON Schema meta-schema checks and representative Release Manifest instance validation on a functioning runner; these are now part of the synthetic suite but have not yet executed.
-5. Reconcile any failures, then update the PR's validation status. Keep PR #3 Draft until these gates produce actual results.
+2. Perform the user's own Microsoft Word COM/GUI acceptance: open the generated Marked and final Clean DOCX/PDF outputs, verify native Track Changes and actual page/line mapping.
+3. Reconcile any failures and update the PR's validation status. Keep PR #3 Draft until the automated suite and Word/PowerShell gates produce actual results.
 
 ## Verdict
 
