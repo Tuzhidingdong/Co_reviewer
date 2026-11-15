@@ -1336,6 +1336,8 @@ def cmd_preflight(args):
 
 def cmd_approve_plan(args):
     plan_path = Path(args.plan).expanduser().resolve()
+    batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    output_plan_path = _batch_plan_snapshot(batch_dir, "approved") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     revision_ledger = None
     ledger_path = None
@@ -1413,10 +1415,16 @@ def cmd_approve_plan(args):
             plan, requested, actor=getattr(args, "actor", "Human Author")
         )
         ledger_payload = revision_ledger.to_dict()
-    write_json_atomic(plan_path, plan)
+    if batch_dir is not None:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(output_plan_path, plan)
+    else:
+        write_json_atomic(plan_path, plan)
     if ledger_payload is not None:
         write_json_atomic(ledger_path, ledger_payload)
     print(f"[APPROVED] {len(requested)} revision item(s) sealed: {', '.join(requested)}")
+    if batch_dir is not None:
+        print(f"[NEXT PLAN] {output_plan_path}")
     print("[GUARD] Any later change to comments, proposed responses, document targets or source DOCX versions invalidates that item's approval.")
     return 0
 
