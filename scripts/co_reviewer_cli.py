@@ -2579,8 +2579,8 @@ def cmd_record_manual_response_locations(args):
         if role in word_outputs:
             raise ValueError(f"Word map contains duplicate document role {role}.")
         audit = row.get("sequence_audit")
-        if not isinstance(audit, dict) or audit.get("status") == "fail":
-            raise ValueError(f"Word map has no successful/manual-review sequence audit for {role}.")
+        if not isinstance(audit, dict) or audit.get("status") not in {"pass", "manual_review"}:
+            raise ValueError(f"Word map has no recognised passing/manual-review sequence audit for {role}.")
         word_outputs[role] = row
     operation_owners = {
         operation.operation_id: (patch, operation)

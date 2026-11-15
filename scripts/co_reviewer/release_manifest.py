@@ -40,6 +40,30 @@ def _normalise_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _require_release_quality_status(payload: Any, label: str) -> str:
+    """Accept only the quality states represented by the release-manifest schema."""
+    if not isinstance(payload, Mapping):
+        raise ReleaseGateError(f"{label} quality report must be an object.")
+    status = payload.get("status")
+    if status not in {"PASS", "PASS_WITH_WARNINGS"}:
+        raise ReleaseGateError(
+            f"{label} quality report has unsupported or blocking status {status!r}; "
+            "expected PASS or PASS_WITH_WARNINGS."
+        )
+    return status
+
+
+def _require_successful_sequence_audit(payload: Any, role: str) -> dict[str, Any]:
+    """Require a recognised Word-native SEQ result; manual-review is explicit and allowed."""
+    if not isinstance(payload, Mapping) or payload.get("status") not in {"pass", "manual_review"}:
+        status = payload.get("status") if isinstance(payload, Mapping) else None
+        raise ReleaseGateError(
+            f"Figure/Table SEQ audit for {role} has unsupported or blocking status {status!r}; "
+            "expected pass or manual_review."
+        )
+    return dict(payload)
+
+
 def _docx_text(path: Path) -> str:
     try:
         document = Document(str(path))
@@ -55,7 +79,7 @@ def _docx_text(path: Path) -> str:
 
 _NUMERIC_TOKEN = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?%?")
 _FIGURE_TABLE_TOKEN = re.compile(
-    r"\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Section|Scheme|Supplementary\s+Fig(?:ure)?)\s*"
+    r"\b(?:Fig(?:ure)?\.?|Table|Eq(?:uation)?\.?|Section|Scheme|Supplementary\s+Fig(?:ure)?\.?)\s*"
     r"(?:S\s*)?\d+(?:[A-Za-z])?(?:\s*[-–]\s*\d+)?",
     re.IGNORECASE,
 )
@@ -587,9 +611,9 @@ def build_final_release_manifest(
         if len(page_counts) != 1 or not isinstance(next(iter(page_counts)), int):
             raise ReleaseGateError(f"Word COM page count is missing or inconsistent for {role}.")
         final_record["word_page_count"] = next(iter(page_counts))
-        final_record["sequence_audit"] = matching_rows[0].get("sequence_audit")
-        if not isinstance(final_record["sequence_audit"], Mapping) or final_record["sequence_audit"].get("status") == "fail":
-            raise ReleaseGateError(f"Figure/Table SEQ numbering audit failed or is missing for {role}.")
+        final_record["sequence_audit"] = _require_successful_sequence_audit(
+            matching_rows[0].get("sequence_audit"), role
+        )
         quality_rows = [
             row for row in matching_rows
             if isinstance(row.get("quality_report_file"), str)
@@ -601,8 +625,9 @@ def build_final_release_manifest(
         if not quality_path.is_file() or sha256_file(quality_path) != quality_row.get("quality_report_sha256"):
             raise ReleaseGateError(f"Final Word Clean DOCX quality report is missing or stale: {quality_path}.")
         quality_payload = json.loads(quality_path.read_text(encoding="utf-8"))
-        if quality_payload.get("status") == "FAIL":
-            raise ReleaseGateError(f"Final Word Clean DOCX failed deterministic quality checks for {role}.")
+        quality_status = _require_release_quality_status(
+            quality_payload, f"Final Word Clean DOCX for {role}"
+        )
         if quality_payload.get("docx", {}).get("docx_sha256") != final_record["final_clean_sha256"]:
             raise ReleaseGateError(f"Final DOCX quality report is bound to another file for {role}.")
         final_quality = audit_docx_quality(
@@ -618,7 +643,7 @@ def build_final_release_manifest(
         final_record["quality_report"] = {
             "file": str(quality_path),
             "sha256": quality_row["quality_report_sha256"],
-            "status": quality_payload["status"],
+            "status": quality_status,
             "release_reaudit_status": final_quality["status"],
         }
 
@@ -630,8 +655,9 @@ def build_final_release_manifest(
             raise ReleaseGateError(f"Required release artifact is missing: {path}.")
 
     response_quality_payload = json.loads(response_quality_path.read_text(encoding="utf-8"))
-    if response_quality_payload.get("status") == "FAIL":
-        raise ReleaseGateError("Response Letter DOCX quality report has status FAIL.")
+    response_quality_status = _require_release_quality_status(
+        response_quality_payload, "Response Letter DOCX"
+    )
     response_docx_sha = sha256_file(response_docx_path)
     if response_quality_payload.get("docx", {}).get("docx_sha256") != response_docx_sha:
         raise ReleaseGateError("Response Letter DOCX quality report is not bound to the current DOCX.")
@@ -738,7 +764,7 @@ def build_final_release_manifest(
             "response_letter_docx": _sha_record(response_docx_path),
             "response_letter_quality": {
                 **_sha_record(response_quality_path),
-                "status": response_quality_payload["status"],
+                "status": response_quality_status,
                 "release_reaudit_status": current_response_quality["status"],
             },
         },

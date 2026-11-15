@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from co_reviewer.docx_quality import audit_docx_quality
 from co_reviewer.release_manifest import (
     ReleaseGateError,
+    _require_release_quality_status,
+    _require_successful_sequence_audit,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
@@ -132,6 +134,33 @@ class ReleaseManifestGateTests(unittest.TestCase):
             response_letter_docx=self.root / "missing.docx",
             response_letter_quality=self.root / "missing-quality.json",
         )
+
+    def test_release_gate_accepts_only_schema_defined_quality_statuses(self):
+        self.assertEqual(
+            _require_release_quality_status({"status": "PASS"}, "Synthetic DOCX"),
+            "PASS",
+        )
+        self.assertEqual(
+            _require_release_quality_status({"status": "PASS_WITH_WARNINGS"}, "Synthetic DOCX"),
+            "PASS_WITH_WARNINGS",
+        )
+        for status in ("FAIL", "BLOCKED", "PENDING", None):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ReleaseGateError, "expected PASS or PASS_WITH_WARNINGS"):
+                    _require_release_quality_status({"status": status}, "Synthetic DOCX")
+
+    def test_release_gate_rejects_unknown_or_failed_sequence_audit_statuses(self):
+        self.assertEqual(
+            _require_successful_sequence_audit(
+                {"status": "manual_review", "detected": {}, "issues": [], "manual_review": []},
+                "Manuscript",
+            )["status"],
+            "manual_review",
+        )
+        for status in ("fail", "FAIL", "BLOCKED", None):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ReleaseGateError, "expected pass or manual_review"):
+                    _require_successful_sequence_audit({"status": status}, "Manuscript")
 
     def test_deterministic_patch_delta_audit_surfaces_numbers_units_refs_and_sample_ids(self):
         operation = SimpleNamespace(
