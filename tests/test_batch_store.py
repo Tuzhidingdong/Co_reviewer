@@ -117,6 +117,36 @@ class BatchStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(BatchStoreError, "must not be a symbolic link"):
             _batch_artifact_inventory(batch_dir)
 
+        external_batch = self.root / "external-batch"
+        external_batch.mkdir()
+        batch_directory_link = self.root / "batch-directory-link"
+        try:
+            batch_directory_link.symlink_to(external_batch, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Directory symbolic links are unavailable in this environment: {exc}")
+        with self.assertRaisesRegex(BatchStoreError, "Batch directory must not be a symbolic link"):
+            _batch_artifact_inventory(batch_directory_link)
+
+    def test_role_lock_rejects_symlinked_batch_directories(self):
+        self.runs_dir.mkdir()
+        external_batch = self.root / "batch-external"
+        external_batch.mkdir()
+        (external_batch / "batch-intent-placeholder").write_text("not a real batch", encoding="utf-8")
+        batch_directory_link = self.runs_dir / "batch-external"
+        try:
+            batch_directory_link.symlink_to(external_batch, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Directory symbolic links are unavailable in this environment: {exc}")
+
+        with self.assertRaisesRegex(BatchStoreError, "Batch directory must not be a symbolic link"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {},
+                self.workflow,
+            )
+
     def _intent(self, batch_id="run-001"):
         return create_batch_intent(
             self.workflow,
