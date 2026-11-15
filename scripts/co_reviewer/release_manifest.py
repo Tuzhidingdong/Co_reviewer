@@ -909,6 +909,7 @@ def _collect_recovered_batch_history(
             raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
         selected_task_ids = recovery_intent.get("selected_task_ids")
         batch_task_ids = recovery_intent.get("batch_task_ids")
+        invalidated_task_ids = recovery_intent.get("invalidated_task_ids")
         intent_all_task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
         def valid_task_list(values: Any) -> bool:
             return (
@@ -920,9 +921,11 @@ def _collect_recovered_batch_history(
         if (
             not valid_task_list(selected_task_ids)
             or not valid_task_list(batch_task_ids)
+            or not valid_task_list(invalidated_task_ids)
             or selected_task_ids != intent_all_task_ids
             or batch_task_ids != intent.get("selected_task_ids")
             or not set(selected_task_ids).issubset(workflow_task_ids)
+            or not set(invalidated_task_ids).issubset(workflow_task_ids)
         ):
             raise ReleaseGateError(
                 f"Recovered batch {batch_id} task sets differ from its original batch intent or current Workflow Ledger."
