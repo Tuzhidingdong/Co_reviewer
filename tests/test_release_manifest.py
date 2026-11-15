@@ -413,6 +413,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             published_batch_ids=set(),
             revision_ledger_path=self.revision_path,
             workflow_ledger_path=self.workflow_path,
+            workflow_task_ids={"T1"},
         )
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["batch_id"], "recovery-003")
@@ -425,6 +426,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 published_batch_ids={"recovery-003"},
                 revision_ledger_path=self.revision_path,
                 workflow_ledger_path=self.workflow_path,
+                workflow_task_ids={"T1"},
             )
 
     def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):

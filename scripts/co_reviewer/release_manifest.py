@@ -824,6 +824,7 @@ def _collect_recovered_batch_history(
     published_batch_ids: set[str],
     revision_ledger_path: str | Path,
     workflow_ledger_path: str | Path,
+    workflow_task_ids: set[str],
 ) -> list[dict[str, Any]]:
     """Seal every abandoned unpublished batch from its RevisionLedger recovery events."""
     patch_status_by_id = {
@@ -906,15 +907,43 @@ def _collect_recovered_batch_history(
         except Exception as exc:
             raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
         selected_task_ids = recovery_intent.get("selected_task_ids")
-        if not isinstance(selected_task_ids, list):
-            raise ReleaseGateError(f"Recovered batch {batch_id} has no valid full selected-task set.")
+        batch_task_ids = recovery_intent.get("batch_task_ids")
+        intent_all_task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+        if (
+            not isinstance(selected_task_ids, list)
+            or not isinstance(batch_task_ids, list)
+            or selected_task_ids != intent_all_task_ids
+            or batch_task_ids != intent.get("selected_task_ids")
+            or not set(selected_task_ids).issubset(workflow_task_ids)
+        ):
+            raise ReleaseGateError(
+                f"Recovered batch {batch_id} task sets differ from its original batch intent or current Workflow Ledger."
+            )
         _validate_release_batch_scope(
             intent,
             scope_payload,
             revision_ledger=revision_ledger,
             revision_ledger_path=revision_path,
-            workflow_task_ids=set(selected_task_ids),
+            workflow_task_ids=workflow_task_ids,
         )
+        parent_documents = recovery_intent.get("parent_documents")
+        if not isinstance(parent_documents, Mapping) or set(parent_documents) != set(intent.get("documents", {})):
+            raise ReleaseGateError(f"Recovered batch {batch_id} active-parent roles differ from its original intent.")
+        for role, parent in parent_documents.items():
+            intent_parent = intent["documents"].get(role)
+            if (
+                not isinstance(parent, Mapping)
+                or not isinstance(intent_parent, Mapping)
+                or not isinstance(parent.get("file"), str)
+                or not isinstance(parent.get("sha256"), str)
+                or Path(parent["file"]).expanduser().resolve()
+                    != Path(intent_parent["parent_file"]).expanduser().resolve()
+                or parent["sha256"] != intent_parent["parent_sha256"]
+            ):
+                raise ReleaseGateError(f"Recovered batch {batch_id} parent evidence differs from intent for {role}.")
+            parent_path = Path(parent["file"]).expanduser().resolve()
+            if not parent_path.is_file() or sha256_file(parent_path) != parent["sha256"]:
+                raise ReleaseGateError(f"Recovered batch {batch_id} active parent is missing or stale for {role}.")
 
         event_patch_ids = set(patch_ids)
         recovery_patch_ids = recovery_intent.get("patch_ids")
@@ -1033,6 +1062,11 @@ def build_final_release_manifest(
         published_batch_ids={row["batch_id"] for row in batch_records},
         revision_ledger_path=revision_path,
         workflow_ledger_path=workflow_path,
+        workflow_task_ids={
+            row.get("task_id")
+            for row in workflow_ledger.get("tasks", [])
+            if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
+        },
     )
     workflow_tasks = {
         row.get("task_id"): row
