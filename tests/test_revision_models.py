@@ -17,6 +17,7 @@ from co_reviewer.revision_models import (
     ResponseUnit,
     RevisionLedger,
     RevisionDocument,
+    RevisionEvent,
     RevisionModelError,
     build_revision_ledger,
     response_units_to_legacy_plan,
