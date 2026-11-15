@@ -96,7 +96,7 @@ class ResponseRendererPatchExcerptTests(unittest.TestCase):
         rendered = "\n".join(paragraph.text for paragraph in document.paragraphs)
         self.assertIn(self.operation.replace, rendered)
         self.assertIn("PatchOperation OP-RESULT-01", rendered)
-        self.assertIn("Draft revised text", rendered)
+        self.assertIn("Verified revised text", rendered)
         self.assertTrue(output.is_file())
 
 
