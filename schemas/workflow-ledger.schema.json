@@ -21,6 +21,21 @@
         "additionalProperties": false
       }
     },
+    "active_documents": {
+      "type": "object",
+      "description": "Current committed DOCX pointer per logical role. Pointers change atomically only after an entire batch is verified.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file", "sha256", "batch_id", "updated_at_utc"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "batch_id": { "type": ["string", "null"] },
+          "updated_at_utc": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    },
     "documents": {
       "type": "array",
       "items": { "$ref": "document-identity.schema.json#/$defs/documentIdentity" }
@@ -381,14 +396,31 @@
             "patch_applied",
             "verification",
             "invalidation",
-            "location_mapping"
+            "location_mapping",
+            "batch_published",
+            "batch_rolled_back"
           ]
         },
         "from_status": { "type": "string" },
         "to_status": { "type": "string" },
         "reason": { "type": "string" },
         "actor": { "type": "string" },
-        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "batch_id": { "type": "string", "minLength": 1 },
+        "documents": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["file", "sha256", "batch_id", "updated_at_utc"],
+            "properties": {
+              "file": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "batch_id": { "type": ["string", "null"] },
+              "updated_at_utc": { "type": "string", "format": "date-time" }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     }
