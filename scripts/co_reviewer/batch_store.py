@@ -280,21 +280,11 @@ def _validate_recovered_batch_receipt(
             "Recovered batch staged Workflow Ledger snapshot does not require recheck for every selected task."
         )
 
-    snapshot_events = workflow_after.get("events")
-    if not isinstance(snapshot_events, list):
-        raise BatchStoreError("Recovered batch staged Workflow Ledger snapshot has no event history.")
-    for task_id in selected_task_ids:
-        matching_invalidation_events = [
-            row for row in snapshot_events
-            if isinstance(row, Mapping)
-            and row.get("task_id") == task_id
-            and row.get("event_type") == "invalidation"
-            and row.get("batch_id") == intent.get("batch_id")
-        ]
-        if len(matching_invalidation_events) != 1:
-            raise BatchStoreError(
-                f"Recovered batch staged Workflow Ledger snapshot must contain exactly one matching invalidation event for task {task_id}."
-            )
+    _validate_recovery_workflow_invalidation_evidence(
+        recovery,
+        intent,
+        workflow_after,
+    )
 
     patch_ids = recovery.get("patch_ids")
     if (
@@ -1173,6 +1163,90 @@ def _json_payload_sha256(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_recovery_workflow_invalidation_evidence(
+    recovery: Mapping[str, Any],
+    intent: Mapping[str, Any],
+    workflow_after: Mapping[str, Any],
+) -> list[str]:
+    """Require one invalidation event for every selected/conflicting/downstream task."""
+    batch_id = intent.get("batch_id")
+    selected_task_ids = recovery.get("selected_task_ids")
+    reason = recovery.get("reason")
+    actor = recovery.get("actor")
+    timestamp = recovery.get("created_at_utc")
+    if (
+        not isinstance(batch_id, str)
+        or not isinstance(reason, str)
+        or not reason.strip()
+        or not isinstance(actor, str)
+        or not actor.strip()
+        or not isinstance(timestamp, str)
+        or not timestamp.strip()
+        or not isinstance(selected_task_ids, list)
+        or not selected_task_ids
+        or any(not isinstance(value, str) or not value.strip() for value in selected_task_ids)
+        or len(selected_task_ids) != len(set(selected_task_ids))
+    ):
+        raise BatchStoreError("Recovery intent has invalid task, actor, reason or timestamp evidence.")
+
+    expected_reason = (
+        f"Unpublished batch {batch_id} abandoned after Apply failure: {reason}"
+    )
+    task_rows = workflow_after.get("tasks")
+    if not isinstance(task_rows, list):
+        raise BatchStoreError("Recovered batch Workflow after-image has no task array.")
+    affected_task_ids = sorted({
+        row.get("task_id")
+        for row in task_rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("task_id"), str)
+        and row.get("status") == "recheck_required"
+        and row.get("invalidation_reason") == expected_reason
+    })
+    if not set(selected_task_ids).issubset(affected_task_ids):
+        missing = sorted(set(selected_task_ids) - set(affected_task_ids))
+        raise BatchStoreError(
+            "Recovered batch Workflow after-image does not invalidate every selected task: "
+            + ", ".join(missing)
+        )
+    declared_affected = recovery.get("invalidated_task_ids")
+    if declared_affected is not None and declared_affected != affected_task_ids:
+        raise BatchStoreError(
+            "Recovered batch invalidated_task_ids differs from the actual Workflow after-image."
+        )
+
+    events = workflow_after.get("events")
+    if not isinstance(events, list):
+        raise BatchStoreError("Recovered batch staged Workflow Ledger snapshot has no event history.")
+    matching_events = [
+        row for row in events
+        if isinstance(row, Mapping)
+        and row.get("event_type") == "invalidation"
+        and row.get("batch_id") == batch_id
+    ]
+    event_task_ids = [row.get("task_id") for row in matching_events]
+    if (
+        len(event_task_ids) != len(affected_task_ids)
+        or any(not isinstance(value, str) or not value.strip() for value in event_task_ids)
+        or len(event_task_ids) != len(set(event_task_ids))
+        or set(event_task_ids) != set(affected_task_ids)
+    ):
+        raise BatchStoreError(
+            "Recovered batch Workflow after-image must contain exactly one invalidation event "
+            "for every selected, conflicting and downstream task."
+        )
+    if any(
+        row.get("reason") != expected_reason
+        or row.get("actor") != actor
+        or row.get("timestamp_utc") != timestamp
+        for row in matching_events
+    ):
+        raise BatchStoreError(
+            "Recovered batch Workflow invalidation event reason/actor/timestamp differs from its recovery intent."
+        )
+    return affected_task_ids
+
+
 def _prepare_recovery_workflow(
     workflow: Mapping[str, Any],
     selected_task_ids: Sequence[str],
@@ -1614,6 +1688,16 @@ def recover_unpublished_batch(
         "batch_scope_sha256": scope_sha,
         "selected_task_ids": list(intent.get("all_selected_task_ids", intent["selected_task_ids"])),
         "batch_task_ids": list(intent["selected_task_ids"]),
+        "invalidated_task_ids": sorted({
+            row.get("task_id")
+            for row in workflow_after.get("tasks", [])
+            if isinstance(row, Mapping)
+            and isinstance(row.get("task_id"), str)
+            and row.get("status") == "recheck_required"
+            and row.get("invalidation_reason") == (
+                f"Unpublished batch {intent['batch_id']} abandoned after Apply failure: {recovery_reason}"
+            )
+        }),
         "patch_ids": list(patch_ids),
         "patch_statuses_before": patch_statuses_now,
         "parent_documents": parent_documents,
