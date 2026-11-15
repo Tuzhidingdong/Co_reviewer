@@ -389,6 +389,52 @@ class BatchStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        event_tampered_intent = json.loads(original_recovery_intent)
+        event_tampered_intent["workflow_after"]["events"] = [
+            row for row in event_tampered_intent["workflow_after"]["events"]
+            if not (
+                isinstance(row, dict)
+                and row.get("task_id") == "T1"
+                and row.get("event_type") == "invalidation"
+                and row.get("batch_id") == intent["batch_id"]
+            )
+        ]
+        event_tampered_intent["workflow_ledger_sha256_after"] = hashlib.sha256(
+            json.dumps(
+                event_tampered_intent["workflow_after"],
+                ensure_ascii=False,
+                indent=2,
+            ).encode("utf-8")
+        ).hexdigest()
+        recovery_intent_path.write_text(
+            json.dumps(event_tampered_intent, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        event_tampered_receipt = dict(receipt)
+        event_tampered_receipt["workflow_ledger_sha256"] = (
+            event_tampered_intent["workflow_ledger_sha256_after"]
+        )
+        event_tampered_receipt["batch_recovery_intent_sha256"] = hashlib.sha256(
+            recovery_intent_path.read_bytes()
+        ).hexdigest()
+        receipt_path.write_text(
+            json.dumps(event_tampered_receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(BatchStoreError, "invalidation event"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+            )
+        recovery_intent_path.write_text(original_recovery_intent, encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
         assert_no_uncommitted_role_batches(
             self.runs_dir,
             ["Manuscript"],

@@ -280,6 +280,22 @@ def _validate_recovered_batch_receipt(
             "Recovered batch staged Workflow Ledger snapshot does not require recheck for every selected task."
         )
 
+    snapshot_events = workflow_after.get("events")
+    if not isinstance(snapshot_events, list):
+        raise BatchStoreError("Recovered batch staged Workflow Ledger snapshot has no event history.")
+    for task_id in selected_task_ids:
+        matching_invalidation_events = [
+            row for row in snapshot_events
+            if isinstance(row, Mapping)
+            and row.get("task_id") == task_id
+            and row.get("event_type") == "invalidation"
+            and row.get("batch_id") == intent.get("batch_id")
+        ]
+        if len(matching_invalidation_events) != 1:
+            raise BatchStoreError(
+                f"Recovered batch staged Workflow Ledger snapshot must contain exactly one matching invalidation event for task {task_id}."
+            )
+
     patch_ids = recovery.get("patch_ids")
     if (
         not isinstance(patch_ids, list)
