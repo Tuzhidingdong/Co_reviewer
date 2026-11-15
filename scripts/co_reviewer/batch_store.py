@@ -278,12 +278,14 @@ def publish_active_pointers(
             raise BatchStoreError(
                 f"Verified Patch output hashes do not uniquely match the batch output for {role}."
             )
-        role_updates[role] = {
-            "file": str(output_path),
-            "sha256": output_sha,
-            "batch_id": batch_id,
-            "updated_at_utc": _timestamp(),
-        }
+        role_updates[role] = (
+            dict(current) if already_published else {
+                "file": str(output_path),
+                "sha256": output_sha,
+                "batch_id": batch_id,
+                "updated_at_utc": _timestamp(),
+            }
+        )
     updated = json.loads(json.dumps(workflow, ensure_ascii=False))
     active = dict(updated.get("active_documents") or {})
     active.update(role_updates)
@@ -369,7 +371,15 @@ def rollback_active_pointers(
     active.update(restored)
     updated["active_documents"] = active
     now = _timestamp()
+    existing_rollback_events = {
+        event.get("task_id") for event in updated.get("events", [])
+        if isinstance(event, Mapping)
+        and event.get("event_type") == "batch_rolled_back"
+        and event.get("batch_id") == batch_id
+    }
     for task_id in intent.get("selected_task_ids", []):
+        if task_id in existing_rollback_events:
+            continue
         updated.setdefault("events", []).append({
             "event_id": str(uuid.uuid4()),
             "task_id": task_id,
