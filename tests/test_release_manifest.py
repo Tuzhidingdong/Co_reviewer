@@ -396,7 +396,16 @@ class ReleaseManifestGateTests(unittest.TestCase):
             json.dumps(recovery_receipt, ensure_ascii=False), encoding="utf-8"
         )
         revision = SimpleNamespace(
-            patches=[SimpleNamespace(patch_id="P-RECOVER", status="abandoned")],
+            revision_round_id="round-release-tests",
+            patches=[SimpleNamespace(
+                patch_id="P-RECOVER",
+                task_id="T1",
+                status="abandoned",
+                operations=[SimpleNamespace(
+                    document="Manuscript",
+                    output_file=str(output_path),
+                )],
+            )],
             events=[event],
         )
         records = _collect_recovered_batch_history(
