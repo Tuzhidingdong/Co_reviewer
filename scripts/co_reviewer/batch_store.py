@@ -221,13 +221,22 @@ def create_batch_intent(
     errors = validate_workflow_ledger(workflow)
     if errors:
         raise BatchStoreError("Cannot prepare a batch from an invalid Workflow Ledger:\n- " + "\n- ".join(errors))
-    if not selected_task_ids:
+    if not isinstance(selected_task_ids, (list, tuple)) or not selected_task_ids:
         raise BatchStoreError("A batch must contain at least one selected task.")
-    all_task_ids = list(dict.fromkeys(all_selected_task_ids or selected_task_ids))
-    if not all_task_ids or not set(selected_task_ids).issubset(set(all_task_ids)):
-        raise BatchStoreError("all_selected_task_ids must include every document-changing selected task.")
-    if any(not isinstance(item, str) or not item.strip() for item in all_task_ids):
-        raise BatchStoreError("all_selected_task_ids must contain non-empty task IDs.")
+    selected_ids = list(selected_task_ids)
+    all_task_ids = list(all_selected_task_ids) if all_selected_task_ids is not None else list(selected_ids)
+    if (
+        not isinstance(all_task_ids, list)
+        or any(not isinstance(item, str) or not item.strip() for item in selected_ids)
+        or any(not isinstance(item, str) or not item.strip() for item in all_task_ids)
+        or len(selected_ids) != len(set(selected_ids))
+        or len(all_task_ids) != len(set(all_task_ids))
+        or not all_task_ids
+        or not set(selected_ids).issubset(set(all_task_ids))
+    ):
+        raise BatchStoreError(
+            "Selected task ID arrays must contain unique non-empty strings and include every document-changing task."
+        )
     unique_roles = list(dict.fromkeys(roles))
     if not unique_roles:
         raise BatchStoreError("A document-changing batch must contain at least one target document role.")
@@ -320,10 +329,11 @@ def read_batch_intent(batch_dir: str | Path) -> dict[str, Any]:
         or not selected_task_ids
         or any(not isinstance(item, str) or not item.strip() for item in selected_task_ids)
         or not isinstance(all_selected_task_ids, list)
+        or any(not isinstance(item, str) or not item.strip() for item in selected_task_ids)
+        or any(not isinstance(item, str) or not item.strip() for item in all_selected_task_ids)
         or len(all_selected_task_ids) != len(set(all_selected_task_ids))
         or len(selected_task_ids) != len(set(selected_task_ids))
         or not set(selected_task_ids).issubset(set(all_selected_task_ids))
-        or any(not isinstance(item, str) or not item.strip() for item in all_selected_task_ids)
     ):
         raise BatchStoreError("Batch intent task ID sets are invalid or inconsistent.")
     for role, row in intent["documents"].items():
