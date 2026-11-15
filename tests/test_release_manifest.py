@@ -227,7 +227,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseGateError, "explicitly completed"):
             self._call(self._unit(status="verified"))
 
-    def test_release_manifest_accepts_reply_only_round_without_fake_document_locations(self):
+    def test_release_manifest_binds_reply_only_package_and_rejects_tampered_docx_content(self):
         unit = self._unit(status="completed", comment_id="C1")
         ledger = RevisionLedger(
             revision_round_id="round-release-tests",
@@ -267,6 +267,32 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertEqual(manifest["deterministic_consistency_audit"]["status"], "PASS")
         self.assertEqual(manifest["response_units"][0]["location_methods"], [])
         self.assertTrue(manifest["checks"]["response_letter_contains_verified_patch_excerpts"])
+
+        # A valid hash/quality report must not let a stale or hand-edited reply body pass release.
+        response_document = Document(str(response_docx_path))
+        changed = False
+        for paragraph in response_document.paragraphs:
+            if paragraph.text == "We have clarified the statement.":
+                paragraph.text = "We have not clarified the statement."
+                changed = True
+                break
+        self.assertTrue(changed, "Synthetic Response Letter fixture did not contain its expected response text.")
+        response_document.save(response_docx_path)
+        tampered_quality = audit_docx_quality(response_docx_path, profile="response-letter")
+        quality_path.write_text(
+            json.dumps(tampered_quality, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ReleaseGateError, "DOCX content does not match the current ResponseUnits/PatchOperations"):
+            build_final_release_manifest(
+                ledger,
+                self.workflow,
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+                response_letter_md=response_md_path,
+                response_letter_docx=response_docx_path,
+                response_letter_quality=quality_path,
+            )
 
     def test_final_consistency_audit_blocks_unresolved_figure_reference(self):
         source = self.root / "synthetic_manuscript.docx"

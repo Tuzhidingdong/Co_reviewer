@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -107,6 +108,25 @@ def _docx_text(path: Path) -> str:
             for cell in row.cells:
                 paragraphs.extend(paragraph.text for paragraph in cell.paragraphs)
     return "\n".join(paragraphs)
+
+
+def _response_docx_body_text(path: Path) -> str:
+    """Return Response Letter content from the summary onward, excluding optional title/author metadata."""
+    try:
+        document = Document(str(path))
+    except Exception as exc:
+        raise ReleaseGateError(f"Cannot reopen Response Letter DOCX {path}: {exc}") from exc
+    paragraphs = [paragraph.text for paragraph in document.paragraphs]
+    summary_index = next(
+        (index for index, value in enumerate(paragraphs)
+         if value.startswith("Revision items: ")),
+        None,
+    )
+    if summary_index is None:
+        raise ReleaseGateError(
+            f"Response Letter DOCX has no deterministic revision summary paragraph: {path}"
+        )
+    return "\n".join(paragraphs[summary_index:])
 
 
 _NUMERIC_TOKEN = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?%?")
@@ -724,6 +744,28 @@ def build_final_release_manifest(
         raise ReleaseGateError(
             "Response Letter omitted exact verified PatchOperation excerpt(s): "
             f"Markdown missing {len(missing_md_quotes)}, DOCX missing {len(missing_docx_quotes)}."
+        )
+
+    # The quality report proves that the existing DOCX is structurally acceptable;
+    # it does not prove that its content still corresponds to the current ledger.
+    # Re-render the deterministic document from the current ResponseUnits and compare
+    # all semantic paragraphs, ignoring only optional manuscript title/author metadata.
+    try:
+        from response_letter_docx import render_response_docx
+        with tempfile.TemporaryDirectory(prefix="co-reviewer-release-response-") as temp_dir:
+            expected_docx_path = Path(temp_dir) / "expected_response_letter.docx"
+            render_response_docx(response_plan, expected_docx_path)
+            expected_body = _normalise_whitespace(_response_docx_body_text(expected_docx_path))
+        actual_body = _normalise_whitespace(_response_docx_body_text(response_docx_path))
+    except ReleaseGateError:
+        raise
+    except Exception as exc:
+        raise ReleaseGateError(
+            f"Cannot regenerate the canonical Response Letter DOCX for content comparison: {exc}"
+        ) from exc
+    if actual_body != expected_body:
+        raise ReleaseGateError(
+            "Response Letter DOCX content does not match the current ResponseUnits/PatchOperations; regenerate it."
         )
 
     if sha256_file(revision_path) != revision_sha_at_start:
