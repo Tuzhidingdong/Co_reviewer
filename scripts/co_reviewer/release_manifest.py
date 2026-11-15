@@ -2,6 +2,7 @@
 """Deterministic final-release gate and hash-bound manifest generation."""
 from __future__ import annotations
 
+import copy
 import json
 import re
 from datetime import datetime, timezone
