@@ -2971,6 +2971,7 @@ def cmd_confirm_verified(args):
     )
     if batch_dir is not None and batch_dir not in Path(apply_report_value).expanduser().resolve().parents:
         raise ValueError("Apply report for an immutable batch must remain inside its batch directory.")
+    output_plan_path = _batch_plan_snapshot(batch_dir, "verified") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if not isinstance(plan, dict) or not isinstance(plan.get("revision_items"), list):
         raise ValueError("Plan must contain a revision_items array.")
@@ -2980,7 +2981,7 @@ def cmd_confirm_verified(args):
         ledger_path = Path(args.revision_ledger).expanduser().resolve()
         if ledger_path in {
             plan_path.expanduser().resolve(),
-            Path(args.apply_report).expanduser().resolve(),
+            Path(apply_report_value).expanduser().resolve(),
         }:
             raise ValueError("RevisionLedger path must be distinct from plan/apply-report paths.")
         revision_ledger = _load_revision_ledger(ledger_path)
@@ -3075,11 +3076,17 @@ def cmd_confirm_verified(args):
             verification_report_id=verification_id,
         )
         ledger_payload = revision_ledger.to_dict()
-    write_json_atomic(plan_path, plan)
+    if batch_dir is not None:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(output_plan_path, plan)
+    else:
+        write_json_atomic(plan_path, plan)
     if ledger_payload is not None:
         write_json_atomic(args.revision_ledger, ledger_payload)
         print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
     print(f"[VERIFIED] {len(requested)} revision item(s): {', '.join(requested)}")
+    if batch_dir is not None:
+        print(f"[NEXT PLAN] {output_plan_path}")
     print("[GUARD] Exact Track Changes were rechecked; current output DOCX hashes are sealed.")
     print("[HUMAN] Semantic review acknowledgement was recorded; the CLI does not judge scientific correctness.")
     return 0
