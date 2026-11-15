@@ -25,9 +25,11 @@ from co_reviewer.release_manifest import (
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
+from co_reviewer.batch_store import _batch_artifact_inventory
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.revision_models import (
     ResponseUnit,
+    RevisionEvent,
     RevisionLedger,
     response_units_to_legacy_plan,
 )
@@ -271,6 +273,148 @@ class ReleaseManifestGateTests(unittest.TestCase):
             _validate_response_unit_task_attribution(
                 [SimpleNamespace(response_unit_id="RU-EXTRA", comment_id="C2", linked_task_ids=["T1"])],
                 task_map,
+            )
+
+    def test_release_manifest_captures_unpublished_failed_batch_recovery_evidence(self):
+        batch_id = "batch-recovery-003"
+        batch_dir = self.root / "runs" / batch_id
+        documents_dir = batch_dir / "documents"
+        documents_dir.mkdir(parents=True)
+        output_path = documents_dir / "Manuscript.marked.docx"
+        output_path.write_bytes(b"partial failed Apply artifact")
+        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+        intent = {
+            "schema_version": "1.0",
+            "batch_id": batch_id.removeprefix("batch-"),
+            "revision_round_id": "round-release-tests",
+            "workflow_ledger_file": str(self.workflow_path),
+            "selected_task_ids": ["T1"],
+            "all_selected_task_ids": ["T1"],
+            "documents": {
+                "Manuscript": {
+                    "parent_file": str(self.source),
+                    "parent_sha256": source_sha,
+                    "output_file": str(output_path),
+                }
+            },
+        }
+        intent_path = batch_dir / "batch_intent.json"
+        intent_path.write_text(json.dumps(intent, ensure_ascii=False), encoding="utf-8")
+        intent_sha = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": batch_id.removeprefix("batch-"),
+            "revision_round_id": "round-release-tests",
+            "revision_ledger_file": str(self.revision_path),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "batch_intent_sha256": intent_sha,
+            "patch_ids": ["P-RECOVER"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.source),
+                    "input_sha256": source_sha,
+                    "output_file": str(output_path),
+                }
+            },
+        }
+        scope_path = batch_dir / "batch_scope.json"
+        scope_path.write_text(json.dumps(scope, ensure_ascii=False), encoding="utf-8")
+        scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
+        parent_documents = {
+            "Manuscript": {"file": str(self.source), "sha256": source_sha},
+        }
+        failed_output_files = {"Manuscript": [str(output_path)]}
+        recovery_id = "recovery-synthetic-003"
+        event = RevisionEvent(
+            event_id="event-recovery-003",
+            subject_id="P-RECOVER",
+            subject_type="patch",
+            event_type="patch_abandoned_after_batch_recovery",
+            timestamp_utc=STAMP,
+            actor="Recovery Agent",
+            details={
+                "recovery_id": recovery_id,
+                "batch_id": batch_id.removeprefix("batch-"),
+                "reason": "Synthetic recovery test.",
+                "parent_documents": parent_documents,
+                "failed_output_files": failed_output_files,
+                "artifact_inventory": [],
+                "batch_intent_sha256": intent_sha,
+                "batch_scope_sha256": scope_sha,
+            },
+        )
+        artifact_inventory = _batch_artifact_inventory(batch_dir)
+        event.details["artifact_inventory"] = artifact_inventory
+        recovery_intent = {
+            "schema_version": "1.0",
+            "status": "prepared",
+            "recovery_id": recovery_id,
+            "batch_id": batch_id.removeprefix("batch-"),
+            "workflow_ledger_file": str(self.workflow_path),
+            "revision_ledger_file": str(self.revision_path),
+            "workflow_ledger_sha256_before": "1" * 64,
+            "workflow_ledger_sha256_after": "2" * 64,
+            "revision_ledger_sha256_before": "3" * 64,
+            "revision_ledger_sha256_after": "4" * 64,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P-RECOVER"],
+            "parent_documents": parent_documents,
+            "failed_output_files": failed_output_files,
+            "artifact_inventory": artifact_inventory,
+            "revision_events": [event.to_dict()],
+        }
+        recovery_intent_path = batch_dir / "batch_recovery_intent.json"
+        recovery_intent_path.write_text(json.dumps(recovery_intent, ensure_ascii=False), encoding="utf-8")
+        recovery_intent_sha = hashlib.sha256(recovery_intent_path.read_bytes()).hexdigest()
+        recovery_receipt = {
+            "schema_version": "1.0",
+            "status": "recovered",
+            "recovery_id": recovery_id,
+            "batch_id": batch_id.removeprefix("batch-"),
+            "workflow_ledger_file": str(self.workflow_path),
+            "workflow_ledger_sha256": "2" * 64,
+            "revision_ledger_file": str(self.revision_path),
+            "revision_ledger_sha256": "4" * 64,
+            "batch_recovery_intent_sha256": recovery_intent_sha,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+            "selected_task_ids": ["T1"],
+            "patch_ids": ["P-RECOVER"],
+            "parent_documents": parent_documents,
+            "failed_output_files": failed_output_files,
+            "retained_artifacts": artifact_inventory,
+            "retained_batch_files": True,
+        }
+        (batch_dir / "batch_recovered.json").write_text(
+            json.dumps(recovery_receipt, ensure_ascii=False), encoding="utf-8"
+        )
+        revision = SimpleNamespace(
+            patches=[SimpleNamespace(patch_id="P-RECOVER", status="abandoned")],
+            events=[event],
+        )
+        records = _collect_recovered_batch_history(
+            revision,
+            published_batch_ids=set(),
+            revision_ledger_path=self.revision_path,
+            workflow_ledger_path=self.workflow_path,
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["batch_id"], "batch-recovery-003")
+        self.assertEqual(records[0]["patch_ids"], ["P-RECOVER"])
+        self.assertTrue(records[0]["retained_batch_files"])
+        self.assertEqual(records[0]["retained_artifacts"], artifact_inventory)
+        with self.assertRaisesRegex(ReleaseGateError, "both recovered-unpublished and published"):
+            _collect_recovered_batch_history(
+                revision,
+                published_batch_ids={"batch-recovery-003"},
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
             )
 
     def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):

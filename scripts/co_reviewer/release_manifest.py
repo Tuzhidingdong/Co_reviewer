@@ -908,6 +908,12 @@ def _collect_recovered_batch_history(
         event_patch_ids = set(patch_ids)
         recovery_patch_ids = recovery_intent.get("patch_ids")
         recovery_events = recovery_intent.get("revision_events")
+        actual_event_records = [event.to_dict() for event in events]
+        expected_events_by_subject = {
+            row.get("subject_id"): row
+            for row in recovery_events
+            if isinstance(row, Mapping)
+        } if isinstance(recovery_events, list) else {}
         if (
             intent.get("batch_id") != batch_id
             or recovery_intent.get("batch_id") != batch_id
@@ -917,9 +923,12 @@ def _collect_recovered_batch_history(
             or set(recovery_patch_ids) != event_patch_ids
             or receipt.get("patch_ids") != recovery_patch_ids
             or not isinstance(recovery_events, list)
-            or {row.get("subject_id") for row in recovery_events if isinstance(row, Mapping)} != event_patch_ids
+            or len(recovery_events) != len(events)
+            or set(expected_events_by_subject) != event_patch_ids
+            or any(expected_events_by_subject.get(event.subject_id) != event_record for event, event_record in zip(events, actual_event_records))
             or any(
                 event.details.get(key) != recovery_intent.get(intent_key)
+                for event in events
                 for key, intent_key in (
                     ("recovery_id", "recovery_id"),
                     ("parent_documents", "parent_documents"),
