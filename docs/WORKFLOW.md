@@ -102,42 +102,47 @@ Before task authorization, enrich each executable task with exact `patch_operati
 
 Prepare the complete reviewer map before the first batch when possible. If a later build uses the generic fallback, the RevisionLedger retains any reviewer identity already recorded; a generic placeholder can be upgraded when an explicit reviewer label is supplied, but an existing explicit label cannot be silently replaced by a different explicit label.
 
-Authorize the prepared task scope, then build the conflict-free ready batch:
+Authorize the prepared task scope, then build the conflict-free ready batch. The command allocates one immutable directory under `runs/batch-{id}/`, pins its parent document paths and hashes, and chooses new output DOCX paths before any edit begins:
 
-    python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
-    python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --reviewer-map reviewer_map.json --out revision_ledger.json
-    python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --out edits_plan_batch_01.json
+```powershell
+python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
+python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --reviewer-map reviewer_map.json --out revision_ledger.json
+```
 
-The scheduler enforces dependency and target-group conflict boundaries. `--task-ids` can select only a subset of the currently ready batch. Use a unique exported plan filename for every batch; the exporter does not overwrite an existing plan. Keep the same Workflow Ledger and RevisionLedger paths so task state and Patch history remain connected.
+The command prints the new batch ID and directory. Export its plan into that directory:
 
-## Preflight, exact Patch approval, apply and verification
+```powershell
+python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --batch-dir runs/batch-{id}
+```
 
-Preflight the exact exported Patch batch and synchronize the source/version evidence into the RevisionLedger:
+The scheduler enforces dependency and target-group conflict boundaries. `--task-ids` can select only a subset of the currently ready batch. A document role is reserved by an uncommitted batch so a second batch cannot branch from the same active parent version. Do not reuse an existing batch directory; an interrupted or failed batch is retained and must be resolved or superseded before another batch for that document role is created.
 
-    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report_batch_01.json --revision-ledger revision_ledger.json
+Preflight, approval, apply and verification each create a new plan snapshot. The original plan is not overwritten:
 
-Review the exact edits, paths and source hashes with the author. Then record the second approval, bound to the preflighted Patch operations:
+```powershell
+python scripts/co_reviewer_cli.py preflight-plan --plan runs/batch-{id}/revision_plan.json --revision-ledger revision_ledger.json
+python scripts/co_reviewer_cli.py approve-plan --plan runs/batch-{id}/revision_plan.preflighted.json --ids T1 --revision-ledger revision_ledger.json --actor "Human Author"
+python scripts/co_reviewer_cli.py apply --plan runs/batch-{id}/revision_plan.approved.json --revision-ledger revision_ledger.json --author "Author Name"
+python scripts/co_reviewer_cli.py verify --plan runs/batch-{id}/revision_plan.applied.json
+python scripts/co_reviewer_cli.py confirm-verified --plan runs/batch-{id}/revision_plan.applied.json --ids T1 --semantic-review-confirmed --revision-ledger revision_ledger.json
+python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
+python scripts/co_reviewer_cli.py publish-batch --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir runs/batch-{id}
+```
 
-    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan_batch_01.json --ids T1 --revision-ledger revision_ledger.json --actor "Human Author"
+Use the next plan snapshot printed by each command. The batch Apply report and verification report are created inside the same batch directory; never redirect them to a previously used file. If Apply partially writes files and then fails, do not delete or reuse those outputs. The incomplete batch remains uncommitted; inspect it and supersede or resolve the affected Patch before preparing a new batch.
 
-Both gates are required: `approve-workflow-tasks` authorizes the prepared task scope; `approve-plan` authorizes the exact preflighted Patch operations and source versions. A task-scope approval alone is not permission to edit a DOCX.
+`publish-batch` checks the parent active pointers, batch intent/scope hashes, every expected Patch verification record, and the synchronized Workflow task states. It then atomically replaces the Workflow Ledger's `active_documents` object so all roles in that batch become active together. Previous outputs remain untouched.
 
-Apply only after both approvals:
+To roll back a published batch, restore only its parent pointers:
 
-    python scripts/co_reviewer_cli.py apply --plan edits_plan_batch_01.json --author "Author Name" --report output/revision_apply_report.json --revision-ledger revision_ledger.json
+```powershell
+python scripts/co_reviewer_cli.py rollback-batch --workflow-ledger workflow_ledger.json --batch-dir runs/batch-{id} --reason "Describe the reason"
+```
 
-Inputs must remain immutable, and each output DOCX path must be distinct. The existing Word-native Track Changes writer is the only writer. Do not edit a Marked DOCX directly or bypass a refused complex target.
+Rollback never deletes a DOCX, PDF, report or batch directory. It records a receipt and moves affected tasks and their dependents to `recheck_required`; a new revision must be explicitly prepared and verified.
 
-Run exact mechanical verification:
+After all batches for the round have been published, create Working Clean Views, complete the final ResponseUnit/Word-PDF mapping, and only then create the release package. Do not perform the final page/line map after each intermediate batch: a later batch can change pagination across the entire document role.
 
-    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report output/revision_apply_report.json --out reports/revision_verification_batch_01.json
-
-Only after mechanical verification and separate scientific/semantic review of the revised Manuscript/SI pass, seal the Patch outputs and synchronize task state:
-
-    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan_batch_01.json --apply-report output/revision_apply_report.json --ids T1 --semantic-review-confirmed --revision-ledger revision_ledger.json
-    python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
-
-Use unique plan, preflight and verification report filenames for each later batch. Reuse the same `output/revision_apply_report.json` within the round because each apply run appends its execution records. After synchronization, review newly ready tasks and any same-target/dependency invalidations. Refresh affected evidence and paths against the latest outputs, obtain renewed authorization and build the next conflict-free batch. Do not apply a downstream task against an outdated DOCX.
 
 ## Clean views, final Word/PDF locations and Response Letter
 
