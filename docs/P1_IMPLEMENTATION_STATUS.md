@@ -92,7 +92,7 @@ These tests are present in the repository but have **not been established as pas
 
 - The four relevant JSON Schema files (`workflow-ledger`, `final-release-manifest`, `revision-ledger`, `response-location-map`) were parsed as JSON successfully. This is a JSON syntax check only, not a full JSON Schema validation.
 - The existing Windows matrix runs the PowerShell 5.1 quality-check script and remains the Windows-specific gate. A separate Ubuntu Python-unit matrix (Python 3.10 and 3.13) has been added to isolate compile/unit-test execution from Windows runner allocation; this does not replace the Windows job or Word GUI/COM acceptance.
-- The earlier GitHub Actions runs for commits `77488b8` and `a7f1831` ended in failure before runner assignment (`runner_id=0`, empty `runner_name`, zero steps). Retrying the failed Windows jobs reproduced the same condition. No Python test process started, so these results cannot be attributed to code failures or treated as test passes.
+- GitHub Actions Run #997 for commit `18a8caf` created all four Ubuntu/Windows Python matrix jobs, but all four ended before runner assignment (`runner_id=0`, empty `runner_name`, zero steps). Runs for commits `77488b8` and `a7f1831` showed the same pre-runner failure; retrying the failed Windows jobs did not change it. No Python test process started, so these results cannot be attributed to code failures or treated as test passes. The issue is currently an Actions execution-environment blocker affecting both OS families; the exact account/repository-side cause is not exposed by the available job records.
 - No real manuscript, Worker, model call, local Word COM run or final Windows acceptance was performed.
 - The final acceptance boundary remains: run the complete synthetic suite on the target Windows/Python environment, then perform the user's own Word GUI/COM acceptance. Do not describe static inspection or schema parsing as final acceptance.
 - P2 Usage Adapter is not included here. It still depends on locating/attaching the actual Supervisor/Worker model invocation wrapper; no complete automatic token capture claim is made.
@@ -101,4 +101,5 @@ These tests are present in the repository but have **not been established as pas
 
 - Base: `upgrade/v0.5.1-p0-implementation-20261114`
 - Development branch: `upgrade/v0.5.1-p1-audit-quality-implementation-20261114`
+- Latest development commit: `18a8caf293ef696f16a73c2a817fca456c1f42fd`.
 - PR #3: Draft, open, not merged.
