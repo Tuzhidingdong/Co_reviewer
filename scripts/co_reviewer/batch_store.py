@@ -197,6 +197,11 @@ def create_batch_intent(
         raise BatchStoreError("Cannot prepare a batch from an invalid Workflow Ledger:\n- " + "\n- ".join(errors))
     if not selected_task_ids:
         raise BatchStoreError("A batch must contain at least one selected task.")
+    all_task_ids = list(dict.fromkeys(all_selected_task_ids or selected_task_ids))
+    if not all_task_ids or not set(selected_task_ids).issubset(set(all_task_ids)):
+        raise BatchStoreError("all_selected_task_ids must include every document-changing selected task.")
+    if any(not isinstance(item, str) or not item.strip() for item in all_task_ids):
+        raise BatchStoreError("all_selected_task_ids must contain non-empty task IDs.")
     unique_roles = list(dict.fromkeys(roles))
     if not unique_roles:
         raise BatchStoreError("A document-changing batch must contain at least one target document role.")
@@ -249,7 +254,7 @@ def create_batch_intent(
         "workflow_ledger_sha256_at_prepare": workflow_sha_at_prepare,
         "created_at_utc": _timestamp(),
         "selected_task_ids": list(dict.fromkeys(selected_task_ids)),
-        "all_selected_task_ids": list(dict.fromkeys(all_selected_task_ids or selected_task_ids)),
+        "all_selected_task_ids": all_task_ids,
         "status": "prepared",
         "documents": role_records,
         "policy": {
@@ -289,6 +294,8 @@ def read_batch_intent(batch_dir: str | Path) -> dict[str, Any]:
         or not selected_task_ids
         or any(not isinstance(item, str) or not item.strip() for item in selected_task_ids)
         or not isinstance(all_selected_task_ids, list)
+        or len(all_selected_task_ids) != len(set(all_selected_task_ids))
+        or len(selected_task_ids) != len(set(selected_task_ids))
         or not set(selected_task_ids).issubset(set(all_selected_task_ids))
         or any(not isinstance(item, str) or not item.strip() for item in all_selected_task_ids)
     ):
