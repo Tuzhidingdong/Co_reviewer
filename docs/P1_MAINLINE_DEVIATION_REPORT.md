@@ -57,13 +57,13 @@ Automated JSON Schema meta-schema validation for every repository schema and Dra
 
 ## Current verification blocker
 
-The latest inspected Actions run at this report refresh is Run #1130, associated with commit daa0352. All four Ubuntu/Windows matrix jobs report runner_id=0, an empty runner name and zero steps. No Python compilation, unit test, PowerShell script or Word COM step ran. The run therefore provides no evidence of a code pass or code failure.
+The latest inspected Actions run at this report refresh is Run #1132, associated with commit daa1acc. All four Ubuntu/Windows matrix jobs report runner_id=0, an empty runner name and zero steps. No Python compilation, unit test, PowerShell script or Word COM step ran. The run therefore provides no evidence of a code pass or code failure.
 
 Earlier runs show the same pre-runner failure pattern. Identical retries are not a useful code-debugging loop and have not been repeated as a substitute for test results.
 
 ## Closure checklist
 
-1. Obtain a functioning GitHub Actions runner or use the user's approved Windows/Python environment to execute the complete synthetic suite.
+1. Obtain a functioning GitHub Actions runner or use the user's approved Windows/Python environment to execute the complete synthetic suite. The latest run is still failing before runner assignment, not in a test step.
 2. Execute the Windows PowerShell 5.1 quality-check script on the target environment and inspect its persistent log.
 3. Perform the user's own Microsoft Word COM/GUI acceptance: open the generated Marked and final Clean DOCX/PDF outputs, verify native Track Changes and actual page/line mapping.
 4. Execute the newly added full JSON Schema meta-schema checks and representative Release Manifest instance validation on a functioning runner; these are now part of the synthetic suite but have not yet executed.
