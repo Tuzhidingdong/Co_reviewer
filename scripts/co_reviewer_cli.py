@@ -1787,6 +1787,7 @@ def cmd_build_revision_ledger(args):
             workflow_path,
             selected_document_task_ids,
             selected_roles,
+            all_selected_task_ids=selected_task_ids,
             runs_dir=getattr(args, "runs_dir", None),
             batch_id=getattr(args, "batch_id", None),
         )
@@ -2001,6 +2002,7 @@ def cmd_build_revision_ledger(args):
             "revision_ledger_file": str(output_path),
             "selected_task_ids": list(selected_task_ids),
             "batch_task_ids": list(batch_intent["selected_task_ids"]),
+            "batch_intent_sha256": sha256_file(batch_intent["batch_intent_file"]),
             "patch_ids": [
                 patch.patch_id for patch in ledger.patches
                 if patch.task_id in selected_task_ids
@@ -3077,6 +3079,12 @@ def cmd_publish_batch(args):
     scope = json.loads(scope_path.read_text(encoding="utf-8"))
     if not isinstance(scope, dict) or scope.get("batch_id") != intent["batch_id"]:
         raise ValueError("Batch scope does not match the selected batch intent.")
+    if scope.get("batch_intent_sha256") != sha256_file(batch_dir / "batch_intent.json"):
+        raise ValueError("Batch scope is not bound to the current immutable batch intent.")
+    if set(scope.get("batch_task_ids", [])) != set(intent["selected_task_ids"]):
+        raise ValueError("Batch scope document-changing task IDs differ from the immutable intent.")
+    if set(scope.get("selected_task_ids", [])) != set(intent.get("all_selected_task_ids", intent["selected_task_ids"])):
+        raise ValueError("Batch scope full task IDs differ from the immutable intent.")
     if Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
         raise ValueError("RevisionLedger path does not match the immutable batch scope.")
     ledger = _load_revision_ledger(revision_path)
@@ -3092,7 +3100,7 @@ def cmd_publish_batch(args):
         for row in workflow.get("tasks", [])
         if isinstance(row, dict)
     }
-    batch_task_ids = scope.get("batch_task_ids", intent.get("selected_task_ids", []))
+    batch_task_ids = intent["selected_task_ids"]
     incomplete_tasks = sorted(
         task_id for task_id in batch_task_ids
         if task_id not in workflow_tasks
@@ -3127,7 +3135,7 @@ def cmd_publish_batch(args):
             "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
             + ", ".join(unverified)
         )
-    scoped_tasks = set(scope.get("selected_task_ids", []))
+    scoped_tasks = set(intent.get("all_selected_task_ids", intent["selected_task_ids"]))
     pending_units = [
         unit.response_unit_id for unit in ledger.response_units
         if scoped_tasks.intersection(unit.linked_task_ids)
