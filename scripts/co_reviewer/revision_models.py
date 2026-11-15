@@ -625,6 +625,16 @@ class ResponseUnit:
                 raise RevisionModelError("Completed ResponseUnit requires completed_at_utc.")
             _aware_timestamp(self.completed_at_utc, "completed_at_utc")
 
+    def _expected_location_locator_ids(self) -> set[str]:
+        """Return the exact locator IDs required by this ResponseUnit's disposition."""
+        if self.disposition == "revised":
+            prefix = "manual:" if self.location_requirement == "manual_required" else ""
+            return {f"{prefix}{operation_id}" for operation_id in self.linked_operation_ids}
+        if self.disposition == "no_change" and self.anchor_evidence_id:
+            prefix = "manual:anchor:" if self.location_requirement == "manual_required" else "anchor:"
+            return {f"{prefix}{self.anchor_evidence_id}"}
+        return set()
+
     def validate_location_evidence(self) -> list[str]:
         if self.location_requirement == "not_required":
             return []
@@ -644,6 +654,17 @@ class ResponseUnit:
                 errors.append(f"Cannot recheck location map file {map_path}: {exc}")
         if not self.final_locations:
             errors.append("Mapped ResponseUnit has no final Word/PDF location records.")
+        expected_locator_ids = self._expected_location_locator_ids()
+        actual_locator_ids = [location.locator_id for location in self.final_locations]
+        if not expected_locator_ids:
+            errors.append("Mapped ResponseUnit has no exact linked PatchOperation or existing-anchor locator scope.")
+        elif (
+            len(actual_locator_ids) != len(expected_locator_ids)
+            or set(actual_locator_ids) != expected_locator_ids
+        ):
+            errors.append(
+                "Mapped ResponseUnit must contain exactly one final locator for every linked PatchOperation or existing anchor."
+            )
         for location in self.final_locations:
             expected_method = "manual" if self.location_requirement == "manual_required" else "word_com"
             if location.mapping_method != expected_method:
@@ -716,22 +737,10 @@ class ResponseUnit:
             raise RevisionModelError(
                 f"{self.location_requirement} ResponseUnit requires mapping_method={expected_method}."
             )
-        if self.disposition == "revised":
-            locator_prefix = "manual:" if self.location_requirement == "manual_required" else ""
-            expected_locator_ids = {
-                f"{locator_prefix}{operation_id}"
-                for operation_id in self.linked_operation_ids
-            }
-        elif self.disposition == "no_change":
-            if not self.anchor_evidence_id:
-                raise RevisionModelError(
-                    f"Existing-anchor ResponseUnit {self.response_unit_id} has no anchor_evidence_id."
-                )
-            locator_prefix = "manual:anchor:" if self.location_requirement == "manual_required" else "anchor:"
-            expected_locator_ids = {f"{locator_prefix}{self.anchor_evidence_id}"}
-        else:
+        expected_locator_ids = self._expected_location_locator_ids()
+        if not expected_locator_ids:
             raise RevisionModelError(
-                f"ResponseUnit {self.response_unit_id} with disposition {self.disposition} cannot receive document locations."
+                f"ResponseUnit {self.response_unit_id} has no exact linked PatchOperation or existing-anchor locator scope."
             )
         actual_locator_ids = [item.locator_id for item in final_locations]
         if (
