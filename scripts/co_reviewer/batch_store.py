@@ -624,6 +624,10 @@ def assert_no_uncommitted_role_batches(
     active_pointers = load_active_document_pointers(workflow)
     new_task_ids = set(selected_task_ids)
     for batch_dir in sorted(root.glob("batch-*")):
+        if batch_dir.is_symlink():
+            raise BatchStoreError(
+                f"Batch directory must not be a symbolic link: {batch_dir}"
+            )
         if not batch_dir.is_dir():
             continue
         intent_path = batch_dir / "batch_intent.json"
@@ -1130,7 +1134,12 @@ def _batch_artifact_inventory(batch_dir: Path) -> list[dict[str, Any]]:
     describe files retained inside this immutable batch directory, not mutable
     files that happen to be reachable through a link.
     """
-    root = batch_dir.expanduser().resolve()
+    requested_root = batch_dir.expanduser()
+    if requested_root.is_symlink():
+        raise BatchStoreError(
+            f"Batch directory must not be a symbolic link: {requested_root}"
+        )
+    root = requested_root.resolve()
     rows: list[dict[str, Any]] = []
     excluded_root_controls = {"batch_recovery_intent.json", "batch_recovered.json"}
     for path in sorted(root.rglob("*")):
