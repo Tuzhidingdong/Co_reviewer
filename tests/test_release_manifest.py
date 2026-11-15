@@ -276,8 +276,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
             )
 
     def test_release_manifest_captures_unpublished_failed_batch_recovery_evidence(self):
-        batch_id = "batch-recovery-003"
-        batch_dir = self.root / "runs" / batch_id
+        batch_id = "recovery-003"
+        batch_dir = self.root / "runs" / f"batch-{batch_id}"
         documents_dir = batch_dir / "documents"
         documents_dir.mkdir(parents=True)
         output_path = documents_dir / "Manuscript.marked.docx"
@@ -287,7 +287,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
 
         intent = {
             "schema_version": "1.0",
-            "batch_id": batch_id.removeprefix("batch-"),
+            "batch_id": batch_id,
             "revision_round_id": "round-release-tests",
             "workflow_ledger_file": str(self.workflow_path),
             "selected_task_ids": ["T1"],
@@ -305,7 +305,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         intent_sha = hashlib.sha256(intent_path.read_bytes()).hexdigest()
         scope = {
             "schema_version": "1.0",
-            "batch_id": batch_id.removeprefix("batch-"),
+            "batch_id": batch_id,
             "revision_round_id": "round-release-tests",
             "revision_ledger_file": str(self.revision_path),
             "selected_task_ids": ["T1"],
@@ -337,7 +337,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             actor="Recovery Agent",
             details={
                 "recovery_id": recovery_id,
-                "batch_id": batch_id.removeprefix("batch-"),
+                "batch_id": batch_id,
                 "reason": "Synthetic recovery test.",
                 "parent_documents": parent_documents,
                 "failed_output_files": failed_output_files,
@@ -352,7 +352,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "schema_version": "1.0",
             "status": "prepared",
             "recovery_id": recovery_id,
-            "batch_id": batch_id.removeprefix("batch-"),
+            "batch_id": batch_id,
             "workflow_ledger_file": str(self.workflow_path),
             "revision_ledger_file": str(self.revision_path),
             "workflow_ledger_sha256_before": "1" * 64,
@@ -376,7 +376,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "schema_version": "1.0",
             "status": "recovered",
             "recovery_id": recovery_id,
-            "batch_id": batch_id.removeprefix("batch-"),
+            "batch_id": batch_id,
             "workflow_ledger_file": str(self.workflow_path),
             "workflow_ledger_sha256": "2" * 64,
             "revision_ledger_file": str(self.revision_path),
@@ -405,14 +405,14 @@ class ReleaseManifestGateTests(unittest.TestCase):
             workflow_ledger_path=self.workflow_path,
         )
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["batch_id"], "batch-recovery-003")
+        self.assertEqual(records[0]["batch_id"], "recovery-003")
         self.assertEqual(records[0]["patch_ids"], ["P-RECOVER"])
         self.assertTrue(records[0]["retained_batch_files"])
         self.assertEqual(records[0]["retained_artifacts"], artifact_inventory)
         with self.assertRaisesRegex(ReleaseGateError, "both recovered-unpublished and published"):
             _collect_recovered_batch_history(
                 revision,
-                published_batch_ids={"batch-recovery-003"},
+                published_batch_ids={"recovery-003"},
                 revision_ledger_path=self.revision_path,
                 workflow_ledger_path=self.workflow_path,
             )

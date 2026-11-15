@@ -902,8 +902,19 @@ def _collect_recovered_batch_history(
         try:
             recovery_intent = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
             receipt = _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+            scope_payload = json.loads(scope_path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
+        selected_task_ids = recovery_intent.get("selected_task_ids")
+        if not isinstance(selected_task_ids, list):
+            raise ReleaseGateError(f"Recovered batch {batch_id} has no valid full selected-task set.")
+        _validate_release_batch_scope(
+            intent,
+            scope_payload,
+            revision_ledger=revision_ledger,
+            revision_ledger_path=revision_path,
+            workflow_task_ids=set(selected_task_ids),
+        )
 
         event_patch_ids = set(patch_ids)
         recovery_patch_ids = recovery_intent.get("patch_ids")
