@@ -575,6 +575,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
 
         recovery_intent_path = self.root / "runs" / "batch-recovery-003" / "batch_recovery_intent.json"
         receipt_path = self.root / "runs" / "batch-recovery-003" / "batch_recovered.json"
+        original_recovery_intent_bytes = recovery_intent_path.read_bytes()
+        original_recovery_receipt_bytes = receipt_path.read_bytes()
         recovery_intent_payload = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
         recovery_intent_payload["selected_task_ids"] = [{"malformed": "not hashable"}]
         recovery_intent_path.write_text(
@@ -597,6 +599,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 workflow_task_ids={"T1"},
             )
 
+        # Restore the valid recovery pair before exercising the independent
+        # missing-parent check; each tamper case must start from a clean fixture.
+        recovery_intent_path.write_bytes(original_recovery_intent_bytes)
+        receipt_path.write_bytes(original_recovery_receipt_bytes)
         self.source.unlink()
         with self.assertRaisesRegex(ReleaseGateError, "active parent is missing or stale"):
             _collect_recovered_batch_history(
