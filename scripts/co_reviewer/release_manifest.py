@@ -13,7 +13,11 @@ from typing import Any, Mapping, Sequence
 
 from docx import Document
 
-from .batch_store import load_active_document_pointers
+from .batch_store import (
+    _validate_recovered_batch_receipt,
+    load_active_document_pointers,
+    read_batch_intent,
+)
 from .docx_quality import audit_docx_quality
 from .identity import sha256_file
 from .revision_models import (
@@ -814,6 +818,142 @@ def _collect_release_batch_history(
     return records
 
 
+def _collect_recovered_batch_history(
+    revision_ledger: RevisionLedger,
+    *,
+    published_batch_ids: set[str],
+    revision_ledger_path: str | Path,
+    workflow_ledger_path: str | Path,
+) -> list[dict[str, Any]]:
+    """Seal every abandoned unpublished batch from its RevisionLedger recovery events."""
+    patch_status_by_id = {
+        patch.patch_id: patch.status for patch in revision_ledger.patches
+    }
+    groups: dict[str, list[Any]] = {}
+    for event in revision_ledger.events:
+        if (
+            event.subject_type != "patch"
+            or event.event_type != "patch_abandoned_after_batch_recovery"
+        ):
+            continue
+        details = event.details
+        batch_id = details.get("batch_id")
+        if not isinstance(batch_id, str) or not batch_id.strip():
+            raise ReleaseGateError(
+                f"Recovery event for Patch {event.subject_id} has no batch_id."
+            )
+        if batch_id in published_batch_ids:
+            raise ReleaseGateError(
+                f"Batch {batch_id} is marked both recovered-unpublished and published."
+            )
+        groups.setdefault(batch_id, []).append(event)
+
+    records: list[dict[str, Any]] = []
+    revision_path = Path(revision_ledger_path).expanduser().resolve()
+    workflow_path = Path(workflow_ledger_path).expanduser().resolve()
+    for batch_id in sorted(groups):
+        events = groups[batch_id]
+        patch_ids = [event.subject_id for event in events]
+        details_by_event = [
+            json.dumps(event.details, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for event in events
+        ]
+        if (
+            any(not isinstance(value, str) or not value.strip() for value in patch_ids)
+            or len(patch_ids) != len(set(patch_ids))
+            or any(value != details_by_event[0] for value in details_by_event[1:])
+        ):
+            raise ReleaseGateError(f"Recovered batch {batch_id} has duplicate or inconsistent Patch recovery events.")
+        details = events[0].details
+        failed_outputs = details.get("failed_output_files")
+        if not isinstance(failed_outputs, Mapping) or not failed_outputs:
+            raise ReleaseGateError(f"Recovered batch {batch_id} has no failed-output path inventory.")
+        candidate_dirs: set[Path] = set()
+        for role, raw_paths in failed_outputs.items():
+            if not isinstance(role, str) or not isinstance(raw_paths, list) or not raw_paths:
+                raise ReleaseGateError(f"Recovered batch {batch_id} has invalid failed-output records for {role}.")
+            for raw_path in raw_paths:
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    raise ReleaseGateError(f"Recovered batch {batch_id} has an invalid failed output path.")
+                output_path = Path(raw_path).expanduser().resolve()
+                if output_path.parent.name != "documents":
+                    raise ReleaseGateError(f"Recovered batch {batch_id} failed output is outside its documents directory.")
+                candidate_dirs.add(output_path.parent.parent)
+        if len(candidate_dirs) != 1:
+            raise ReleaseGateError(f"Recovered batch {batch_id} failed outputs do not share one batch directory.")
+        batch_dir = next(iter(candidate_dirs))
+        if batch_dir.name != f"batch-{batch_id}":
+            raise ReleaseGateError(f"Recovered batch {batch_id} event paths do not resolve to its declared directory.")
+
+        try:
+            intent = read_batch_intent(batch_dir)
+        except Exception as exc:
+            raise ReleaseGateError(f"Cannot validate recovered batch {batch_id} intent: {exc}") from exc
+        recovery_intent_path = batch_dir / "batch_recovery_intent.json"
+        recovery_receipt_path = batch_dir / "batch_recovered.json"
+        scope_path = batch_dir / "batch_scope.json"
+        for label, path in (
+            ("recovery intent", recovery_intent_path),
+            ("recovery receipt", recovery_receipt_path),
+            ("batch scope", scope_path),
+        ):
+            if not path.is_file():
+                raise ReleaseGateError(f"Recovered batch {batch_id} is missing its {label}: {path}.")
+        try:
+            recovery_intent = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
+            receipt = _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+        except Exception as exc:
+            raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
+
+        event_patch_ids = set(patch_ids)
+        recovery_patch_ids = recovery_intent.get("patch_ids")
+        recovery_events = recovery_intent.get("revision_events")
+        if (
+            intent.get("batch_id") != batch_id
+            or recovery_intent.get("batch_id") != batch_id
+            or receipt.get("batch_id") != batch_id
+            or receipt.get("status") != "recovered"
+            or not isinstance(recovery_patch_ids, list)
+            or set(recovery_patch_ids) != event_patch_ids
+            or receipt.get("patch_ids") != recovery_patch_ids
+            or not isinstance(recovery_events, list)
+            or {row.get("subject_id") for row in recovery_events if isinstance(row, Mapping)} != event_patch_ids
+            or any(
+                event.details.get(key) != recovery_intent.get(intent_key)
+                for key, intent_key in (
+                    ("recovery_id", "recovery_id"),
+                    ("parent_documents", "parent_documents"),
+                    ("failed_output_files", "failed_output_files"),
+                    ("artifact_inventory", "artifact_inventory"),
+                    ("batch_intent_sha256", "batch_intent_sha256"),
+                    ("batch_scope_sha256", "batch_scope_sha256"),
+                )
+            )
+            or not isinstance(recovery_intent.get("workflow_ledger_file"), str)
+            or Path(recovery_intent["workflow_ledger_file"]).expanduser().resolve() != workflow_path
+            or not isinstance(recovery_intent.get("revision_ledger_file"), str)
+            or Path(recovery_intent["revision_ledger_file"]).expanduser().resolve() != revision_path
+        ):
+            raise ReleaseGateError(f"Recovered batch {batch_id} event history does not match its recovery intent/receipt.")
+        records.append({
+            "batch_id": batch_id,
+            "directory": str(batch_dir),
+            "intent": _sha_record(batch_dir / "batch_intent.json"),
+            "scope": _sha_record(scope_path),
+            "recovery_intent": _sha_record(recovery_intent_path),
+            "recovery_receipt": _sha_record(recovery_receipt_path),
+            "recovery_id": receipt["recovery_id"],
+            "selected_task_ids": list(receipt.get("selected_task_ids", [])),
+            "batch_task_ids": list(recovery_intent.get("batch_task_ids", [])),
+            "patch_ids": list(receipt["patch_ids"]),
+            "parent_documents": receipt["parent_documents"],
+            "failed_output_files": receipt["failed_output_files"],
+            "retained_artifacts": receipt["retained_artifacts"],
+            "retained_batch_files": True,
+        })
+    return records
+
+
 def build_final_release_manifest(
 
 def build_final_release_manifest(
@@ -865,6 +1005,12 @@ def build_final_release_manifest(
         workflow_ledger,
         active_documents,
         revision_ledger=revision_ledger,
+        revision_ledger_path=revision_path,
+        workflow_ledger_path=workflow_path,
+    )
+    recovered_batch_records = _collect_recovered_batch_history(
+        revision_ledger,
+        published_batch_ids={row["batch_id"] for row in batch_records},
         revision_ledger_path=revision_path,
         workflow_ledger_path=workflow_path,
     )
@@ -1265,6 +1411,7 @@ def build_final_release_manifest(
         },
         "active_documents": active_records,
         "batches": batch_records,
+        "recovered_batches": recovered_batch_records,
         "marked_documents": marked_documents,
         "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,

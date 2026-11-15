@@ -11,6 +11,7 @@
     "source_ledgers",
     "active_documents",
     "batches",
+    "recovered_batches",
     "marked_documents",
     "deterministic_consistency_audit",
     "final_documents",
@@ -86,6 +87,42 @@
             "then": { "required": ["rollback_intent", "rollback_receipt"] }
           }
         ],
+        "additionalProperties": false
+      }
+    },
+    "recovered_batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["batch_id", "directory", "intent", "scope", "recovery_intent", "recovery_receipt", "recovery_id", "selected_task_ids", "batch_task_ids", "patch_ids", "parent_documents", "failed_output_files", "retained_artifacts", "retained_batch_files"],
+        "properties": {
+          "batch_id": { "type": "string", "minLength": 1 },
+          "directory": { "type": "string", "minLength": 1 },
+          "intent": { "$ref": "#/$defs/fileRecord" },
+          "scope": { "$ref": "#/$defs/fileRecord" },
+          "recovery_intent": { "$ref": "#/$defs/fileRecord" },
+          "recovery_receipt": { "$ref": "#/$defs/fileRecord" },
+          "recovery_id": { "type": "string", "minLength": 1 },
+          "selected_task_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "batch_task_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "patch_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "parent_documents": { "type": "object", "additionalProperties": { "type": "object" } },
+          "failed_output_files": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } } },
+          "retained_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "size_bytes", "sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "size_bytes": { "type": "integer", "minimum": 0 },
+                "sha256": { "$ref": "#/$defs/sha256" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "retained_batch_files": { "const": true }
+        },
         "additionalProperties": false
       }
     },
