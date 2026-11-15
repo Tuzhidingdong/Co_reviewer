@@ -20,6 +20,7 @@ from co_reviewer.release_manifest import (
     _require_bound_response_quality_report,
     _require_word_page_count,
     _validate_release_batch_scope,
+    _validate_response_unit_task_attribution,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
@@ -243,6 +244,33 @@ class ReleaseManifestGateTests(unittest.TestCase):
                         docx_path="/tmp/Response_to_Reviewers.docx",
                         docx_sha256="a" * 64,
                     )
+
+    def test_response_units_must_reference_a_current_task_and_its_source_comment(self):
+        unit = SimpleNamespace(
+            response_unit_id="RU-ATTRIBUTION",
+            comment_id="C1",
+            linked_task_ids=["T1"],
+        )
+        task_map = {
+            "T1": {"task_id": "T1", "source_comment_ids": ["C1"]},
+        }
+        _validate_response_unit_task_attribution([unit], task_map)
+
+        with self.assertRaisesRegex(ReleaseGateError, "at least one current Workflow task"):
+            _validate_response_unit_task_attribution(
+                [SimpleNamespace(response_unit_id="RU-NO-TASK", comment_id="C1", linked_task_ids=[])],
+                task_map,
+            )
+        with self.assertRaisesRegex(ReleaseGateError, "unknown or removed Workflow task"):
+            _validate_response_unit_task_attribution(
+                [SimpleNamespace(response_unit_id="RU-UNKNOWN", comment_id="C1", linked_task_ids=["T2"])],
+                task_map,
+            )
+        with self.assertRaisesRegex(ReleaseGateError, "not declared by linked Workflow task"):
+            _validate_response_unit_task_attribution(
+                [SimpleNamespace(response_unit_id="RU-EXTRA", comment_id="C2", linked_task_ids=["T1"])],
+                task_map,
+            )
 
     def test_release_batch_scope_must_match_ledger_patch_task_and_document_ownership(self):
         parent = self.root / "parent.docx"

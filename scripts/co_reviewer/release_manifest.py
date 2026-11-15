@@ -98,6 +98,32 @@ def _require_word_page_count(value: Any, role: str) -> int:
     return value
 
 
+def _validate_response_unit_task_attribution(
+    response_units: Sequence[Any],
+    workflow_tasks: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Require every final ResponseUnit to map to a current task and its real reviewer comment."""
+    for unit in response_units:
+        task_ids = list(unit.linked_task_ids)
+        if not task_ids:
+            raise ReleaseGateError(
+                f"ResponseUnit {unit.response_unit_id} must link to at least one current Workflow task."
+            )
+        for task_id in task_ids:
+            task = workflow_tasks.get(task_id)
+            if task is None:
+                raise ReleaseGateError(
+                    f"ResponseUnit {unit.response_unit_id} links unknown or removed Workflow task {task_id}."
+                )
+            comment_ids = task.get("source_comment_ids", [])
+            if not isinstance(comment_ids, list):
+                raise ReleaseGateError(f"Workflow task {task_id} source_comment_ids must be an array.")
+            if unit.comment_id not in {str(value) for value in comment_ids}:
+                raise ReleaseGateError(
+                    f"ResponseUnit {unit.response_unit_id} comment {unit.comment_id} is not declared by linked Workflow task {task_id}."
+                )
+
+
 def _validate_release_batch_scope(
     intent: Mapping[str, Any],
     scope: Mapping[str, Any],
@@ -701,6 +727,8 @@ def build_final_release_manifest(
             "Every ResponseUnit must be explicitly completed before final release; pending unit(s): "
             + ", ".join(sorted(incomplete_units))
         )
+
+    _validate_response_unit_task_attribution(revision_ledger.response_units, workflow_tasks)
 
     response_units_by_task_comment: dict[tuple[str, str], list[Any]] = {}
     for unit in revision_ledger.response_units:
