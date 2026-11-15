@@ -34,6 +34,10 @@ python scripts/co_reviewer_cli.py publish-batch --workflow-ledger workflow_ledge
 
 Use the exact `[NEXT PLAN]` snapshot path reported by each command. Do not copy later-stage data back into an earlier snapshot.
 
+### P1-4 recovery boundary still open
+
+Published-batch rollback is implemented and non-destructive. An uncommitted batch whose Apply step has already created partial DOCX outputs is retained, and the role reservation prevents another batch from silently branching from the same active parent. However, there is not yet a dedicated one-command recovery path that explicitly reconciles a failed, unpublished batch's RevisionDocument/Patch lineage back to the still-active parent before allocating a fresh batch directory. The current Patch supersession rules preserve predecessor-output lineage for applied/verified Patches. Treat this as an unresolved recovery edge case: do not delete or reuse the partial outputs, and do not claim that a fresh batch can always be rebuilt automatically after a partial Apply failure. Resolve the lineage explicitly before continuing that document role.
+
 ## P1-5 — Response Renderer and Final Release Gate
 
 Implemented:
