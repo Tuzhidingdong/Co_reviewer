@@ -17,6 +17,7 @@ from co_reviewer.batch_store import (
     create_batch_intent,
     load_active_document_pointers,
     publish_active_pointers,
+    read_batch_intent,
     recover_unpublished_batch,
     rollback_active_pointers,
     write_json_new,
@@ -126,6 +127,8 @@ class BatchStoreTests(unittest.TestCase):
             self.skipTest(f"Directory symbolic links are unavailable in this environment: {exc}")
         with self.assertRaisesRegex(BatchStoreError, "Batch directory must not be a symbolic link"):
             _batch_artifact_inventory(batch_directory_link)
+        with self.assertRaisesRegex(BatchStoreError, "Batch directory must not be a symbolic link"):
+            read_batch_intent(batch_directory_link)
 
     def test_role_lock_rejects_symlinked_batch_directories(self):
         self.runs_dir.mkdir()
