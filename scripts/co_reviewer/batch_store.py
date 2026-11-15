@@ -331,6 +331,8 @@ def rollback_active_pointers(
     workflow: Mapping[str, Any],
     workflow_path: str | Path,
     batch_dir: str | Path,
+    *,
+    reason: str = "Published batch rolled back; revalidate all affected document targets.",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Restore parent pointers for a published batch without deleting any batch file."""
     errors = validate_workflow_ledger(workflow)
@@ -367,6 +369,22 @@ def rollback_active_pointers(
             "updated_at_utc": _timestamp(),
         }
     updated = json.loads(json.dumps(workflow, ensure_ascii=False))
+    from .workflow_engine import invalidate_affected_tasks
+    invalidated_tasks, _ = invalidate_affected_tasks(
+        updated.get("tasks", []),
+        list(intent.get("selected_task_ids", [])),
+        reason,
+    )
+    task_rows = {row.get("task_id"): row for row in invalidated_tasks}
+    for task_id in intent.get("selected_task_ids", []):
+        task = task_rows.get(task_id)
+        if task is None:
+            raise BatchStoreError(f"Rollback refers to unknown Workflow task {task_id}.")
+        if task.get("status") != "recheck_required":
+            task["recheck_from"] = task.get("status", "identified")
+        task["status"] = "recheck_required"
+        task["invalidation_reason"] = reason
+    updated["tasks"] = invalidated_tasks
     active = dict(updated.get("active_documents") or {})
     active.update(restored)
     updated["active_documents"] = active
