@@ -22,59 +22,16 @@ A second run with unchanged files should report cache hits and no new full-text 
 
 ## Record actual model usage
 
-The actual Supervisor/Worker caller should wrap each model invocation with `co_reviewer.usage_adapter.invoke_with_usage`. The wrapper is provider-neutral: the caller supplies its real invocation, provider-specific usage extractor, actor/stage/provider/model metadata, and explicit context scope. It does not inspect prompt/response text, infer tokens from text length, or infer model exposure from filesystem reads. The provider integration still has to attach this wrapper at its real call boundary.
+P1 does not intercept Antigravity or OpenCode model calls. Record model usage only from a trusted provider/agent metadata export. Do not infer token counts from prompt/response text, text length, cache reads or filesystem activity.
 
-Example integration shape (replace the placeholders with the actual caller and documented provider usage fields):
+Prepare a metadata-only JSON event using the schema in `schemas/usage-event.schema.json`, then append and audit it:
 
-```python
-from co_reviewer.usage_adapter import invoke_with_usage
-
-response = invoke_with_usage(
-    ledger_path=".co-reviewer-usage.jsonl",
-    invoke=lambda: invoke_provider_call(...),
-    stage="decision_synthesis",
-    actor="supervisor",
-    provider="provider-name",
-    model="model-name",
-    context_scope="excerpt",  # caller's explicit dispatch knowledge
-    usage_extractor=extract_provider_usage,
-    reasoning_relation="unknown",  # set only from provider accounting evidence
-    job_id="optional-job-id",
-    session_id="optional-session-id",
-)
+```powershell
+python scripts/co_reviewer_cli.py record-usage-event --ledger ./.co-reviewer-usage.jsonl --event ./model_usage_event.json
+python scripts/co_reviewer_cli.py audit-usage --ledger ./.co-reviewer-usage.jsonl --out ./usage_audit_report.json
 ```
 
-The extractor returns only canonical integer/null buckets (`input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens`, `reasoning_tokens`). If no trusted usage object is available, omit the extractor and the event remains `unavailable`; partial measurements remain partial. Failed calls produce an unavailable event and re-raise the original exception. If the model call succeeds but the ledger cannot be written, `UsageAdapterError.result` retains the completed result; do not retry the billable call blindly.
-
-The legacy manual event-file route below remains available for provider usage exports. Example:
-
-    {
-      "event_type": "model_usage",
-      "stage": "decision_synthesis",
-      "actor": "supervisor",
-      "provider": "provider-name",
-      "model": "model-name",
-      "job_id": "optional-job-id",
-      "session_id": "optional-session-id",
-      "token_usage": {
-        "source": "measured",
-        "reasoning_relation": "included_in_output",
-        "input_tokens": 12000,
-        "cache_read_tokens": 8000,
-        "cache_write_tokens": 0,
-        "output_tokens": 1800,
-        "reasoning_tokens": 900
-      }
-    }
-
-Append it using:
-
-    python scripts/co_reviewer_cli.py record-usage-event --ledger ./.co-reviewer-usage.jsonl --event ./model_usage_event.json
-    python scripts/co_reviewer_cli.py audit-usage --ledger ./.co-reviewer-usage.jsonl --out ./usage_audit_report.json
-
-The five token buckets are retained separately. `reasoning_relation` must describe whether reasoning is included in output or separately billable; an `unknown` relationship is never silently combined.
-
-`audit-usage` groups model events by stage, actor and provider/model, reports actual caller-supplied model context scope, call outcomes and observed durations, and separately reports programmatic read scopes and repeated full-document extractions by source SHA-256. A programmatic `document_read` event never proves that the model saw the file.
+Keep the five token buckets separate: `input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens` and `reasoning_tokens`. Missing measurements remain null/unavailable, not zero. `reasoning_relation` must reflect provider accounting evidence; an unknown relationship is never silently combined. `audit-usage` groups recorded model events by stage, actor and provider/model, and reports programmatic document reads separately. A `document_read` event never proves that the model saw the file.
 
 ## Optional cost estimate
 
@@ -119,7 +76,7 @@ Response Letter rendering emits a `.quality.json` report automatically. `map-res
 
 ## Not covered / acceptance still required
 
-- The provider-neutral wrapper is an integration seam, not an automatically attached hook. This repository does not contain Antigravity or OpenCode invocation code; automatic capture remains inactive until those external call sites attach `invoke_with_usage` with their documented provider usage extractors.
+- Automatic Antigravity/OpenCode model-call capture is outside P1. A future P2 integration may attach provider-specific usage extraction at the real call boundaries.
 - No reliable model-context count is inferred from local file reads, cache operations, prompt size or total token usage.
 - The quality checker does not replace Microsoft Word GUI inspection, Word save-round-trip acceptance, visual figure/table checks, or scientific semantic review.
 - Actual page/line positions continue to come from Word COM after pagination and must be backed by the exported PDF.

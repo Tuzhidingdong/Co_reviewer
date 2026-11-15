@@ -27,7 +27,7 @@ The clearest scope deviation is the size of the P1 adaptation to word_pdf_mapper
 | Working Clean projection and Response Letter Markdown/DOCX | Working Clean projections are separate from Marked DOCX. ResponseUnit-linked PatchOperation excerpts feed deterministic Markdown/DOCX rendering; quality checks and Release Gate bind the outputs to current evidence. | Implemented; synthetic tests present |
 | Preserve P0 Word revision writer and Windows PowerShell 5.1 compatibility | The P0 Track Changes writer core is retained; its edit-result metadata pass-through was extended with operation/comment/location provenance. The PowerShell quality script was expanded, while retaining the Windows PowerShell 5.1 entry point and a non-ArgumentList fallback. | Core retained; runtime compatibility not yet verified |
 | Preserve P0 Word/PDF mapping implementation | Word COM remains responsible for pagination and page/line coordinates, but P1 substantially extends the mapper for ResponseUnit locators, no-change anchors, manual non-body locations, deletion-aware phrases and whole-role reuse. P0's PDF page-text corroboration was temporarily removed, then restored. The exporter call's missing PDF-path argument was also fixed. Cached/reused mappings now receive the same PDF page-text corroboration. | Material P1 adaptation; compatibility repair committed; Word COM not run |
-| Keep Usage Audit and DOCX Quality Audit as supporting controls | They are implemented as audit/quality support. The provider-neutral Usage Adapter is only an integration seam; actual Antigravity/OpenCode invocation hooks are outside this repository. | Correctly supporting scope; external hooks remain unintegrated |
+| Keep Usage Audit and DOCX Quality Audit as supporting controls | The document-read Usage Audit and deterministic DOCX Quality Audit remain supporting controls. Actual model-call usage must be supplied through trusted metadata exports; automatic Antigravity/OpenCode call interception is not part of P1. | Supporting scope retained |
 
 ## Confirmed deviations and boundaries
 
@@ -47,23 +47,19 @@ Both were fixed in 4a5a364. The independent PDF check only confirms that the tar
 
 The second-batch test now covers immutable directory creation, batch plan export, staged preflight/approval/apply snapshots, Track Changes, verification, semantic confirmation, Workflow synchronization and publication. It simulates the previously published first batch by seeding the verified first output as the active parent; it does not combine the first batch's full creation/publication procedure and the second batch into one giant integration test. Those first-batch storage/publication cases remain separately covered.
 
-### 3. Usage Adapter integration seam
-
-The provider-neutral invoke_with_usage wrapper is a P2 supporting interface. It does not itself intercept external Antigravity or OpenCode calls. Those integration points and provider-specific usage extractors remain outside this repository; automatic production token capture is not claimed.
-
-### 4. Validation scope
+### 3. Validation scope
 
 Automated JSON Schema meta-schema validation for every repository schema and Draft 2020-12 validation of a generated Release Manifest instance have now been added to the synthetic suite; they remain unverified until a runner executes the tests. Dedicated Draft 2020-12 schemas and instance checks also cover failed-batch Recovery Intent and Receipt, including the exact invalidated DAG task set. Synthetic tests are present in the repository but must not be described as passing until a runner actually executes them. Word COM pagination/export, PowerShell 5.1 execution and visual inspection of the final Word/PDF pair remain separate acceptance steps.
 
 ## Current verification blocker
 
-The latest inspected Actions run at this report refresh is Run #1134, associated with commit 72c64a6. All four Ubuntu/Windows matrix jobs report runner_id=0, an empty runner name and zero steps. No Python compilation, unit test, PowerShell script or Word COM step ran. The run therefore provides no evidence of a code pass or code failure. The follow-up fixture-import commit 1e2d6c4 skipped CI and therefore has no test result.
+The latest executed Actions runs are #1133 and #1134 for commit 72c64a6. All four matrix jobs in each run failed before runner assignment (`runner_id=0`, empty runner name, zero steps). No Python compilation, unit test or PowerShell step ran. The follow-up fixture-import commit 1e2d6c4 and docs commit 331e77a skipped CI. No code pass/fail conclusion can be drawn from these runs. The immediate next validation is the user's local Windows PowerShell 5.1 quality-check script, followed by Word GUI/COM acceptance.
 
 Earlier runs show the same pre-runner failure pattern. Identical retries are not a useful code-debugging loop and have not been repeated as a substitute for test results.
 
 ## Closure checklist
 
-1. Obtain a functioning GitHub Actions runner or use the user's approved Windows/Python environment to execute the complete synthetic suite. The latest run is still failing before runner assignment, not in a test step.
+1. Use the existing Windows/Python environment to execute the complete synthetic suite with `scripts/run_quality_checks.ps1`; Actions has repeatedly failed before runner assignment and identical retries are not useful.
 2. Execute the Windows PowerShell 5.1 quality-check script on the target environment and inspect its persistent log.
 3. Perform the user's own Microsoft Word COM/GUI acceptance: open the generated Marked and final Clean DOCX/PDF outputs, verify native Track Changes and actual page/line mapping.
 4. Execute the newly added full JSON Schema meta-schema checks and representative Release Manifest instance validation on a functioning runner; these are now part of the synthetic suite but have not yet executed.
@@ -71,4 +67,4 @@ Earlier runs show the same pre-runner failure pattern. Identical retries are not
 
 ## Verdict
 
-The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviations are now explicit: a material but purposeful mapper adaptation, an intentionally unintegrated external Usage Adapter seam, and acceptance/validation that has not run. The code and test additions should not be treated as accepted until the runner and local Word/PowerShell gates complete.
+The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviation is the material but purposeful Word/PDF mapper adaptation; automated and local acceptance validation has not yet run. The code and test additions should not be treated as accepted until the runner and local Word/PowerShell gates complete.
