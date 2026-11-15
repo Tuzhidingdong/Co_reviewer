@@ -310,7 +310,7 @@ A published batch can be rolled back without deleting any Marked DOCX, Clean DOC
 python scripts/co_reviewer_cli.py rollback-batch --workflow-ledger workflow_ledger.json --batch-dir "runs/batch-<id>" --reason "Explain why this committed batch is being rolled back."
 ```
 
-Rollback restores all parent active pointers atomically and marks the affected tasks/dependents `recheck_required`. If an uncommitted batch has already created a partial output, do not reuse or overwrite that output. Preserve the failed batch as evidence; explicitly supersede/re-authorize the affected Patch and build a fresh batch with new output paths. A second batch must not silently reuse the failed batch's files.
+Rollback restores all parent active pointers atomically and marks the affected tasks/dependents `recheck_required`. If an uncommitted batch has already created a partial output, do not reuse or overwrite that output. Preserve the failed batch as evidence. The current supersession model preserves predecessor-output lineage for applied/verified Patches, so do not assume that a new batch can automatically reset to the still-active parent. Reconcile the RevisionDocument/Patch lineage explicitly before allocating a fresh batch; a dedicated one-command failed-unpublished-batch recovery path is still outstanding. A second batch must never silently reuse the failed batch's files.
 
 Publication and rollback use intent/receipt records so a retry after an interrupted pointer update can finish the receipt without overwriting later Workflow Ledger edits. If a concurrent Workflow Ledger update is detected before pointer replacement, the command fails closed.
 
