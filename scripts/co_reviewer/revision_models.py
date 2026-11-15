@@ -8,6 +8,7 @@ revision-plan format and records the resulting execution history.
 from __future__ import annotations
 
 import copy
+from collections import defaultdict
 import hashlib
 import json
 import re
@@ -125,7 +126,7 @@ class PatchOperation:
             raise RevisionModelError("source_comment_ids must be unique.")
         if self.location_phrase is not None:
             _text(self.location_phrase, "location_phrase")
-            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\\r\\n\\t"):
+            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\r\n\t"):
                 raise RevisionModelError("location_phrase must be a single-line Word Find phrase of at most 255 characters.")
         if self.target_ref is not None:
             if not isinstance(self.target_ref, Mapping):
@@ -545,7 +546,7 @@ class ResponseUnit:
         _text(self.resolution_reason, "resolution_reason", allow_empty=True)
         if self.location_phrase is not None:
             _text(self.location_phrase, "location_phrase")
-            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\\r\\n\\t"):
+            if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\r\n\t"):
                 raise RevisionModelError("ResponseUnit location_phrase must be a single-line phrase of at most 255 characters.")
         if self.disposition == "reply_only" and self.location_requirement != "not_required":
             raise RevisionModelError("reply_only ResponseUnits must use location_requirement=not_required.")
@@ -1845,58 +1846,140 @@ class RevisionLedger:
             item.get("id"): item
             for item in plan_items if isinstance(item, Mapping)
         }
-        now = datetime.now(timezone.utc).isoformat()
+
+        # One Patch may span several document roles. Apply emits one report per
+        # input/output DOCX pair, so validate the complete operation set before
+        # moving the Patch out of approved state. Mutating it after the first
+        # document report made the second report look like a replay.
+        applied_by_patch: dict[str, list[tuple[Mapping[str, Any], Mapping[str, Any]]]] = defaultdict(list)
         for report in reports:
             if not isinstance(report, Mapping):
                 raise RevisionModelError("Apply report entries must be objects.")
             results = report.get("results", [])
-            applied_ids = {
-                item.get("revision_item_id")
-                for item in results if isinstance(item, Mapping) and item.get("status") == "applied"
-            }
-            for patch_id in applied_ids:
-                patch = by_id.get(patch_id)
-                if patch is None:
+            if not isinstance(results, list):
+                raise RevisionModelError("Apply report results must be an array.")
+            for result in results:
+                if not isinstance(result, Mapping) or result.get("status") != "applied":
                     continue
-                legacy_item = plan_by_id.get(patch_id)
-                if not isinstance(legacy_item, Mapping):
-                    raise RevisionModelError(
-                        f"Applied patch {patch_id} is missing from the legacy revision plan."
-                    )
-                approval_fingerprint = legacy_item.get("approval_fingerprint")
-                _sha256(approval_fingerprint, "approval_fingerprint")
-                preflight_fingerprint = _sha256(
-                    legacy_item.get("preflight_fingerprint"), "preflight_fingerprint"
+                patch_id = result.get("revision_item_id")
+                if not isinstance(patch_id, str) or not patch_id.strip():
+                    raise RevisionModelError("Applied result is missing its exact Patch ID.")
+                if patch_id in by_id:
+                    applied_by_patch[patch_id].append((report, result))
+
+        now = datetime.now(timezone.utc).isoformat()
+        for patch_id, evidence_rows in applied_by_patch.items():
+            patch = by_id[patch_id]
+            legacy_item = plan_by_id.get(patch_id)
+            if not isinstance(legacy_item, Mapping):
+                raise RevisionModelError(
+                    f"Applied patch {patch_id} is missing from the legacy revision plan."
                 )
-                if (
-                    patch.status != "approved"
-                    or patch.approval_fingerprint != approval_fingerprint
-                    or patch.preflight_fingerprint != preflight_fingerprint
-                ):
+            approval_fingerprint = legacy_item.get("approval_fingerprint")
+            _sha256(approval_fingerprint, "approval_fingerprint")
+            preflight_fingerprint = _sha256(
+                legacy_item.get("preflight_fingerprint"), "preflight_fingerprint"
+            )
+            if (
+                patch.status != "approved"
+                or patch.approval_fingerprint != approval_fingerprint
+                or patch.preflight_fingerprint != preflight_fingerprint
+            ):
+                raise RevisionModelError(
+                    f"Apply evidence for Patch {patch_id} does not match its preflight/approval ledger state."
+                )
+            if not patch.preflight_report_id:
+                raise RevisionModelError(
+                    f"Patch {patch_id} has no recorded preflight report; refusing to record apply."
+                )
+
+            expected_by_output: dict[str, dict[str, Any]] = {}
+            for operation in patch.operations:
+                output_key = _canonical_path(operation.output_file)
+                row = expected_by_output.setdefault(output_key, {
+                    "input_file": _canonical_path(operation.input_file),
+                    "output_file": str(Path(operation.output_file).expanduser().resolve()),
+                    "operation_ids": set(),
+                })
+                if row["input_file"] != _canonical_path(operation.input_file):
                     raise RevisionModelError(
-                        f"Apply evidence for Patch {patch_id} does not match its preflight/approval ledger state."
+                        f"Patch {patch_id} maps one output DOCX to multiple source DOCX files."
                     )
-                if not patch.preflight_report_id:
+                row["operation_ids"].add(operation.operation_id)
+
+            actual_by_output: dict[str, set[str]] = defaultdict(set)
+            reports_by_output: dict[str, Mapping[str, Any]] = {}
+            for report, result in evidence_rows:
+                output_value = report.get("output_file")
+                input_value = report.get("input_file")
+                operation_id = result.get("operation_id")
+                if not isinstance(output_value, str) or not output_value.strip():
                     raise RevisionModelError(
-                        f"Patch {patch_id} has no recorded preflight report; refusing to record apply."
+                        f"Apply evidence for Patch {patch_id} has no output DOCX path."
                     )
-                patch.status = "applied"
-                if report.get("output_file"):
-                    report_id = str(report.get("report_id") or report.get("output_file"))
+                if not isinstance(input_value, str) or not input_value.strip():
+                    raise RevisionModelError(
+                        f"Apply evidence for Patch {patch_id} has no input DOCX path."
+                    )
+                output_key = _canonical_path(output_value)
+                expected = expected_by_output.get(output_key)
+                if expected is None:
+                    raise RevisionModelError(
+                        f"Apply evidence for Patch {patch_id} refers to an unowned output DOCX: {output_value}."
+                    )
+                if _canonical_path(input_value) != expected["input_file"]:
+                    raise RevisionModelError(
+                        f"Apply evidence for Patch {patch_id} does not match its exact source DOCX."
+                    )
+                if not isinstance(operation_id, str) or operation_id not in expected["operation_ids"]:
+                    raise RevisionModelError(
+                        f"Apply evidence for Patch {patch_id} is missing a valid exact PatchOperation ID."
+                    )
+                if operation_id in actual_by_output[output_key]:
+                    raise RevisionModelError(
+                        f"Apply evidence duplicates PatchOperation {operation_id} for Patch {patch_id}."
+                    )
+                actual_by_output[output_key].add(operation_id)
+                reports_by_output[output_key] = report
+
+            expected_operation_sets = {
+                key: row["operation_ids"] for key, row in expected_by_output.items()
+            }
+            if dict(actual_by_output) != expected_operation_sets:
+                missing = sorted({
+                    operation_id
+                    for key, operation_ids in expected_operation_sets.items()
+                    for operation_id in operation_ids - actual_by_output.get(key, set())
+                })
+                extra = sorted({
+                    operation_id
+                    for key, operation_ids in actual_by_output.items()
+                    for operation_id in operation_ids - expected_operation_sets.get(key, set())
+                })
+                raise RevisionModelError(
+                    f"Apply evidence for Patch {patch_id} does not cover its exact operation/output set; "
+                    f"missing={missing}, unexpected={extra}."
+                )
+
+            patch.status = "applied"
+            for output_key, report in reports_by_output.items():
+                report_id = str(report.get("report_id") or report.get("output_file"))
+                if report_id not in patch.apply_report_ids:
                     patch.apply_report_ids.append(report_id)
-                    self.events.append(RevisionEvent(
-                        event_id=str(uuid.uuid4()),
-                        subject_id=patch_id,
-                        subject_type="patch",
-                        event_type="patch_applied",
-                        timestamp_utc=now,
-                        actor=actor,
-                        details={
-                            "input_file": report.get("input_file", ""),
-                            "output_file": report.get("output_file", ""),
-                            "edits_applied": report.get("edits_applied", 0),
-                        },
-                    ))
+                self.events.append(RevisionEvent(
+                    event_id=str(uuid.uuid4()),
+                    subject_id=patch_id,
+                    subject_type="patch",
+                    event_type="patch_applied",
+                    timestamp_utc=now,
+                    actor=actor,
+                    details={
+                        "input_file": report.get("input_file", ""),
+                        "output_file": report.get("output_file", ""),
+                        "edits_applied": report.get("edits_applied", 0),
+                        "operation_ids": sorted(actual_by_output[output_key]),
+                    },
+                ))
 
     def record_legacy_verified_items(
         self,
@@ -2461,6 +2544,7 @@ def build_revision_ledger(
         raw_operations = task.get("patch_operations", [])
         if not isinstance(raw_operations, list):
             raise RevisionModelError(f"Task {task_id} patch_operations must be an array.")
+        has_authored_patch_operations = bool(raw_operations)
         # Keep ResponseUnits for all tasks, but create executable Patches only
         # for the selected, author-approved, conflict-free ready batch.
         if task_id not in selected_ids:
@@ -2552,6 +2636,9 @@ def build_revision_ledger(
                 if spec is None:
                     if linked_ops:
                         disposition, location_requirement, resolution_reason = "revised", "required", ""
+                    elif task_id not in selected_ids and has_authored_patch_operations:
+                        disposition, location_requirement = "revised", "required"
+                        resolution_reason = "Exact PatchOperations are recorded in the pending task but are not materialized until author authorization."
                     elif task.get("task_type") == "response_only":
                         disposition, location_requirement = "reply_only", "not_required"
                         resolution_reason = "Response-only task; no manuscript change or existing-text location is claimed."

@@ -290,7 +290,17 @@
           "then": {
             "properties": {
               "target_groups": { "maxItems": 0 },
-              "target_refs": { "maxItems": 0 }
+              "target_refs": { "maxItems": 0 },
+              "status": {
+                "enum": [
+                  "identified",
+                  "planned",
+                  "blocked",
+                  "ready",
+                  "completed",
+                  "recheck_required"
+                ]
+              }
             }
           }
         },
@@ -306,6 +316,10 @@
             "required": ["status"],
             "properties": { "status": { "enum": ["preflighted", "approved", "applied", "verified", "completed"] } }
           },
+          "not": {
+            "required": ["task_type"],
+            "properties": { "task_type": { "const": "response_only" } }
+          },
           "then": {
             "required": [
               "input_fingerprint",
@@ -319,6 +333,10 @@
           "if": {
             "required": ["status"],
             "properties": { "status": { "enum": ["approved", "applied", "verified", "completed"] } }
+          },
+          "not": {
+            "required": ["task_type"],
+            "properties": { "task_type": { "const": "response_only" } }
           },
           "then": {
             "required": [
@@ -335,6 +353,10 @@
             "required": ["status"],
             "properties": { "status": { "enum": ["applied", "verified", "completed"] } }
           },
+          "not": {
+            "required": ["task_type"],
+            "properties": { "task_type": { "const": "response_only" } }
+          },
           "then": {
             "required": ["output_fingerprint", "execution_report_id", "applied_at_utc"]
           }
@@ -343,6 +365,10 @@
           "if": {
             "required": ["status"],
             "properties": { "status": { "enum": ["verified", "completed"] } }
+          },
+          "not": {
+            "required": ["task_type"],
+            "properties": { "task_type": { "const": "response_only" } }
           },
           "then": {
             "required": [

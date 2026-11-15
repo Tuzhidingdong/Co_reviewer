@@ -390,8 +390,16 @@ class WorkflowEngineTests(unittest.TestCase):
         task_schema = schema["$defs"]["workflowTask"]
         self.assertIn("response_only", task_schema["properties"]["task_type"]["enum"])
         self.assertTrue(any(
-            condition.get("if", {}).get("properties", {}).get("status", {}).get("const") == "approved"
+            "approved" in condition.get("if", {}).get("properties", {}).get("status", {}).get("enum", [])
             for condition in task_schema["allOf"]
+        ))
+        response_only_rules = [
+            condition for condition in task_schema["allOf"]
+            if condition.get("if", {}).get("properties", {}).get("task_type", {}).get("const") == "response_only"
+        ]
+        self.assertTrue(any(
+            "completed" in condition.get("then", {}).get("properties", {}).get("status", {}).get("enum", [])
+            for condition in response_only_rules
         ))
         self.assertTrue(any(
             "verification_fingerprint" in condition.get("then", {}).get("required", [])
@@ -451,49 +459,45 @@ class WorkflowEngineTests(unittest.TestCase):
             citation_state={},
             document_id="doc-wrong-source",
         )
-        ledger = build_workflow_ledger(
-            {
-                "source_files": [{
-                    "role": "Manuscript",
-                    "file": "Manuscript.docx",
-                    "sha256": INPUT_HASH,
-                }],
-                "tasks": [{
-                    "task_id": "T1",
-                    "sequence": 1,
-                    "task_type": "response_only",
-                    "title": "Prepare response",
-                    "source_comment_ids": ["C1"],
-                    "target_documents": [],
-                    "evidence": [{
-                        "evidence_id": "E1",
-                        "document": "Reviewers",
-                        "part": "word/comments.xml",
-                        "p_idx": 0,
-                        "source_excerpt": "Please clarify.",
-                        "evidence_type": "reviewer_comment",
-                        "match_status": "confirmed",
-                        "source_comment_id": "C1",
+        with self.assertRaisesRegex(WorkflowValidationError, "source_sha256 does not match"):
+            ledger = build_workflow_ledger(
+                {
+                    "source_files": [{
+                        "role": "Manuscript",
+                        "file": "Manuscript.docx",
+                        "sha256": INPUT_HASH,
                     }],
-                    "proposed_action": "Draft a response.",
-                    "targets": [],
-                    "dependencies": [],
-                    "readiness": "ready_for_author_approval",
-                    "unresolved_questions": [],
-                    "confidence": 0.9,
-                    "status": "pending",
-                    "requires_user_approval": True,
-                }],
-            },
-            "round-identity-hash-mismatch",
-            STAMP,
-            document_identities=[document],
-        )
-        errors = validate_workflow_ledger(ledger)
-        self.assertTrue(any(
-            "source_sha256 does not match" in error
-            for error in errors
-        ))
+                    "tasks": [{
+                        "task_id": "T1",
+                        "sequence": 1,
+                        "task_type": "response_only",
+                        "title": "Prepare response",
+                        "source_comment_ids": ["C1"],
+                        "target_documents": [],
+                        "evidence": [{
+                            "evidence_id": "E1",
+                            "document": "Reviewers",
+                            "part": "word/comments.xml",
+                            "p_idx": 0,
+                            "source_excerpt": "Please clarify.",
+                            "evidence_type": "reviewer_comment",
+                            "match_status": "confirmed",
+                            "source_comment_id": "C1",
+                        }],
+                        "proposed_action": "Draft a response.",
+                        "targets": [],
+                        "dependencies": [],
+                        "readiness": "ready_for_author_approval",
+                        "unresolved_questions": [],
+                        "confidence": 0.9,
+                        "status": "pending",
+                        "requires_user_approval": True,
+                    }],
+                },
+                "round-identity-hash-mismatch",
+                STAMP,
+                document_identities=[document],
+            )
 
     def test_ledger_persists_stable_targetrefs_and_schedules_by_object_id(self):
         document = build_document_identity(

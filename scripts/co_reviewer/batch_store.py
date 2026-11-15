@@ -296,8 +296,10 @@ def _validate_recovered_batch_receipt(
     ledger_hash_fields = (
         "workflow_ledger_sha256_before",
         "workflow_ledger_sha256_after",
+        "workflow_ledger_payload_sha256_before",
         "revision_ledger_sha256_before",
         "revision_ledger_sha256_after",
+        "revision_ledger_payload_sha256_before",
     )
     if any(
         not isinstance(recovery.get(field), str)
@@ -1712,6 +1714,8 @@ def recover_unpublished_batch(
     artifact_inventory = _batch_artifact_inventory(root)
     workflow_sha_now = sha256_file(workflow_file)
     ledger_sha_now = sha256_file(ledger_file)
+    workflow_payload_sha_now = _json_payload_sha256(workflow)
+    ledger_payload_sha_now = _json_payload_sha256(revision_ledger.to_dict())
     recovery_intent_path = root / "batch_recovery_intent.json"
 
     if recovery_intent_path.exists():
@@ -1745,15 +1749,21 @@ def recover_unpublished_batch(
             intent,
             workflow_after,
         )
-        if workflow_sha_now not in {
-            recovery_intent.get("workflow_ledger_sha256_before"),
+        workflow_payload_sha_now = _json_payload_sha256(workflow)
+        workflow_payload_hashes = {
+            recovery_intent.get("workflow_ledger_payload_sha256_before"),
             recovery_intent.get("workflow_ledger_sha256_after"),
-        }:
+        }
+        if (
+            not all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for value in workflow_payload_hashes)
+            or workflow_payload_sha_now not in workflow_payload_hashes
+        ):
             raise BatchStoreError(
                 "Workflow Ledger changed outside the staged batch recovery transaction."
             )
         workflow_changed = (
-            workflow_sha_now == recovery_intent.get("workflow_ledger_sha256_before")
+            workflow_payload_sha_now
+            == recovery_intent.get("workflow_ledger_payload_sha256_before")
         )
         if not workflow_changed and dict(workflow) != dict(workflow_after):
             raise BatchStoreError(
@@ -1784,14 +1794,14 @@ def recover_unpublished_batch(
                 raise BatchStoreError(
                     "RevisionLedger contains only a partial or inconsistent recovery update."
                 )
-            if ledger_sha_now != recovery_intent.get("revision_ledger_sha256_after"):
+            if ledger_payload_sha_now != recovery_intent.get("revision_ledger_sha256_after"):
                 raise BatchStoreError(
                     "RevisionLedger changed after recovery was staged; refusing to seal a different state."
                 )
             candidate_ledger = revision_ledger
             ledger_changed = False
         else:
-            if ledger_sha_now != recovery_intent.get("revision_ledger_sha256_before"):
+            if ledger_payload_sha_now != recovery_intent.get("revision_ledger_payload_sha256_before"):
                 raise BatchStoreError(
                     "RevisionLedger changed after recovery intent was staged but before its atomic update."
                 )
@@ -1901,10 +1911,12 @@ def recover_unpublished_batch(
         "workflow_ledger_file": str(workflow_file),
         "workflow_ledger_sha256_before": workflow_sha_now,
         "workflow_ledger_sha256_after": _json_payload_sha256(workflow_after),
+        "workflow_ledger_payload_sha256_before": workflow_payload_sha_now,
         "workflow_after": workflow_after,
         "revision_ledger_file": str(ledger_file),
         "revision_ledger_sha256_before": ledger_sha_now,
         "revision_ledger_sha256_after": _json_payload_sha256(candidate_ledger.to_dict()),
+        "revision_ledger_payload_sha256_before": ledger_payload_sha_now,
         "batch_intent_sha256": intent_sha,
         "batch_scope_sha256": scope_sha,
         "selected_task_ids": list(intent.get("all_selected_task_ids", intent["selected_task_ids"])),

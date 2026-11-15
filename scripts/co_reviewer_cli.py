@@ -539,8 +539,11 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     for item in eligible_items:
         for target in item["targets"]:
             operation_id = target.get("operation_id")
+            # P0 legacy plans predate typed PatchOperation IDs. Keep their
+            # native DOCX preflight/apply path operational; only a typed
+            # RevisionLedger (checked before this function) requires exact IDs.
             if not isinstance(operation_id, str) or not operation_id.strip():
-                raise ValueError(f"{item['id']} contains a target without operation_id; rebuild the Patch with explicit operation attribution.")
+                continue
             if operation_id in targets_by_operation:
                 raise ValueError(f"Duplicate operation_id in revision plan: {operation_id}.")
             targets_by_operation[operation_id] = target
@@ -557,6 +560,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         spans_by_operation: dict[str, tuple[int, int, int]] = {}
         for result in tracked_results:
             operation_id = result.get("operation_id")
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                # P0 plans remain executable but are not eligible for typed
+                # ResponseUnit automatic location mapping.
+                continue
             if operation_id not in targets_by_operation:
                 raise ValueError(f"Prepared target has unknown operation_id {operation_id!r}.")
             target = targets_by_operation[operation_id]

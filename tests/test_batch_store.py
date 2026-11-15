@@ -214,7 +214,7 @@ class BatchStoreTests(unittest.TestCase):
     def test_role_lock_rejects_receipts_without_a_complete_transaction_chain(self):
         cases = (
             ("batch_published.json", "publication intent and receipt"),
-            ("batch_rollback.json", "publication chain"),
+            ("batch_rollback.json", "incomplete publication transaction"),
         )
         for receipt_name, expected_error in cases:
             with self.subTest(receipt=receipt_name):

@@ -26,6 +26,7 @@ from co_reviewer.revision_models import (
 
 HASH_A = "a" * 64
 HASH_B = "b" * 64
+HASH_C = "c" * 64
 STAMP = "2026-11-14T12:00:00+08:00"
 
 
@@ -67,13 +68,18 @@ class RevisionModelsTests(unittest.TestCase):
         self.marked_docx.write_bytes(b"synthetic marked DOCX")
         self.clean_docx.write_bytes(b"synthetic accepted Clean DOCX")
         self.clean_sha256 = hashlib.sha256(self.clean_docx.read_bytes()).hexdigest()
+        self.working_view_fingerprint = hashlib.sha256(json.dumps({
+            "source_sha256": hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+            "working_clean_sha256": self.clean_sha256,
+            "policy": "accept-insertions-reject-deletions-v1",
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         self.document = RevisionDocument(
             document_id="doc-manuscript", revision_id="rev-synthetic", role="Manuscript",
             input_file=str(self.input_docx), output_file=str(self.marked_docx),
             source_sha256=hashlib.sha256(self.input_docx.read_bytes()).hexdigest(),
             output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
             working_clean_file=str(self.clean_docx), working_clean_sha256=self.clean_sha256,
-            working_view_fingerprint=HASH_B,
+            working_view_fingerprint=self.working_view_fingerprint,
         )
 
     def tearDown(self):
@@ -88,7 +94,8 @@ class RevisionModelsTests(unittest.TestCase):
         response = schema["$defs"]["responseUnit"]
         self.assertIn("location_mapped", response["properties"]["status"]["enum"])
         self.assertTrue(any(
-            "final_locations" in condition.get("then", {}).get("required", [])
+            isinstance(condition.get("then"), dict)
+            and "final_locations" in condition["then"].get("required", [])
             for condition in response["allOf"]
         ))
 
@@ -369,6 +376,7 @@ class RevisionModelsTests(unittest.TestCase):
             "targets": [operation.to_legacy_target()],
         }
         legacy_item["targets"][0]["source_sha256"] = HASH_A
+        legacy_item["targets"][0]["location_phrase"] = "revised phrase"
         legacy_item["preflight_fingerprint"] = revision_targets_fingerprint(legacy_item)
         ledger.record_legacy_preflight(
             {
@@ -436,6 +444,7 @@ class RevisionModelsTests(unittest.TestCase):
             "edits_applied": 1,
             "results": [{
                 "revision_item_id": "T1",
+                "operation_id": operation.operation_id,
                 "status": "applied",
             }],
         }
@@ -508,8 +517,29 @@ class RevisionModelsTests(unittest.TestCase):
                 source_clean_sha256=self.clean_sha256,
             )],
         )
+        patch = Patch(
+            patch_id="P1",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Please explain.",
+            proposed_response="We have explained it.",
+            operations=[_operation(
+                input_file=str(self.input_docx),
+                output_file=str(self.marked_docx),
+            )],
+            status="verified",
+            preflight_fingerprint=HASH_A,
+            preflight_report_id="preflight-001",
+            approval_fingerprint=HASH_B,
+            apply_report_ids=["apply-001"],
+            verification_report_id="verify-001",
+            verified_output_hashes=[{
+                "path": str(self.marked_docx),
+                "sha256": hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+            }],
+        )
         draft_plan = response_units_to_legacy_plan([unit])
-        final_plan = response_units_to_legacy_plan([mapped])
+        final_plan = response_units_to_legacy_plan([mapped], [patch])
         self.assertEqual(draft_plan["revision_items"][0]["status"], "planned")
         self.assertEqual(final_plan["revision_items"][0]["status"], "verified")
         self.assertIn("Page 3, lines 12-15", final_plan["revision_items"][0]["targets"][0]["location"])
@@ -961,7 +991,7 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertFalse(response.semantic_review_confirmed)
         self.assertIsNone(response.verification_report_id)
         self.assertEqual(
-            [patch.patch_id for patch in ledger.to_legacy_revision_plan()["revision_items"]],
+            [item["id"] for item in ledger.to_legacy_revision_plan()["revision_items"]],
             ["P2"],
         )
         self.assertEqual(

@@ -179,7 +179,15 @@ def _state_evidence_errors(
         ):
             errors.append(f"Task {task_id} in recheck_required state requires invalidation_reason.")
 
-    preflight_states = {"preflighted", "approved", "applied", "verified", "completed"}
+    response_only = task.get("task_type") == "response_only"
+    if response_only and status in {"preflighted", "approved", "applied", "verified"}:
+        errors.append(
+            f"Response-only Task {task_id} cannot enter document-execution state {status}."
+        )
+
+    preflight_states = {"preflighted", "approved", "applied", "verified"}
+    if not response_only:
+        preflight_states.add("completed")
     if status in preflight_states:
         if not _is_sha256(task.get("input_fingerprint")):
             errors.append(f"Task {task_id} requires input_fingerprint before preflighted state.")
@@ -199,7 +207,9 @@ def _state_evidence_errors(
         if not _is_aware_timestamp(task.get("preflighted_at_utc")):
             errors.append(f"Task {task_id} requires timezone-aware preflighted_at_utc.")
 
-    approval_states = {"approved", "applied", "verified", "completed"}
+    approval_states = {"approved", "applied", "verified"}
+    if not response_only:
+        approval_states.add("completed")
     if status in approval_states:
         if task.get("human_approval_confirmed") is not True:
             errors.append(f"Task {task_id} requires explicit human_approval_confirmed=true.")
@@ -219,7 +229,9 @@ def _state_evidence_errors(
             except WorkflowValidationError as exc:
                 errors.append(f"Task {task_id}: {exc}")
 
-    applied_states = {"applied", "verified", "completed"}
+    applied_states = {"applied", "verified"}
+    if not response_only:
+        applied_states.add("completed")
     if status in applied_states:
         if not _is_sha256(task.get("output_fingerprint")):
             errors.append(f"Task {task_id} requires output_fingerprint.")
@@ -228,7 +240,9 @@ def _state_evidence_errors(
         if not _is_aware_timestamp(task.get("applied_at_utc")):
             errors.append(f"Task {task_id} requires timezone-aware applied_at_utc.")
 
-    verified_states = {"verified", "completed"}
+    verified_states = {"verified"}
+    if not response_only:
+        verified_states.add("completed")
     if status in verified_states:
         if task.get("semantic_review_confirmed") is not True:
             errors.append(f"Task {task_id} requires semantic_review_confirmed=true.")
