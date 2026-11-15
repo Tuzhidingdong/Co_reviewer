@@ -66,6 +66,26 @@ def build_final_release_manifest(
     """Validate every release dependency and return a self-contained hash manifest."""
     if not isinstance(revision_ledger, RevisionLedger):
         raise ReleaseGateError("A validated RevisionLedger object is required.")
+    revision_path = Path(revision_ledger_path).expanduser().resolve()
+    workflow_path = Path(workflow_ledger_path).expanduser().resolve()
+    for path in (revision_path, workflow_path):
+        if not path.is_file():
+            raise ReleaseGateError(f"Required source ledger does not exist: {path}.")
+    revision_sha_at_start = sha256_file(revision_path)
+    workflow_sha_at_start = sha256_file(workflow_path)
+    try:
+        stored_revision = json.loads(revision_path.read_text(encoding="utf-8"))
+        stored_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseGateError(f"Cannot reload source ledgers for release binding: {exc}") from exc
+    if stored_revision != revision_ledger.to_dict():
+        raise ReleaseGateError(
+            "In-memory RevisionLedger does not match its current on-disk version; reload before release."
+        )
+    if stored_workflow != dict(workflow_ledger):
+        raise ReleaseGateError(
+            "In-memory Workflow Ledger does not match its current on-disk version; reload before release."
+        )
     revision_ledger.validate_or_raise()
     workflow_errors = validate_workflow_ledger(workflow_ledger)
     if workflow_errors:
@@ -321,8 +341,6 @@ def build_final_release_manifest(
             "release_reaudit_status": final_quality["status"],
         }
 
-    revision_path = Path(revision_ledger_path).expanduser().resolve()
-    workflow_path = Path(workflow_ledger_path).expanduser().resolve()
     response_md_path = Path(response_letter_md).expanduser().resolve()
     response_docx_path = Path(response_letter_docx).expanduser().resolve()
     response_quality_path = Path(response_letter_quality).expanduser().resolve()
@@ -364,6 +382,15 @@ def build_final_release_manifest(
         raise ReleaseGateError(
             "Response Letter omitted exact verified PatchOperation excerpt(s): "
             f"Markdown missing {len(missing_md_quotes)}, DOCX missing {len(missing_docx_quotes)}."
+        )
+
+    if sha256_file(revision_path) != revision_sha_at_start:
+        raise ReleaseGateError(
+            "RevisionLedger changed while the final release checks were running; discard this draft package and regenerate it."
+        )
+    if sha256_file(workflow_path) != workflow_sha_at_start:
+        raise ReleaseGateError(
+            "Workflow Ledger changed while the final release checks were running; discard this draft package and regenerate it."
         )
 
     active_records = {
