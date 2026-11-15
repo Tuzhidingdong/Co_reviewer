@@ -168,6 +168,45 @@ def render_response_docx(
                 _set_run_font(run, size=9)
                 run.italic = True
 
+        quoted_changes = item.get("quoted_changes", [])
+        if quoted_changes:
+            _add_label(doc, "Manuscript excerpts copied from PatchOperations")
+            for change in quoted_changes:
+                action = change.get("action", "revised_text")
+                if action == "existing_text":
+                    label = "Existing text cited for no-change response"
+                elif action == "removed_text":
+                    label = "Verified deleted text" if change.get("verified") else "Draft deleted text"
+                else:
+                    label = "Verified revised text" if change.get("verified") else "Draft revised text"
+                location = str(change.get("location") or "final PDF location pending")
+                document_name = str(change.get("document") or "Document")
+                operation_id = change.get("operation_id")
+                suffix = f" | PatchOperation {operation_id}" if operation_id else ""
+                metadata = doc.add_paragraph()
+                metadata.paragraph_format.keep_with_next = True
+                metadata.paragraph_format.space_before = Pt(2)
+                metadata.paragraph_format.space_after = Pt(1)
+                run = metadata.add_run(f"{label} — {document_name}, {location}{suffix}")
+                _set_run_font(run, size=9, bold=True)
+                quote_text = str(change.get("quote_text") or "").strip()
+                quote = doc.add_paragraph()
+                quote.paragraph_format.left_indent = Inches(0.25)
+                quote.paragraph_format.right_indent = Inches(0.15)
+                quote.paragraph_format.keep_together = True
+                quote.paragraph_format.space_after = Pt(6)
+                if quote_text:
+                    run = quote.add_run(quote_text)
+                    _set_run_font(run, size=10.5)
+                    run.italic = True
+                    shading = OxmlElement("w:shd")
+                    shading.set(qn("w:fill"), "FFF2CC")
+                    run._r.get_or_add_rPr().append(shading)
+                else:
+                    run = quote.add_run("[No replacement text was supplied for this operation.]")
+                    _set_run_font(run, size=9)
+                    run.italic = True
+
         _add_label(doc, "Linked document changes")
         targets = item.get("targets", [])
         if not targets:
