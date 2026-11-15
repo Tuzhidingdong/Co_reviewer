@@ -1220,6 +1220,8 @@ def cmd_preflight(args):
         if report_path.exists():
             raise FileExistsError(f"Preflight report already exists for this immutable batch: {report_path}")
     output_plan_path = _batch_plan_snapshot(batch_dir, "preflighted") if batch_dir is not None else plan_path
+    if batch_dir is not None and report_path == output_plan_path:
+        raise ValueError("Preflight report and preflighted-plan snapshot must use different paths.")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     validate_apply_artifact_paths(plan, plan_path, report_path)
 
@@ -2858,6 +2860,8 @@ def cmd_verify(args):
         str(batch_dir / "verification_report.json") if batch_dir is not None else "verification_report.json"
     )
     output_path = Path(out_value).expanduser().resolve()
+    if output_path == apply_report_path:
+        raise ValueError("Verification report must not overwrite the Apply report.")
     if batch_dir is not None:
         if batch_dir not in apply_report_path.parents or batch_dir not in output_path.parents:
             raise ValueError("Verification inputs and outputs for an immutable batch must remain inside its batch directory.")
