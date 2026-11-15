@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -8,9 +9,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from co_reviewer.docx_quality import audit_docx_quality
 from co_reviewer.release_manifest import ReleaseGateError, build_final_release_manifest
-from co_reviewer.revision_models import ResponseUnit, RevisionLedger
+from co_reviewer.response_renderer import render_response_letter
+from co_reviewer.revision_models import (
+    ResponseUnit,
+    RevisionLedger,
+    response_units_to_legacy_plan,
+)
 from co_reviewer.workflow_engine import build_workflow_ledger
+from response_letter_docx import render_response_docx
 
 
 STAMP = "2026-11-15T08:00:00+08:00"
@@ -62,7 +70,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.revision_path = self.root / "revision_ledger.json"
         self.workflow_path = self.root / "workflow_ledger.json"
         self.revision_path.write_text("{}", encoding="utf-8")
-        self.workflow_path.write_text("{}", encoding="utf-8")
+        self.workflow_path.write_text(
+            json.dumps(self.workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -102,6 +113,46 @@ class ReleaseManifestGateTests(unittest.TestCase):
     def test_release_is_blocked_until_every_response_unit_is_completed(self):
         with self.assertRaisesRegex(ReleaseGateError, "explicitly completed"):
             self._call(self._unit(status="verified"))
+
+    def test_release_manifest_accepts_reply_only_round_without_fake_document_locations(self):
+        unit = self._unit(status="completed", comment_id="C1")
+        ledger = RevisionLedger(
+            revision_round_id="round-release-tests",
+            response_units=[unit],
+        )
+        self.revision_path.write_text(
+            json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        response_plan = response_units_to_legacy_plan(ledger.response_units, ledger.patches)
+        response_md_path = self.root / "Response_to_Reviewers.md"
+        response_md_path.write_text(
+            render_response_letter(response_plan),
+            encoding="utf-8",
+        )
+        response_docx_path = self.root / "Response_to_Reviewers.docx"
+        render_response_docx(response_plan, response_docx_path)
+        quality = audit_docx_quality(response_docx_path, profile="response-letter")
+        quality_path = self.root / "Response_to_Reviewers.quality.json"
+        quality_path.write_text(
+            json.dumps(quality, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        manifest = build_final_release_manifest(
+            ledger,
+            self.workflow,
+            revision_ledger_path=self.revision_path,
+            workflow_ledger_path=self.workflow_path,
+            response_letter_md=response_md_path,
+            response_letter_docx=response_docx_path,
+            response_letter_quality=quality_path,
+        )
+        self.assertEqual(manifest["release_status"], "READY")
+        self.assertEqual(manifest["final_documents"], {})
+        self.assertEqual(manifest["location_maps"], [])
+        self.assertEqual(manifest["response_units"][0]["location_methods"], [])
+        self.assertTrue(manifest["checks"]["response_letter_contains_verified_patch_excerpts"])
 
     def test_release_is_blocked_when_a_workflow_comment_has_no_matching_response_unit(self):
         with self.assertRaisesRegex(ReleaseGateError, "comment C1 must map to exactly one completed ResponseUnit"):
