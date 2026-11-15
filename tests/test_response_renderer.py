@@ -15,6 +15,7 @@ from co_reviewer.revision_models import (
     ResponseUnit,
     response_units_to_legacy_plan,
 )
+from co_reviewer.release_manifest import build_patch_operation_change_inventory
 from co_reviewer.response_renderer import render_response_letter
 from response_letter_docx import render_response_docx
 
@@ -87,6 +88,41 @@ class ResponseRendererPatchExcerptTests(unittest.TestCase):
         self.assertIn(self.operation.replace, markdown)
         self.assertIn("PatchOperation OP-RESULT-01", markdown)
         self.assertNotIn("model-generated", markdown.lower())
+
+    def test_patch_operation_inventory_surfaces_numeric_citation_and_cross_reference_deltas(self):
+        operation = PatchOperation.from_mapping({
+            "operation_id": "OP-MARKERS-01",
+            "document": "Manuscript",
+            "input_file": str(self.root / "source.docx"),
+            "output_file": str(self.root / "marked.docx"),
+            "part": "word/document.xml",
+            "find": "Sample AB-12 showed 1.2 mS cm-1 [4].",
+            "replace": "Sample AB-12 showed 1.5 mS cm-1 [5] (Fig. 2).",
+            "evidence_ids": ["E-MARKER"],
+            "source_comment_ids": ["C-Reviewer-1"],
+        })
+        patch = Patch(
+            patch_id="P-MARKERS-01",
+            task_id="T-MARKERS-01",
+            reviewer="Reviewer 1",
+            comment="Please correct the result and reference.",
+            proposed_response="The result and reference were updated.",
+            operations=[operation],
+        )
+        inventory = build_patch_operation_change_inventory(
+            type("LedgerView", (), {"patches": [patch]})()
+        )
+        row = inventory[0]
+        categories = row["marker_categories"]
+        self.assertEqual(categories["numeric_literals"]["removed_values"], ["1.2"])
+        self.assertEqual(categories["numeric_literals"]["added_values"], ["1.5", "2"])
+        self.assertEqual(categories["citation_markers"]["removed_values"], ["[4]"])
+        self.assertEqual(categories["citation_markers"]["added_values"], ["[5]"])
+        self.assertEqual(categories["figure_table_reference_markers"]["added_values"], ["Fig. 2"])
+        self.assertEqual(categories["identifier_candidates"]["before"][0]["value"], "AB-12")
+        self.assertTrue(row["author_semantic_review_required"])
+        self.assertIn("numeric_literals", row["changed_categories"])
+        self.assertIn("citation_markers", row["changed_categories"])
 
     def test_docx_response_contains_the_same_exact_patch_excerpt(self):
         plan = response_units_to_legacy_plan([self.unit], [self.patch])
