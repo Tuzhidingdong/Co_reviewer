@@ -3141,6 +3141,21 @@ def cmd_publish_batch(args):
     expected_patch_ids = set(scope.get("patch_ids", []))
     if not expected_patch_ids:
         raise ValueError("Batch scope contains no Patch IDs.")
+    workflow_tasks = {
+        row.get("task_id"): row
+        for row in json.loads(workflow_path.read_text(encoding="utf-8")).get("tasks", [])
+        if isinstance(row, dict)
+    }
+    incomplete_tasks = sorted(
+        task_id for task_id in scope.get("selected_task_ids", [])
+        if task_id not in workflow_tasks
+        or workflow_tasks[task_id].get("status") not in {"verified", "completed"}
+    )
+    if incomplete_tasks:
+        raise ValueError(
+            "Synchronize verified Patch states to the Workflow Ledger before publishing. "
+            "Task(s) not yet verified/completed: " + ", ".join(incomplete_tasks)
+        )
     for role, record in scope.get("documents", {}).items():
         intent_record = intent["documents"].get(role)
         if (
@@ -3366,7 +3381,7 @@ def build_parser():
     a.set_defaults(func=cmd_apply)
     vfy = sub.add_parser("verify", help="Verify actual Word Track Changes against the approved plan.")
     vfy.add_argument("--plan", required=True)
-    vfy.add_argument("--apply-report", default="revision_apply_report.json")
+    vfy.add_argument("--apply-report", help="Apply report path; defaults inside the plan's batch directory when applicable.")
     vfy.add_argument("--out", help="Verification report path; defaults inside the plan's batch directory when applicable.")
     vfy.set_defaults(func=cmd_verify)
     rsp = sub.add_parser("render-response", help="Render a conservative Response Letter from revision items or ResponseUnits.")
