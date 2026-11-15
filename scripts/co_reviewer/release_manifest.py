@@ -53,6 +53,110 @@ def _docx_text(path: Path) -> str:
     return "\n".join(paragraphs)
 
 
+_NUMERIC_TOKEN = re.compile(r"(?<![A-Za-z])[-+]?\\d+(?:[.,]\\d+)?(?:[eE][-+]?\\d+)?%?")
+_FIGURE_TABLE_TOKEN = re.compile(
+    r"\\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Section|Scheme|Supplementary\\s+Fig(?:ure)?)\\s*"
+    r"(?:S\\s*)?\\d+(?:[A-Za-z])?(?:\\s*[-–]\\s*\\d+)?",
+    re.IGNORECASE,
+)
+_CITATION_TOKEN = re.compile(r"\\[(?:\\d{1,4}(?:\\s*[,;–-]\\s*\\d{1,4})*)\\]|\\bDOI\\s*:\\s*10\\.\\d{4,9}/[^\\s,;]+", re.IGNORECASE)
+_SAMPLE_TOKEN = re.compile(
+    r"\\b(?:sample|specimen|electrode|cell|batch|group|cathode|anode)\\s*[-_:#]?\\s*[A-Za-z0-9][A-Za-z0-9._/-]*",
+    re.IGNORECASE,
+)
+_UNIT_TOKEN = re.compile(
+    r"(?<![A-Za-z])(?:"
+    r"m?S\\s*cm(?:\\^?[-−]?1)?|"
+    r"mAh\\s*g(?:\\^?[-−]?1)?|"
+    r"Ah\\s*kg(?:\\^?[-−]?1)?|"
+    r"mg\\s*L(?:\\^?[-−]?1)?|"
+    r"g\\s*L(?:\\^?[-−]?1)?|"
+    r"mol\\s*L(?:\\^?[-−]?1)?|"
+    r"mmol\\s*L(?:\\^?[-−]?1)?|"
+    r"eV|meV|kJ\\s*mol(?:\\^?[-−]?1)?|"
+    r"mV|V|mA|A|mW|W|nm|µm|um|Å|K|°C|wt%|at%|vol%|MPa|GPa|kPa|"
+    r"m\\^?2\\s*g(?:\\^?[-−]?1)?|cm\\^?2\\s*g(?:\\^?[-−]?1)?"
+    r")(?![A-Za-z])"
+)
+
+
+def _token_delta(before: str, after: str, pattern: re.Pattern[str]) -> dict[str, list[str]]:
+    old_tokens = pattern.findall(before or "")
+    new_tokens = pattern.findall(after or "")
+    old_counts: dict[str, int] = {}
+    new_counts: dict[str, int] = {}
+    for token in old_tokens:
+        normalized = _normalise_whitespace(token).casefold()
+        old_counts[normalized] = old_counts.get(normalized, 0) + 1
+    for token in new_tokens:
+        normalized = _normalise_whitespace(token).casefold()
+        new_counts[normalized] = new_counts.get(normalized, 0) + 1
+    removed: list[str] = []
+    added: list[str] = []
+    for key, count in old_counts.items():
+        removed.extend([key] * max(0, count - new_counts.get(key, 0)))
+    for key, count in new_counts.items():
+        added.extend([key] * max(0, count - old_counts.get(key, 0)))
+    return {"removed": sorted(removed), "added": sorted(added)}
+
+
+def audit_patch_operation_deltas(
+    revision_ledger: RevisionLedger,
+) -> list[dict[str, Any]]:
+    """Surface deterministic operand deltas; never claim that changed science is correct."""
+    units_by_operation: dict[str, list[Any]] = {}
+    for unit in revision_ledger.response_units:
+        for operation_id in unit.linked_operation_ids:
+            units_by_operation.setdefault(operation_id, []).append(unit)
+
+    rows: list[dict[str, Any]] = []
+    for patch in revision_ledger.patches:
+        if patch.status == "superseded":
+            continue
+        for operation in patch.operations:
+            linked_units = units_by_operation.get(operation.operation_id, [])
+            completed_reviewers = sorted({
+                unit.reviewer for unit in linked_units
+                if unit.status == "completed" and unit.semantic_review_confirmed
+                and unit.comment_id in operation.source_comment_ids
+            })
+            if not linked_units or not all(
+                unit.status == "completed" and unit.semantic_review_confirmed
+                and unit.comment_id in operation.source_comment_ids
+                for unit in linked_units
+            ):
+                raise ReleaseGateError(
+                    f"PatchOperation {operation.operation_id} has no complete human-reviewed ResponseUnit link."
+                )
+            categories = {
+                "numeric_values": _token_delta(operation.find, operation.replace, _NUMERIC_TOKEN),
+                "units": _token_delta(operation.find, operation.replace, _UNIT_TOKEN),
+                "figure_table_equation_references": _token_delta(operation.find, operation.replace, _FIGURE_TABLE_TOKEN),
+                "citation_markers": _token_delta(operation.find, operation.replace, _CITATION_TOKEN),
+                "sample_or_component_identifiers": _token_delta(operation.find, operation.replace, _SAMPLE_TOKEN),
+            }
+            changed_categories = [
+                name for name, delta in categories.items()
+                if delta["removed"] or delta["added"]
+            ]
+            rows.append({
+                "patch_id": patch.patch_id,
+                "operation_id": operation.operation_id,
+                "document": operation.document,
+                "source_comment_ids": list(operation.source_comment_ids),
+                "linked_response_unit_ids": [unit.response_unit_id for unit in linked_units],
+                "human_reviewers": completed_reviewers,
+                "review_status": "human_semantic_review_completed",
+                "changed_categories": changed_categories,
+                "deltas": categories,
+                "interpretation": (
+                    "Deterministic token differences are surfaced for author review; "
+                    "they do not assert scientific correctness or incorrectness."
+                ),
+            })
+    return rows
+
+
 def build_final_release_manifest(
     revision_ledger: RevisionLedger,
     workflow_ledger: Mapping[str, Any],
@@ -455,6 +559,7 @@ def build_final_release_manifest(
             "Workflow Ledger changed while the final release checks were running; discard this draft package and regenerate it."
         )
 
+    deterministic_change_audit = audit_patch_operation_deltas(revision_ledger)
     active_records = {
         role: {
             "file": pointer["file"],
@@ -507,6 +612,7 @@ def build_final_release_manifest(
         "final_documents": final_documents,
         "patches": patch_records,
         "response_units": response_records,
+        "deterministic_change_audit": deterministic_change_audit,
         "location_maps": [
             {"file": row["file"], "sha256": row["sha256"]}
             for row in location_maps.values()
@@ -527,5 +633,6 @@ def build_final_release_manifest(
             "all_final_clean_docx_pdf_hashes_valid": True,
             "all_word_quality_reports_pass": True,
             "response_letter_contains_verified_patch_excerpts": True,
+            "numeric_unit_reference_deltas_surfaced_for_human_review": True,
         },
     }
