@@ -1529,6 +1529,7 @@ def cmd_sync_workflow_ledger(args):
     }
     now = datetime.now(timezone.utc).isoformat()
     synchronized: list[str] = []
+    response_completed_tasks: list[str] = []
 
     def latest_patch_event(patch_id: str, event_type: str) -> Any:
         matches = [
@@ -1688,6 +1689,12 @@ def cmd_sync_workflow_ledger(args):
             reason=reason,
         )
 
+    task_by_id = {
+        task.get("task_id"): task
+        for task in workflow.get("tasks", [])
+        if isinstance(task, dict)
+    }
+
     # Response-only/no-change tasks have no executable Patch to synchronize.
     # Complete them only when every reviewer comment has one completed,
     # semantically confirmed ResponseUnit. Patch-bearing tasks keep the full
@@ -1762,7 +1769,7 @@ def cmd_sync_workflow_ledger(args):
             "actor": "Co_Reviewer ResponseUnit Synchronizer",
             "fingerprint": workflow_scope_fingerprint(task),
         })
-        synchronized.append(task_id)
+        response_completed_tasks.append(task_id)
 
     errors = validate_workflow_ledger(workflow)
     if errors:
@@ -1786,6 +1793,8 @@ def cmd_sync_workflow_ledger(args):
         "[WORKFLOW VERIFIED] "
         + (", ".join(synchronized) if synchronized else "No newly verified Patch tasks to synchronize.")
     )
+    if response_completed_tasks:
+        print("[RESPONSE-ONLY COMPLETED] " + ", ".join(response_completed_tasks))
     if invalidated:
         print("[RECHECK REQUIRED] " + ", ".join(invalidated))
     if reopened_units:
