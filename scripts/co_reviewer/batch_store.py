@@ -331,6 +331,283 @@ def _validate_recovered_batch_receipt(
     return dict(receipt)
 
 
+def _read_batch_transaction_record(path: Path, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BatchStoreError(f"Cannot read {label} {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise BatchStoreError(f"{label} must be a JSON object: {path}")
+    return payload
+
+
+def _batch_pointer_projection(value: Any, label: str) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping) or not value:
+        raise BatchStoreError(f"{label} must contain at least one document pointer.")
+    projected: dict[str, dict[str, Any]] = {}
+    for role, pointer in value.items():
+        if not isinstance(role, str) or not role.strip() or not isinstance(pointer, Mapping):
+            raise BatchStoreError(f"{label} contains a malformed document pointer.")
+        file_value = pointer.get("file")
+        digest = pointer.get("sha256")
+        batch_id = pointer.get("batch_id")
+        if (
+            not isinstance(file_value, str)
+            or not file_value.strip()
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+            or (batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()))
+        ):
+            raise BatchStoreError(f"{label} contains invalid path, SHA-256 or batch ID evidence for {role}.")
+        projected[role] = {
+            "file": str(Path(file_value).expanduser().resolve()),
+            "sha256": digest,
+            "batch_id": batch_id,
+        }
+    return projected
+
+
+def _validate_batch_transaction_events(
+    workflow: Mapping[str, Any],
+    *,
+    batch_id: str,
+    event_type: str,
+    task_ids: Sequence[str],
+    expected_documents: Mapping[str, Mapping[str, Any]],
+) -> None:
+    events = workflow.get("events")
+    if not isinstance(events, list):
+        raise BatchStoreError(f"Workflow Ledger has no event history for {event_type} batch {batch_id}.")
+    matching = [
+        row for row in events
+        if isinstance(row, Mapping)
+        and row.get("batch_id") == batch_id
+        and row.get("event_type") == event_type
+    ]
+    event_task_ids = [row.get("task_id") for row in matching]
+    if (
+        len(event_task_ids) != len(task_ids)
+        or any(not isinstance(value, str) or not value.strip() for value in event_task_ids)
+        or len(event_task_ids) != len(set(event_task_ids))
+        or set(event_task_ids) != set(task_ids)
+    ):
+        raise BatchStoreError(
+            f"Workflow Ledger {event_type} events do not cover the exact selected task set for batch {batch_id}."
+        )
+    expected = _batch_pointer_projection(expected_documents, f"Batch {batch_id} {event_type} evidence")
+    for row in matching:
+        actual = _batch_pointer_projection(
+            row.get("documents"),
+            f"Workflow Ledger {event_type} event for batch {batch_id}",
+        )
+        if actual != expected:
+            raise BatchStoreError(
+                f"Workflow Ledger {event_type} event pointers differ from the committed batch record for {batch_id}."
+            )
+
+
+def _validate_committed_batch_publication(
+    batch_dir: Path,
+    intent: Mapping[str, Any],
+    workflow: Mapping[str, Any],
+    patch_status_by_id: Mapping[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Only a complete, hash-bound publication chain may release a role reservation."""
+    publish_intent_path = batch_dir / "batch_publish_intent.json"
+    receipt_path = batch_dir / "batch_published.json"
+    scope_path = batch_dir / "batch_scope.json"
+    if not publish_intent_path.is_file() or not receipt_path.is_file() or not scope_path.is_file():
+        raise BatchStoreError(
+            f"Batch {intent.get('batch_id')} has an incomplete publication transaction; "
+            "both publication intent and receipt, plus its immutable scope, are required."
+        )
+    publish_intent = _read_batch_transaction_record(publish_intent_path, "Batch publication intent")
+    receipt = _read_batch_transaction_record(receipt_path, "Batch publication receipt")
+    scope = _read_batch_transaction_record(scope_path, "Batch scope")
+    batch_id = intent.get("batch_id")
+    intent_sha = sha256_file(batch_dir / "batch_intent.json")
+    scope_sha = sha256_file(scope_path)
+    task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+    batch_task_ids = intent.get("selected_task_ids")
+    patch_ids = scope.get("patch_ids")
+    revision_file = scope.get("revision_ledger_file")
+    if (
+        not isinstance(batch_id, str)
+        or scope.get("batch_id") != batch_id
+        or scope.get("batch_intent_sha256") != intent_sha
+        or not isinstance(task_ids, list)
+        or not task_ids
+        or any(not isinstance(value, str) or not value.strip() for value in task_ids)
+        or len(task_ids) != len(set(task_ids))
+        or not isinstance(batch_task_ids, list)
+        or not batch_task_ids
+        or set(batch_task_ids) != set(intent.get("selected_task_ids", []))
+        or not isinstance(patch_ids, list)
+        or not patch_ids
+        or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
+        or len(patch_ids) != len(set(patch_ids))
+        or not isinstance(revision_file, str)
+        or not revision_file.strip()
+        or set(scope.get("selected_task_ids", [])) != set(task_ids)
+    ):
+        raise BatchStoreError(f"Batch {batch_id} publication scope does not match its immutable intent.")
+    scope_documents = scope.get("documents")
+    intent_documents = intent.get("documents")
+    if (
+        not isinstance(scope_documents, Mapping)
+        or not isinstance(intent_documents, Mapping)
+        or set(scope_documents) != set(intent_documents)
+    ):
+        raise BatchStoreError(f"Batch {batch_id} publication scope has incomplete document-role coverage.")
+    for role, record in intent_documents.items():
+        scoped = scope_documents.get(role)
+        if (
+            not isinstance(record, Mapping)
+            or not isinstance(scoped, Mapping)
+            or not isinstance(scoped.get("input_file"), str)
+            or Path(scoped["input_file"]).expanduser().resolve()
+               != Path(str(record.get("parent_file", ""))).expanduser().resolve()
+            or scoped.get("input_sha256") != record.get("parent_sha256")
+            or not isinstance(scoped.get("output_file"), str)
+            or Path(scoped["output_file"]).expanduser().resolve()
+               != Path(str(record.get("output_file", ""))).expanduser().resolve()
+        ):
+            raise BatchStoreError(f"Batch {batch_id} publication scope differs from the immutable parent/output record for {role}.")
+    for patch_id in patch_ids:
+        if patch_status_by_id.get(patch_id) not in {"verified", "superseded"}:
+            raise BatchStoreError(
+                f"Batch {batch_id} published Patch {patch_id} is missing or no longer has verified lineage."
+            )
+
+    revision_sha = receipt.get("revision_ledger_sha256")
+    expected_workflow_file = intent.get("workflow_ledger_file")
+    expected_revision_file = str(Path(revision_file).expanduser().resolve())
+    if (
+        publish_intent.get("batch_id") != batch_id
+        or receipt.get("batch_id") != batch_id
+        or receipt.get("status") != "published"
+        or not isinstance(expected_workflow_file, str)
+        or Path(str(receipt.get("workflow_ledger_file", ""))).expanduser().resolve()
+           != Path(expected_workflow_file).expanduser().resolve()
+        or Path(str(receipt.get("revision_ledger_file", ""))).expanduser().resolve()
+           != Path(expected_revision_file).expanduser().resolve()
+        or not isinstance(revision_sha, str)
+        or re.fullmatch(r"[a-f0-9]{64}", revision_sha) is None
+        or publish_intent.get("revision_ledger_sha256") != revision_sha
+        or publish_intent.get("batch_intent_sha256") != intent_sha
+        or receipt.get("batch_intent_sha256") != intent_sha
+        or publish_intent.get("batch_scope_sha256") != scope_sha
+        or receipt.get("batch_scope_sha256") != scope_sha
+        or receipt.get("selected_task_ids") != task_ids
+    ):
+        raise BatchStoreError(f"Batch {batch_id} publication intent/receipt hash or path binding is invalid.")
+
+    published = _batch_pointer_projection(
+        receipt.get("active_documents"),
+        f"Batch {batch_id} publication receipt",
+    )
+    staged = _batch_pointer_projection(
+        publish_intent.get("active_documents_to_publish"),
+        f"Batch {batch_id} publication intent",
+    )
+    if published != staged or set(published) != set(intent_documents):
+        raise BatchStoreError(f"Batch {batch_id} publication intent and receipt disagree on document pointers.")
+    for role, pointer in published.items():
+        expected_output = Path(str(intent_documents[role].get("output_file", ""))).expanduser().resolve()
+        output_path = Path(pointer["file"])
+        if (
+            output_path != expected_output
+            or pointer["batch_id"] != batch_id
+            or not output_path.is_file()
+            or sha256_file(output_path) != pointer["sha256"]
+        ):
+            raise BatchStoreError(
+                f"Batch {batch_id} published output path/hash does not match its retained document for {role}."
+            )
+    _validate_batch_transaction_events(
+        workflow,
+        batch_id=batch_id,
+        event_type="batch_published",
+        task_ids=task_ids,
+        expected_documents=published,
+    )
+    return published
+
+
+def _validate_committed_batch_rollback(
+    batch_dir: Path,
+    intent: Mapping[str, Any],
+    workflow: Mapping[str, Any],
+) -> None:
+    """Require a complete rollback intent/receipt and matching Workflow invalidation events."""
+    rollback_intent_path = batch_dir / "batch_rollback_intent.json"
+    receipt_path = batch_dir / "batch_rollback.json"
+    if not rollback_intent_path.is_file() or not receipt_path.is_file():
+        raise BatchStoreError(
+            f"Batch {intent.get('batch_id')} has an incomplete rollback transaction; "
+            "both rollback intent and receipt are required."
+        )
+    rollback_intent = _read_batch_transaction_record(rollback_intent_path, "Batch rollback intent")
+    receipt = _read_batch_transaction_record(receipt_path, "Batch rollback receipt")
+    batch_id = intent.get("batch_id")
+    intent_sha = sha256_file(batch_dir / "batch_intent.json")
+    scope_sha = sha256_file(batch_dir / "batch_scope.json")
+    task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+    if (
+        rollback_intent.get("batch_id") != batch_id
+        or receipt.get("batch_id") != batch_id
+        or receipt.get("status") != "rolled_back"
+        or rollback_intent.get("batch_intent_sha256") != intent_sha
+        or receipt.get("batch_intent_sha256") != intent_sha
+        or rollback_intent.get("batch_scope_sha256") != scope_sha
+        or receipt.get("batch_scope_sha256") != scope_sha
+        or receipt.get("rollback_intent_sha256") != sha256_file(rollback_intent_path)
+        or receipt.get("workflow_ledger_file") is None
+        or Path(str(receipt.get("workflow_ledger_file"))).expanduser().resolve()
+           != Path(str(intent.get("workflow_ledger_file", ""))).expanduser().resolve()
+        or receipt.get("selected_task_ids") != task_ids
+        or receipt.get("retained_batch_files") is not True
+        or not isinstance(rollback_intent.get("reason"), str)
+        or not rollback_intent.get("reason", "").strip()
+        or receipt.get("reason") != rollback_intent.get("reason")
+    ):
+        raise BatchStoreError(f"Batch {batch_id} rollback intent/receipt hash or path binding is invalid.")
+    expected_parent_documents = {
+        role: {
+            "file": str(Path(str(row.get("parent_file", ""))).expanduser().resolve()),
+            "sha256": row.get("parent_sha256"),
+            "batch_id": row.get("parent_batch_id"),
+        }
+        for role, row in intent.get("documents", {}).items()
+        if isinstance(row, Mapping)
+    }
+    intent_parents = _batch_pointer_projection(
+        rollback_intent.get("restored_active_documents"),
+        f"Batch {batch_id} rollback intent",
+    )
+    receipt_parents = _batch_pointer_projection(
+        receipt.get("restored_active_documents"),
+        f"Batch {batch_id} rollback receipt",
+    )
+    expected_parents = _batch_pointer_projection(
+        expected_parent_documents,
+        f"Batch {batch_id} immutable parents",
+    )
+    if intent_parents != expected_parents or receipt_parents != expected_parents:
+        raise BatchStoreError(f"Batch {batch_id} rollback parent pointers differ from its immutable intent.")
+    for role, pointer in expected_parents.items():
+        parent_path = Path(pointer["file"])
+        if not parent_path.is_file() or sha256_file(parent_path) != pointer["sha256"]:
+            raise BatchStoreError(f"Batch {batch_id} rollback parent document changed or is missing for {role}.")
+    _validate_batch_transaction_events(
+        workflow,
+        batch_id=batch_id,
+        event_type="batch_rolled_back",
+        task_ids=task_ids,
+        expected_documents=expected_parents,
+    )
+
+
 def assert_no_uncommitted_role_batches(
     runs_dir: str | Path,
     roles: Sequence[str],
@@ -348,15 +625,52 @@ def assert_no_uncommitted_role_batches(
     for batch_dir in sorted(root.glob("batch-*")):
         if not batch_dir.is_dir():
             continue
-        if (batch_dir / "batch_published.json").is_file() or (batch_dir / "batch_rollback.json").is_file():
-            continue
         intent_path = batch_dir / "batch_intent.json"
+        control_names = (
+            "batch_recovery_intent.json",
+            "batch_recovered.json",
+            "batch_publish_intent.json",
+            "batch_published.json",
+            "batch_rollback_intent.json",
+            "batch_rollback.json",
+        )
+        present_controls = [name for name in control_names if (batch_dir / name).exists()]
         if not intent_path.is_file():
+            if present_controls:
+                raise BatchStoreError(
+                    f"Batch directory {batch_dir} has transaction control records but no immutable batch intent."
+                )
             continue
         intent = read_batch_intent(batch_dir)
         recovery_receipt = batch_dir / "batch_recovered.json"
+        publication_markers = (
+            batch_dir / "batch_publish_intent.json",
+            batch_dir / "batch_published.json",
+        )
+        rollback_markers = (
+            batch_dir / "batch_rollback_intent.json",
+            batch_dir / "batch_rollback.json",
+        )
         if recovery_receipt.is_file():
+            if any(path.exists() for path in (*publication_markers, *rollback_markers)):
+                raise BatchStoreError(
+                    f"Batch {intent['batch_id']} has conflicting recovery and publish/rollback transaction records."
+                )
             _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+            continue
+        if any(path.exists() for path in (*publication_markers, *rollback_markers)):
+            if any(path.exists() for path in rollback_markers) and not any(
+                path.exists() for path in publication_markers
+            ):
+                raise BatchStoreError(
+                    f"Batch {intent['batch_id']} has rollback records without a committed publication chain."
+                )
+            if any(path.exists() for path in publication_markers):
+                _validate_committed_batch_publication(
+                    batch_dir, intent, workflow, patch_status_by_id
+                )
+            if any(path.exists() for path in rollback_markers):
+                _validate_committed_batch_rollback(batch_dir, intent, workflow)
             continue
         overlap = requested_roles.intersection(intent.get("documents", {}))
         if not overlap:
