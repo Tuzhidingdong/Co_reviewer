@@ -809,18 +809,32 @@ def rollback_active_pointers(
 
 
 def _batch_artifact_inventory(batch_dir: Path) -> list[dict[str, Any]]:
-    """Hash every retained batch artifact, excluding recovery control receipts."""
+    """Hash every retained batch artifact, excluding only root recovery controls.
+
+    Symlinks are rejected rather than hashing their targets: the inventory must
+    describe files retained inside this immutable batch directory, not mutable
+    files that happen to be reachable through a link.
+    """
+    root = batch_dir.expanduser().resolve()
     rows: list[dict[str, Any]] = []
-    excluded = {"batch_recovery_intent.json", "batch_recovered.json"}
-    for path in sorted(batch_dir.rglob("*")):
-        if not path.is_file() or path.name in excluded:
-            continue
+    excluded_root_controls = {"batch_recovery_intent.json", "batch_recovered.json"}
+    for path in sorted(root.rglob("*")):
         try:
+            if path.is_symlink():
+                raise BatchStoreError(
+                    f"Retained batch artifact must not be a symbolic link: {path}"
+                )
+            if not path.is_file():
+                continue
+            if path.parent == root and path.name in excluded_root_controls:
+                continue
             rows.append({
-                "path": path.relative_to(batch_dir).as_posix(),
+                "path": path.relative_to(root).as_posix(),
                 "size_bytes": path.stat().st_size,
                 "sha256": sha256_file(path),
             })
+        except BatchStoreError:
+            raise
         except OSError as exc:
             raise BatchStoreError(
                 f"Cannot inventory retained batch artifact {path}: {exc}"
