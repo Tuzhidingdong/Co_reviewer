@@ -244,11 +244,12 @@ class ReleaseManifestGateTests(unittest.TestCase):
             },
         }
         operation = SimpleNamespace(document="Manuscript", output_file=str(output))
-        patch = SimpleNamespace(patch_id="P1", task_id="T1", status="verified", operations=[operation])
+        patch = SimpleNamespace(patch_id="P1", task_id="T1", status="superseded", operations=[operation])
         ledger = SimpleNamespace(revision_round_id="round-release-tests", patches=[patch])
         self.assertEqual(
             _validate_release_batch_scope(
-                intent, scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+                intent, scope, revision_ledger=ledger, revision_ledger_path=self.revision_path,
+                workflow_task_ids={"T1", "T2"},
             ),
             ["P1"],
         )
@@ -256,12 +257,14 @@ class ReleaseManifestGateTests(unittest.TestCase):
         bad_patch_scope = dict(scope, patch_ids=[])
         with self.assertRaisesRegex(ReleaseGateError, "Patch ownership"):
             _validate_release_batch_scope(
-                intent, bad_patch_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+                intent, bad_patch_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path,
+                workflow_task_ids={"T1", "T2"},
             )
         bad_task_scope = dict(scope, batch_task_ids=["T2"])
         with self.assertRaisesRegex(ReleaseGateError, "task ownership"):
             _validate_release_batch_scope(
-                intent, bad_task_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+                intent, bad_task_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path,
+                workflow_task_ids={"T1", "T2"},
             )
         bad_document_scope = dict(
             scope,
@@ -275,7 +278,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ReleaseGateError, "document hash scope"):
             _validate_release_batch_scope(
-                intent, bad_document_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path
+                intent, bad_document_scope, revision_ledger=ledger, revision_ledger_path=self.revision_path,
+                workflow_task_ids={"T1", "T2"},
             )
 
     def test_final_docx_quality_report_must_bind_docx_pdf_and_page_count(self):

@@ -104,6 +104,7 @@ def _validate_release_batch_scope(
     *,
     revision_ledger: RevisionLedger,
     revision_ledger_path: str | Path,
+    workflow_task_ids: set[str],
 ) -> list[str]:
     """Cross-check immutable batch task/document/Patch ownership against the current ledger."""
     batch_id = intent.get("batch_id")
@@ -135,6 +136,12 @@ def _validate_release_batch_scope(
         raise ReleaseGateError(f"Batch {batch_id} task ownership differs between intent and scope.")
     if not set(batch_task_ids).issubset(set(all_task_ids)):
         raise ReleaseGateError(f"Batch {batch_id} document-changing tasks are outside its full task selection.")
+    if not set(all_task_ids).issubset(workflow_task_ids):
+        missing_tasks = sorted(set(all_task_ids) - workflow_task_ids)
+        raise ReleaseGateError(
+            f"Batch {batch_id} references task(s) missing from the current Workflow Ledger: "
+            + ", ".join(missing_tasks)
+        )
     ledger_path = Path(revision_ledger_path).expanduser().resolve()
     if (
         not isinstance(scope.get("revision_ledger_file"), str)
@@ -176,7 +183,6 @@ def _validate_release_batch_scope(
         patch.patch_id
         for patch in revision_ledger.patches
         if patch.task_id in set(batch_task_ids)
-        and patch.status != "superseded"
         and any(
             operation.document in intent_documents
             and Path(operation.output_file).expanduser().resolve()
@@ -593,6 +599,11 @@ def build_final_release_manifest(
             scope_payload,
             revision_ledger=revision_ledger,
             revision_ledger_path=revision_path,
+            workflow_task_ids={
+                row.get("task_id")
+                for row in workflow_ledger.get("tasks", [])
+                if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
+            },
         )
         receipt_pointer = receipt_payload.get("active_documents", {}).get(role)
         if not isinstance(receipt_pointer, Mapping) or (
