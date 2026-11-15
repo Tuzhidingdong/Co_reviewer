@@ -113,6 +113,74 @@ def load_active_document_pointers(workflow: Mapping[str, Any]) -> dict[str, dict
     return result
 
 
+def assert_no_uncommitted_role_batches(
+    runs_dir: str | Path,
+    roles: Sequence[str],
+    patch_status_by_id: Mapping[str, str],
+) -> None:
+    """Prevent two uncommitted batches from branching from the same active role pointer."""
+    root = Path(runs_dir).expanduser().resolve()
+    if not root.exists():
+        return
+    requested_roles = set(roles)
+    for batch_dir in sorted(root.glob("batch-*")):
+        if not batch_dir.is_dir():
+            continue
+        if (batch_dir / "batch_published.json").is_file() or (batch_dir / "batch_rollback.json").is_file():
+            continue
+        intent_path = batch_dir / "batch_intent.json"
+        if not intent_path.is_file():
+            continue
+        intent = read_batch_intent(batch_dir)
+        overlap = requested_roles.intersection(intent.get("documents", {}))
+        if not overlap:
+            continue
+        scope_path = batch_dir / "batch_scope.json"
+        if not scope_path.is_file():
+            raise BatchStoreError(
+                f"Uncommitted batch {intent['batch_id']} has no batch_scope.json and reserves document role(s) "
+                + ", ".join(sorted(overlap))
+                + "; inspect and abandon/resolve this incomplete batch before creating another."
+            )
+        try:
+            scope = json.loads(scope_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BatchStoreError(
+                f"Cannot inspect uncommitted batch scope {scope_path}: {exc}"
+            ) from exc
+        if (
+            not isinstance(scope, Mapping)
+            or scope.get("batch_id") != intent["batch_id"]
+            or scope.get("batch_intent_sha256") != sha256_file(intent_path)
+        ):
+            raise BatchStoreError(
+                f"Uncommitted batch {intent['batch_id']} has an invalid or stale scope record; "
+                "resolve it before creating another batch for " + ", ".join(sorted(overlap))
+            )
+        patch_ids = scope.get("patch_ids")
+        if not isinstance(patch_ids, list) or not patch_ids:
+            raise BatchStoreError(
+                f"Uncommitted batch {intent['batch_id']} has no resolvable Patch IDs; "
+                "resolve it before creating another batch for " + ", ".join(sorted(overlap))
+            )
+        unknown = [patch_id for patch_id in patch_ids if patch_id not in patch_status_by_id]
+        active = [
+            patch_id for patch_id in patch_ids
+            if patch_status_by_id.get(patch_id) != "superseded"
+        ]
+        if unknown or active:
+            reasons = []
+            if unknown:
+                reasons.append("missing ledger Patch(es): " + ", ".join(sorted(unknown)))
+            if active:
+                reasons.append("non-superseded Patch(es): " + ", ".join(sorted(active)))
+            raise BatchStoreError(
+                f"Document role(s) {', '.join(sorted(overlap))} are reserved by uncommitted batch "
+                f"{intent['batch_id']} ({'; '.join(reasons)}). Finish/publish it, roll it back if published, "
+                "or explicitly supersede every Patch before creating a new batch."
+            )
+
+
 def create_batch_intent(
     workflow: Mapping[str, Any],
     workflow_path: str | Path,
