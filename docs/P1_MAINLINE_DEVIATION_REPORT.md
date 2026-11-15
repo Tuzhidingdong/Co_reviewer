@@ -53,7 +53,7 @@ The provider-neutral invoke_with_usage wrapper is a P2 supporting interface. It 
 
 ### 4. Validation scope
 
-The relevant JSON Schema files have been parsed as JSON, but full JSON Schema meta-schema validation and release-manifest instance validation have not been established here. Synthetic tests are present in the repository but must not be described as passing until a runner actually executes them. Word COM pagination/export, PowerShell 5.1 execution and visual inspection of the final Word/PDF pair remain separate acceptance steps.
+Automated JSON Schema meta-schema validation for every repository schema and Draft 2020-12 validation of a generated Release Manifest instance have now been added to the synthetic suite; they remain unverified until a runner executes the tests. Synthetic tests are present in the repository but must not be described as passing until a runner actually executes them. Word COM pagination/export, PowerShell 5.1 execution and visual inspection of the final Word/PDF pair remain separate acceptance steps.
 
 ## Current verification blocker
 

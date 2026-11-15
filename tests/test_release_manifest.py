@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from jsonschema import Draft202012Validator, FormatChecker
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -858,6 +860,13 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertEqual(manifest["deterministic_consistency_audit"]["status"], "PASS")
         self.assertEqual(manifest["response_units"][0]["location_methods"], [])
         self.assertTrue(manifest["checks"]["response_letter_contains_verified_patch_excerpts"])
+
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "final-release-manifest.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator(
+            schema,
+            format_checker=FormatChecker(),
+        ).validate(manifest)
 
         # A valid hash/quality report must not let a stale or hand-edited reply body pass release.
         response_document = Document(str(response_docx_path))

@@ -209,10 +209,10 @@ try {
     Add-QualityLog "Validated Python version: $VersionText"
 
     if ($InstallDependencies) {
-        Invoke-QualityCheck -Name "Install project dependencies" -PythonArgs @("-m", "pip", "install", "-r", "requirements.txt")
+        Invoke-QualityCheck -Name "Install project and test dependencies" -PythonArgs @("-m", "pip", "install", "-e", ".[test]")
     }
 
-    Invoke-QualityCheck -Name "Check required Python packages" -PythonArgs @("-c", "import lxml, docx; print('lxml and python-docx are available')")
+    Invoke-QualityCheck -Name "Check required Python packages" -PythonArgs @("-c", "import lxml, docx, jsonschema; print('lxml, python-docx and jsonschema are available')")
     Invoke-QualityCheck -Name "Compile source and tests" -PythonArgs @("-m", "compileall", "-q", "scripts", "tests")
     Invoke-QualityCheck -Name "Run unit tests" -PythonArgs @("-m", "unittest", "discover", "-s", "tests", "-v")
     $CoreWorkflowCliSmoke = "import argparse, sys; sys.path.insert(0, 'scripts'); import co_reviewer_cli as cli; parser = cli.build_parser(); action = next(item for item in parser._actions if isinstance(item, argparse._SubParsersAction)); names = ('approve-workflow-tasks', 'build-revision-ledger', 'export-revision-plan', 'sync-workflow-ledger', 'create-working-clean-views', 'confirm-response-units', 'map-response-locations', 'complete-response-units', 'render-response', 'render-response-docx'); missing = [name for name in names if name not in action.choices]; assert not missing, f'missing workflow CLI command(s): {missing}'; [action.choices[name].format_help() for name in names]; print(f'{len(names)} core workflow CLI commands are available')"
