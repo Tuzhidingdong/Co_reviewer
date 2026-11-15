@@ -28,7 +28,7 @@ from co_reviewer.release_manifest import (
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )
-from co_reviewer.batch_store import _batch_artifact_inventory
+from co_reviewer.batch_store import _batch_artifact_inventory, _prepare_recovery_workflow
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.revision_models import (
     ResponseUnit,
@@ -330,19 +330,80 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "Manuscript": {"file": str(self.source), "sha256": source_sha, "batch_id": None},
         }
         failed_output_files = {"Manuscript": [str(output_path)]}
-        workflow_after = json.loads(json.dumps(self.workflow, ensure_ascii=False))
-        workflow_after["tasks"][0]["status"] = "recheck_required"
-        workflow_after["tasks"][0]["recheck_from"] = "completed"
-        workflow_after["tasks"][0]["invalidation_reason"] = "Synthetic failed-batch recovery."
-        workflow_after.setdefault("events", []).append({
-            "event_id": "synthetic-workflow-recovery-event",
-            "task_id": "T1",
-            "timestamp_utc": STAMP,
-            "event_type": "invalidation",
-            "reason": "Synthetic failed-batch recovery.",
-            "actor": "Recovery Agent",
-            "batch_id": batch_id,
-        })
+        workflow_for_recovery = build_workflow_ledger(
+            {
+                "source_files": [{
+                    "role": "Manuscript",
+                    "file": str(self.source),
+                    "sha256": source_sha,
+                }],
+                "tasks": [
+                    {
+                        "task_id": "T1",
+                        "sequence": 1,
+                        "task_type": "response_only",
+                        "title": "Synthetic failed-batch task",
+                        "source_comment_ids": ["C1"],
+                        "target_documents": [],
+                        "evidence": [],
+                        "proposed_action": "A synthetic upstream task.",
+                        "targets": [],
+                        "dependencies": [],
+                        "readiness": "ready_for_author_approval",
+                        "unresolved_questions": [],
+                        "confidence": 1.0,
+                        "status": "pending",
+                        "requires_user_approval": True,
+                    },
+                    {
+                        "task_id": "T2",
+                        "sequence": 2,
+                        "task_type": "response_only",
+                        "title": "Synthetic downstream task",
+                        "source_comment_ids": ["C2"],
+                        "target_documents": [],
+                        "evidence": [],
+                        "proposed_action": "A synthetic downstream dependent task.",
+                        "targets": [],
+                        "dependencies": ["T1"],
+                        "readiness": "ready_for_author_approval",
+                        "unresolved_questions": [],
+                        "confidence": 1.0,
+                        "status": "pending",
+                        "requires_user_approval": True,
+                    },
+                ],
+            },
+            "round-release-tests",
+            STAMP,
+        )
+        upstream_ready = transition_task(workflow_for_recovery["tasks"][0], "ready")
+        workflow_for_recovery["tasks"][0] = transition_task(
+            upstream_ready,
+            "completed",
+            evidence={
+                "completion_record_id": "synthetic-recovery-upstream",
+                "completion_record_fingerprint": hashlib.sha256(
+                    b"synthetic-recovery-upstream"
+                ).hexdigest(),
+                "completed_at_utc": STAMP,
+            },
+        )
+        self.workflow = workflow_for_recovery
+        self.workflow_path.write_text(
+            json.dumps(self.workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        recovery_reason = "Synthetic recovery test."
+        workflow_after = _prepare_recovery_workflow(
+            self.workflow,
+            ["T1"],
+            batch_id=batch_id,
+            actor="Recovery Agent",
+            reason=recovery_reason,
+            timestamp_utc=STAMP,
+        )
+        invalidated_task_ids = ["T1", "T2"]
         workflow_after_sha = hashlib.sha256(
             json.dumps(workflow_after, ensure_ascii=False, indent=2).encode("utf-8")
         ).hexdigest()
@@ -374,7 +435,12 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "batch_id": batch_id,
             "workflow_ledger_file": str(self.workflow_path),
             "revision_ledger_file": str(self.revision_path),
-            "workflow_ledger_sha256_before": "1" * 64,
+            "created_at_utc": STAMP,
+            "actor": "Recovery Agent",
+            "reason": recovery_reason,
+            "workflow_ledger_sha256_before": hashlib.sha256(
+                self.workflow_path.read_bytes()
+            ).hexdigest(),
             "workflow_after": workflow_after,
             "workflow_ledger_sha256_after": workflow_after_sha,
             "revision_ledger_sha256_before": "3" * 64,
@@ -383,6 +449,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "batch_scope_sha256": scope_sha,
             "selected_task_ids": ["T1"],
             "batch_task_ids": ["T1"],
+            "invalidated_task_ids": invalidated_task_ids,
             "patch_ids": ["P-RECOVER"],
             "parent_documents": parent_documents,
             "failed_output_files": failed_output_files,
@@ -439,6 +506,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertEqual(records[0]["patch_ids"], ["P-RECOVER"])
         self.assertTrue(records[0]["retained_batch_files"])
         self.assertEqual(records[0]["retained_artifacts"], artifact_inventory)
+        self.assertEqual(records[0]["invalidated_task_ids"], ["T1", "T2"])
         with self.assertRaisesRegex(ReleaseGateError, "both recovered-unpublished and published"):
             _collect_recovered_batch_history(
                 revision,
