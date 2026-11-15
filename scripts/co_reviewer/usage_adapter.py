@@ -54,6 +54,9 @@ def _normalise_usage(raw_usage: Mapping[str, Any] | None, *, source: str, reason
     if unknown:
         raise UsageAuditError("Unsupported token field(s): " + ", ".join(sorted(str(x) for x in unknown)))
     values = {bucket: raw_usage.get(bucket) for bucket in TOKEN_BUCKETS}
+    for bucket, value in values.items():
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            raise UsageAuditError(f"{bucket} must be a non-negative integer or null.")
     if not any(value is not None for value in values.values()):
         return _unavailable_usage(reasoning_relation)
     if source not in TOKEN_SOURCES - {"unavailable"}:

@@ -106,3 +106,12 @@ These tests are present in the repository but have **not been established as pas
 - Development branch: `upgrade/v0.5.1-p1-audit-quality-implementation-20261114`
 - Latest development commit: follow the current head of PR #3; this status file intentionally does not pin a commit SHA that becomes stale as implementation continues.
 - PR #3: Draft, open, not merged.
+
+
+## P2 Usage Adapter — initial call-boundary seam
+
+- Added `scripts/co_reviewer/usage_adapter.py` with `invoke_with_usage`: the external model caller supplies its invocation, provider-specific canonical usage extractor, explicit context scope, actor/stage/provider/model and optional job/session IDs.
+- Successful calls return the original result and emit measured/estimated token events only when the extractor returns explicit token buckets. Missing or invalid usage metadata produces `source=unavailable` with null buckets; token counts are never estimated from text length.
+- Failed calls emit unavailable-token events and re-raise the original exception without persisting exception messages. If a successful call's ledger write fails, `UsageAdapterError.result` preserves the completed result to prevent blind model-call retries.
+- `usage_audit.py` now validates model-call context scope, call status, duration and exception-type metadata. `tests/test_usage_adapter.py` adds coverage for success, missing metadata, extractor errors, invalid counts, failed calls, ledger-write failure and explicit context-scope enforcement.
+- This is a reusable integration seam, not automatic Antigravity/OpenCode capture. Their actual invocation entry points are outside this repository and still need to attach the wrapper with provider-specific usage extractors; no production usage capture is claimed.
