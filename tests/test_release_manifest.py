@@ -332,6 +332,15 @@ class ReleaseManifestGateTests(unittest.TestCase):
         workflow_after["tasks"][0]["status"] = "recheck_required"
         workflow_after["tasks"][0]["recheck_from"] = "completed"
         workflow_after["tasks"][0]["invalidation_reason"] = "Synthetic failed-batch recovery."
+        workflow_after.setdefault("events", []).append({
+            "event_id": "synthetic-workflow-recovery-event",
+            "task_id": "T1",
+            "timestamp_utc": STAMP,
+            "event_type": "invalidation",
+            "reason": "Synthetic failed-batch recovery.",
+            "actor": "Recovery Agent",
+            "batch_id": batch_id,
+        })
         workflow_after_sha = hashlib.sha256(
             json.dumps(workflow_after, ensure_ascii=False, indent=2).encode("utf-8")
         ).hexdigest()
