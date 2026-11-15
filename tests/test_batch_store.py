@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.batch_store import (
     BatchStoreError,
+    assert_no_uncommitted_role_batches,
     create_batch_intent,
     load_active_document_pointers,
     publish_active_pointers,
@@ -93,6 +94,36 @@ class BatchStoreTests(unittest.TestCase):
             self._intent()
         with self.assertRaises(BatchStoreError):
             write_json_new(batch_dir / "batch_intent.json", {"rewrite": True})
+
+    def test_uncommitted_batch_locks_same_document_role_until_patch_superseded(self):
+        intent = self._intent()
+        batch_dir = Path(intent["batch_dir"])
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "batch_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_intent.json").read_bytes()
+            ).hexdigest(),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P1"],
+            "documents": {},
+        }
+        (batch_dir / "batch_scope.json").write_text(
+            json.dumps(scope, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(BatchStoreError, "reserved by uncommitted batch"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                {"P1": "planned"},
+            )
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            {"P1": "superseded"},
+        )
 
     def test_active_pointer_rejects_source_changed_outside_ledger(self):
         load_active_document_pointers(self.workflow)
