@@ -294,6 +294,26 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 response_letter_quality=quality_path,
             )
 
+        # Non-canonical structures must not be used to hide additional response text.
+        response_document = Document(str(response_docx_path))
+        response_document.add_table(rows=1, cols=1).cell(0, 0).text = "Additional untracked reviewer reply"
+        response_document.save(response_docx_path)
+        tampered_quality = audit_docx_quality(response_docx_path, profile="response-letter")
+        quality_path.write_text(
+            json.dumps(tampered_quality, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ReleaseGateError, "tables or inline shapes"):
+            build_final_release_manifest(
+                ledger,
+                self.workflow,
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+                response_letter_md=response_md_path,
+                response_letter_docx=response_docx_path,
+                response_letter_quality=quality_path,
+            )
+
     def test_final_consistency_audit_blocks_unresolved_figure_reference(self):
         source = self.root / "synthetic_manuscript.docx"
         document = Document()
