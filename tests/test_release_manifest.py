@@ -438,6 +438,30 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 workflow_task_ids={"T2"},
             )
 
+        recovery_intent_path = self.root / "runs" / "batch-recovery-003" / "batch_recovery_intent.json"
+        receipt_path = self.root / "runs" / "batch-recovery-003" / "batch_recovered.json"
+        recovery_intent_payload = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
+        recovery_intent_payload["selected_task_ids"] = [{"malformed": "not hashable"}]
+        recovery_intent_path.write_text(
+            json.dumps(recovery_intent_payload, ensure_ascii=False), encoding="utf-8"
+        )
+        recovery_receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        recovery_receipt_payload["selected_task_ids"] = recovery_intent_payload["selected_task_ids"]
+        recovery_receipt_payload["batch_recovery_intent_sha256"] = hashlib.sha256(
+            recovery_intent_path.read_bytes()
+        ).hexdigest()
+        receipt_path.write_text(
+            json.dumps(recovery_receipt_payload, ensure_ascii=False), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ReleaseGateError, "task sets differ"):
+            _collect_recovered_batch_history(
+                revision,
+                published_batch_ids=set(),
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+                workflow_task_ids={"T1"},
+            )
+
         self.source.unlink()
         with self.assertRaisesRegex(ReleaseGateError, "active parent is missing or stale"):
             _collect_recovered_batch_history(
