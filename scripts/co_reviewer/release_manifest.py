@@ -239,7 +239,8 @@ def _require_bound_final_quality_report(
             f"Final Word Clean DOCX quality report for {role} must include DOCX and PDF metric objects."
         )
     if (
-        docx_metrics.get("docx_sha256") != docx_sha256
+        docx_metrics.get("profile") != "word-final-clean"
+        or docx_metrics.get("docx_sha256") != docx_sha256
         or not isinstance(docx_metrics.get("docx_file"), str)
         or Path(docx_metrics["docx_file"]).expanduser().resolve() != Path(docx_path).expanduser().resolve()
     ):
@@ -254,6 +255,29 @@ def _require_bound_final_quality_report(
     ):
         raise ReleaseGateError(
             f"Final DOCX quality report is not bound to the current PDF and Word page count for {role}."
+        )
+    return status
+
+
+def _require_bound_response_quality_report(
+    payload: Any,
+    *,
+    docx_path: str,
+    docx_sha256: str,
+) -> str:
+    """Require the stored Response Letter quality report to use its dedicated profile and file hash."""
+    status = _require_release_quality_status(payload, "Response Letter DOCX")
+    docx_metrics = payload.get("docx")
+    if (
+        not isinstance(docx_metrics, Mapping)
+        or docx_metrics.get("profile") != "response-letter"
+        or docx_metrics.get("docx_sha256") != docx_sha256
+        or not isinstance(docx_metrics.get("docx_file"), str)
+        or Path(docx_metrics["docx_file"]).expanduser().resolve()
+        != Path(docx_path).expanduser().resolve()
+    ):
+        raise ReleaseGateError(
+            "Response Letter quality report is not bound to the current DOCX using the response-letter profile."
         )
     return status
 
@@ -907,12 +931,12 @@ def build_final_release_manifest(
             raise ReleaseGateError(f"Required release artifact is missing: {path}.")
 
     response_quality_payload = json.loads(response_quality_path.read_text(encoding="utf-8"))
-    response_quality_status = _require_release_quality_status(
-        response_quality_payload, "Response Letter DOCX"
-    )
     response_docx_sha = sha256_file(response_docx_path)
-    if response_quality_payload.get("docx", {}).get("docx_sha256") != response_docx_sha:
-        raise ReleaseGateError("Response Letter DOCX quality report is not bound to the current DOCX.")
+    response_quality_status = _require_bound_response_quality_report(
+        response_quality_payload,
+        docx_path=str(response_docx_path),
+        docx_sha256=response_docx_sha,
+    )
     current_response_quality = audit_docx_quality(response_docx_path, profile="response-letter")
     if current_response_quality["status"] == "FAIL":
         raise ReleaseGateError(

@@ -17,6 +17,7 @@ from co_reviewer.release_manifest import (
     _require_successful_sequence_audit,
     _require_consistent_sequence_audits,
     _require_bound_final_quality_report,
+    _require_bound_response_quality_report,
     _require_word_page_count,
     _validate_release_batch_scope,
     audit_patch_operation_deltas,
@@ -212,6 +213,37 @@ class ReleaseManifestGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseGateError, "inconsistent Figure/Table SEQ audit"):
             _require_consistent_sequence_audits([passing, conflicting], "Manuscript")
 
+    def test_response_quality_report_must_use_response_letter_profile_and_exact_docx(self):
+        payload = {
+            "status": "PASS_WITH_WARNINGS",
+            "docx": {
+                "profile": "response-letter",
+                "docx_file": "/tmp/Response_to_Reviewers.docx",
+                "docx_sha256": "a" * 64,
+            },
+        }
+        self.assertEqual(
+            _require_bound_response_quality_report(
+                payload,
+                docx_path="/tmp/Response_to_Reviewers.docx",
+                docx_sha256="a" * 64,
+            ),
+            "PASS_WITH_WARNINGS",
+        )
+        for changed in (
+            {"docx": {"profile": "generic", "docx_file": "/tmp/Response_to_Reviewers.docx", "docx_sha256": "a" * 64}},
+            {"docx": {"profile": "response-letter", "docx_file": "/tmp/other.docx", "docx_sha256": "a" * 64}},
+            {"docx": {"profile": "response-letter", "docx_file": "/tmp/Response_to_Reviewers.docx", "docx_sha256": "b" * 64}},
+        ):
+            broken = dict(payload, docx=changed["docx"])
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(ReleaseGateError, "response-letter profile"):
+                    _require_bound_response_quality_report(
+                        broken,
+                        docx_path="/tmp/Response_to_Reviewers.docx",
+                        docx_sha256="a" * 64,
+                    )
+
     def test_release_batch_scope_must_match_ledger_patch_task_and_document_ownership(self):
         parent = self.root / "parent.docx"
         output = self.root / "batch" / "documents" / "Manuscript.marked.docx"
@@ -285,7 +317,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
     def test_final_docx_quality_report_must_bind_docx_pdf_and_page_count(self):
         payload = {
             "status": "PASS",
-            "docx": {"docx_file": "/tmp/Manuscript.docx", "docx_sha256": "a" * 64},
+            "docx": {"profile": "word-final-clean", "docx_file": "/tmp/Manuscript.docx", "docx_sha256": "a" * 64},
             "pdf": {
                 "file": "/tmp/Manuscript.pdf",
                 "sha256": "b" * 64,
@@ -305,7 +337,8 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "PASS",
         )
         for mutation in (
-            {"docx": {"docx_file": "/tmp/other.docx", "docx_sha256": "a" * 64}},
+            {"docx": {"profile": "generic", "docx_file": "/tmp/Manuscript.docx", "docx_sha256": "a" * 64}},
+            {"docx": {"profile": "word-final-clean", "docx_file": "/tmp/other.docx", "docx_sha256": "a" * 64}},
             {"pdf": {"file": "/tmp/other.pdf", "sha256": "b" * 64, "word_page_count": 4}},
             {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "c" * 64, "word_page_count": 4}},
             {"pdf": {"file": "/tmp/Manuscript.pdf", "sha256": "b" * 64, "word_page_count": 5}},
