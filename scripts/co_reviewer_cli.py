@@ -2999,8 +2999,8 @@ def cmd_confirm_verified(args):
     """Promote selected applied items only after exact DOCX verification and semantic review."""
     if not getattr(args, "semantic_review_confirmed", False):
         raise ValueError(
-            "Semantic review acknowledgement is required. Confirm the revised Manuscript/SI claims, "
-            "values, units, sample names and figure/table references before running this command."
+            "Semantic review acknowledgement is required. Confirm revised Manuscript/SI claims, "
+            "numeric values, units, sample identities, citations, figure/table references and cross-document consistency before running this command."
         )
 
     plan_path = Path(args.plan).expanduser().resolve()
