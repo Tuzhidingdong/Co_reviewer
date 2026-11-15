@@ -84,9 +84,10 @@ Use the manual-location command for table/non-body cases explicitly marked `manu
 
 ## Synthetic test coverage added
 
-- `tests/test_batch_store.py`: unique batch storage, no-overwrite semantics, same-role reservation, active-pointer source hash integrity, verified-only publication, atomic pointer result and non-destructive rollback.
-- `tests/test_response_renderer.py`: exact PatchOperation excerpt extraction, same text in Markdown/DOCX, and numeric/unit/citation/Figure/identifier delta inventory.
-- `tests/test_release_manifest.py`: release blocking for incomplete ResponseUnits, reply-only completion without invented document locations, comment-to-ResponseUnit coverage and unresolved Figure/Table references.
+- `tests/test_batch_store.py`: unique batch storage, no-overwrite semantics, same-role reservation, active-pointer source hash integrity, verified-only publication, atomic pointer result and non-destructive rollback, and interrupted failed-batch recovery with receipt integrity.
+- `tests/test_revision_models.py`: abandoned-plan replay rejection, exact final-location coverage for every linked PatchOperation or anchor, rejection of missing/duplicate locator records, and persisted-ledger validation of location coverage.
+- `tests/test_response_renderer.py`: exact PatchOperation excerpt extraction, same text in Markdown/DOCX, and numeric/unit/citation/Figure/identifier delta inventory, including punctuated `Fig.` references.
+- `tests/test_release_manifest.py`: release blocking for incomplete ResponseUnits, reply-only completion without invented document locations, comment-to-ResponseUnit coverage, unresolved Figure/Table references, strict quality/SEQ status allowlists, SEQ audit structure consistency and positive non-boolean Word page counts.
 
 These tests are present in the repository but have **not been established as passing** in this implementation session.
 
@@ -103,5 +104,5 @@ These tests are present in the repository but have **not been established as pas
 
 - Base: `upgrade/v0.5.1-p0-implementation-20261114`
 - Development branch: `upgrade/v0.5.1-p1-audit-quality-implementation-20261114`
-- Latest development commit: `18a8caf293ef696f16a73c2a817fca456c1f42fd`.
+- Latest development commit: follow the current head of PR #3; this status file intentionally does not pin a commit SHA that becomes stale as implementation continues.
 - PR #3: Draft, open, not merged.
