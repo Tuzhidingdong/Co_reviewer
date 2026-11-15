@@ -716,18 +716,32 @@ class ResponseUnit:
             raise RevisionModelError(
                 f"{self.location_requirement} ResponseUnit requires mapping_method={expected_method}."
             )
-        if self.location_requirement == "manual_required":
-            expected_locator_ids = (
-                {f"manual:anchor:{self.anchor_evidence_id}"}
-                if self.disposition == "no_change"
-                else {f"manual:{operation_id}" for operation_id in self.linked_operation_ids}
-            )
-            actual_locator_ids = {item.locator_id for item in final_locations}
-            if expected_locator_ids != actual_locator_ids:
+        if self.disposition == "revised":
+            locator_prefix = "manual:" if self.location_requirement == "manual_required" else ""
+            expected_locator_ids = {
+                f"{locator_prefix}{operation_id}"
+                for operation_id in self.linked_operation_ids
+            }
+        elif self.disposition == "no_change":
+            if not self.anchor_evidence_id:
                 raise RevisionModelError(
-                    "Manual location records must cover exactly these PatchOperations: "
-                    + ", ".join(sorted(expected_locator_ids))
+                    f"Existing-anchor ResponseUnit {self.response_unit_id} has no anchor_evidence_id."
                 )
+            locator_prefix = "manual:anchor:" if self.location_requirement == "manual_required" else "anchor:"
+            expected_locator_ids = {f"{locator_prefix}{self.anchor_evidence_id}"}
+        else:
+            raise RevisionModelError(
+                f"ResponseUnit {self.response_unit_id} with disposition {self.disposition} cannot receive document locations."
+            )
+        actual_locator_ids = [item.locator_id for item in final_locations]
+        if (
+            len(actual_locator_ids) != len(expected_locator_ids)
+            or set(actual_locator_ids) != expected_locator_ids
+        ):
+            raise RevisionModelError(
+                "Final location records must cover every linked PatchOperation or existing anchor exactly once; "
+                "expected locator IDs: " + ", ".join(sorted(expected_locator_ids))
+            )
         if any(
             item.mapping_fingerprint != location_map_fingerprint
             for item in final_locations

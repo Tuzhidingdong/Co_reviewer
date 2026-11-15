@@ -539,6 +539,68 @@ class RevisionModelsTests(unittest.TestCase):
                 )],
             )
 
+    def test_automatic_location_records_must_cover_every_linked_operation_once(self):
+        unit = ResponseUnit(
+            response_unit_id="RU-MULTI-OP",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify both locations.",
+            response_text="We clarified both locations.",
+            linked_task_ids=["T1"],
+            linked_patch_ids=["P1"],
+            linked_operation_ids=["OP-001", "OP-002"],
+            disposition="revised",
+            location_requirement="required",
+            resolution_reason="The reviewer comment requires two exact manuscript changes.",
+            status="verified",
+            semantic_review_confirmed=True,
+            verification_report_id="semantic-multi-op",
+        )
+
+        def location(locator_id):
+            return ResponseLocation(
+                document="Manuscript",
+                output_file=str(self.marked_docx),
+                pdf_file=str(self.pdf_path),
+                page=1,
+                line_start=1,
+                line_end=2,
+                pdf_sha256=self.pdf_sha256,
+                location_map_id="map-multi-op",
+                mapping_fingerprint=HASH_A,
+                output_sha256=hashlib.sha256(self.marked_docx.read_bytes()).hexdigest(),
+                locator_id=locator_id,
+                source_clean_sha256=self.clean_sha256,
+            )
+
+        with self.assertRaisesRegex(RevisionModelError, "every linked PatchOperation"):
+            unit.record_final_locations(
+                HASH_A,
+                [location("OP-001")],
+                location_map_file=str(self.map_path),
+                location_map_file_sha256=self.map_sha256,
+            )
+
+        with self.assertRaisesRegex(RevisionModelError, "every linked PatchOperation"):
+            unit.record_final_locations(
+                HASH_A,
+                [location("OP-001"), location("OP-001")],
+                location_map_file=str(self.map_path),
+                location_map_file_sha256=self.map_sha256,
+            )
+
+        unit.record_final_locations(
+            HASH_A,
+            [location("OP-001"), location("OP-002")],
+            location_map_file=str(self.map_path),
+            location_map_file_sha256=self.map_sha256,
+        )
+        self.assertEqual(unit.status, "location_mapped")
+        self.assertEqual(
+            {item.locator_id for item in unit.final_locations},
+            {"OP-001", "OP-002"},
+        )
+
     def test_manual_locator_records_table_without_fabricating_word_line_numbers(self):
         unit = ResponseUnit(
             response_unit_id="RU-MANUAL-C1",
