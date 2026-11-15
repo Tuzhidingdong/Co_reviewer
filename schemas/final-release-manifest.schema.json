@@ -10,6 +10,7 @@
     "generated_at_utc",
     "source_ledgers",
     "active_documents",
+    "batches",
     "marked_documents",
     "final_documents",
     "patches",
@@ -42,6 +43,35 @@
           "file": { "type": "string", "minLength": 1 },
           "sha256": { "$ref": "#/$defs/sha256" },
           "batch_id": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["batch_id", "directory", "intent", "scope", "publish_receipt", "selected_task_ids", "patch_ids", "documents"],
+        "properties": {
+          "batch_id": { "type": "string", "minLength": 1 },
+          "directory": { "type": "string", "minLength": 1 },
+          "intent": { "$ref": "#/$defs/fileRecord" },
+          "scope": { "$ref": "#/$defs/fileRecord" },
+          "publish_receipt": { "$ref": "#/$defs/fileRecord" },
+          "selected_task_ids": { "type": "array", "items": { "type": "string" } },
+          "patch_ids": { "type": "array", "items": { "type": "string" } },
+          "documents": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": { "type": "string", "minLength": 1 },
+                "sha256": { "$ref": "#/$defs/sha256" }
+              },
+              "additionalProperties": false
+            }
+          }
         },
         "additionalProperties": false
       }
