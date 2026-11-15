@@ -100,6 +100,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
             revision_round_id="round-release-tests",
             response_units=[unit],
         )
+        self.revision_path.write_text(
+            json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         return build_final_release_manifest(
             ledger,
             self.workflow,
