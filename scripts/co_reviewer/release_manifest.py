@@ -67,6 +67,7 @@ _SAMPLE_TOKEN = re.compile(
 _UNIT_TOKEN = re.compile(
     r"(?<![A-Za-z])(?:"
     r"m?S\s*cm(?:\^?[-−]?1)?|"
+    r"S\s*m(?:\^?[-−]?1)?|"
     r"mAh\s*g(?:\^?[-−]?1)?|"
     r"Ah\s*kg(?:\^?[-−]?1)?|"
     r"mg\s*L(?:\^?[-−]?1)?|"
