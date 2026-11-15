@@ -24,6 +24,16 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_aware_iso_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
 def _safe_component(value: str) -> str:
     result = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
     return result or "document"
@@ -146,6 +156,12 @@ def _validate_recovered_batch_receipt(
         or receipt.get("batch_id") != intent.get("batch_id")
         or recovery.get("batch_id") != intent.get("batch_id")
         or receipt.get("recovery_id") != recovery.get("recovery_id")
+        or not isinstance(recovery.get("recovery_id"), str)
+        or not recovery.get("recovery_id", "").strip()
+        or not isinstance(receipt.get("recovered_at_utc"), str)
+        or not _is_aware_iso_timestamp(receipt.get("recovered_at_utc"))
+        or receipt.get("actor") != recovery.get("actor")
+        or receipt.get("reason") != recovery.get("reason")
         or scope.get("batch_id") != intent.get("batch_id")
         or scope.get("batch_intent_sha256") != intent_sha
         or receipt.get("batch_intent_sha256") != intent_sha
@@ -241,6 +257,15 @@ def _validate_recovered_batch_receipt(
         or batch_task_ids != expected_batch_task_ids
     ):
         raise BatchStoreError("Recovered batch task sets differ from its immutable batch intent.")
+
+    invalidated_task_ids = recovery.get("invalidated_task_ids")
+    if (
+        not valid_task_ids(invalidated_task_ids)
+        or receipt.get("invalidated_task_ids") != invalidated_task_ids
+    ):
+        raise BatchStoreError(
+            "Recovered batch invalidated task IDs differ between recovery intent and receipt."
+        )
 
     workflow_after = recovery.get("workflow_after")
     if (
@@ -1249,9 +1274,9 @@ def _validate_recovery_workflow_invalidation_evidence(
             + "; ".join(details) + ")."
         )
     declared_affected = recovery.get("invalidated_task_ids")
-    if declared_affected is not None and declared_affected != affected_task_ids:
+    if not isinstance(declared_affected, list) or declared_affected != affected_task_ids:
         raise BatchStoreError(
-            "Recovered batch invalidated_task_ids differs from the actual Workflow after-image."
+            "Recovered batch invalidated_task_ids is missing or differs from the actual Workflow after-image."
         )
 
     events = workflow_after.get("events")

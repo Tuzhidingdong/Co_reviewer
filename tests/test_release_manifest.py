@@ -451,6 +451,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "batch_task_ids": ["T1"],
             "invalidated_task_ids": invalidated_task_ids,
             "patch_ids": ["P-RECOVER"],
+            "patch_statuses_before": {"P-RECOVER": "approved"},
             "parent_documents": parent_documents,
             "failed_output_files": failed_output_files,
             "artifact_inventory": artifact_inventory,
@@ -458,6 +459,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
         }
         recovery_intent_path = batch_dir / "batch_recovery_intent.json"
         recovery_intent_path.write_text(json.dumps(recovery_intent, ensure_ascii=False), encoding="utf-8")
+        recovery_intent_schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "batch-recovery-intent.schema.json").read_text(encoding="utf-8")
+        )
+        Draft202012Validator(recovery_intent_schema, format_checker=FormatChecker()).validate(recovery_intent)
         recovery_intent_sha = hashlib.sha256(recovery_intent_path.read_bytes()).hexdigest()
         recovery_receipt = {
             "schema_version": "1.0",
@@ -468,10 +473,14 @@ class ReleaseManifestGateTests(unittest.TestCase):
             "workflow_ledger_sha256": workflow_after_sha,
             "revision_ledger_file": str(self.revision_path),
             "revision_ledger_sha256": "4" * 64,
+            "recovered_at_utc": STAMP,
+            "actor": "Recovery Agent",
+            "reason": recovery_reason,
             "batch_recovery_intent_sha256": recovery_intent_sha,
             "batch_intent_sha256": intent_sha,
             "batch_scope_sha256": scope_sha,
             "selected_task_ids": ["T1"],
+            "invalidated_task_ids": invalidated_task_ids,
             "patch_ids": ["P-RECOVER"],
             "parent_documents": parent_documents,
             "failed_output_files": failed_output_files,
@@ -481,6 +490,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
         (batch_dir / "batch_recovered.json").write_text(
             json.dumps(recovery_receipt, ensure_ascii=False), encoding="utf-8"
         )
+        recovery_receipt_schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "batch-recovery-receipt.schema.json").read_text(encoding="utf-8")
+        )
+        Draft202012Validator(recovery_receipt_schema, format_checker=FormatChecker()).validate(recovery_receipt)
         revision = SimpleNamespace(
             revision_round_id="round-release-tests",
             patches=[SimpleNamespace(
@@ -499,7 +512,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
             published_batch_ids=set(),
             revision_ledger_path=self.revision_path,
             workflow_ledger_path=self.workflow_path,
-            workflow_task_ids={"T1"},
+            workflow_task_ids={"T1", "T2"},
         )
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["batch_id"], "recovery-003")

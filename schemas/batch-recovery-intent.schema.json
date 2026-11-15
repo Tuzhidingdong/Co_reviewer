@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Failed Batch Recovery Intent",
+  "description": "Immutable staged transaction describing two-Ledger recovery of an unpublished failed batch.",
+  "type": "object",
+  "required": ["schema_version","status","recovery_id","batch_id","created_at_utc","actor","reason","workflow_ledger_file","workflow_ledger_sha256_before","workflow_ledger_sha256_after","workflow_after","revision_ledger_file","revision_ledger_sha256_before","revision_ledger_sha256_after","batch_intent_sha256","batch_scope_sha256","selected_task_ids","batch_task_ids","invalidated_task_ids","patch_ids","patch_statuses_before","parent_documents","failed_output_files","artifact_inventory","revision_events"],
+  "properties": {
+    "schema_version": {"const":"1.0"},
+    "status": {"const":"prepared"},
+    "recovery_id": {"type":"string","minLength":1},
+    "batch_id": {"type":"string","minLength":1},
+    "created_at_utc": {"type":"string","format":"date-time"},
+    "actor": {"type":"string","minLength":1},
+    "reason": {"type":"string","minLength":1},
+    "workflow_ledger_file": {"type":"string","minLength":1},
+    "workflow_ledger_sha256_before": {"$ref":"#/$defs/sha256"},
+    "workflow_ledger_sha256_after": {"$ref":"#/$defs/sha256"},
+    "workflow_after": {"type":"object","minProperties":1},
+    "revision_ledger_file": {"type":"string","minLength":1},
+    "revision_ledger_sha256_before": {"$ref":"#/$defs/sha256"},
+    "revision_ledger_sha256_after": {"$ref":"#/$defs/sha256"},
+    "batch_intent_sha256": {"$ref":"#/$defs/sha256"},
+    "batch_scope_sha256": {"$ref":"#/$defs/sha256"},
+    "selected_task_ids": {"$ref":"#/$defs/taskIds"},
+    "batch_task_ids": {"$ref":"#/$defs/taskIds"},
+    "invalidated_task_ids": {"$ref":"#/$defs/taskIds"},
+    "patch_ids": {"$ref":"#/$defs/taskIds"},
+    "patch_statuses_before": {"type":"object","minProperties":1,"additionalProperties":{"enum":["planned","preflighted","approved","applied","abandoned"]}},
+    "parent_documents": {"type":"object","minProperties":1,"additionalProperties":{"$ref":"#/$defs/documentPointer"}},
+    "failed_output_files": {"type":"object","minProperties":1,"additionalProperties":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}}},
+    "artifact_inventory": {"type":"array","items":{"$ref":"#/$defs/artifact"}},
+    "revision_events": {"type":"array","minItems":1,"items":{"$ref":"#/$defs/revisionEvent"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "taskIds": {"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "documentPointer": {"type":"object","required":["file","sha256","batch_id"],"properties":{"file":{"type":"string","minLength":1},"sha256":{"$ref":"#/$defs/sha256"},"batch_id":{"type":["string","null"]}},"additionalProperties":false},
+    "artifact": {"type":"object","required":["path","size_bytes","sha256"],"properties":{"path":{"type":"string","minLength":1},"size_bytes":{"type":"integer","minimum":0},"sha256":{"$ref":"#/$defs/sha256"}},"additionalProperties":false},
+    "revisionEvent": {
+      "type":"object",
+      "required":["event_id","subject_id","subject_type","event_type","timestamp_utc","actor","details"],
+      "properties":{
+        "event_id":{"type":"string","minLength":1},
+        "subject_id":{"type":"string","minLength":1},
+        "subject_type":{"const":"patch"},
+        "event_type":{"const":"patch_abandoned_after_batch_recovery"},
+        "timestamp_utc":{"type":"string","format":"date-time"},
+        "actor":{"type":"string","minLength":1},
+        "details":{
+          "type":"object",
+          "required":["recovery_id","batch_id","reason","parent_documents","failed_output_files","artifact_inventory","batch_intent_sha256","batch_scope_sha256"],
+          "properties":{
+            "recovery_id":{"type":"string","minLength":1},
+            "batch_id":{"type":"string","minLength":1},
+            "reason":{"type":"string","minLength":1},
+            "parent_documents":{"type":"object","minProperties":1,"additionalProperties":{"$ref":"#/$defs/documentPointer"}},
+            "failed_output_files":{"type":"object","minProperties":1,"additionalProperties":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}}},
+            "artifact_inventory":{"type":"array","items":{"$ref":"#/$defs/artifact"}},
+            "batch_intent_sha256":{"$ref":"#/$defs/sha256"},
+            "batch_scope_sha256":{"$ref":"#/$defs/sha256"}
+          },
+          "additionalProperties":false
+        }
+      },
+      "additionalProperties":false
+    }
+  }
+}

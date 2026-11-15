@@ -3227,6 +3227,7 @@ def cmd_recover_failed_batch(args):
         "batch_intent_sha256": recovery_intent["batch_intent_sha256"],
         "batch_scope_sha256": recovery_intent["batch_scope_sha256"],
         "selected_task_ids": recovery_intent["selected_task_ids"],
+        "invalidated_task_ids": recovery_intent["invalidated_task_ids"],
         "patch_ids": recovery_intent["patch_ids"],
         "parent_documents": recovery_intent["parent_documents"],
         "failed_output_files": recovery_intent["failed_output_files"],

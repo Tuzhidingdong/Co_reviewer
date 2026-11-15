@@ -1002,7 +1002,7 @@ def _collect_recovered_batch_history(
             "recovery_id": receipt["recovery_id"],
             "selected_task_ids": list(receipt.get("selected_task_ids", [])),
             "batch_task_ids": list(recovery_intent.get("batch_task_ids", [])),
-            "invalidated_task_ids": list(recovery_intent.get("invalidated_task_ids", [])),
+            "invalidated_task_ids": list(receipt["invalidated_task_ids"]),
             "patch_ids": list(receipt["patch_ids"]),
             "parent_documents": receipt["parent_documents"],
             "failed_output_files": receipt["failed_output_files"],
