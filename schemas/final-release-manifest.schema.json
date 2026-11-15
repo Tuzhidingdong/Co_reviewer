@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Final Release Manifest",
+  "description": "Hash-bound release record for verified Manuscript/SI outputs, ResponseUnits, Word/PDF locations, and the deterministic Response Letter.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "release_status",
+    "revision_round_id",
+    "generated_at_utc",
+    "source_ledgers",
+    "active_documents",
+    "marked_documents",
+    "final_documents",
+    "patches",
+    "response_units",
+    "location_maps",
+    "artifacts",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "release_status": { "const": "READY" },
+    "revision_round_id": { "type": "string", "minLength": 1 },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "source_ledgers": {
+      "type": "object",
+      "required": ["revision_ledger", "workflow_ledger"],
+      "properties": {
+        "revision_ledger": { "$ref": "#/$defs/fileRecord" },
+        "workflow_ledger": { "$ref": "#/$defs/fileRecord" }
+      },
+      "additionalProperties": false
+    },
+    "active_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file", "sha256", "batch_id"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "batch_id": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "marked_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "active_file",
+          "active_sha256",
+          "active_batch_id",
+          "working_clean_file",
+          "working_clean_sha256"
+        ],
+        "properties": {
+          "active_file": { "type": "string", "minLength": 1 },
+          "active_sha256": { "$ref": "#/$defs/sha256" },
+          "active_batch_id": { "type": ["string", "null"] },
+          "working_clean_file": { "type": "string", "minLength": 1 },
+          "working_clean_sha256": { "$ref": "#/$defs/sha256" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "final_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "document",
+          "final_clean_file",
+          "final_clean_sha256",
+          "final_pdf_file",
+          "final_pdf_sha256",
+          "source_working_clean_sha256",
+          "word_page_count",
+          "sequence_audit",
+          "quality_report"
+        ],
+        "properties": {
+          "document": { "type": "string", "minLength": 1 },
+          "final_clean_file": { "type": "string", "minLength": 1 },
+          "final_clean_sha256": { "$ref": "#/$defs/sha256" },
+          "final_pdf_file": { "type": "string", "minLength": 1 },
+          "final_pdf_sha256": { "$ref": "#/$defs/sha256" },
+          "source_working_clean_sha256": { "$ref": "#/$defs/sha256" },
+          "word_page_count": { "type": "integer", "minimum": 1 },
+          "sequence_audit": {
+            "type": "object",
+            "required": ["status", "detected", "issues", "manual_review"],
+            "properties": {
+              "status": { "enum": ["pass", "manual_review"] },
+              "detected": { "type": "object" },
+              "issues": { "type": "array" },
+              "manual_review": { "type": "array" }
+            },
+            "additionalProperties": true
+          },
+          "quality_report": {
+            "type": "object",
+            "required": ["file", "sha256", "status", "release_reaudit_status"],
+            "properties": {
+              "file": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] },
+              "release_reaudit_status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["patch_id", "task_id", "status", "operation_ids", "source_comment_ids", "verified_output_hashes"],
+        "properties": {
+          "patch_id": { "type": "string", "minLength": 1 },
+          "task_id": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["verified", "superseded"] },
+          "operation_ids": { "type": "array", "items": { "type": "string" } },
+          "source_comment_ids": { "type": "array", "items": { "type": "string" } },
+          "verified_output_hashes": { "type": "array" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "response_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "response_unit_id",
+          "comment_id",
+          "reviewer",
+          "disposition",
+          "location_requirement",
+          "status",
+          "linked_patch_ids",
+          "linked_operation_ids",
+          "location_methods"
+        ],
+        "properties": {
+          "response_unit_id": { "type": "string", "minLength": 1 },
+          "comment_id": { "type": "string", "minLength": 1 },
+          "reviewer": { "type": "string", "minLength": 1 },
+          "disposition": { "enum": ["revised", "reply_only", "no_change"] },
+          "location_requirement": { "enum": ["required", "existing_anchor_required", "not_required", "manual_required"] },
+          "status": { "const": "completed" },
+          "linked_patch_ids": { "type": "array", "items": { "type": "string" } },
+          "linked_operation_ids": { "type": "array", "items": { "type": "string" } },
+          "location_methods": { "type": "array", "items": { "enum": ["word_com", "manual"] } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "location_maps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fileRecord" }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "response_letter_markdown",
+        "response_letter_docx",
+        "response_letter_quality"
+      ],
+      "properties": {
+        "response_letter_markdown": { "$ref": "#/$defs/fileRecord" },
+        "response_letter_docx": { "$ref": "#/$defs/fileRecord" },
+        "response_letter_quality": {
+          "type": "object",
+          "required": ["file", "sha256", "bytes", "status", "release_reaudit_status"],
+          "properties": {
+            "file": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "bytes": { "type": "integer", "minimum": 1 },
+            "status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] },
+            "release_reaudit_status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "all_active_patches_verified",
+        "all_response_units_completed",
+        "active_pointers_match_marked_docx",
+        "all_final_clean_docx_pdf_hashes_valid",
+        "all_word_quality_reports_pass",
+        "response_letter_contains_verified_patch_excerpts"
+      ],
+      "properties": {
+        "all_active_patches_verified": { "const": true },
+        "all_response_units_completed": { "const": true },
+        "active_pointers_match_marked_docx": { "const": true },
+        "all_final_clean_docx_pdf_hashes_valid": { "const": true },
+        "all_word_quality_reports_pass": { "const": true },
+        "response_letter_contains_verified_patch_excerpts": { "const": true }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "fileRecord": {
+      "type": "object",
+      "required": ["file", "sha256", "bytes"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
