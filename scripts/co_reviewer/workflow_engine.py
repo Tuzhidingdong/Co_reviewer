@@ -963,6 +963,8 @@ _WORKFLOW_EVENT_TYPES = frozenset({
     "verification",
     "invalidation",
     "location_mapping",
+    "batch_published",
+    "batch_rolled_back",
 })
 
 
@@ -1011,6 +1013,32 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         ):
             source_hashes_by_role[role].add(digest)
             source_records.add((role, file_path, digest))
+
+    active_documents = ledger.get("active_documents")
+    if active_documents is not None:
+        if not isinstance(active_documents, Mapping):
+            errors.append("Workflow Ledger active_documents must be an object.")
+        else:
+            known_roles = {row.get("role") for row in sources if isinstance(row, Mapping)}
+            for role, pointer in active_documents.items():
+                prefix = f"Workflow Ledger active_documents[{role}]"
+                if not isinstance(role, str) or role not in known_roles:
+                    errors.append(f"{prefix} uses a role absent from source_files.")
+                    continue
+                if not isinstance(pointer, Mapping):
+                    errors.append(f"{prefix} must be an object.")
+                    continue
+                file_path, digest = pointer.get("file"), pointer.get("sha256")
+                if not isinstance(file_path, str) or not file_path.strip():
+                    errors.append(f"{prefix}.file must be non-empty.")
+                if not _is_sha256(digest):
+                    errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest.")
+                batch_id = pointer.get("batch_id")
+                if batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()):
+                    errors.append(f"{prefix}.batch_id must be a non-empty string or null.")
+                updated_at = pointer.get("updated_at_utc")
+                if updated_at is not None and not _is_aware_timestamp(updated_at):
+                    errors.append(f"{prefix}.updated_at_utc must be timezone-aware.")
 
     documents = ledger.get("documents", [])
     if not isinstance(documents, list):
@@ -1369,11 +1397,29 @@ def build_workflow_ledger(
                 key=lambda item: (item["file"], item["sha256"]),
             )
         ]
+    source_files = copy.deepcopy(decision_plan.get("source_files", []))
+    active_documents: dict[str, dict[str, Any]] = {}
+    for source in source_files:
+        if not isinstance(source, Mapping):
+            continue
+        role, file_path, digest = source.get("role"), source.get("file"), source.get("sha256")
+        if isinstance(role, str) and isinstance(file_path, str) and _is_sha256(digest):
+            if role in active_documents:
+                raise WorkflowValidationError(
+                    f"Multiple initial source files exist for role {role}; resolve document identity before creating active pointers."
+                )
+            active_documents[role] = {
+                "file": file_path,
+                "sha256": digest,
+                "batch_id": None,
+                "updated_at_utc": created_at_utc,
+            }
     ledger = {
         "schema_version": "0.5.1",
         "revision_round_id": revision_round_id.strip(),
         "created_at_utc": created_at_utc,
-        "source_files": copy.deepcopy(decision_plan.get("source_files", [])),
+        "source_files": source_files,
+        "active_documents": active_documents,
         "documents": documents,
         "object_registry": objects,
         "tasks": tasks,
