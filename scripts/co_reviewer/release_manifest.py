@@ -125,13 +125,18 @@ def build_final_release_manifest(
             receipt_payload = json.loads(required_batch_files["publish_receipt"].read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ReleaseGateError(f"Cannot read active batch records for {batch_id}: {exc}") from exc
+        intent_sha256 = sha256_file(required_batch_files["intent"])
+        scope_sha256 = sha256_file(required_batch_files["scope"])
         if (
             intent_payload.get("batch_id") != batch_id
             or scope_payload.get("batch_id") != batch_id
             or receipt_payload.get("batch_id") != batch_id
             or receipt_payload.get("status") != "published"
+            or scope_payload.get("batch_intent_sha256") != intent_sha256
+            or receipt_payload.get("batch_intent_sha256") != intent_sha256
+            or receipt_payload.get("batch_scope_sha256") != scope_sha256
         ):
-            raise ReleaseGateError(f"Active batch {batch_id} has inconsistent immutable records.")
+            raise ReleaseGateError(f"Active batch {batch_id} has inconsistent or stale immutable records.")
         receipt_pointer = receipt_payload.get("active_documents", {}).get(role)
         if not isinstance(receipt_pointer, Mapping) or (
             receipt_pointer.get("file") != pointer["file"]
