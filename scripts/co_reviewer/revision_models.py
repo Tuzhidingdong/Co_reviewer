@@ -2129,6 +2129,7 @@ def build_revision_ledger(
     reviewer_comments_by_id: Mapping[str, str] | None = None,
     reviewer_by_task: Mapping[str, Any] | None = None,
     selected_task_ids: Sequence[str] | None = None,
+    force_document_paths: bool = False,
 ) -> RevisionLedger:
     """Build explicit Patch and ResponseUnit records from a Workflow Ledger.
 
@@ -2283,6 +2284,11 @@ def build_revision_ledger(
             data.setdefault("input_file", paths.get("input_file"))
             data.setdefault("output_file", paths.get("output_file"))
             data.setdefault("document", document)
+            if force_document_paths and isinstance(document, str) and document in document_paths:
+                managed = document_paths[document]
+                data["input_file"] = managed.get("input_file")
+                data["output_file"] = managed.get("output_file")
+                data["source_sha256"] = managed.get("source_sha256")
             operation = PatchOperation.from_mapping(
                 data, fallback_id=f"{task_id}-OP{index + 1:03d}"
             )
@@ -2476,7 +2482,7 @@ def build_revision_ledger(
             role=role,
             input_file=paths.get("input_file", first_operation.input_file if first_operation else None),
             output_file=paths.get("output_file", first_operation.output_file if first_operation else None),
-            source_sha256=identity.get("source_sha256"),
+            source_sha256=paths.get("source_sha256", identity.get("source_sha256")),
         ))
 
     ledger = RevisionLedger(
