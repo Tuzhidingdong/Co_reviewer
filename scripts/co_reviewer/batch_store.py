@@ -116,6 +116,7 @@ def load_active_document_pointers(workflow: Mapping[str, Any]) -> dict[str, dict
 def assert_no_uncommitted_role_batches(
     runs_dir: str | Path,
     roles: Sequence[str],
+    selected_task_ids: Sequence[str],
     patch_status_by_id: Mapping[str, str],
 ) -> None:
     """Prevent two uncommitted batches from branching from the same active role pointer."""
@@ -157,11 +158,18 @@ def assert_no_uncommitted_role_batches(
                 f"Uncommitted batch {intent['batch_id']} has an invalid or stale scope record; "
                 "resolve it before creating another batch for " + ", ".join(sorted(overlap))
             )
+        old_task_ids = set(intent.get("all_selected_task_ids", intent["selected_task_ids"]))
+        new_task_ids = set(selected_task_ids)
+        if old_task_ids and old_task_ids.issubset(new_task_ids):
+            # The Workflow scheduler supplies only tasks that have received
+            # current ready authorization; build_revision_ledger will enforce
+            # exact supersession/reapproval before this new batch is written.
+            continue
         patch_ids = scope.get("patch_ids")
         if not isinstance(patch_ids, list) or not patch_ids:
             raise BatchStoreError(
                 f"Uncommitted batch {intent['batch_id']} has no resolvable Patch IDs; "
-                "resolve it before creating another batch for " + ", ".join(sorted(overlap))
+                "reselect the entire original task set with fresh authorization or resolve this batch."
             )
         unknown = [patch_id for patch_id in patch_ids if patch_id not in patch_status_by_id]
         active = [
@@ -176,8 +184,8 @@ def assert_no_uncommitted_role_batches(
                 reasons.append("non-superseded Patch(es): " + ", ".join(sorted(active)))
             raise BatchStoreError(
                 f"Document role(s) {', '.join(sorted(overlap))} are reserved by uncommitted batch "
-                f"{intent['batch_id']} ({'; '.join(reasons)}). Finish/publish it, roll it back if published, "
-                "or explicitly supersede every Patch before creating a new batch."
+                f"{intent['batch_id']} ({'; '.join(reasons)}). Reauthorize/reselect its entire task set "
+                "or supersede every Patch before creating a different batch."
             )
 
 
