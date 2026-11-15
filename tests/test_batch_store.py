@@ -119,12 +119,40 @@ class BatchStoreTests(unittest.TestCase):
                 ["Manuscript"],
                 ["T2"],
                 {"P1": "planned"},
+                self.workflow,
             )
         assert_no_uncommitted_role_batches(
             self.runs_dir,
             ["Manuscript"],
             ["T2"],
             {"P1": "superseded"},
+            self.workflow,
+        )
+
+    def test_full_reauthorized_task_set_can_rebase_to_a_new_batch_directory(self):
+        intent = self._intent()
+        batch_dir = Path(intent["batch_dir"])
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": intent["batch_id"],
+            "batch_intent_sha256": hashlib.sha256(
+                (batch_dir / "batch_intent.json").read_bytes()
+            ).hexdigest(),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P1"],
+            "documents": {},
+        }
+        (batch_dir / "batch_scope.json").write_text(
+            json.dumps(scope, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T1"],
+            {"P1": "applied"},
+            self.workflow,
         )
 
     def test_active_pointer_rejects_source_changed_outside_ledger(self):
