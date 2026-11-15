@@ -670,6 +670,20 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertFalse(reopened.semantic_review_confirmed)
         self.assertIsNone(reopened.verification_report_id)
 
+        # Model the completed first batch publication: T1's verified Marked DOCX
+        # is now the active parent from which the second immutable batch must branch.
+        synced["active_documents"] = {
+            "Manuscript": {
+                "file": str(marked.resolve()),
+                "sha256": marked_hash,
+                "batch_id": "batch-01",
+                "updated_at_utc": timestamp,
+            }
+        }
+        workflow_path.write_text(json.dumps(synced, ensure_ascii=False, indent=2), encoding="utf-8")
+        revision_after_sync.workflow_ledger_fingerprint = canonical_fingerprint(synced)
+        cli.write_json_atomic(revision_path, revision_after_sync.to_dict())
+
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_authorize_workflow_tasks(Namespace(
                 workflow_ledger=str(workflow_path),
@@ -690,6 +704,18 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 task_ids=["T2"],
                 out=str(revision_path),
             )), 0)
+        batch_directories = sorted((self.root / "runs").glob("batch-*"))
+        self.assertEqual(len(batch_directories), 1)
+        batch_dir = batch_directories[0]
+        batch_intent = json.loads(
+            (batch_dir / "batch_intent.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            batch_intent["documents"]["Manuscript"]["parent_file"],
+            str(marked.resolve()),
+        )
+        final_docx = Path(batch_intent["documents"]["Manuscript"]["output_file"])
+
         merged = revision_ledger_from_mapping(
             json.loads(revision_path.read_text(encoding="utf-8"))
         )
@@ -717,19 +743,22 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         )
         merged.assert_legacy_plan_matches(batch_two_plan)
 
-        # Run the second batch through the existing Track Changes adapter.
-        plan_path = self.root / "edits_plan_batch_02.json"
+        # Run the second batch through its immutable batch directory, the existing
+        # Track Changes adapter, verification, DAG synchronization and publication.
+        plan_path = batch_dir / "revision_plan.json"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_export_revision_plan(Namespace(
                 ledger=str(revision_path),
-                out=str(plan_path),
+                out=None,
+                batch_dir=str(batch_dir),
             )), 0)
         self.assertEqual(
             [item["id"] for item in json.loads(plan_path.read_text(encoding="utf-8"))["revision_items"]],
             ["T2"],
         )
 
-        preflight_path = self.root / "preflight_report_batch_02.json"
+        preflight_path = batch_dir / "preflight_report.json"
+        preflight_plan_path = batch_dir / "revision_plan.preflighted.json"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_preflight(Namespace(
                 plan=str(plan_path),
@@ -739,26 +768,28 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             )), 0)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_approve_plan(Namespace(
-                plan=str(plan_path),
+                plan=str(preflight_plan_path),
                 ids=["T2"],
                 revision_ledger=str(revision_path),
                 actor="Human Author",
             )), 0)
 
-        apply_report_path = self.root / "revision_apply_report.json"
+        approved_plan_path = batch_dir / "revision_plan.approved.json"
+        applied_plan_path = batch_dir / "revision_plan.applied.json"
+        apply_report_path = batch_dir / "apply_report.json"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_apply(Namespace(
-                plan=str(plan_path),
+                plan=str(approved_plan_path),
                 report=str(apply_report_path),
                 author="Synthetic Integration",
                 revision_ledger=str(revision_path),
             )), 0)
         self.assertTrue(final_docx.is_file())
 
-        verification_path = self.root / "verification_report_batch_02.json"
+        verification_path = batch_dir / "verification_report.json"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_verify(Namespace(
-                plan=str(plan_path),
+                plan=str(applied_plan_path),
                 apply_report=str(apply_report_path),
                 out=str(verification_path),
             )), 0)
@@ -768,7 +799,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
 
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.cmd_confirm_verified(Namespace(
-                plan=str(plan_path),
+                plan=str(applied_plan_path),
                 apply_report=str(apply_report_path),
                 ids=["T2"],
                 semantic_review_confirmed=True,
@@ -778,6 +809,12 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 workflow_ledger=str(workflow_path),
                 revision_ledger=str(revision_path),
             )), 0)
+            self.assertEqual(cli.cmd_publish_batch(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+                batch_dir=str(batch_dir),
+            )), 0)
+        self.assertTrue((batch_dir / "batch_published.json").is_file())
 
         final_ledger = revision_ledger_from_mapping(
             json.loads(revision_path.read_text(encoding="utf-8"))
@@ -803,6 +840,9 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             {task["task_id"]: task["status"] for task in final_workflow["tasks"]},
             {"T1": "verified", "T2": "verified"},
         )
+        active_pointer = final_workflow["active_documents"]["Manuscript"]
+        self.assertEqual(Path(active_pointer["file"]), final_docx.resolve())
+        self.assertEqual(active_pointer["batch_id"], batch_intent["batch_id"])
 
     def test_authorized_rebase_supersedes_verified_patch_and_preserves_history(self):
         source = self.root / "Manuscript_source.docx"
