@@ -3180,7 +3180,9 @@ def cmd_rollback_batch(args):
         return 0
     from co_reviewer.batch_store import rollback_active_pointers, write_json_new
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-    updated, receipt = rollback_active_pointers(workflow, workflow_path, batch_dir)
+    updated, receipt = rollback_active_pointers(
+        workflow, workflow_path, batch_dir, reason=args.reason
+    )
     receipt["reason"] = args.reason
     rollback_intent_path = batch_dir / "batch_rollback_intent.json"
     if rollback_intent_path.exists():
