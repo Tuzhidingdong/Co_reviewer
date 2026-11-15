@@ -53,29 +53,29 @@ def _docx_text(path: Path) -> str:
     return "\n".join(paragraphs)
 
 
-_NUMERIC_TOKEN = re.compile(r"(?<![A-Za-z])[-+]?\\d+(?:[.,]\\d+)?(?:[eE][-+]?\\d+)?%?")
+_NUMERIC_TOKEN = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?%?")
 _FIGURE_TABLE_TOKEN = re.compile(
-    r"\\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Section|Scheme|Supplementary\\s+Fig(?:ure)?)\\s*"
-    r"(?:S\\s*)?\\d+(?:[A-Za-z])?(?:\\s*[-–]\\s*\\d+)?",
+    r"\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Section|Scheme|Supplementary\s+Fig(?:ure)?)\s*"
+    r"(?:S\s*)?\d+(?:[A-Za-z])?(?:\s*[-–]\s*\d+)?",
     re.IGNORECASE,
 )
-_CITATION_TOKEN = re.compile(r"\\[(?:\\d{1,4}(?:\\s*[,;–-]\\s*\\d{1,4})*)\\]|\\bDOI\\s*:\\s*10\\.\\d{4,9}/[^\\s,;]+", re.IGNORECASE)
+_CITATION_TOKEN = re.compile(r"\[(?:\d{1,4}(?:\s*[,;–-]\s*\d{1,4})*)\]|\bDOI\s*:\s*10\.\d{4,9}/[^\s,;]+", re.IGNORECASE)
 _SAMPLE_TOKEN = re.compile(
-    r"\\b(?:sample|specimen|electrode|cell|batch|group|cathode|anode)\\s*[-_:#]?\\s*[A-Za-z0-9][A-Za-z0-9._/-]*",
+    r"\b(?:sample|specimen|electrode|cell|batch|group|cathode|anode)\s*[-_:#]?\s*[A-Za-z0-9][A-Za-z0-9._/-]*",
     re.IGNORECASE,
 )
 _UNIT_TOKEN = re.compile(
     r"(?<![A-Za-z])(?:"
-    r"m?S\\s*cm(?:\\^?[-−]?1)?|"
-    r"mAh\\s*g(?:\\^?[-−]?1)?|"
-    r"Ah\\s*kg(?:\\^?[-−]?1)?|"
-    r"mg\\s*L(?:\\^?[-−]?1)?|"
-    r"g\\s*L(?:\\^?[-−]?1)?|"
-    r"mol\\s*L(?:\\^?[-−]?1)?|"
-    r"mmol\\s*L(?:\\^?[-−]?1)?|"
-    r"eV|meV|kJ\\s*mol(?:\\^?[-−]?1)?|"
+    r"m?S\s*cm(?:\^?[-−]?1)?|"
+    r"mAh\s*g(?:\^?[-−]?1)?|"
+    r"Ah\s*kg(?:\^?[-−]?1)?|"
+    r"mg\s*L(?:\^?[-−]?1)?|"
+    r"g\s*L(?:\^?[-−]?1)?|"
+    r"mol\s*L(?:\^?[-−]?1)?|"
+    r"mmol\s*L(?:\^?[-−]?1)?|"
+    r"eV|meV|kJ\s*mol(?:\^?[-−]?1)?|"
     r"mV|V|mA|A|mW|W|nm|µm|um|Å|K|°C|wt%|at%|vol%|MPa|GPa|kPa|"
-    r"m\\^?2\\s*g(?:\\^?[-−]?1)?|cm\\^?2\\s*g(?:\\^?[-−]?1)?"
+    r"m\^?2\s*g(?:\^?[-−]?1)?|cm\^?2\s*g(?:\^?[-−]?1)?"
     r")(?![A-Za-z])"
 )
 
