@@ -3080,12 +3080,16 @@ def cmd_publish_batch(args):
     if Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
         raise ValueError("RevisionLedger path does not match the immutable batch scope.")
     ledger = _load_revision_ledger(revision_path)
+    workflow_sha_before = sha256_file(workflow_path)
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_before:
+        raise ValueError("Workflow Ledger changed while preparing batch publication; retry after reloading it.")
     expected_patch_ids = set(scope.get("patch_ids", []))
     if not expected_patch_ids:
         raise ValueError("Batch scope contains no Patch IDs.")
     workflow_tasks = {
         row.get("task_id"): row
-        for row in json.loads(workflow_path.read_text(encoding="utf-8")).get("tasks", [])
+        for row in workflow.get("tasks", [])
         if isinstance(row, dict)
     }
     batch_task_ids = scope.get("batch_task_ids", intent.get("selected_task_ids", []))
@@ -3136,10 +3140,6 @@ def cmd_publish_batch(args):
         )
     if set(scope.get("documents", {})) != set(intent.get("documents", {})):
         raise ValueError("Batch scope document roles differ from the prepared batch intent.")
-    workflow_sha_before = sha256_file(workflow_path)
-    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-    if sha256_file(workflow_path) != workflow_sha_before:
-        raise ValueError("Workflow Ledger changed while preparing batch publication; retry after reloading it.")
     updated, receipt = publish_active_pointers(
         workflow, workflow_path, batch_dir, ledger
     )
