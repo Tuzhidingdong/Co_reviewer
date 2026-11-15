@@ -1229,8 +1229,8 @@ def cmd_preflight(args):
     ledger_path = None
     if getattr(args, "revision_ledger", None):
         ledger_path = Path(args.revision_ledger).expanduser().resolve()
-        if ledger_path in {plan_path, report_path}:
-            raise ValueError("RevisionLedger path must be distinct from plan/preflight-report paths.")
+        if ledger_path in {plan_path, output_plan_path, report_path}:
+            raise ValueError("RevisionLedger path must be distinct from plan/preflight-report/snapshot paths.")
         revision_ledger = _load_revision_ledger(ledger_path)
         revision_ledger.assert_legacy_plan_matches(plan)
 
@@ -1271,8 +1271,8 @@ def cmd_approve_plan(args):
     ledger_path = None
     if getattr(args, "revision_ledger", None):
         ledger_path = Path(args.revision_ledger).expanduser().resolve()
-        if ledger_path == plan_path:
-            raise ValueError("RevisionLedger path must be distinct from the legacy revision plan.")
+        if ledger_path in {plan_path, output_plan_path}:
+            raise ValueError("RevisionLedger path must be distinct from both the input and approved-plan snapshot.")
         revision_ledger = _load_revision_ledger(ledger_path)
         revision_ledger.assert_legacy_plan_matches(plan)
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
@@ -2760,7 +2760,11 @@ def cmd_export_revision_plan(args):
         raise FileExistsError(f"Output already exists; choose a new path: {output_path}")
     plan = ledger.to_legacy_revision_plan()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(output_path, plan)
+    if batch_dir is not None:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(output_path, plan)
+    else:
+        write_json_atomic(output_path, plan)
     print(f"[EXPORT] {len(plan['revision_items'])} pending Patch(es) exported.")
     print("[GUARD] The plan is unapproved; preflight and explicit approve-plan are still required.")
     print(f"[OK] Legacy revision plan: {output_path}")
@@ -2801,8 +2805,12 @@ def cmd_apply(args):
     revision_ledger = None
     if getattr(args, "revision_ledger", None):
         ledger_path = Path(args.revision_ledger).expanduser().resolve()
-        if ledger_path in {plan_path.expanduser().resolve(), report_path.expanduser().resolve()}:
-            raise ValueError("RevisionLedger path must be distinct from plan/report paths.")
+        if ledger_path in {
+            plan_path.expanduser().resolve(),
+            report_path.expanduser().resolve(),
+            output_plan_path.expanduser().resolve(),
+        }:
+            raise ValueError("RevisionLedger path must be distinct from plan/report/snapshot paths.")
         revision_ledger = _load_revision_ledger(ledger_path)
         revision_ledger.assert_legacy_plan_matches(plan)
 
