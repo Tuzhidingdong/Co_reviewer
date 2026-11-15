@@ -1210,6 +1210,8 @@ def _batch_plan_snapshot(batch_dir: Path, stage: str) -> Path:
 def cmd_preflight(args):
     plan_path = Path(args.plan).expanduser().resolve()
     batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    if batch_dir is not None and not getattr(args, "revision_ledger", None):
+        raise ValueError("Preflight for an immutable batch requires --revision-ledger so Patch lifecycle evidence remains synchronized.")
     report_value = args.out or (
         str(batch_dir / "preflight_report.json") if batch_dir is not None else "preflight_report.json"
     )
@@ -1265,6 +1267,8 @@ def cmd_preflight(args):
 def cmd_approve_plan(args):
     plan_path = Path(args.plan).expanduser().resolve()
     batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    if batch_dir is not None and not getattr(args, "revision_ledger", None):
+        raise ValueError("Approval for an immutable batch requires --revision-ledger so approval lineage remains synchronized.")
     output_plan_path = _batch_plan_snapshot(batch_dir, "approved") if batch_dir is not None else plan_path
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     revision_ledger = None
@@ -2775,6 +2779,8 @@ def cmd_export_revision_plan(args):
 def cmd_apply(args):
     plan_path = Path(args.plan).expanduser().resolve()
     batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    if batch_dir is not None and not getattr(args, "revision_ledger", None):
+        raise ValueError("Apply for an immutable batch requires --revision-ledger so Patch execution state remains synchronized.")
     report_value = args.report or (
         str(batch_dir / "apply_report.json") if batch_dir is not None else "revision_apply_report.json"
     )
@@ -2923,6 +2929,8 @@ def cmd_confirm_verified(args):
 
     plan_path = Path(args.plan).expanduser().resolve()
     batch_dir = plan_path.parent if (plan_path.parent / "batch_intent.json").is_file() else None
+    if batch_dir is not None and not getattr(args, "revision_ledger", None):
+        raise ValueError("Verification confirmation for an immutable batch requires --revision-ledger.")
     apply_report_value = args.apply_report or (
         str(batch_dir / "apply_report.json") if batch_dir is not None else "revision_apply_report.json"
     )
@@ -2939,8 +2947,9 @@ def cmd_confirm_verified(args):
         if ledger_path in {
             plan_path.expanduser().resolve(),
             Path(apply_report_value).expanduser().resolve(),
+            output_plan_path.expanduser().resolve(),
         }:
-            raise ValueError("RevisionLedger path must be distinct from plan/apply-report paths.")
+            raise ValueError("RevisionLedger path must be distinct from plan/apply-report/verified-snapshot paths.")
         revision_ledger = _load_revision_ledger(ledger_path)
         revision_ledger.assert_legacy_plan_matches(plan)
     errors = validate_plan(plan, require_approval=False)
