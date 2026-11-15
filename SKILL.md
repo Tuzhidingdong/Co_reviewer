@@ -283,19 +283,19 @@ python scripts/co_reviewer_cli.py verify --plan "runs/batch-<id>/revision_plan.a
 python scripts/co_reviewer_cli.py confirm-verified --plan "runs/batch-<id>/revision_plan.applied.json" --revision-ledger revision_ledger.json --ids P1 --semantic-review-confirmed
 ```
 
-4. Create Working Clean views, confirm the scientific response text, map final Word locations, attach locations, then complete the ResponseUnits:
+4. After every document-changing batch for the round has been published, create the final Working Clean projections, confirm ResponseUnit text and map final Word locations. Do not perform final page/line mapping between intermediate batches because later batches can shift the whole document's pagination:
 
 ```powershell
 python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
 python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-P1-C1 --verification-report-id "semantic-review-P1-C1" --semantic-review-confirmed
-python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir "runs/batch-<id>/word_pdf_final"
-python scripts/co_reviewer_cli.py record-response-locations --ledger revision_ledger.json --location-map "runs/batch-<id>/word_pdf_final/response_location_map.json"
+python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
+python scripts/co_reviewer_cli.py record-response-locations --ledger revision_ledger.json --location-map word_pdf_final/response_location_map.json
 python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-P1-C1 --ready-for-submission-confirmed
 ```
 
-For `manual_required` table/non-body locators, use `record-manual-response-locations` with the exact author-confirmed locator input described above. A batch cannot publish until every ResponseUnit linked to its selected tasks is completed.
+For `manual_required` table/non-body locators, use `record-manual-response-locations` against the final Word/PDF map with the exact author-confirmed locator input described above. `reply_only` units with `not_required` location can be completed after semantic review without generating fake document locations.
 
-5. Synchronize verified Patch lifecycle state to the Workflow Ledger, then publish the entire batch. Publication rechecks parent pointers, every Patch verification hash, task state and ResponseUnit completion; the only active-state change is one atomic replacement of the Workflow Ledger file:
+5. Synchronize verified Patch lifecycle state to the Workflow Ledger, then publish the entire batch. Publication rechecks parent pointers, every Patch verification hash and all selected document-task states; final ResponseUnit page/line completion is intentionally a round-level release gate performed after every batch. The only active-document-state change is one atomic replacement of the Workflow Ledger file:
 
 ```powershell
 python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
