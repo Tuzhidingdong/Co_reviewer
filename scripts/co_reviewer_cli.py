@@ -61,6 +61,20 @@ ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
 ET.register_namespace("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing")
 ET.register_namespace("a", "http://schemas.openxmlformats.org/drawingml/2006/main")
+def _resolve_batch_dir_argument(value: str | Path) -> Path:
+    """Reject symlink components before canonicalizing a user-supplied batch path."""
+    requested = Path(value).expanduser()
+    candidate = Path(os.path.abspath(str(requested)))
+    probe = candidate
+    while True:
+        if probe.is_symlink():
+            raise ValueError(f"Batch directory path must not traverse a symbolic link: {probe}")
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    return candidate.resolve()
+
+
 ET.register_namespace("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture")
 
 PLACEHOLDER_RE = re.compile(
@@ -2826,7 +2840,7 @@ def cmd_supersede_patch(args):
 def cmd_export_revision_plan(args):
     ledger_path = Path(args.ledger).expanduser().resolve()
     ledger = _load_revision_ledger(ledger_path)
-    batch_dir = Path(args.batch_dir).expanduser().resolve() if getattr(args, "batch_dir", None) else None
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir) if getattr(args, "batch_dir", None) else None
     if batch_dir is not None:
         from co_reviewer.batch_store import read_batch_intent
         intent = read_batch_intent(batch_dir)
@@ -3163,7 +3177,7 @@ def cmd_recover_failed_batch(args):
     """Recover an unpublished partial Apply without moving active document pointers."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     revision_path = Path(args.revision_ledger).expanduser().resolve()
-    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -3251,7 +3265,7 @@ def cmd_publish_batch(args):
     """Atomically publish all verified document outputs as the new active revision."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     revision_path = Path(args.revision_ledger).expanduser().resolve()
-    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     if (batch_dir / "batch_published.json").exists():
@@ -3399,7 +3413,7 @@ def cmd_publish_batch(args):
 def cmd_rollback_batch(args):
     """Restore parent active pointers; never remove the published batch's files."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
-    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if not (batch_dir / "batch_published.json").is_file():
         raise ValueError("Only a batch with a committed batch_published.json receipt can be rolled back.")
     receipt_path = batch_dir / "batch_rollback.json"

@@ -51,6 +51,30 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_batch_directory_argument_rejects_symlinked_final_and_parent_paths(self):
+        real_batch = self.root / "real-batch"
+        real_batch.mkdir()
+        self.assertEqual(cli._resolve_batch_dir_argument(real_batch), real_batch.resolve())
+
+        linked_batch = self.root / "linked-batch"
+        try:
+            linked_batch.symlink_to(real_batch, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Directory symbolic links are unavailable in this environment: {exc}")
+        with self.assertRaisesRegex(ValueError, "must not traverse a symbolic link"):
+            cli._resolve_batch_dir_argument(linked_batch)
+
+        real_parent = self.root / "real-parent"
+        real_parent.mkdir()
+        (real_parent / "batch").mkdir()
+        linked_parent = self.root / "linked-parent"
+        try:
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Directory symbolic links are unavailable in this environment: {exc}")
+        with self.assertRaisesRegex(ValueError, "must not traverse a symbolic link"):
+            cli._resolve_batch_dir_argument(linked_parent / "batch")
+
     def _ledger(self):
         make_docx(self.input, [[("The old phrase remains.", False)]])
         operation = PatchOperation.from_mapping({
