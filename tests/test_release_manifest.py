@@ -603,6 +603,25 @@ class ReleaseManifestGateTests(unittest.TestCase):
         # missing-parent check; each tamper case must start from a clean fixture.
         recovery_intent_path.write_bytes(original_recovery_intent_bytes)
         receipt_path.write_bytes(original_recovery_receipt_bytes)
+        restored_batch_intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        restored_recovery_intent = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
+        restored_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            restored_recovery_intent["selected_task_ids"],
+            restored_batch_intent["all_selected_task_ids"],
+        )
+        self.assertEqual(
+            restored_recovery_intent["batch_task_ids"],
+            restored_batch_intent["selected_task_ids"],
+        )
+        self.assertEqual(
+            restored_receipt["selected_task_ids"],
+            restored_recovery_intent["selected_task_ids"],
+        )
+        self.assertEqual(
+            restored_receipt["batch_recovery_intent_sha256"],
+            hashlib.sha256(original_recovery_intent_bytes).hexdigest(),
+        )
         self.source.unlink()
         with self.assertRaisesRegex(ReleaseGateError, "active parent is missing or stale"):
             _collect_recovered_batch_history(
