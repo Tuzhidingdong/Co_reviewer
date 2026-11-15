@@ -243,6 +243,12 @@ def _validate_recovered_batch_receipt(
     if not all(isinstance(value, Mapping) for value in (receipt, recovery, scope)):
         raise BatchStoreError("Recovered batch receipt, recovery intent and scope must be JSON objects.")
 
+    # The current in-memory RevisionLedger is an independent witness for the
+    # staged recovery events. Check that lineage before relying on derivative
+    # receipt/scope fields, so an event-history failure is reported explicitly.
+    if revision_events is not None:
+        _validate_recovery_revision_event_lineage(recovery, revision_events)
+
     intent_sha = sha256_file(root / "batch_intent.json")
     scope_sha = sha256_file(scope_path)
     recovery_sha = sha256_file(intent_path)
@@ -486,8 +492,6 @@ def _validate_recovered_batch_receipt(
         raise BatchStoreError(
             f"Recovered batch {intent.get('batch_id')} receipt does not attest the immutable parent/output scope, retained artifacts and staged Ledger hashes."
         )
-    if revision_events is not None:
-        _validate_recovery_revision_event_lineage(recovery, revision_events)
     return dict(receipt)
 
 
