@@ -583,12 +583,23 @@ class WordPdfMapperContractTests(unittest.TestCase):
         )
         from co_reviewer.word_pdf_mapper import MappingJob
         job = MappingJob("RU-T1-C1", "OP-1", "P1", "OP-1", "Manuscript", "new phrase", str(self.clean_docx))
-        reused = _reusable_role_mapping(
-            "Manuscript", [job], {unit.response_unit_id: unit}, source_clean_hash
-        )
+        with patch("co_reviewer.word_pdf_mapper._verify_pdf_page_text") as pdf_check:
+            reused = _reusable_role_mapping(
+                "Manuscript", [job], {unit.response_unit_id: unit}, source_clean_hash
+            )
         self.assertIsNotNone(reused)
         self.assertTrue(reused[1]["reused"])
         self.assertEqual(reused[0][job.key], (2, 8, 10))
+        pdf_check.assert_called_once_with(self.pdf.resolve(), "new phrase", 2)
+
+        with patch(
+            "co_reviewer.word_pdf_mapper._verify_pdf_page_text",
+            side_effect=WordPdfMappingError("The target phrase is not extractable from PDF page 2."),
+        ):
+            stale_page = _reusable_role_mapping(
+                "Manuscript", [job], {unit.response_unit_id: unit}, source_clean_hash
+            )
+        self.assertIsNone(stale_page)
 
         second_job = MappingJob("RU-T2-C2", "OP-2", "P2", "OP-2", "Manuscript", "other phrase", str(self.clean_docx))
         incomplete = _reusable_role_mapping(

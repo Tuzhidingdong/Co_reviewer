@@ -735,6 +735,14 @@ def _reusable_role_mapping(
             return None
         if min(location.page, location.line_start, location.line_end) < 1:
             return None
+        try:
+            _verify_pdf_page_text(pdf_path, job.phrase, location.page)
+        except WordPdfMappingError as exc:
+            if "PyMuPDF is required" in str(exc):
+                raise
+            # A stale or mismatched cached location is not reusable. Force a
+            # fresh Word export/remap for the complete document role.
+            return None
         output_files.add(str(output_path))
         pdf_files.add(str(pdf_path))
         output_hashes.add(location.output_sha256)
