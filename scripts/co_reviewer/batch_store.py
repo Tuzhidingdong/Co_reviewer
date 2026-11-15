@@ -124,10 +124,106 @@ def load_active_document_pointers(workflow: Mapping[str, Any]) -> dict[str, dict
     return result
 
 
+def _validate_recovery_revision_event_lineage(
+    recovery: Mapping[str, Any],
+    revision_events: Sequence[Any],
+) -> None:
+    """Require the persisted RevisionLedger to contain the exact staged recovery event set."""
+    patch_ids = recovery.get("patch_ids")
+    expected_rows = recovery.get("revision_events")
+    recovery_id = recovery.get("recovery_id")
+    if (
+        not isinstance(patch_ids, list)
+        or not patch_ids
+        or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
+        or len(patch_ids) != len(set(patch_ids))
+        or not isinstance(expected_rows, list)
+        or len(expected_rows) != len(patch_ids)
+        or not isinstance(recovery_id, str)
+        or not recovery_id.strip()
+    ):
+        raise BatchStoreError(
+            "Recovery intent has an invalid RevisionLedger recovery event inventory."
+        )
+
+    expected_by_patch: dict[str, dict[str, Any]] = {}
+    expected_event_ids: set[str] = set()
+    for row in expected_rows:
+        if not isinstance(row, Mapping):
+            raise BatchStoreError(
+                "Recovery intent contains a malformed staged RevisionLedger recovery event."
+            )
+        subject_id = row.get("subject_id")
+        event_id = row.get("event_id")
+        if (
+            not isinstance(subject_id, str)
+            or subject_id not in patch_ids
+            or subject_id in expected_by_patch
+            or not isinstance(event_id, str)
+            or not event_id.strip()
+            or event_id in expected_event_ids
+        ):
+            raise BatchStoreError(
+                "Recovery intent staged RevisionLedger events do not cover unique Patch/event IDs."
+            )
+        expected_by_patch[subject_id] = dict(row)
+        expected_event_ids.add(event_id)
+    if set(expected_by_patch) != set(patch_ids):
+        raise BatchStoreError(
+            "Recovery intent staged RevisionLedger events do not cover the exact Patch set."
+        )
+
+    actual_rows: list[dict[str, Any]] = []
+    for event in revision_events:
+        if hasattr(event, "to_dict") and callable(event.to_dict):
+            row = event.to_dict()
+        elif isinstance(event, Mapping):
+            row = dict(event)
+        else:
+            continue
+        details = row.get("details")
+        if (
+            row.get("subject_type") == "patch"
+            and row.get("event_type") == "patch_abandoned_after_batch_recovery"
+            and isinstance(details, Mapping)
+            and details.get("recovery_id") == recovery_id
+        ):
+            actual_rows.append(row)
+
+    actual_by_patch: dict[str, dict[str, Any]] = {}
+    actual_event_ids: set[str] = set()
+    for row in actual_rows:
+        subject_id = row.get("subject_id")
+        event_id = row.get("event_id")
+        if (
+            not isinstance(subject_id, str)
+            or subject_id in actual_by_patch
+            or not isinstance(event_id, str)
+            or not event_id.strip()
+            or event_id in actual_event_ids
+        ):
+            raise BatchStoreError(
+                "RevisionLedger contains duplicate or malformed recovery events for this recovery ID."
+            )
+        actual_by_patch[subject_id] = row
+        actual_event_ids.add(event_id)
+
+    if (
+        len(actual_rows) != len(patch_ids)
+        or set(actual_by_patch) != set(patch_ids)
+        or actual_by_patch != expected_by_patch
+    ):
+        raise BatchStoreError(
+            "RevisionLedger recovery event lineage does not exactly match the immutable staged recovery intent."
+        )
+
+
 def _validate_recovered_batch_receipt(
     batch_dir: str | Path,
     intent: Mapping[str, Any],
     patch_status_by_id: Mapping[str, str],
+    *,
+    revision_events: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Fail closed unless the recovery receipt matches its staged evidence."""
     root = Path(batch_dir).expanduser().resolve()
@@ -388,6 +484,8 @@ def _validate_recovered_batch_receipt(
         raise BatchStoreError(
             f"Recovered batch {intent.get('batch_id')} receipt does not attest the immutable parent/output scope, retained artifacts and staged Ledger hashes."
         )
+    if revision_events is not None:
+        _validate_recovery_revision_event_lineage(recovery, revision_events)
     return dict(receipt)
 
 
@@ -685,6 +783,8 @@ def assert_no_uncommitted_role_batches(
     selected_task_ids: Sequence[str],
     patch_status_by_id: Mapping[str, str],
     workflow: Mapping[str, Any],
+    *,
+    revision_events: Sequence[Any] | None = None,
 ) -> None:
     """Prevent competing batches from branching from the same active document-role version."""
     root = Path(runs_dir).expanduser().resolve()
@@ -731,7 +831,16 @@ def assert_no_uncommitted_role_batches(
                 raise BatchStoreError(
                     f"Batch {intent['batch_id']} has conflicting recovery and publish/rollback transaction records."
                 )
-            _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+            if revision_events is None:
+                raise BatchStoreError(
+                    f"Recovered batch {intent['batch_id']} cannot release its role reservation without the current RevisionLedger events."
+                )
+            _validate_recovered_batch_receipt(
+                batch_dir,
+                intent,
+                patch_status_by_id,
+                revision_events=revision_events,
+            )
             continue
         if any(path.exists() for path in (*publication_markers, *rollback_markers)):
             if any(path.exists() for path in rollback_markers) and not any(
@@ -1454,19 +1563,12 @@ def recover_unpublished_batch(
         patch_status_by_id = {
             patch.patch_id: patch.status for patch in revision_ledger.patches
         }
-        receipt = _validate_recovered_batch_receipt(root, intent, patch_status_by_id)
-        for patch_id in receipt["patch_ids"]:
-            has_event = any(
-                event.subject_type == "patch"
-                and event.subject_id == patch_id
-                and event.event_type == "patch_abandoned_after_batch_recovery"
-                and event.details.get("recovery_id") == receipt.get("recovery_id")
-                for event in revision_ledger.events
-            )
-            if not has_event:
-                raise BatchStoreError(
-                    "Existing recovery receipt does not match the RevisionLedger recovery event lineage."
-                )
+        receipt = _validate_recovered_batch_receipt(
+            root,
+            intent,
+            patch_status_by_id,
+            revision_events=revision_ledger.events,
+        )
         return dict(workflow), revision_ledger, dict(receipt), False, False, True
 
     if any((root / name).exists() for name in (

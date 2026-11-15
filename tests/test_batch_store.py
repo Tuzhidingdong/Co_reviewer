@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import tempfile
@@ -695,12 +696,44 @@ class BatchStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        with self.assertRaisesRegex(BatchStoreError, "without the current RevisionLedger events"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+            )
+
+        with self.assertRaisesRegex(BatchStoreError, "RevisionLedger recovery event lineage"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+                revision_events=[],
+            )
+
+        altered_revision_events = copy.deepcopy(final_ledger.events)
+        altered_revision_events[0].details["reason"] = "Tampered persisted recovery event."
+        with self.assertRaisesRegex(BatchStoreError, "RevisionLedger recovery event lineage"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {"P1": "abandoned"},
+                final_workflow,
+                revision_events=altered_revision_events,
+            )
+
         assert_no_uncommitted_role_batches(
             self.runs_dir,
             ["Manuscript"],
             ["T1"],
             {"P1": "abandoned"},
             final_workflow,
+            revision_events=final_ledger.events,
         )
         next_intent = create_batch_intent(
             final_workflow,

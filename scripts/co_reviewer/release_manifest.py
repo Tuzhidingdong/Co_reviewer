@@ -903,7 +903,12 @@ def _collect_recovered_batch_history(
                 raise ReleaseGateError(f"Recovered batch {batch_id} is missing its {label}: {path}.")
         try:
             recovery_intent = json.loads(recovery_intent_path.read_text(encoding="utf-8"))
-            receipt = _validate_recovered_batch_receipt(batch_dir, intent, patch_status_by_id)
+            receipt = _validate_recovered_batch_receipt(
+                batch_dir,
+                intent,
+                patch_status_by_id,
+                revision_events=revision_ledger.events,
+            )
             scope_payload = json.loads(scope_path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
