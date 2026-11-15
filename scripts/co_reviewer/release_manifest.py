@@ -98,6 +98,63 @@ def build_final_release_manifest(
             "Workflow Ledger has no committed active_documents pointers. Publish the verified batches first."
         )
     active_documents = load_active_document_pointers(workflow_ledger)
+    batch_records_by_id: dict[str, dict[str, Any]] = {}
+    for role, pointer in active_documents.items():
+        batch_id = pointer.get("batch_id")
+        if batch_id is None:
+            continue
+        active_file = Path(pointer["file"]).expanduser().resolve()
+        batch_dir = active_file.parents[1]
+        if batch_dir.name != f"batch-{batch_id}":
+            raise ReleaseGateError(
+                f"Active document {role} path does not belong to its declared batch_id {batch_id}."
+            )
+        required_batch_files = {
+            "intent": batch_dir / "batch_intent.json",
+            "scope": batch_dir / "batch_scope.json",
+            "publish_receipt": batch_dir / "batch_published.json",
+        }
+        for name, artifact_path in required_batch_files.items():
+            if not artifact_path.is_file():
+                raise ReleaseGateError(
+                    f"Active batch {batch_id} is missing its immutable {name} record: {artifact_path}."
+                )
+        try:
+            intent_payload = json.loads(required_batch_files["intent"].read_text(encoding="utf-8"))
+            scope_payload = json.loads(required_batch_files["scope"].read_text(encoding="utf-8"))
+            receipt_payload = json.loads(required_batch_files["publish_receipt"].read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReleaseGateError(f"Cannot read active batch records for {batch_id}: {exc}") from exc
+        if (
+            intent_payload.get("batch_id") != batch_id
+            or scope_payload.get("batch_id") != batch_id
+            or receipt_payload.get("batch_id") != batch_id
+            or receipt_payload.get("status") != "published"
+        ):
+            raise ReleaseGateError(f"Active batch {batch_id} has inconsistent immutable records.")
+        receipt_pointer = receipt_payload.get("active_documents", {}).get(role)
+        if not isinstance(receipt_pointer, Mapping) or (
+            receipt_pointer.get("file") != pointer["file"]
+            or receipt_pointer.get("sha256") != pointer["sha256"]
+            or receipt_pointer.get("batch_id") != batch_id
+        ):
+            raise ReleaseGateError(
+                f"Active batch publication receipt does not attest the Workflow Ledger pointer for {role}."
+            )
+        batch_records_by_id.setdefault(batch_id, {
+            "batch_id": batch_id,
+            "directory": str(batch_dir),
+            "intent": _sha_record(required_batch_files["intent"]),
+            "scope": _sha_record(required_batch_files["scope"]),
+            "publish_receipt": _sha_record(required_batch_files["publish_receipt"]),
+            "selected_task_ids": list(intent_payload.get("selected_task_ids", [])),
+            "patch_ids": list(scope_payload.get("patch_ids", [])),
+            "documents": {},
+        })
+        batch_records_by_id[batch_id]["documents"][role] = {
+            "file": pointer["file"],
+            "sha256": pointer["sha256"],
+        }
     workflow_tasks = {
         row.get("task_id"): row
         for row in workflow_ledger.get("tasks", [])
@@ -440,6 +497,7 @@ def build_final_release_manifest(
             "workflow_ledger": _sha_record(workflow_path),
         },
         "active_documents": active_records,
+        "batches": [batch_records_by_id[key] for key in sorted(batch_records_by_id)],
         "marked_documents": marked_documents,
         "final_documents": final_documents,
         "patches": patch_records,
