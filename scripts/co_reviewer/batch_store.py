@@ -429,7 +429,7 @@ def publish_active_pointers(
     active = dict(updated.get("active_documents") or {})
     active.update(role_updates)
     updated["active_documents"] = active
-    task_ids = list(intent.get("selected_task_ids", []))
+    task_ids = list(intent.get("all_selected_task_ids", intent.get("selected_task_ids", [])))
     events = list(updated.get("events", []))
     now = _timestamp()
     already_recorded = {
@@ -511,11 +511,11 @@ def rollback_active_pointers(
     from .workflow_engine import invalidate_affected_tasks
     invalidated_tasks, _ = invalidate_affected_tasks(
         updated.get("tasks", []),
-        list(intent.get("selected_task_ids", [])),
+        list(intent.get("all_selected_task_ids", intent.get("selected_task_ids", []))),
         reason,
     )
     task_rows = {row.get("task_id"): row for row in invalidated_tasks}
-    for task_id in intent.get("selected_task_ids", []):
+    for task_id in intent.get("all_selected_task_ids", intent.get("selected_task_ids", [])):
         task = task_rows.get(task_id)
         if task is None:
             raise BatchStoreError(f"Rollback refers to unknown Workflow task {task_id}.")
@@ -534,7 +534,7 @@ def rollback_active_pointers(
         and event.get("event_type") == "batch_rolled_back"
         and event.get("batch_id") == batch_id
     }
-    for task_id in intent.get("selected_task_ids", []):
+    for task_id in intent.get("all_selected_task_ids", intent.get("selected_task_ids", [])):
         if task_id in existing_rollback_events:
             continue
         updated.setdefault("events", []).append({
@@ -555,7 +555,7 @@ def rollback_active_pointers(
         "rolled_back_at_utc": now,
         "workflow_ledger_file": str(Path(workflow_path).expanduser().resolve()),
         "restored_active_documents": restored,
-        "selected_task_ids": list(intent.get("selected_task_ids", [])),
+        "selected_task_ids": list(intent.get("all_selected_task_ids", intent.get("selected_task_ids", []))),
         "status": "rolled_back",
         "retained_batch_files": True,
     }
