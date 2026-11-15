@@ -1015,6 +1015,37 @@ def render_response_letter(plan: dict[str, Any]) -> str:
                 "> Do not use completion claims such as “we have revised” until the corresponding document changes have been verified.",
                 ""
             ])
+        quoted_changes = item.get("quoted_changes", [])
+        if quoted_changes:
+            lines.extend([
+                "**Manuscript excerpts from exact PatchOperations**",
+                "",
+                "> Excerpts below are copied directly from the verified PatchOperation operands; no model-generated replacement text is used.",
+                "",
+            ])
+            for change in quoted_changes:
+                action = change.get("action", "revised_text")
+                if action == "existing_text":
+                    label = "Existing text — no-change evidence"
+                elif action == "removed_text":
+                    label = "Removed manuscript text"
+                else:
+                    label = "Revised manuscript text"
+                if change.get("verified") is not True:
+                    label = "DRAFT — " + label
+                location = change.get("location") or "final PDF location pending"
+                document = change.get("document") or "Document"
+                operation_id = change.get("operation_id")
+                suffix = f" (PatchOperation {operation_id})" if operation_id else ""
+                lines.append(f"**{label} — {document}, {location}{suffix}**")
+                quote_text = str(change.get("quote_text") or "").strip()
+                if quote_text:
+                    lines.extend(
+                        ["> " + part for part in quote_text.splitlines()]
+                    )
+                else:
+                    lines.append("> [No replacement text was supplied for this operation.]")
+                lines.append("")
         lines.extend(["**Linked document changes**", ""])
         for target in item.get("targets", []):
             location = target.get("location") or "location not specified"
