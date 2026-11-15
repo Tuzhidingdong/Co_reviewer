@@ -3121,7 +3121,10 @@ def cmd_publish_batch(args):
         )
     if set(scope.get("documents", {})) != set(intent.get("documents", {})):
         raise ValueError("Batch scope document roles differ from the prepared batch intent.")
+    workflow_sha_before = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_before:
+        raise ValueError("Workflow Ledger changed while preparing batch publication; retry after reloading it.")
     updated, receipt = publish_active_pointers(
         workflow, workflow_path, batch_dir, ledger
     )
@@ -3155,7 +3158,21 @@ def cmd_publish_batch(args):
             "active_documents_to_publish": receipt["active_documents"],
             "revision_ledger_sha256": receipt["revision_ledger_sha256"],
         })
-    write_json_atomic(workflow_path, updated)
+    current_active = workflow.get("active_documents", {})
+    pointers_already_committed = all(
+        isinstance(current_active.get(role), dict)
+        and current_active[role].get("file") == pointer.get("file")
+        and current_active[role].get("sha256") == pointer.get("sha256")
+        and current_active[role].get("batch_id") == pointer.get("batch_id")
+        for role, pointer in receipt["active_documents"].items()
+    )
+    if not pointers_already_committed:
+        if sha256_file(workflow_path) != workflow_sha_before:
+            raise ValueError(
+                "Workflow Ledger changed during publication; the active pointer update was not committed. "
+                "Reload workflow state and retry this same batch."
+            )
+        write_json_atomic(workflow_path, updated)
     write_json_new(batch_dir / "batch_published.json", receipt)
     print(f"[PUBLISHED] Batch {intent['batch_id']}")
     for role, pointer in receipt["active_documents"].items():
@@ -3177,7 +3194,10 @@ def cmd_rollback_batch(args):
         print(f"[ALREADY ROLLED BACK] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
         return 0
     from co_reviewer.batch_store import rollback_active_pointers, write_json_new
+    workflow_sha_before = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_before:
+        raise ValueError("Workflow Ledger changed while preparing rollback; reload it and retry.")
     updated, receipt = rollback_active_pointers(
         workflow, workflow_path, batch_dir, reason=args.reason
     )
@@ -3209,7 +3229,21 @@ def cmd_rollback_batch(args):
             "restored_active_documents": receipt["restored_active_documents"],
         })
     # Restore every document-role pointer in one atomic Workflow Ledger replace.
-    write_json_atomic(workflow_path, updated)
+    current_active = workflow.get("active_documents", {})
+    pointers_already_restored = all(
+        isinstance(current_active.get(role), dict)
+        and current_active[role].get("file") == pointer.get("file")
+        and current_active[role].get("sha256") == pointer.get("sha256")
+        and current_active[role].get("batch_id") == pointer.get("batch_id")
+        for role, pointer in receipt["restored_active_documents"].items()
+    )
+    if not pointers_already_restored:
+        if sha256_file(workflow_path) != workflow_sha_before:
+            raise ValueError(
+                "Workflow Ledger changed during rollback; no pointer changes were committed. "
+                "Reload it and retry this same rollback."
+            )
+        write_json_atomic(workflow_path, updated)
     write_json_new(receipt_path, receipt)
     print(f"[ROLLED BACK] Batch {receipt['batch_id']}; active pointers restored to its parent versions.")
     print("[RETAINED] No DOCX, PDF, report or batch directory was deleted.")
