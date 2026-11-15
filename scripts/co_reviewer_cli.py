@@ -3010,6 +3010,101 @@ def cmd_status(args):
         print(f"- {item['id']} | {item['reviewer']} | {item['status']} | {targets} target(s)")
     return 0
 
+def cmd_publish_batch(args):
+    """Atomically publish all verified document outputs as the new active revision."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    if (batch_dir / "batch_published.json").exists():
+        raise FileExistsError(f"Batch already has a publication receipt: {batch_dir / 'batch_published.json'}")
+    from co_reviewer.batch_store import (
+        publish_active_pointers,
+        read_batch_intent,
+        write_json_new,
+    )
+    intent = read_batch_intent(batch_dir)
+    scope_path = batch_dir / "batch_scope.json"
+    if not scope_path.is_file():
+        raise ValueError(f"Batch scope record is missing: {scope_path}")
+    scope = json.loads(scope_path.read_text(encoding="utf-8"))
+    if not isinstance(scope, dict) or scope.get("batch_id") != intent["batch_id"]:
+        raise ValueError("Batch scope does not match the selected batch intent.")
+    if Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
+        raise ValueError("RevisionLedger path does not match the immutable batch scope.")
+    ledger = _load_revision_ledger(revision_path)
+    expected_patch_ids = set(scope.get("patch_ids", []))
+    if not expected_patch_ids:
+        raise ValueError("Batch scope contains no Patch IDs.")
+    patch_by_id = {patch.patch_id: patch for patch in ledger.patches}
+    missing = sorted(expected_patch_ids - set(patch_by_id))
+    if missing:
+        raise ValueError("RevisionLedger is missing batch Patch(es): " + ", ".join(missing))
+    unverified = sorted(
+        patch_id for patch_id in expected_patch_ids
+        if patch_by_id[patch_id].status != "verified"
+    )
+    if unverified:
+        raise ValueError(
+            "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
+            + ", ".join(unverified)
+        )
+    if set(scope.get("documents", {})) != set(intent.get("documents", {})):
+        raise ValueError("Batch scope document roles differ from the prepared batch intent.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    updated, receipt = publish_active_pointers(
+        workflow, workflow_path, batch_dir, ledger
+    )
+    # Validate and stage the receipt before replacing the sole mutable active pointer file.
+    receipt["revision_ledger_file"] = str(revision_path)
+    receipt["revision_ledger_sha256"] = sha256_file(revision_path)
+    write_json_new(batch_dir / "batch_publish_intent.json", {
+        "schema_version": "1.0",
+        "batch_id": intent["batch_id"],
+        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+        "active_documents_to_publish": receipt["active_documents"],
+        "revision_ledger_sha256": receipt["revision_ledger_sha256"],
+    })
+    write_json_atomic(workflow_path, updated)
+    write_json_new(batch_dir / "batch_published.json", receipt)
+    print(f"[PUBLISHED] Batch {intent['batch_id']}")
+    for role, pointer in receipt["active_documents"].items():
+        print(f"[ACTIVE] {role}: {pointer['file']} | SHA-256 {pointer['sha256']}")
+    print(f"[OK] Workflow Ledger: {workflow_path}")
+    print("[IMMUTABLE] Prior batch outputs were retained; only active_documents pointers changed.")
+    return 0
+
+
+def cmd_rollback_batch(args):
+    """Restore parent active pointers; never remove the published batch's files."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    batch_dir = Path(args.batch_dir).expanduser().resolve()
+    if not (batch_dir / "batch_published.json").is_file():
+        raise ValueError("Only a batch with a committed batch_published.json receipt can be rolled back.")
+    receipt_path = batch_dir / "batch_rollback.json"
+    if receipt_path.exists():
+        raise FileExistsError(f"Batch already has a rollback receipt: {receipt_path}")
+    from co_reviewer.batch_store import rollback_active_pointers, write_json_new
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    updated, receipt = rollback_active_pointers(workflow, workflow_path, batch_dir)
+    receipt["reason"] = args.reason
+    write_json_new(batch_dir / "batch_rollback_intent.json", {
+        "schema_version": "1.0",
+        "batch_id": receipt["batch_id"],
+        "reason": args.reason,
+        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+        "restored_active_documents": receipt["restored_active_documents"],
+    })
+    # Restore every document-role pointer in one atomic Workflow Ledger replace.
+    write_json_atomic(workflow_path, updated)
+    write_json_new(receipt_path, receipt)
+    print(f"[ROLLED BACK] Batch {receipt['batch_id']}; active pointers restored to its parent versions.")
+    print("[RETAINED] No DOCX, PDF, report or batch directory was deleted.")
+    print(f"[OK] Workflow Ledger: {workflow_path}")
+    return 0
+
+
 def cmd_response(args):
     if getattr(args, "revision_ledger", None):
         ledger = _load_revision_ledger(args.revision_ledger)
@@ -3096,7 +3191,7 @@ def build_parser():
     v.set_defaults(func=cmd_validate)
     pf = sub.add_parser("preflight-plan", help="Check revision targets and bind approval to source DOCX versions without editing files.")
     pf.add_argument("--plan", required=True)
-    pf.add_argument("--out", default="preflight_report.json")
+    pf.add_argument("--out", help="Preflight report output path; defaults inside the plan's batch directory when applicable.")
     pf.add_argument("--author", default="Co_Reviewer Preflight")
     pf.add_argument("--revision-ledger", help="Synchronize preflight evidence/events into a v0.5.1 RevisionLedger.")
     pf.set_defaults(func=cmd_preflight)
@@ -3108,13 +3203,13 @@ def build_parser():
     ap.set_defaults(func=cmd_approve_plan)
     a = sub.add_parser("apply", help="Apply an approved plan to separate DOCX output files.")
     a.add_argument("--plan", required=True); a.add_argument("--author", default="Co_Reviewer")
-    a.add_argument("--report", default="revision_apply_report.json")
+    a.add_argument("--report", help="Apply report path; defaults inside the plan's batch directory when applicable.")
     a.add_argument("--revision-ledger", help="Synchronize Patch state/events into a v0.5.1 RevisionLedger after apply.")
     a.set_defaults(func=cmd_apply)
     vfy = sub.add_parser("verify", help="Verify actual Word Track Changes against the approved plan.")
     vfy.add_argument("--plan", required=True)
     vfy.add_argument("--apply-report", default="revision_apply_report.json")
-    vfy.add_argument("--out", default="revision_verification.json")
+    vfy.add_argument("--out", help="Verification report path; defaults inside the plan's batch directory when applicable.")
     vfy.set_defaults(func=cmd_verify)
     rsp = sub.add_parser("render-response", help="Render a conservative Response Letter from revision items or ResponseUnits.")
     rsp_inputs = rsp.add_mutually_exclusive_group(required=True)
@@ -3133,7 +3228,7 @@ def build_parser():
     rspdocx.set_defaults(func=cmd_response_docx)
     cv = sub.add_parser("confirm-verified", help="Confirm selected items after exact DOCX verification and semantic review.")
     cv.add_argument("--plan", required=True)
-    cv.add_argument("--apply-report", default="revision_apply_report.json")
+    cv.add_argument("--apply-report", help="Apply report path; defaults inside the plan's batch directory when applicable.")
     cv.add_argument("--revision-ledger", help="Synchronize verified Patch state/events into the RevisionLedger.")
     cv.add_argument("--ids", nargs="+", required=True, help="Applied revision item IDs to confirm.")
     cv.add_argument("--semantic-review-confirmed", action="store_true", required=True,
@@ -3156,7 +3251,19 @@ def build_parser():
     bl.add_argument("--reviewer-comments", help="Optional JSON map of comment ID to exact reviewer comment text.")
     bl.add_argument("--reviewer-map", help="Optional JSON map of task ID to reviewer label; nested comment_ids maps preserve multiple reviewers within one task.")
     bl.add_argument("--out", default="revision_ledger.json")
+    bl.add_argument("--runs-dir", help="Append-only batch root; defaults to runs/ beside the Workflow Ledger.")
+    bl.add_argument("--batch-id", help="Optional unique batch ID; existing batch directories are never reused.")
     bl.set_defaults(func=cmd_build_revision_ledger)
+    pub = sub.add_parser("publish-batch", help="Atomically switch Workflow Ledger active document pointers after all batch Patches are verified.")
+    pub.add_argument("--workflow-ledger", required=True)
+    pub.add_argument("--revision-ledger", required=True)
+    pub.add_argument("--batch-dir", required=True)
+    pub.set_defaults(func=cmd_publish_batch)
+    rb = sub.add_parser("rollback-batch", help="Restore the parent active document pointers without deleting any committed output.")
+    rb.add_argument("--workflow-ledger", required=True)
+    rb.add_argument("--batch-dir", required=True)
+    rb.add_argument("--reason", required=True)
+    rb.set_defaults(func=cmd_rollback_batch)
     sp = sub.add_parser("supersede-patch", help="Replace a Patch while reopening linked ResponseUnits.")
     sp.add_argument("--ledger", required=True)
     sp.add_argument("--previous-patch-id", required=True)
@@ -3166,7 +3273,8 @@ def build_parser():
     sp.set_defaults(func=cmd_supersede_patch)
     ex = sub.add_parser("export-revision-plan", help="Export new planned Patch operations to the legacy DOCX plan format.")
     ex.add_argument("--ledger", required=True)
-    ex.add_argument("--out", default="revision_plan.json")
+    ex.add_argument("--batch-dir", help="Existing immutable runs/batch-{id} directory created by build-revision-ledger.")
+    ex.add_argument("--out", help="Plan output path; defaults inside --batch-dir when supplied.")
     ex.set_defaults(func=cmd_export_revision_plan)
     wcv = sub.add_parser("create-working-clean-views", help="Create read-only accepted-changes projections from Marked DOCX outputs.")
     wcv.add_argument("--ledger", required=True)
