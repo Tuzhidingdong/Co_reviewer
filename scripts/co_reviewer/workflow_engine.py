@@ -36,7 +36,7 @@ ALLOWED_TRANSITIONS = {
     "identified": frozenset({"planned", "blocked"}),
     "planned": frozenset({"ready", "blocked", "recheck_required"}),
     "blocked": frozenset({"planned", "ready", "recheck_required"}),
-    "ready": frozenset({"preflighted", "blocked", "recheck_required"}),
+    "ready": frozenset({"preflighted", "completed", "blocked", "recheck_required"}),
     "preflighted": frozenset({"approved", "ready", "blocked", "recheck_required"}),
     "approved": frozenset({"applied", "recheck_required"}),
     "applied": frozenset({"verified", "recheck_required"}),
