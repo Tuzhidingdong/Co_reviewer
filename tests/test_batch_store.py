@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.batch_store import (
     BatchStoreError,
+    _batch_artifact_inventory,
     assert_no_uncommitted_role_batches,
     create_batch_intent,
     load_active_document_pointers,
@@ -70,6 +71,51 @@ class BatchStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_batch_inventory_excludes_only_root_level_recovery_controls(self):
+        batch_dir = self.root / "batch-inventory"
+        documents_dir = batch_dir / "documents"
+        documents_dir.mkdir(parents=True)
+        (batch_dir / "batch_recovery_intent.json").write_text(
+            "root recovery control", encoding="utf-8"
+        )
+        (batch_dir / "batch_recovered.json").write_text(
+            "root recovery receipt", encoding="utf-8"
+        )
+        nested_intent = documents_dir / "batch_recovery_intent.json"
+        nested_receipt = documents_dir / "batch_recovered.json"
+        ordinary = documents_dir / "partial-output.bin"
+        nested_intent.write_text("retained nested intent-name artifact", encoding="utf-8")
+        nested_receipt.write_text("retained nested receipt-name artifact", encoding="utf-8")
+        ordinary.write_bytes(b"partial output")
+
+        inventory = _batch_artifact_inventory(batch_dir)
+        by_path = {row["path"]: row for row in inventory}
+
+        self.assertNotIn("batch_recovery_intent.json", by_path)
+        self.assertNotIn("batch_recovered.json", by_path)
+        for path in (nested_intent, nested_receipt, ordinary):
+            relative = path.relative_to(batch_dir).as_posix()
+            self.assertIn(relative, by_path)
+            self.assertEqual(by_path[relative]["size_bytes"], path.stat().st_size)
+            self.assertEqual(
+                by_path[relative]["sha256"],
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+
+    def test_batch_inventory_rejects_symbolic_links(self):
+        batch_dir = self.root / "batch-symlink"
+        batch_dir.mkdir()
+        external = self.root / "outside-batch.bin"
+        external.write_bytes(b"outside batch content")
+        link = batch_dir / "linked-artifact.bin"
+        try:
+            link.symlink_to(external)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Symbolic links are unavailable in this environment: {exc}")
+
+        with self.assertRaisesRegex(BatchStoreError, "must not be a symbolic link"):
+            _batch_artifact_inventory(batch_dir)
 
     def _intent(self, batch_id="run-001"):
         return create_batch_intent(
