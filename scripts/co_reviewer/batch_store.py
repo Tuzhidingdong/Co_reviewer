@@ -355,13 +355,22 @@ def _validate_recovered_batch_receipt(
             and len(values) == len(set(values))
         )
 
+    selected_task_ids_valid = valid_task_ids(selected_task_ids)
+    batch_task_ids_valid = valid_task_ids(batch_task_ids)
     if (
-        not valid_task_ids(selected_task_ids)
-        or not valid_task_ids(batch_task_ids)
+        not selected_task_ids_valid
+        or not batch_task_ids_valid
         or selected_task_ids != expected_selected_task_ids
         or batch_task_ids != expected_batch_task_ids
     ):
-        raise BatchStoreError("Recovered batch task sets differ from its immutable batch intent.")
+        raise BatchStoreError(
+            "Recovered batch task sets differ from its immutable batch intent "
+            f"(recovery.selected_task_ids={selected_task_ids!r}, "
+            f"intent.all_selected_task_ids={expected_selected_task_ids!r}, "
+            f"recovery.batch_task_ids={batch_task_ids!r}, "
+            f"intent.selected_task_ids={expected_batch_task_ids!r}, "
+            f"selected_valid={selected_task_ids_valid}, batch_valid={batch_task_ids_valid})."
+        )
 
     invalidated_task_ids = recovery.get("invalidated_task_ids")
     if (
