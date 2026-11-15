@@ -1781,6 +1781,7 @@ def cmd_build_revision_ledger(args):
             selected_roles,
             selected_task_ids,
             existing_patch_statuses,
+            workflow,
         )
         batch_intent = create_batch_intent(
             workflow,
