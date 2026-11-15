@@ -12,7 +12,7 @@ dependencies = ["lxml>=5.0.0", "python-docx>=1.1.2"]
 
 [project.optional-dependencies]
 test = [
-  "jsonschema>=4.22,<5",
+  "jsonschema[format]>=4.22,<5",
 ]
 word-pdf = [
   "pywin32>=306; platform_system == 'Windows'",
