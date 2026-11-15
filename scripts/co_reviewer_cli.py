@@ -3119,6 +3119,17 @@ def cmd_publish_batch(args):
             "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
             + ", ".join(unverified)
         )
+    scoped_tasks = set(scope.get("selected_task_ids", []))
+    pending_units = [
+        unit.response_unit_id for unit in ledger.response_units
+        if scoped_tasks.intersection(unit.linked_task_ids)
+        and unit.status != "completed"
+    ]
+    if pending_units:
+        raise ValueError(
+            "Complete semantic review and final Word/PDF locations for every ResponseUnit in the batch before publishing: "
+            + ", ".join(sorted(pending_units))
+        )
     if set(scope.get("documents", {})) != set(intent.get("documents", {})):
         raise ValueError("Batch scope document roles differ from the prepared batch intent.")
     workflow_sha_before = sha256_file(workflow_path)
