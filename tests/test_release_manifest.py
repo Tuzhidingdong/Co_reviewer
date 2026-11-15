@@ -22,6 +22,7 @@ from co_reviewer.release_manifest import (
     _validate_release_batch_scope,
     _validate_response_unit_task_attribution,
     _collect_release_batch_history,
+    _collect_recovered_batch_history,
     audit_patch_operation_deltas,
     build_final_release_manifest,
 )

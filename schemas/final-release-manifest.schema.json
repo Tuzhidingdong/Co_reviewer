@@ -348,6 +348,8 @@
     "checks": {
       "type": "object",
       "required": [
+        "all_published_batch_history_valid",
+        "all_recovered_batch_history_valid",
         "all_active_patches_verified",
         "all_response_units_completed",
         "active_pointers_match_marked_docx",
@@ -357,6 +359,8 @@
         "numeric_unit_reference_deltas_surfaced_for_human_review"
       ],
       "properties": {
+        "all_published_batch_history_valid": { "const": true },
+        "all_recovered_batch_history_valid": { "const": true },
         "all_active_patches_verified": { "const": true },
         "all_response_units_completed": { "const": true },
         "active_pointers_match_marked_docx": { "const": true },

@@ -1452,6 +1452,8 @@ def build_final_release_manifest(
             },
         },
         "checks": {
+            "all_published_batch_history_valid": True,
+            "all_recovered_batch_history_valid": True,
             "all_active_patches_verified": True,
             "all_response_units_completed": True,
             "active_pointers_match_marked_docx": True,
