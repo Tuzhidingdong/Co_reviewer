@@ -119,6 +119,7 @@ def create_batch_intent(
     selected_task_ids: Sequence[str],
     roles: Sequence[str],
     *,
+    all_selected_task_ids: Sequence[str] | None = None,
     runs_dir: str | Path | None = None,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
@@ -180,6 +181,7 @@ def create_batch_intent(
         "workflow_ledger_sha256_at_prepare": workflow_sha_at_prepare,
         "created_at_utc": _timestamp(),
         "selected_task_ids": list(dict.fromkeys(selected_task_ids)),
+        "all_selected_task_ids": list(dict.fromkeys(all_selected_task_ids or selected_task_ids)),
         "status": "prepared",
         "documents": role_records,
         "policy": {
@@ -212,6 +214,17 @@ def read_batch_intent(batch_dir: str | Path) -> dict[str, Any]:
         raise BatchStoreError("Batch intent ID does not match its directory name.")
     if not isinstance(intent.get("documents"), dict) or not intent["documents"]:
         raise BatchStoreError("Batch intent has no document role records.")
+    selected_task_ids = intent.get("selected_task_ids")
+    all_selected_task_ids = intent.get("all_selected_task_ids", selected_task_ids)
+    if (
+        not isinstance(selected_task_ids, list)
+        or not selected_task_ids
+        or any(not isinstance(item, str) or not item.strip() for item in selected_task_ids)
+        or not isinstance(all_selected_task_ids, list)
+        or not set(selected_task_ids).issubset(set(all_selected_task_ids))
+        or any(not isinstance(item, str) or not item.strip() for item in all_selected_task_ids)
+    ):
+        raise BatchStoreError("Batch intent task ID sets are invalid or inconsistent.")
     for role, row in intent["documents"].items():
         if not isinstance(role, str) or not isinstance(row, Mapping):
             raise BatchStoreError("Batch document records must be role-keyed objects.")
