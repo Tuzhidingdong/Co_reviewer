@@ -429,6 +429,7 @@ def _validate_committed_batch_publication(
     scope_sha = sha256_file(scope_path)
     task_ids = intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
     batch_task_ids = intent.get("selected_task_ids")
+    scope_task_ids = scope.get("selected_task_ids")
     patch_ids = scope.get("patch_ids")
     revision_file = scope.get("revision_ledger_file")
     if (
@@ -441,14 +442,19 @@ def _validate_committed_batch_publication(
         or len(task_ids) != len(set(task_ids))
         or not isinstance(batch_task_ids, list)
         or not batch_task_ids
+        or any(not isinstance(value, str) or not value.strip() for value in batch_task_ids)
+        or len(batch_task_ids) != len(set(batch_task_ids))
         or set(batch_task_ids) != set(intent.get("selected_task_ids", []))
+        or not isinstance(scope_task_ids, list)
+        or any(not isinstance(value, str) or not value.strip() for value in scope_task_ids)
+        or len(scope_task_ids) != len(set(scope_task_ids))
+        or set(scope_task_ids) != set(task_ids)
         or not isinstance(patch_ids, list)
         or not patch_ids
         or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
         or len(patch_ids) != len(set(patch_ids))
         or not isinstance(revision_file, str)
         or not revision_file.strip()
-        or set(scope.get("selected_task_ids", [])) != set(task_ids)
     ):
         raise BatchStoreError(f"Batch {batch_id} publication scope does not match its immutable intent.")
     scope_documents = scope.get("documents")
