@@ -1740,10 +1740,19 @@ def cmd_build_revision_ledger(args):
             "Unavailable task ID(s): " + ", ".join(sorted(unavailable))
         )
 
+    selected_document_task_ids = [
+        task_id for task_id in selected_task_ids
+        if any(
+            isinstance(operation, dict) and isinstance(operation.get("document"), str)
+            for task in workflow.get("tasks", [])
+            if isinstance(task, dict) and task.get("task_id") == task_id
+            for operation in task.get("patch_operations", [])
+        )
+    ]
     selected_roles = sorted({
         operation.get("document")
         for task in workflow.get("tasks", [])
-        if isinstance(task, dict) and task.get("task_id") in selected_task_ids
+        if isinstance(task, dict) and task.get("task_id") in selected_document_task_ids
         for operation in task.get("patch_operations", [])
         if isinstance(operation, dict) and isinstance(operation.get("document"), str)
     })
@@ -1774,7 +1783,7 @@ def cmd_build_revision_ledger(args):
         batch_intent = create_batch_intent(
             workflow,
             workflow_path,
-            selected_task_ids,
+            selected_document_task_ids,
             selected_roles,
             runs_dir=getattr(args, "runs_dir", None),
             batch_id=getattr(args, "batch_id", None),
@@ -1989,6 +1998,7 @@ def cmd_build_revision_ledger(args):
             "revision_round_id": ledger.revision_round_id,
             "revision_ledger_file": str(output_path),
             "selected_task_ids": list(selected_task_ids),
+            "batch_task_ids": list(batch_intent["selected_task_ids"]),
             "patch_ids": [
                 patch.patch_id for patch in ledger.patches
                 if patch.task_id in selected_task_ids
@@ -3072,8 +3082,9 @@ def cmd_publish_batch(args):
         for row in json.loads(workflow_path.read_text(encoding="utf-8")).get("tasks", [])
         if isinstance(row, dict)
     }
+    batch_task_ids = scope.get("batch_task_ids", intent.get("selected_task_ids", []))
     incomplete_tasks = sorted(
-        task_id for task_id in scope.get("selected_task_ids", [])
+        task_id for task_id in batch_task_ids
         if task_id not in workflow_tasks
         or workflow_tasks[task_id].get("status") not in {"verified", "completed"}
     )
