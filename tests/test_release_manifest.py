@@ -429,6 +429,25 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 workflow_task_ids={"T1"},
             )
 
+        with self.assertRaisesRegex(ReleaseGateError, "current Workflow Ledger"):
+            _collect_recovered_batch_history(
+                revision,
+                published_batch_ids=set(),
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+                workflow_task_ids={"T2"},
+            )
+
+        self.source.unlink()
+        with self.assertRaisesRegex(ReleaseGateError, "active parent is missing or stale"):
+            _collect_recovered_batch_history(
+                revision,
+                published_batch_ids=set(),
+                revision_ledger_path=self.revision_path,
+                workflow_ledger_path=self.workflow_path,
+                workflow_task_ids={"T1"},
+            )
+
     def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):
         source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
         revision = SimpleNamespace(revision_round_id="round-release-tests", patches=[])
