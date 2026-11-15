@@ -331,6 +331,50 @@ class BatchStoreTests(unittest.TestCase):
 
 
     def test_partial_unpublished_batch_recovery_is_idempotent_and_rebases_from_parent(self):
+        task_template = {
+            "task_type": "response_only",
+            "target_documents": [],
+            "evidence": [],
+            "proposed_action": "A synthetic workflow task used only for batch recovery DAG tests.",
+            "targets": [],
+            "readiness": "ready_for_author_approval",
+            "unresolved_questions": [],
+            "confidence": 1.0,
+            "status": "pending",
+            "requires_user_approval": True,
+        }
+        task_one = {
+            **task_template,
+            "task_id": "T1",
+            "sequence": 1,
+            "title": "Synthetic failed batch task",
+            "source_comment_ids": ["C1"],
+            "dependencies": [],
+        }
+        task_two = {
+            **task_template,
+            "task_id": "T2",
+            "sequence": 2,
+            "title": "Synthetic downstream dependent task",
+            "source_comment_ids": ["C2"],
+            "dependencies": ["T1"],
+        }
+        self.workflow = build_workflow_ledger(
+            {
+                "source_files": [{
+                    "role": "Manuscript",
+                    "file": str(self.source),
+                    "sha256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+                }],
+                "tasks": [task_one, task_two],
+            },
+            "round-batch-tests",
+            STAMP,
+        )
+        self.workflow_path.write_text(
+            json.dumps(self.workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         intent = self._intent()
         batch_dir = Path(intent["batch_dir"])
         output = Path(intent["documents"]["Manuscript"]["output_file"])
@@ -418,7 +462,14 @@ class BatchStoreTests(unittest.TestCase):
         self.assertTrue(ledger_changed)
         self.assertFalse(already)
         self.assertEqual(first_ledger.patches[0].status, "abandoned")
-        self.assertEqual(first_workflow["tasks"][0]["status"], "recheck_required")
+        task_states = {
+            row["task_id"]: row["status"] for row in first_workflow["tasks"]
+        }
+        self.assertEqual(task_states, {
+            "T1": "recheck_required",
+            "T2": "recheck_required",
+        })
+        self.assertEqual(recovery_intent["invalidated_task_ids"], ["T1", "T2"])
         self.assertEqual(output.read_bytes(), partial_bytes)
 
         # Simulate a crash after the first atomic file replacement (Workflow Ledger).
@@ -566,7 +617,7 @@ class BatchStoreTests(unittest.TestCase):
             row for row in event_tampered_intent["workflow_after"]["events"]
             if not (
                 isinstance(row, dict)
-                and row.get("task_id") == "T1"
+                and row.get("task_id") == "T2"
                 and row.get("event_type") == "invalidation"
                 and row.get("batch_id") == intent["batch_id"]
             )
