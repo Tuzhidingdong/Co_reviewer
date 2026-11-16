@@ -202,7 +202,7 @@ class WorkflowPreparationTests(unittest.TestCase):
             round_root_manifest=str(self.root / "round_manifest.json"),
         )), 0)
         root_manifest = json.loads((self.root / "round_manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(root_manifest["current_workflow_ledger"], str(prepared_path))
+        self.assertEqual(root_manifest["current_workflow_ledger"], str(prepared_path.resolve()))
         self.assertEqual(root_manifest["workflow_ledger_sha256"], hashlib.sha256(prepared_path.read_bytes()).hexdigest())
         self.assertTrue(prepared_path.is_file())
         self.assertTrue(reviewer_map_path.is_file())
@@ -323,7 +323,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(updated["status"], "recheck_required")
         self.assertIn({
             "role": "Manuscript",
-            "file": str(current_manuscript),
+            "file": str(current_manuscript.resolve()),
             "sha256": current_sha,
         }, updated["source_versions"])
         self.assertEqual(updated["targets"][0]["evidence_ids"], ["E-MAN-02"])

@@ -229,7 +229,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
             self.assertEqual(ledger["revision_round_id"], "round-from-starter")
             updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(updated_manifest["current_workflow_ledger"], str(ledger_path))
+            self.assertEqual(updated_manifest["current_workflow_ledger"], str(ledger_path.resolve()))
             self.assertEqual(
                 updated_manifest["workflow_ledger_sha256"],
                 hashlib.sha256(ledger_path.read_bytes()).hexdigest(),
@@ -293,7 +293,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
             self.assertEqual(ledger["revision_round_id"], "round-refresh")
             root_after = json.loads(root_manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(root_after["current_workflow_ledger"], str(ledger_path))
+            self.assertEqual(root_after["current_workflow_ledger"], str(ledger_path.resolve()))
             self.assertEqual(root_after["workflow_ledger_sha256"], hashlib.sha256(ledger_path.read_bytes()).hexdigest())
 
     def test_refresh_manifest_rejects_same_path_with_changed_inventory_bytes(self):

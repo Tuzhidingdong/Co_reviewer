@@ -442,12 +442,12 @@ class ReleaseManifestGateTests(unittest.TestCase):
         scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
         parent_documents = {
             "Manuscript": {
-                "file": parent_pointer["file"],
+                "file": str(Path(parent_pointer["file"]).expanduser().resolve()),
                 "sha256": parent_pointer["sha256"],
                 "batch_id": parent_pointer["batch_id"],
             },
         }
-        failed_output_files = {"Manuscript": [str(output_path)]}
+        failed_output_files = {"Manuscript": [str(output_path.resolve())]}
         workflow_for_recovery = build_workflow_ledger(
             {
                 "source_files": [{

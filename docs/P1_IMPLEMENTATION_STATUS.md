@@ -227,3 +227,15 @@ The first real unified CI run after the runner-account issue was resolved used c
 - The Windows quality-check step passed a PowerShell command result object to a string parameter. It now resolves the exact active interpreter using `python -c "import sys; print(sys.executable)"` and passes an explicit string path.
 
 The focused corrections import the canonical sync hash helper, use the existing local atomic JSON writer, install PyMuPDF through the test extra, align the two regression expectations with the actual guards, and make the Windows PowerShell 5.1 workflow invocation explicit. These corrections are not yet accepted: the follow-up unified run must confirm them. No production workflow or approval gates have been relaxed.
+
+
+## Windows full-matrix findings — path identity and recovery entry hardening
+
+The second unified run on `f89d833a53d061962b5bf1dc54be5beed07a53f3` confirmed that both Ubuntu suites pass (294/294 on Python 3.10 and 3.13), and the Windows PowerShell 5.1 entry successfully invokes the quality-check script. The Windows quality run exposed path-alias edge cases that Linux does not reproduce:
+
+- Workflow source-file records and refreshed task source versions may name the same Windows file through its 8.3 short path and its resolved long path. The Workflow Ledger validator previously compared those raw strings, incorrectly rejecting a refreshed task even though the active document path/hash matched. Validation now compares canonical filesystem identities while leaving serialized evidence paths unchanged.
+- The two-Ledger sync recovery helper now normalizes caller paths itself, rejects symlinked ledger arguments and identical Ledger targets before looking for a pending marker. This makes both the CLI and direct recovery invocation behave consistently when callers supply Windows short paths.
+- Windows-only raw-string path assertions in round-manifest, refresh-manifest, rebase and publish tests now compare resolved paths. The failed-batch Release Manifest fixture now records canonical parent/output paths, matching the recovery producer's contract.
+- The Windows PowerShell parser stage passed; all remaining failures were inside the quality-check test suite, not runner provisioning or PowerShell argument conversion.
+
+These source/test corrections are not accepted until a new unified matrix completes. Actual Microsoft Word COM/PDF rendering remains a separate local-Word acceptance requirement and is not claimed by GitHub-hosted tests.

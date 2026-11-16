@@ -927,8 +927,8 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             document for document in final_ledger.documents
             if document.role == "Manuscript"
         )
-        self.assertEqual(Path(final_document.input_file), marked)
-        self.assertEqual(Path(final_document.output_file), final_docx)
+        self.assertEqual(Path(final_document.input_file), marked.resolve())
+        self.assertEqual(Path(final_document.output_file), final_docx.resolve())
         self.assertEqual(final_document.source_sha256, marked_hash)
         final_patch = next(patch for patch in final_ledger.patches if patch.patch_id == "T2")
         self.assertEqual(
@@ -1148,7 +1148,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(patches["T1"].status, "superseded")
         self.assertEqual(patches["T1-r2"].status, "planned")
         self.assertEqual(patches["T1-r2"].supersedes_patch_id, "T1")
-        self.assertEqual(patches["T1-r2"].operations[0].input_file, str(revision_one))
+        self.assertEqual(patches["T1-r2"].operations[0].input_file, str(revision_one.resolve()))
         rebased_output = Path(patches["T1-r2"].operations[0].output_file)
         self.assertEqual(rebased_output.parent.name, "documents")
         self.assertEqual(rebased_output.parents[1].parent, self.root / "runs")
@@ -1159,7 +1159,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertFalse(unit.semantic_review_confirmed)
         self.assertEqual(merged.documents[0].document_id, "doc-manuscript")
         self.assertEqual(merged.documents[0].revision_id, updated_identity.revision_id)
-        self.assertEqual(merged.documents[0].input_file, str(revision_one))
+        self.assertEqual(merged.documents[0].input_file, str(revision_one.resolve()))
         self.assertEqual(Path(merged.documents[0].output_file), rebased_output)
         self.assertEqual(merged.documents[0].source_sha256, sha256_file(revision_one))
 

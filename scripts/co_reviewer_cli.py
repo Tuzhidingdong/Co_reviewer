@@ -1634,6 +1634,14 @@ def _resume_workflow_sync_transaction(
     revision_path: Path,
 ) -> dict[str, Any] | None:
     """Finish a staged two-ledger Workflow sync after any process interruption."""
+    workflow_source_path = Path(workflow_path).expanduser()
+    revision_source_path = Path(revision_path).expanduser()
+    if workflow_source_path.is_symlink() or revision_source_path.is_symlink():
+        raise ValueError("Workflow Ledger and RevisionLedger paths must not be symbolic links.")
+    workflow_path = workflow_source_path.resolve()
+    revision_path = revision_source_path.resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     pending_path = _workflow_sync_pending_path(workflow_path)
     if pending_path.is_symlink():
         raise ValueError(f"Pending Workflow sync marker must not be a symlink: {pending_path}")
@@ -1916,8 +1924,12 @@ def cmd_sync_workflow_ledger(args):
         workflow_scope_fingerprint,
     )
 
-    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
-    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    workflow_source_path = Path(args.workflow_ledger).expanduser()
+    revision_source_path = Path(args.revision_ledger).expanduser()
+    if workflow_source_path.is_symlink() or revision_source_path.is_symlink():
+        raise ValueError("Workflow Ledger and RevisionLedger paths must not be symbolic links.")
+    workflow_path = workflow_source_path.resolve()
+    revision_path = revision_source_path.resolve()
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     pending_receipt = _resume_workflow_sync_transaction(workflow_path, revision_path)

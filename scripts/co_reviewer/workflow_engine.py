@@ -99,6 +99,15 @@ def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
 
 
+def _canonical_workflow_file_path(value: str) -> str:
+    """Compare filesystem identities consistently across Windows short/long path aliases."""
+    try:
+        return str(Path(value).expanduser().resolve())
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return str(Path(value).expanduser())
+
+
+
 def _is_aware_timestamp(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
@@ -1038,7 +1047,8 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if not _is_sha256(digest):
             errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest.")
         if isinstance(role, str) and isinstance(file_path, str):
-            source_key = (role, file_path)
+            canonical_file_path = _canonical_workflow_file_path(file_path)
+            source_key = (role, canonical_file_path)
             if source_key in seen_sources:
                 errors.append(f"{prefix} duplicates source {role}/{file_path}.")
             seen_sources.add(source_key)
@@ -1047,7 +1057,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             and isinstance(digest, str) and _is_sha256(digest)
         ):
             source_hashes_by_role[role].add(digest)
-            source_records.add((role, file_path, digest))
+            source_records.add((role, _canonical_workflow_file_path(file_path), digest))
 
     active_documents = ledger.get("active_documents")
     if active_documents is not None:
@@ -1195,7 +1205,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             ):
                 errors.append(f"{prefix} requires a supported role, file and SHA-256.")
                 continue
-            key = (role, file_path, digest)
+            key = (role, _canonical_workflow_file_path(file_path), digest)
             if key in seen_task_sources:
                 errors.append(f"{prefix} duplicates a source version.")
             seen_task_sources.add(key)
