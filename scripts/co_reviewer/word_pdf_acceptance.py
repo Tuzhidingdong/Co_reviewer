@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .batch_store import write_json_new
 from .identity import sha256_file
 from .revision_models import (
     Patch,
@@ -142,17 +143,10 @@ def build_word_pdf_acceptance_ledger(
     )
     ledger.validate_or_raise()
 
-    payload = json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2) + "\n"
-    try:
-        with ledger_file.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(payload)
-            stream.flush()
-    except FileExistsError:
-        raise FileExistsError(
-            f"Refusing to overwrite an existing acceptance RevisionLedger: {ledger_file}"
-        )
+    ledger_sha256 = write_json_new(ledger_file, ledger.to_dict())
     return {
         "ledger_file": str(ledger_file),
+        "ledger_sha256": ledger_sha256,
         "revision_round_id": ledger.revision_round_id,
         "patch_id": patch_id,
         "operation_id": operation_id,
