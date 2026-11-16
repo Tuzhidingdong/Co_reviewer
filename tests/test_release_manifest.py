@@ -629,7 +629,9 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 published_batch_ids=set(),
                 revision_ledger_path=self.revision_path,
                 workflow_ledger_path=self.workflow_path,
-                workflow_task_ids={"T1"},
+                # Restore the complete original task inventory after the
+                # preceding negative check intentionally omitted T2.
+                workflow_task_ids={"T1", "T2"},
             )
 
     def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):
