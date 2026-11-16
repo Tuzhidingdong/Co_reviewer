@@ -93,6 +93,7 @@
           "scope",
           "publish_intent",
           "publish_receipt",
+          "creation_receipt",
           "selected_task_ids",
           "all_selected_task_ids",
           "patch_ids",
@@ -118,6 +119,16 @@
           },
           "publish_receipt": {
             "$ref": "#/$defs/fileRecord"
+          },
+          "creation_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/fileRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "publish_intent": {
             "$ref": "#/$defs/fileRecord"
@@ -240,6 +251,7 @@
           "directory",
           "intent",
           "scope",
+          "creation_receipt",
           "recovery_intent",
           "recovery_receipt",
           "recovery_id",
@@ -266,6 +278,16 @@
           },
           "scope": {
             "$ref": "#/$defs/fileRecord"
+          },
+          "creation_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/fileRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "recovery_intent": {
             "$ref": "#/$defs/fileRecord"
@@ -866,6 +888,7 @@
       "required": [
         "all_published_batch_history_valid",
         "all_recovered_batch_history_valid",
+        "all_protocol_v1_batch_creation_receipts_valid",
         "all_active_patches_verified",
         "all_response_units_completed",
         "active_pointers_match_marked_docx",
@@ -879,6 +902,9 @@
           "const": true
         },
         "all_recovered_batch_history_valid": {
+          "const": true
+        },
+        "all_protocol_v1_batch_creation_receipts_valid": {
           "const": true
         },
         "all_active_patches_verified": {

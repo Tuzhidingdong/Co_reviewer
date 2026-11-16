@@ -196,3 +196,16 @@ After the unified synthetic run passes, the user performs the separate Microsoft
 - Development branch: `upgrade/v0.5.1-p1-audit-quality-implementation-20261114`
 - Latest development commit: follow the current head of PR #3; this status file intentionally does not pin a commit SHA that becomes stale as implementation continues.
 - PR #3: Draft, open, not merged.
+
+
+## P1 development-freeze source review — batch creation and Ledger identity
+
+A final source-only integration review identified two remaining transaction hand-offs and closed them in the P1 development line:
+
+- New immutable document-changing batches bind their creation intent to the exact pre-commit and expected post-commit RevisionLedger SHA-256 values. The creation sequence writes the immutable intent and scope, commits the single RevisionLedger replacement, verifies its post-image, then writes a hash-bound `batch_creation_receipt.json` marker.
+- The round reconciler seals a missing creation receipt as committed only when the exact post-image and Patch/path/task contracts are present. It records an `abandoned_before_ledger_commit` receipt for either an intent-only interruption (before scope creation) or a scoped pre-commit interruption only when the exact pre-image remains, no scoped Patch IDs were committed, active parent pointers are unchanged, and no execution artifacts exist. Ambiguous or conflicting states fail closed. A safely abandoned intent no longer reserves the document role, so the same still-authorized task set can be rebuilt in a new immutable batch.
+- Plan export, publication, rollback and failed-batch recovery require a committed creation receipt for protocol-v1 batches; the scheduler blocks missing receipts until round reconciliation runs. Final Release Manifest independently revalidates and records the creation receipt for every published/recovered protocol-v1 batch, with the strict release-manifest schema requiring the corresponding nullable receipt record and an explicit validation check.
+- `round_manifest.current_revision_ledger` is now the authoritative RevisionLedger path for Reconcile, Refresh and the batch entry point. Reconcile rejects an explicitly supplied older RevisionLedger path, matching the current-Workflow-path guard.
+- The batch-intent schema conditionally requires the protocol-v1 RevisionLedger path and before/after hashes. A dedicated batch-creation-receipt schema defines committed and safely abandoned states, with schema contract coverage for both new receipts and legacy intent compatibility.
+
+The regression coverage is authored but **not run**. It remains part of the single deferred unified acceptance cycle; these source changes are not a test pass.

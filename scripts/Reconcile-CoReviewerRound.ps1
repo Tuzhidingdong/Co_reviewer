@@ -129,14 +129,13 @@ $recordedWorkflowValue = if ($manifest.current_workflow_ledger) {
 } else {
     [string]$manifest.workflow_ledger
 }
-$workflowValue = if ($WorkflowLedger) { $WorkflowLedger } else { $recordedWorkflowValue }
-$revisionValue = if ($RevisionLedger) {
-    $RevisionLedger
-} elseif ($manifest.current_revision_ledger) {
+$recordedRevisionValue = if ($manifest.current_revision_ledger) {
     [string]$manifest.current_revision_ledger
 } else {
     [string]$manifest.revision_ledger
 }
+$workflowValue = if ($WorkflowLedger) { $WorkflowLedger } else { $recordedWorkflowValue }
+$revisionValue = if ($RevisionLedger) { $RevisionLedger } else { $recordedRevisionValue }
 if ([string]::IsNullOrWhiteSpace($workflowValue) -or [string]::IsNullOrWhiteSpace($revisionValue)) {
     throw "Round manifest does not identify both the current Workflow Ledger and RevisionLedger."
 }
@@ -146,6 +145,12 @@ if (-not [string]::IsNullOrWhiteSpace([string]$recordedWorkflowValue)) {
     $recordedWorkflowPath = Get-FullPath ([string]$recordedWorkflowValue) $script:RoundPath
     if ([System.IO.Path]::GetFullPath($recordedWorkflowPath) -ne [System.IO.Path]::GetFullPath($script:WorkflowPath)) {
         throw "Requested Workflow Ledger is not the current path recorded in round_manifest.json. Recorded=$recordedWorkflowPath; requested=$script:WorkflowPath. Reconcile the recorded current Ledger; do not roll the round back to an older snapshot."
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace([string]$recordedRevisionValue)) {
+    $recordedRevisionPath = Get-FullPath ([string]$recordedRevisionValue) $script:RoundPath
+    if ([System.IO.Path]::GetFullPath($recordedRevisionPath) -ne [System.IO.Path]::GetFullPath($script:RevisionPath)) {
+        throw "Requested RevisionLedger is not the current path recorded in round_manifest.json. Recorded=$recordedRevisionPath; requested=$script:RevisionPath. Reconcile the recorded current Ledger; do not roll the round back to an older snapshot."
     }
 }
 [void](Assert-PathInRoundRoot $script:WorkflowPath "Workflow Ledger")
@@ -224,7 +229,13 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
         [void](Assert-OrdinaryPath $scopePath "Batch scope")
         [void](Assert-OrdinaryPath $supersededReceiptPath "Batch supersession receipt")
         $boundWorkflow = Get-FullPath ([string]$intent.workflow_ledger_file) $script:RoundPath
+        $boundRevision = if ($intent.revision_ledger_file) {
+            Get-FullPath ([string]$intent.revision_ledger_file) $script:RoundPath
+        } else {
+            $null
+        }
         [void](Assert-PathInRoundRoot $boundWorkflow "Batch-bound Workflow Ledger")
+        if ($boundRevision) { [void](Assert-PathInRoundRoot $boundRevision "Batch-bound RevisionLedger") }
         if (-not (Test-Path -LiteralPath $scopePath -PathType Leaf)) {
             if (Test-Path -LiteralPath $supersededReceiptPath -PathType Leaf) {
                 $supersededReceipt = Read-JsonFile $supersededReceiptPath "Prepared Batch Supersession Receipt"
@@ -265,10 +276,51 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
                     rolled_back_receipt = $null
                     recovered_receipt = $null
                     superseded_receipt = $supersededReceiptPath
+                    creation_receipt = $null
+                    creation_abandoned = $false
                     unresolved_intent_only = $false
                 }
                 if (-not $workflowPathsForSync.Contains($boundWorkflow)) { [void]$workflowPathsForSync.Add($boundWorkflow) }
                 continue
+            }
+            if ([string]$intent.batch_creation_protocol_version -eq "1.0") {
+                if (-not $boundRevision) {
+                    throw "Protocol-v1 intent-only batch has no bound RevisionLedger path: $($batchDir.FullName)"
+                }
+                [void](Assert-OrdinaryPath $boundWorkflow "Batch-bound Workflow Ledger")
+                [void](Assert-OrdinaryPath $boundRevision "Batch-bound RevisionLedger")
+                if (-not (Test-Path -LiteralPath $boundWorkflow -PathType Leaf)) {
+                    throw "Batch-bound Workflow Ledger is missing for intent-only batch: $boundWorkflow"
+                }
+                Invoke-CoReviewerCli @(
+                    "reconcile-batch-creation",
+                    "--workflow-ledger",$boundWorkflow,
+                    "--revision-ledger",$boundRevision,
+                    "--batch-dir",$batchDir.FullName
+                ) "reconcile intent-only batch creation $($intent.batch_id)"
+                $creationReceiptPath = Join-Path $batchDir.FullName "batch_creation_receipt.json"
+                $creationReceipt = Read-JsonFile $creationReceiptPath "Batch Creation Receipt"
+                if ([string]$creationReceipt.status -eq "abandoned_before_ledger_commit") {
+                    $batchTransactions += [pscustomobject]@{
+                        batch_id = [string]$intent.batch_id
+                        batch_directory = $batchDir.FullName
+                        selected_task_ids = $batchSelectedTaskIds
+                        patch_ids = @()
+                        workflow_ledger = $boundWorkflow
+                        revision_ledger = $boundRevision
+                        published_receipt = $null
+                        rolled_back_receipt = $null
+                        recovered_receipt = $null
+                        superseded_receipt = $null
+                        creation_receipt = $creationReceiptPath
+                        creation_abandoned = $true
+                        unpublished_stage = $null
+                        unresolved_intent_only = $false
+                    }
+                    if (-not $workflowPathsForSync.Contains($boundWorkflow)) { [void]$workflowPathsForSync.Add($boundWorkflow) }
+                    continue
+                }
+                throw "Intent-only batch unexpectedly reports a committed RevisionLedger without its immutable scope; manual investigation is required."
             }
             $remaining = @(Get-ChildItem -LiteralPath $batchDir.FullName -Force)
             $intentOnlyPayload = @($remaining | Where-Object { $_.Name -ne "batch_intent.json" })
@@ -285,6 +337,8 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
                     rolled_back_receipt = $null
                     recovered_receipt = $null
                     superseded_receipt = $null
+                    creation_receipt = $null
+                    creation_abandoned = $false
                     unresolved_intent_only = $true
                 }
                 if (-not $workflowPathsForSync.Contains($boundWorkflow)) { [void]$workflowPathsForSync.Add($boundWorkflow) }
@@ -295,7 +349,11 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
         $scope = Read-JsonFile $scopePath "Batch Scope"
         $batchPatchIds = @($scope.patch_ids)
         if (@($scope.selected_task_ids).Count -gt 0) { $batchSelectedTaskIds = @($scope.selected_task_ids) }
-        $boundRevision = Get-FullPath ([string]$scope.revision_ledger_file) $script:RoundPath
+        $scopeRevision = Get-FullPath ([string]$scope.revision_ledger_file) $script:RoundPath
+        if ($boundRevision -and [System.IO.Path]::GetFullPath($boundRevision) -ne [System.IO.Path]::GetFullPath($scopeRevision)) {
+            throw "Batch intent and scope refer to different RevisionLedger paths: intent=$boundRevision; scope=$scopeRevision"
+        }
+        $boundRevision = $scopeRevision
         [void](Assert-PathInRoundRoot $boundWorkflow "Batch-bound Workflow Ledger")
         [void](Assert-PathInRoundRoot $boundRevision "Batch-bound RevisionLedger")
         [void](Assert-OrdinaryPath $boundWorkflow "Batch-bound Workflow Ledger")
@@ -303,6 +361,37 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
         if (-not (Test-Path -LiteralPath $boundWorkflow -PathType Leaf) -or
             -not (Test-Path -LiteralPath $boundRevision -PathType Leaf)) {
             throw "Batch-bound Workflow/RevisionLedger is missing for $($batchDir.FullName)."
+        }
+        $creationReceiptPath = Join-Path $batchDir.FullName "batch_creation_receipt.json"
+        [void](Assert-OrdinaryPath $creationReceiptPath "Batch creation receipt")
+        if ([string]$intent.batch_creation_protocol_version -eq "1.0") {
+            Invoke-CoReviewerCli @(
+                "reconcile-batch-creation",
+                "--workflow-ledger",$boundWorkflow,
+                "--revision-ledger",$boundRevision,
+                "--batch-dir",$batchDir.FullName
+            ) "reconcile batch creation $($intent.batch_id)"
+            $creationReceipt = Read-JsonFile $creationReceiptPath "Batch Creation Receipt"
+            if ([string]$creationReceipt.status -eq "abandoned_before_ledger_commit") {
+                $batchTransactions += [pscustomobject]@{
+                    batch_id = [string]$intent.batch_id
+                    batch_directory = $batchDir.FullName
+                    selected_task_ids = $batchSelectedTaskIds
+                    patch_ids = $batchPatchIds
+                    workflow_ledger = $boundWorkflow
+                    revision_ledger = $boundRevision
+                    published_receipt = $null
+                    rolled_back_receipt = $null
+                    recovered_receipt = $null
+                    superseded_receipt = $null
+                    creation_receipt = $creationReceiptPath
+                    creation_abandoned = $true
+                    unpublished_stage = $null
+                    unresolved_intent_only = $false
+                }
+                if (-not $workflowPathsForSync.Contains($boundWorkflow)) { [void]$workflowPathsForSync.Add($boundWorkflow) }
+                continue
+            }
         }
         Recover-WorkflowSync -WorkflowFile $boundWorkflow -FallbackRevisionFile $boundRevision -Label "recover sync for batch $($intent.batch_id)"
         if (-not $workflowPathsForSync.Contains($boundWorkflow)) { [void]$workflowPathsForSync.Add($boundWorkflow) }
@@ -347,6 +436,8 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
         $rolledBackReceiptValue = $null
         $recoveredReceiptValue = $null
         $supersededReceiptValue = $null
+        $creationReceiptValue = $null
+        if (Test-Path -LiteralPath $creationReceiptPath -PathType Leaf) { $creationReceiptValue = $creationReceiptPath }
         $unpublishedStage = "prepared_or_unpublished"
         if (Test-Path -LiteralPath (Join-Path $batchDir.FullName "verification_report.json") -PathType Leaf) {
             $unpublishedStage = "verified_unpublished"
@@ -370,6 +461,8 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
             rolled_back_receipt = $rolledBackReceiptValue
             recovered_receipt = $recoveredReceiptValue
             superseded_receipt = $supersededReceiptValue
+            creation_receipt = $creationReceiptValue
+            creation_abandoned = $false
             unpublished_stage = $unpublishedStage
             unresolved_intent_only = $false
         }
@@ -561,17 +654,21 @@ foreach ($transaction in $batchTransactions) {
     $rolledBackReceiptSha = $null
     $recoveredReceiptSha = $null
     $supersededReceiptSha = $null
+    $creationReceiptSha = $null
     if ($transaction.published_receipt) { $publishedReceiptSha = Get-Sha256 $transaction.published_receipt }
     if ($transaction.rolled_back_receipt) { $rolledBackReceiptSha = Get-Sha256 $transaction.rolled_back_receipt }
     if ($transaction.recovered_receipt) { $recoveredReceiptSha = Get-Sha256 $transaction.recovered_receipt }
     if ($transaction.superseded_receipt) { $supersededReceiptSha = Get-Sha256 $transaction.superseded_receipt }
+    if ($transaction.creation_receipt) { $creationReceiptSha = Get-Sha256 $transaction.creation_receipt }
     $transactionStatus = "prepared_or_unpublished"
     if ($transaction.recovered_receipt) { $transactionStatus = "recovered" }
     if ($transaction.published_receipt) { $transactionStatus = "published" }
     if ($transaction.rolled_back_receipt) { $transactionStatus = "rolled_back" }
     if ($transaction.superseded_receipt) { $transactionStatus = "superseded_prepared" }
+    if ($transaction.creation_abandoned) { $transactionStatus = "creation_abandoned" }
     if ($transaction.unresolved_intent_only) { $transactionStatus = "intent_only_recovery_required" }
-    $hasTerminalReceipt = $transaction.published_receipt -or
+    $hasTerminalReceipt = $transaction.creation_abandoned -or
+        $transaction.published_receipt -or
         $transaction.rolled_back_receipt -or
         $transaction.recovered_receipt -or
         $transaction.superseded_receipt
@@ -594,6 +691,9 @@ foreach ($transaction in $batchTransactions) {
         recovered_receipt_sha256 = $recoveredReceiptSha
         superseded_receipt = $transaction.superseded_receipt
         superseded_receipt_sha256 = $supersededReceiptSha
+        batch_creation_receipt = $transaction.creation_receipt
+        batch_creation_receipt_sha256 = $creationReceiptSha
+        creation_abandoned = [bool]$transaction.creation_abandoned
         unresolved_intent_only = $transaction.unresolved_intent_only
         unpublished_stage = $transaction.unpublished_stage
         transaction_status = $transactionStatus

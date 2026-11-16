@@ -334,6 +334,65 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             {unit.comment_id: unit.linked_operation_ids for unit in saved.response_units},
             {"C2": ["OP-2"], "C3": ["OP-2"]},
         )
+        batch_directories = sorted((self.root / "runs").glob("batch-*"))
+        self.assertEqual(len(batch_directories), 1)
+        first_batch = batch_directories[0]
+        first_receipt_path = first_batch / "batch_creation_receipt.json"
+        first_intent = json.loads((first_batch / "batch_intent.json").read_text(encoding="utf-8"))
+        first_receipt = json.loads(first_receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(first_receipt["status"], "committed")
+        self.assertEqual(first_receipt["revision_ledger_sha256_after"], sha256_file(self.ledger_path))
+        self.assertEqual(first_intent["batch_creation_protocol_version"], "1.0")
+
+        # Recover the narrow crash window after the RevisionLedger replace but
+        # before the immutable batch-creation receipt was written.
+        first_receipt_path.unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_reconcile_batch_creation(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(self.ledger_path),
+                batch_dir=str(first_batch),
+            )), 0)
+        committed_receipt = json.loads(first_receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(committed_receipt["status"], "committed")
+
+        # Model interruption after the immutable intent but before scope
+        # creation or the RevisionLedger replacement. The reconciler may abandon
+        # only because the exact before-hash remains and no execution artifacts exist.
+        self.ledger_path.unlink()
+        first_receipt_path.unlink()
+        (first_batch / "batch_scope.json").unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_reconcile_batch_creation(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(self.ledger_path),
+                batch_dir=str(first_batch),
+            )), 0)
+        abandoned_receipt = json.loads(first_receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(abandoned_receipt["status"], "abandoned_before_ledger_commit")
+        self.assertFalse(self.ledger_path.exists())
+
+        # The abandoned, never-committed batch no longer reserves the role;
+        # the same still-ready task set can be safely rebuilt with a new ID.
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_build_revision_ledger(Namespace(
+                workflow_ledger=str(workflow_path),
+                document_paths=None,
+                reviewer_comments=None,
+                reviewer_map=str(reviewer_map_path),
+                out=str(self.ledger_path),
+            )), 0)
+        rebuilt_batches = sorted((self.root / "runs").glob("batch-*"))
+        self.assertEqual(len(rebuilt_batches), 2)
+        second_batch = next(path for path in rebuilt_batches if path != first_batch)
+        second_receipt = json.loads(
+            (second_batch / "batch_creation_receipt.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(second_receipt["status"], "committed")
+        rebuilt = revision_ledger_from_mapping(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        )
+        self.assertEqual([patch.status for patch in rebuilt.patches], ["planned"])
 
     def test_preflight_and_approval_parsers_accept_revision_ledger(self):
         parser = cli.build_parser()

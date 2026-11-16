@@ -17,6 +17,7 @@ from .batch_store import (
     _validate_recovered_batch_receipt,
     load_active_document_pointers,
     read_batch_intent,
+    validate_batch_creation_receipt,
 )
 from .docx_quality import audit_docx_quality
 from .identity import sha256_file
@@ -691,6 +692,24 @@ def _collect_release_batch_history(
 
         intent_sha = sha256_file(intent_path)
         scope_sha = sha256_file(scope_path)
+        creation_receipt_path = batch_dir / "batch_creation_receipt.json"
+        creation_receipt_record = None
+        if intent_payload.get("batch_creation_protocol_version") == "1.0":
+            if not creation_receipt_path.is_file():
+                raise ReleaseGateError(
+                    f"Published batch {batch_id} is missing its immutable creation receipt: {creation_receipt_path}."
+                )
+            try:
+                creation_receipt = validate_batch_creation_receipt(batch_dir, intent_payload)
+            except Exception as exc:
+                raise ReleaseGateError(
+                    f"Published batch {batch_id} has an invalid batch-creation receipt: {exc}"
+                ) from exc
+            if creation_receipt.get("status") != "committed":
+                raise ReleaseGateError(
+                    f"Published batch {batch_id} was not committed by its immutable batch-creation transaction."
+                )
+            creation_receipt_record = _sha_record(creation_receipt_path)
         expected_round = revision_ledger.revision_round_id
         all_task_ids = intent_payload.get("all_selected_task_ids", intent_payload.get("selected_task_ids"))
         if (
@@ -764,6 +783,7 @@ def _collect_release_batch_history(
             "scope": _sha_record(scope_path),
             "publish_intent": _sha_record(publish_intent_path),
             "publish_receipt": _sha_record(publish_receipt_path),
+            "creation_receipt": creation_receipt_record,
             "parent_documents": parent_documents,
             "selected_task_ids": list(intent_payload.get("selected_task_ids", [])),
             "all_selected_task_ids": list(all_task_ids),
@@ -1018,6 +1038,19 @@ def _collect_recovered_batch_history(
                 revision_events=revision_ledger.events,
             )
             scope_payload = json.loads(scope_path.read_text(encoding="utf-8"))
+            creation_receipt_record = None
+            if intent.get("batch_creation_protocol_version") == "1.0":
+                creation_receipt_path = batch_dir / "batch_creation_receipt.json"
+                if not creation_receipt_path.is_file():
+                    raise ReleaseGateError(
+                        f"Recovered batch {batch_id} is missing its immutable creation receipt: {creation_receipt_path}."
+                    )
+                creation_receipt = validate_batch_creation_receipt(batch_dir, intent)
+                if creation_receipt.get("status") != "committed":
+                    raise ReleaseGateError(
+                        f"Recovered batch {batch_id} was not committed by its immutable batch-creation transaction."
+                    )
+                creation_receipt_record = _sha_record(creation_receipt_path)
         except Exception as exc:
             raise ReleaseGateError(f"Recovered batch {batch_id} failed receipt validation: {exc}") from exc
         selected_task_ids = recovery_intent.get("selected_task_ids")
@@ -1113,6 +1146,7 @@ def _collect_recovered_batch_history(
             "directory": str(batch_dir),
             "intent": _sha_record(batch_dir / "batch_intent.json"),
             "scope": _sha_record(scope_path),
+            "creation_receipt": creation_receipt_record,
             "recovery_intent": _sha_record(recovery_intent_path),
             "recovery_receipt": _sha_record(recovery_receipt_path),
             "recovery_id": receipt["recovery_id"],
@@ -1618,6 +1652,7 @@ def build_final_release_manifest(
         "checks": {
             "all_published_batch_history_valid": True,
             "all_recovered_batch_history_valid": True,
+            "all_protocol_v1_batch_creation_receipts_valid": True,
             "all_active_patches_verified": True,
             "all_response_units_completed": True,
             "active_pointers_match_marked_docx": True,

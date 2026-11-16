@@ -36,6 +36,26 @@
     "workflow_ledger_sha256_at_prepare": {
       "$ref": "#/$defs/sha256"
     },
+    "batch_creation_protocol_version": {
+      "const": "1.0"
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_sha256_before": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revision_ledger_sha256_after": {
+      "$ref": "#/$defs/sha256"
+    },
     "created_at_utc": {
       "type": "string",
       "format": "date-time"
@@ -101,6 +121,25 @@
             "type": "string"
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_creation_protocol_version": {
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "batch_creation_protocol_version"
+        ]
+      },
+      "then": {
+        "required": [
+          "revision_ledger_file",
+          "revision_ledger_sha256_before",
+          "revision_ledger_sha256_after"
+        ]
       }
     }
   ],

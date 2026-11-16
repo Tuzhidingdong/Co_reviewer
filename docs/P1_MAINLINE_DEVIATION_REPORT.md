@@ -39,6 +39,14 @@ The subsequent source-only review found and corrected a further refresh/decision
 The round reconciler now fails closed when a batch directory contains artifacts without its immutable intent, when retained batch history points to a missing directory, or when historical Workflow sync transaction directories/receipts disappear or remain incomplete. Historical syncs from superseded prepared Workflow Ledger files are still scanned and verified. This increment is also **not tested**.
 The lower-level `prepare-workflow-execution` CLI now binds the input inventory to the exact starter/latest-refresh artifact hash, verifies that the input Workflow Ledger is the current manifest path/hash, and registers the newly prepared Workflow Ledger/Reviewer Map/report paths and hashes back into the root round manifest. The Decision Plan validator performs the corresponding registration for a newly generated base Workflow Ledger and requires a root-manifest write-back path when its source binding is a dedicated refresh manifest. The PowerShell batch entry point supplies the same root manifest. These changes are implementation-only and were not tested.
 
+## Additional source-audit closure — batch creation commit marker and RevisionLedger identity
+
+The pre-freeze source review found a crash window between writing an immutable batch intent/scope and committing the associated RevisionLedger. That window could leave a batch directory reserving a document role even though its scoped Patch records had never reached the Ledger. The batch-creation protocol now records exact before/after Ledger hashes and uses a final immutable creation receipt. Reconciliation can distinguish a committed Ledger from a safely abandoned pre-commit batch; ambiguous hashes, altered parent pointers, existing Patch IDs or execution artifacts block automatic recovery. Plan export, publication and failed-batch recovery require the committed marker, while the scheduler blocks missing markers until reconciliation.
+
+The same review found that the round reconciler enforced current Workflow Ledger path identity but not current RevisionLedger path identity. The round manifest's `current_revision_ledger` is now preferred consistently by Reconcile, Refresh and the batch entry point; Reconcile rejects an explicit older Ledger path. Regression coverage was added to the deferred suite. **This increment has not been tested** and remains subject to the single unified acceptance cycle below.
+
+The new protocol is reflected in the strict batch-intent schema through conditional required fields, and a dedicated batch-creation-receipt schema defines both the committed and pre-commit-abandoned variants. Schema contract coverage exercises both variants and confirms that legacy batch intents without protocol-v1 fields remain valid. The final-release-manifest schema and generated Manifest also remain synchronized.
+
 ## Audit against the PR's declared P1 scope
 
 | PR requirement | Finding | Status |
@@ -99,3 +107,6 @@ The remaining acceptance gates, to be executed together after the development fr
 ## Verdict
 
 The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviation is the material but purposeful Word/PDF mapper adaptation. Automated validation has passed locally; acceptance remains conditional on the outstanding Word GUI/COM and real-workflow gates.
+
+
+The final Release Manifest now independently validates the immutable batch-creation receipt for every protocol-v1 published or recovered batch, records its file hash, and exposes an explicit `all_protocol_v1_batch_creation_receipts_valid` check. The strict `final-release-manifest.schema.json` was updated in lockstep, including nullable fields for legacy pre-protocol batches. This is source implementation only; the unified test/acceptance cycle remains pending.

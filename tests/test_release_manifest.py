@@ -908,6 +908,10 @@ class ReleaseManifestGateTests(unittest.TestCase):
             revision_ledger_path=self.revision_path,
             workflow_ledger_path=self.workflow_path,
         )
+        # Legacy batches remain schema-compatible; protocol-v1 batches carry
+        # a hash-bound creation receipt in this nullable manifest field.
+        self.assertTrue(all("creation_receipt" in row for row in records))
+        self.assertTrue(all(row["creation_receipt"] is None for row in records))
         self.assertEqual(
             [row["batch_id"] for row in records],
             ["batch-old-001", "batch-current-002", "batch-next-003"],
@@ -1183,6 +1187,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.assertEqual(manifest["deterministic_consistency_audit"]["status"], "PASS")
         self.assertEqual(manifest["response_units"][0]["location_methods"], [])
         self.assertTrue(manifest["checks"]["response_letter_contains_verified_patch_excerpts"])
+        self.assertTrue(manifest["checks"]["all_protocol_v1_batch_creation_receipts_valid"])
 
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "final-release-manifest.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))

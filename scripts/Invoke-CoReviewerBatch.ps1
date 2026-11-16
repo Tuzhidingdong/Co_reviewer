@@ -301,7 +301,15 @@ $hasInventory = -not [string]::IsNullOrWhiteSpace($Inventory)
 if ($hasScope -ne $hasInventory) { throw "ExecutionScope and Inventory must be supplied together." }
 
 $currentWorkflow = $workflowInput
-$revisionPath = if ($RevisionLedger) { Get-FullPath $RevisionLedger $script:RoundPath } else { Join-Path $script:RoundPath "plan\revision_ledger.json" }
+$revisionPath = if ($RevisionLedger) {
+    Get-FullPath $RevisionLedger $script:RoundPath
+} elseif ($script:RoundManifest.current_revision_ledger) {
+    Get-FullPath ([string]$script:RoundManifest.current_revision_ledger) $script:RoundPath
+} elseif ($script:RoundManifest.revision_ledger) {
+    Get-FullPath ([string]$script:RoundManifest.revision_ledger) $script:RoundPath
+} else {
+    Join-Path $script:RoundPath "plan\revision_ledger.json"
+}
 $runsPath = if ($RunsDirectory) { Get-FullPath $RunsDirectory $script:RoundPath } else { Join-Path $script:RoundPath "runs" }
 [void](Assert-PathInRoundRoot $revisionPath "RevisionLedger")
 [void](Assert-PathInRoundRoot $runsPath "RunsDirectory")

@@ -129,7 +129,10 @@ else {
 }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $cliPath = Join-Path $repoRoot "scripts/co_reviewer_cli.py"
-$revisionLedgerForRecovery = if ($roundManifest.revision_ledger) {
+$revisionLedgerForRecovery = if ($roundManifest.current_revision_ledger) {
+    $candidate = [string]$roundManifest.current_revision_ledger
+    if ([System.IO.Path]::IsPathRooted($candidate)) { $candidate } else { Join-Path $roundPath $candidate }
+} elseif ($roundManifest.revision_ledger) {
     $candidate = [string]$roundManifest.revision_ledger
     if ([System.IO.Path]::IsPathRooted($candidate)) { $candidate } else { Join-Path $roundPath $candidate }
 } else {

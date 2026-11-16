@@ -11,6 +11,80 @@ SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 
 
 class JsonSchemaContractTests(unittest.TestCase):
+    def test_batch_creation_protocol_intent_and_receipt_contracts(self):
+        intent_schema = json.loads((SCHEMA_DIR / "batch-intent.schema.json").read_text(encoding="utf-8"))
+        receipt_schema = json.loads((SCHEMA_DIR / "batch-creation-receipt.schema.json").read_text(encoding="utf-8"))
+        intent = {
+            "schema_version": "1.0",
+            "batch_id": "batch-test-001",
+            "revision_round_id": "round-schema-tests",
+            "workflow_ledger_file": "/round/workflow_ledger.json",
+            "workflow_ledger_sha256_at_prepare": "a" * 64,
+            "batch_creation_protocol_version": "1.0",
+            "revision_ledger_file": "/round/revision_ledger.json",
+            "revision_ledger_sha256_before": None,
+            "revision_ledger_sha256_after": "b" * 64,
+            "created_at_utc": "2026-11-16T00:00:00+00:00",
+            "selected_task_ids": ["T1"],
+            "all_selected_task_ids": ["T1"],
+            "status": "prepared",
+            "documents": {
+                "Manuscript": {
+                    "parent_file": "/round/source.docx",
+                    "parent_sha256": "c" * 64,
+                    "parent_batch_id": None,
+                    "output_file": "/round/runs/batch-test-001/documents/Manuscript.marked.docx"
+                }
+            },
+            "policy": {
+                "append_only": True,
+                "overwrite_committed_outputs": False,
+                "rollback_deletes_files": False,
+                "publish_mode": "single_workflow_ledger_active_documents_replace"
+            }
+        }
+        intent_validator = validator_for(intent_schema)(intent_schema)
+        intent_validator.validate(intent)
+        legacy_intent = dict(intent)
+        for field in (
+            "batch_creation_protocol_version",
+            "revision_ledger_file",
+            "revision_ledger_sha256_before",
+            "revision_ledger_sha256_after"
+        ):
+            legacy_intent.pop(field)
+        intent_validator.validate(legacy_intent)
+
+        common = {
+            "schema_version": "1.0",
+            "batch_id": "batch-test-001",
+            "created_at_utc": "2026-11-16T00:00:00+00:00",
+            "revision_ledger_file": "/round/revision_ledger.json",
+            "revision_ledger_sha256_before": None,
+            "revision_ledger_sha256_after": "b" * 64,
+            "batch_intent_sha256": "d" * 64,
+            "active_parent_pointers_unchanged": True,
+            "execution_artifacts_present": False,
+            "retained_batch_files": True
+        }
+        committed = {
+            **common,
+            "status": "committed",
+            "batch_scope_sha256": "e" * 64,
+            "revision_ledger_committed": True,
+            "no_patch_records_committed": False
+        }
+        abandoned = {
+            **common,
+            "status": "abandoned_before_ledger_commit",
+            "batch_scope_sha256": None,
+            "revision_ledger_committed": False,
+            "no_patch_records_committed": True
+        }
+        receipt_validator = validator_for(receipt_schema)(receipt_schema)
+        receipt_validator.validate(committed)
+        receipt_validator.validate(abandoned)
+
     def test_every_repository_schema_passes_its_declared_meta_schema(self):
         schema_paths = sorted(SCHEMA_DIR.glob("*.schema.json"))
         self.assertTrue(schema_paths, "No JSON Schema files were found.")

@@ -2846,6 +2846,12 @@ def cmd_build_revision_ledger(args):
             allow_scope_refresh_for_task_ids=sorted(changed_scope_tasks),
         )
         ledger = existing_ledger
+    revision_payload = ledger.to_dict()
+    revision_before_sha = sha256_file(output_path) if output_path.is_file() else None
+    revision_payload_text = json.dumps(revision_payload, ensure_ascii=False, indent=2)
+    revision_after_sha = hashlib.sha256(
+        revision_payload_text.replace("\n", os.linesep).encode("utf-8")
+    ).hexdigest()
     if selected_roles:
         from co_reviewer.batch_store import create_batch_intent
         batch_intent = create_batch_intent(
@@ -2856,6 +2862,9 @@ def cmd_build_revision_ledger(args):
             all_selected_task_ids=selected_task_ids,
             runs_dir=str(runs_root),
             batch_id=batch_id_for_intent,
+            creation_revision_ledger_file=output_path,
+            creation_revision_ledger_sha256_before=revision_before_sha,
+            creation_revision_ledger_sha256_after=revision_after_sha,
         )
         for role, record in batch_intent["documents"].items():
             expected = batch_document_paths[role]
@@ -2899,8 +2908,44 @@ def cmd_build_revision_ledger(args):
                 for role, record in batch_intent["documents"].items()
             },
         }
-        write_json_new(Path(batch_intent["batch_dir"]) / "batch_scope.json", scope)
-    write_json_atomic(output_path, ledger.to_dict())
+        if not scope["patch_ids"]:
+            raise ValueError(
+                "A document-changing batch has no Patch IDs bound to its immutable output paths; "
+                "the intent-only directory is retained and no RevisionLedger update was committed."
+            )
+        scope_path = Path(batch_intent["batch_dir"]) / "batch_scope.json"
+        scope_sha = write_json_new(scope_path, scope)
+        current_revision_before_commit = sha256_file(output_path) if output_path.is_file() else None
+        if current_revision_before_commit != revision_before_sha:
+            raise ValueError(
+                "RevisionLedger changed after batch creation was staged; neither the batch nor the new Ledger snapshot was committed."
+            )
+        write_json_atomic(output_path, revision_payload)
+        committed_revision_sha = sha256_file(output_path)
+        if committed_revision_sha != revision_after_sha:
+            raise ValueError(
+                "RevisionLedger write did not match the staged batch-creation after-image; preserve the batch and inspect both snapshots."
+            )
+        from co_reviewer.batch_store import write_json_new
+        creation_receipt = {
+            "schema_version": "1.0",
+            "status": "committed",
+            "batch_id": batch_intent["batch_id"],
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "revision_ledger_file": str(output_path),
+            "revision_ledger_sha256_before": revision_before_sha,
+            "revision_ledger_sha256_after": committed_revision_sha,
+            "batch_intent_sha256": sha256_file(Path(batch_intent["batch_dir"]) / "batch_intent.json"),
+            "batch_scope_sha256": scope_sha,
+            "revision_ledger_committed": True,
+            "no_patch_records_committed": False,
+            "active_parent_pointers_unchanged": True,
+            "execution_artifacts_present": False,
+            "retained_batch_files": True,
+        }
+        write_json_new(Path(batch_intent["batch_dir"]) / "batch_creation_receipt.json", creation_receipt)
+    else:
+        write_json_atomic(output_path, revision_payload)
     print(f"[BATCH] Selected ready task(s): {', '.join(selected_task_ids)}")
     if batch_intent is not None:
         print(f"[IMMUTABLE BATCH] {batch_intent['batch_id']}")
@@ -3625,8 +3670,12 @@ def cmd_export_revision_plan(args):
     ledger = _load_revision_ledger(ledger_path)
     batch_dir = _resolve_batch_dir_argument(args.batch_dir) if getattr(args, "batch_dir", None) else None
     if batch_dir is not None:
-        from co_reviewer.batch_store import read_batch_intent
+        from co_reviewer.batch_store import read_batch_intent, validate_batch_creation_receipt
         intent = read_batch_intent(batch_dir)
+        if intent.get("batch_creation_protocol_version") == "1.0":
+            receipt = validate_batch_creation_receipt(batch_dir, intent)
+            if receipt.get("status") != "committed":
+                raise ValueError("Cannot export a revision plan from a batch abandoned before its RevisionLedger commit.")
         scope_ledger_roles = {
             operation.document
             for patch in ledger.patches
@@ -4031,6 +4080,217 @@ def cmd_status(args):
         print(f"- {item['id']} | {item['reviewer']} | {item['status']} | {targets} target(s)")
     return 0
 
+def cmd_reconcile_batch_creation(args):
+    """Seal or safely abandon an interrupted pre-Apply batch-creation transaction."""
+    from co_reviewer.batch_store import (
+        load_active_document_pointers,
+        read_batch_intent,
+        validate_batch_creation_receipt,
+        write_json_new,
+    )
+
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    intent = read_batch_intent(batch_dir)
+    if intent.get("batch_creation_protocol_version") != "1.0":
+        print("[LEGACY BATCH] No creation-transaction reconciliation is required.")
+        return 0
+    if Path(str(intent.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_path:
+        raise ValueError("Batch creation intent belongs to a different Workflow Ledger.")
+    if Path(str(intent.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
+        raise ValueError("Batch creation intent belongs to a different RevisionLedger.")
+    receipt_path = batch_dir / "batch_creation_receipt.json"
+    if receipt_path.is_file():
+        receipt = validate_batch_creation_receipt(batch_dir, intent)
+        print(f"[BATCH CREATION ALREADY RECONCILED] {intent['batch_id']} | {receipt['status']}")
+        return 0
+    if workflow_path.is_symlink() or revision_path.is_symlink():
+        raise ValueError("Batch creation reconciliation refuses symlinked Ledger paths.")
+    if not workflow_path.is_file():
+        raise ValueError(f"Batch creation Workflow Ledger is missing: {workflow_path}")
+    workflow_sha = sha256_file(workflow_path)
+    if workflow_sha != intent.get("workflow_ledger_sha256_at_prepare"):
+        raise ValueError("Workflow Ledger changed before the batch-creation receipt was committed; manual reconciliation is required.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    from co_reviewer.workflow_engine import validate_workflow_ledger
+    workflow_errors = validate_workflow_ledger(workflow)
+    if workflow_errors:
+        raise ValueError("Batch creation Workflow Ledger is invalid: " + "; ".join(workflow_errors))
+    if workflow.get("revision_round_id") != intent.get("revision_round_id"):
+        raise ValueError("Batch creation Workflow Ledger belongs to a different review round.")
+    active_pointers = load_active_document_pointers(workflow)
+    for role, record in intent["documents"].items():
+        pointer = active_pointers.get(role)
+        parent_path = Path(record["parent_file"]).expanduser().resolve()
+        if (
+            pointer is None
+            or pointer.get("file") != str(parent_path)
+            or pointer.get("sha256") != record["parent_sha256"]
+            or pointer.get("batch_id") != record.get("parent_batch_id")
+            or not parent_path.is_file()
+            or sha256_file(parent_path) != record["parent_sha256"]
+        ):
+            raise ValueError(f"Batch creation parent pointer/hash changed for document role {role}.")
+    before_sha = intent.get("revision_ledger_sha256_before")
+    after_sha = intent.get("revision_ledger_sha256_after")
+    current_sha = sha256_file(revision_path) if revision_path.is_file() else None
+    scope_path = batch_dir / "batch_scope.json"
+    scope_exists = scope_path.is_file()
+    if not scope_exists:
+        if current_sha != before_sha:
+            raise ValueError(
+                "Intent-only batch has no scope and its RevisionLedger is not the exact pre-commit image; "
+                "preserve it for manual investigation."
+            )
+        if revision_path.is_file():
+            prior_ledger = _load_revision_ledger(revision_path)
+            prior_ledger.validate_or_raise()
+            if prior_ledger.revision_round_id != intent.get("revision_round_id"):
+                raise ValueError("Pre-commit RevisionLedger belongs to a different review round.")
+        allowed_names = {"batch_intent.json", "documents"}
+        unexpected = [entry.name for entry in batch_dir.iterdir() if entry.name not in allowed_names]
+        document_root = batch_dir / "documents"
+        document_files = [path for path in document_root.rglob("*") if path.is_file()]
+        if unexpected or document_files or document_root.is_symlink():
+            raise ValueError(
+                "Intent-only batch has execution artifacts or unexpected files; refusing automatic abandonment."
+            )
+        receipt = {
+            "schema_version": "1.0",
+            "status": "abandoned_before_ledger_commit",
+            "batch_id": intent["batch_id"],
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "revision_ledger_file": str(revision_path),
+            "revision_ledger_sha256_before": before_sha,
+            "revision_ledger_sha256_after": after_sha,
+            "batch_intent_sha256": sha256_file(batch_dir / "batch_intent.json"),
+            "batch_scope_sha256": None,
+            "revision_ledger_committed": False,
+            "no_patch_records_committed": True,
+            "active_parent_pointers_unchanged": True,
+            "execution_artifacts_present": False,
+            "retained_batch_files": True,
+        }
+        write_json_new(receipt_path, receipt)
+        print(f"[BATCH CREATION RECONCILED] {intent['batch_id']} | abandoned_before_ledger_commit (intent-only)")
+        print(f"[RECEIPT] {receipt_path}")
+        return 0
+
+    try:
+        scope = json.loads(scope_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read batch creation scope: {exc}") from exc
+    if not isinstance(scope, Mapping):
+        raise ValueError("Batch creation scope must be a JSON object.")
+    intent_sha = sha256_file(batch_dir / "batch_intent.json")
+    scope_sha = sha256_file(scope_path)
+    patch_ids = scope.get("patch_ids")
+    selected_task_ids = scope.get("selected_task_ids")
+    batch_task_ids = scope.get("batch_task_ids")
+    if (
+        scope.get("batch_id") != intent.get("batch_id")
+        or scope.get("batch_intent_sha256") != intent_sha
+        or Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path
+        or scope.get("revision_round_id") != intent.get("revision_round_id")
+        or not isinstance(patch_ids, list) or not patch_ids
+        or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
+        or len(patch_ids) != len(set(patch_ids))
+        or not isinstance(selected_task_ids, list)
+        or selected_task_ids != intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+        or not isinstance(batch_task_ids, list)
+        or batch_task_ids != intent.get("selected_task_ids")
+        or not isinstance(scope.get("documents"), Mapping)
+        or set(scope["documents"]) != set(intent.get("documents", {}))
+    ):
+        raise ValueError("Batch creation scope does not match its immutable intent.")
+    for role, record in intent["documents"].items():
+        scope_record = scope["documents"].get(role)
+        if (
+            not isinstance(scope_record, Mapping)
+            or Path(str(scope_record.get("input_file", ""))).expanduser().resolve()
+                != Path(record["parent_file"]).expanduser().resolve()
+            or scope_record.get("input_sha256") != record["parent_sha256"]
+            or Path(str(scope_record.get("output_file", ""))).expanduser().resolve()
+                != Path(record["output_file"]).expanduser().resolve()
+        ):
+            raise ValueError(f"Batch creation scope document path/hash differs for role {role}.")
+    if current_sha == after_sha:
+        ledger = _load_revision_ledger(revision_path)
+        ledger.validate_or_raise()
+        if ledger.revision_round_id != intent.get("revision_round_id"):
+            raise ValueError("Committed batch-creation RevisionLedger belongs to a different review round.")
+        if ledger.workflow_ledger_fingerprint != canonical_fingerprint(workflow):
+            raise ValueError("Committed batch-creation RevisionLedger is not bound to the exact Workflow Ledger snapshot.")
+        patch_by_id = {patch.patch_id: patch for patch in ledger.patches}
+        missing_patch_ids = sorted(set(patch_ids) - set(patch_by_id))
+        if missing_patch_ids:
+            raise ValueError("Committed RevisionLedger is missing scoped Patch(es): " + ", ".join(missing_patch_ids))
+        for patch_id in patch_ids:
+            patch = patch_by_id[patch_id]
+            if patch.status != "planned" or patch.task_id not in set(batch_task_ids):
+                raise ValueError(f"Committed batch Patch {patch_id} is not a planned Patch in the declared task scope.")
+            for operation in patch.operations:
+                role_record = intent["documents"].get(operation.document)
+                if (
+                    not isinstance(role_record, Mapping)
+                    or Path(operation.input_file).expanduser().resolve()
+                        != Path(role_record["parent_file"]).expanduser().resolve()
+                    or Path(operation.output_file).expanduser().resolve()
+                        != Path(role_record["output_file"]).expanduser().resolve()
+                    or operation.source_sha256 not in {None, role_record["parent_sha256"]}
+                ):
+                    raise ValueError(f"Committed Patch {patch_id} operation does not match its immutable batch paths/hashes.")
+        allowed_names = {"batch_intent.json", "batch_scope.json", "documents"}
+        unexpected = [entry.name for entry in batch_dir.iterdir() if entry.name not in allowed_names]
+        document_root = batch_dir / "documents"
+        document_files = [path for path in document_root.rglob("*") if path.is_file()]
+        if unexpected or document_files or document_root.is_symlink():
+            raise ValueError("Execution artifacts exist before the batch-creation receipt; refusing to seal it.")
+        status = "committed"
+    elif current_sha == before_sha:
+        if revision_path.is_file():
+            prior_ledger = _load_revision_ledger(revision_path)
+            prior_ledger.validate_or_raise()
+            existing_ids = {patch.patch_id for patch in prior_ledger.patches}
+            overlap = sorted(set(patch_ids).intersection(existing_ids))
+            if overlap:
+                raise ValueError("Pre-commit RevisionLedger already contains scoped Patch IDs: " + ", ".join(overlap))
+        allowed_names = {"batch_intent.json", "batch_scope.json", "documents"}
+        unexpected = [entry.name for entry in batch_dir.iterdir() if entry.name not in allowed_names]
+        document_root = batch_dir / "documents"
+        document_files = [path for path in document_root.rglob("*") if path.is_file()]
+        if unexpected or document_files or document_root.is_symlink():
+            raise ValueError(
+                "RevisionLedger is still at its pre-commit hash but execution artifacts exist; refusing automatic abandonment."
+            )
+        status = "abandoned_before_ledger_commit"
+    else:
+        raise ValueError(
+            "RevisionLedger matches neither the immutable batch-creation before-image nor after-image; preserve both and investigate."
+        )
+    receipt = {
+        "schema_version": "1.0",
+        "status": status,
+        "batch_id": intent["batch_id"],
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256_before": before_sha,
+        "revision_ledger_sha256_after": after_sha,
+        "batch_intent_sha256": intent_sha,
+        "batch_scope_sha256": scope_sha,
+        "revision_ledger_committed": status == "committed",
+        "no_patch_records_committed": status == "abandoned_before_ledger_commit",
+        "active_parent_pointers_unchanged": True,
+        "execution_artifacts_present": False,
+        "retained_batch_files": True,
+    }
+    write_json_new(receipt_path, receipt)
+    print(f"[BATCH CREATION RECONCILED] {intent['batch_id']} | {status}")
+    print(f"[RECEIPT] {receipt_path}")
+    return 0
+
+
 def cmd_recover_failed_batch(args):
     """Recover an unpublished partial Apply without moving active document pointers."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
@@ -4038,6 +4298,15 @@ def cmd_recover_failed_batch(args):
     batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    from co_reviewer.batch_store import read_batch_intent, validate_batch_creation_receipt
+    batch_intent = read_batch_intent(batch_dir)
+    if batch_intent.get("batch_creation_protocol_version") == "1.0":
+        creation_receipt_path = batch_dir / "batch_creation_receipt.json"
+        if not creation_receipt_path.is_file():
+            raise ValueError("Batch creation is not reconciled; run round reconciliation before failed-batch recovery.")
+        creation_receipt = validate_batch_creation_receipt(batch_dir, batch_intent)
+        if creation_receipt.get("status") != "committed":
+            raise ValueError("A batch abandoned before its RevisionLedger commit cannot enter failed-Apply recovery.")
     workflow_sha_at_load = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     if sha256_file(workflow_path) != workflow_sha_at_load:
@@ -4174,6 +4443,14 @@ def cmd_publish_batch(args):
     batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    from co_reviewer.batch_store import read_batch_intent, validate_batch_creation_receipt
+    candidate_intent = read_batch_intent(batch_dir)
+    if candidate_intent.get("batch_creation_protocol_version") == "1.0":
+        if not (batch_dir / "batch_creation_receipt.json").is_file():
+            raise ValueError("Batch creation is not reconciled; run round reconciliation before publication.")
+        creation_receipt = validate_batch_creation_receipt(batch_dir, candidate_intent)
+        if creation_receipt.get("status") != "committed":
+            raise ValueError("A batch abandoned before its RevisionLedger commit cannot be published.")
     if (batch_dir / "batch_published.json").exists():
         from co_reviewer.batch_store import (
             _validate_committed_batch_publication,
@@ -4349,6 +4626,15 @@ def cmd_rollback_batch(args):
     batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if not (batch_dir / "batch_published.json").is_file():
         raise ValueError("Only a batch with a committed batch_published.json receipt can be rolled back.")
+    from co_reviewer.batch_store import read_batch_intent, validate_batch_creation_receipt
+    rollback_intent = read_batch_intent(batch_dir)
+    if rollback_intent.get("batch_creation_protocol_version") == "1.0":
+        creation_receipt_path = batch_dir / "batch_creation_receipt.json"
+        if not creation_receipt_path.is_file():
+            raise ValueError("Batch creation is not reconciled; run round reconciliation before rollback.")
+        creation_receipt = validate_batch_creation_receipt(batch_dir, rollback_intent)
+        if creation_receipt.get("status") != "committed":
+            raise ValueError("A batch abandoned before its RevisionLedger commit cannot be rolled back.")
     receipt_path = batch_dir / "batch_rollback.json"
     if receipt_path.exists():
         from co_reviewer.batch_store import (
@@ -5042,6 +5328,11 @@ def build_parser():
     rws.add_argument("--workflow-ledger", required=True)
     rws.add_argument("--revision-ledger", required=True)
     rws.set_defaults(func=cmd_recover_workflow_sync)
+    rbc = sub.add_parser("reconcile-batch-creation", help="Reconcile the commit receipt for an interrupted immutable batch creation.")
+    rbc.add_argument("--workflow-ledger", required=True)
+    rbc.add_argument("--revision-ledger", required=True)
+    rbc.add_argument("--batch-dir", required=True)
+    rbc.set_defaults(func=cmd_reconcile_batch_creation)
     prep_scope = sub.add_parser("prepare-workflow-execution", help="Validate exact evidence-linked PatchOperations and prepare a new pending Workflow Ledger without authorizing edits.")
     prep_scope.add_argument("--workflow-ledger", required=True)
     prep_scope.add_argument("--execution-scope", required=True, help="JSON scope containing exact PatchOperations and reviewed ResponseUnit dispositions.")

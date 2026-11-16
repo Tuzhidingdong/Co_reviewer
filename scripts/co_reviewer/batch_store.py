@@ -1279,6 +1279,7 @@ def assert_no_uncommitted_role_batches(
             "batch_rollback_intent.json",
             "batch_rollback.json",
             "batch_superseded.json",
+            "batch_creation_receipt.json",
         )
         present_controls = [name for name in control_names if (batch_dir / name).exists()]
         if not intent_path.is_file():
@@ -1294,6 +1295,7 @@ def assert_no_uncommitted_role_batches(
                 "batch_recovery_intent.json", "batch_recovered.json",
                 "batch_publish_intent.json", "batch_published.json",
                 "batch_rollback_intent.json", "batch_rollback.json", "batch_scope.json",
+                "batch_creation_receipt.json",
             )):
                 raise BatchStoreError(
                     f"Prepared batch {intent['batch_id']} has conflicting supersession and transaction records."
@@ -1311,6 +1313,30 @@ def assert_no_uncommitted_role_batches(
                 revision_ledger_path,
             )
             continue
+        creation_receipt_path = batch_dir / "batch_creation_receipt.json"
+        if intent.get("batch_creation_protocol_version") == "1.0":
+            if not creation_receipt_path.is_file():
+                raise BatchStoreError(
+                    f"Batch {intent['batch_id']} has no creation commit/abort receipt; "
+                    "run round reconciliation before creating or using another batch."
+                )
+            creation_receipt = validate_batch_creation_receipt(batch_dir, intent)
+            if creation_receipt.get("status") == "abandoned_before_ledger_commit":
+                conflicting = [
+                    name for name in (
+                        "batch_recovery_intent.json", "batch_recovered.json",
+                        "batch_publish_intent.json", "batch_published.json",
+                        "batch_rollback_intent.json", "batch_rollback.json",
+                        "batch_superseded.json",
+                    )
+                    if (batch_dir / name).exists()
+                ]
+                if conflicting:
+                    raise BatchStoreError(
+                        f"Abandoned batch creation {intent['batch_id']} has conflicting transaction records: "
+                        + ", ".join(conflicting)
+                    )
+                continue
         recovery_receipt = batch_dir / "batch_recovered.json"
         publication_markers = (
             batch_dir / "batch_publish_intent.json",
@@ -1454,6 +1480,9 @@ def create_batch_intent(
     all_selected_task_ids: Sequence[str] | None = None,
     runs_dir: str | Path | None = None,
     batch_id: str | None = None,
+    creation_revision_ledger_file: str | Path | None = None,
+    creation_revision_ledger_sha256_before: str | None = None,
+    creation_revision_ledger_sha256_after: str | None = None,
 ) -> dict[str, Any]:
     """Create a unique batch directory and immutable parent/output intent manifest."""
     errors = validate_workflow_ledger(workflow)
@@ -1486,6 +1515,23 @@ def create_batch_intent(
     if not workflow_file.is_file():
         raise BatchStoreError(f"Workflow Ledger file does not exist: {workflow_file}")
     workflow_sha_at_prepare = sha256_file(workflow_file)
+    creation_revision_file = None
+    if creation_revision_ledger_file is not None:
+        creation_revision_file = Path(creation_revision_ledger_file).expanduser().resolve()
+        current_revision_sha = sha256_file(creation_revision_file) if creation_revision_file.is_file() else None
+        if current_revision_sha != creation_revision_ledger_sha256_before:
+            raise BatchStoreError(
+                "RevisionLedger changed before immutable batch creation; reload it before preparing the batch."
+            )
+        if (
+            creation_revision_ledger_sha256_before is not None
+            and not re.fullmatch(r"[a-f0-9]{64}", creation_revision_ledger_sha256_before)
+        ) or not isinstance(creation_revision_ledger_sha256_after, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", creation_revision_ledger_sha256_after
+        ):
+            raise BatchStoreError("Batch creation requires valid before/after RevisionLedger SHA-256 bindings.")
+        if creation_revision_ledger_sha256_before == creation_revision_ledger_sha256_after:
+            raise BatchStoreError("A document-changing batch must produce a new RevisionLedger snapshot.")
     try:
         workflow_on_disk = json.loads(workflow_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1525,6 +1571,12 @@ def create_batch_intent(
         "revision_round_id": workflow.get("revision_round_id"),
         "workflow_ledger_file": str(workflow_file),
         "workflow_ledger_sha256_at_prepare": workflow_sha_at_prepare,
+        **({
+            "batch_creation_protocol_version": "1.0",
+            "revision_ledger_file": str(creation_revision_file),
+            "revision_ledger_sha256_before": creation_revision_ledger_sha256_before,
+            "revision_ledger_sha256_after": creation_revision_ledger_sha256_after,
+        } if creation_revision_file is not None else {}),
         "created_at_utc": _timestamp(),
         "selected_task_ids": list(dict.fromkeys(selected_task_ids)),
         "all_selected_task_ids": all_task_ids,
@@ -1593,6 +1645,121 @@ def read_batch_intent(batch_dir: str | Path) -> dict[str, Any]:
         if Path(row["output_file"]).expanduser().resolve() != expected_output:
             raise BatchStoreError(f"Batch output path for {role} escapes its immutable batch directory.")
     return intent
+
+
+def validate_batch_creation_receipt(
+    batch_dir: str | Path,
+    intent: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate the immutable commit/abort receipt for a batch-creation transaction."""
+    requested_root = Path(batch_dir).expanduser()
+    if requested_root.is_symlink():
+        raise BatchStoreError(f"Batch directory must not be a symbolic link: {requested_root}")
+    root = requested_root.resolve()
+    actual_intent = dict(intent) if intent is not None else read_batch_intent(root)
+    if actual_intent.get("batch_creation_protocol_version") != "1.0":
+        raise BatchStoreError("Batch intent does not declare the supported creation transaction protocol.")
+    revision_file = actual_intent.get("revision_ledger_file")
+    before_sha = actual_intent.get("revision_ledger_sha256_before")
+    after_sha = actual_intent.get("revision_ledger_sha256_after")
+    if (
+        not isinstance(revision_file, str)
+        or not revision_file.strip()
+        or (before_sha is not None and (
+            not isinstance(before_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", before_sha)
+        ))
+        or not isinstance(after_sha, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", after_sha)
+        or before_sha == after_sha
+    ):
+        raise BatchStoreError("Batch creation intent has invalid RevisionLedger path/hash bindings.")
+    scope_path = root / "batch_scope.json"
+    receipt_path = root / "batch_creation_receipt.json"
+    if not receipt_path.is_file():
+        raise BatchStoreError("Batch creation receipt is missing.")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        scope = json.loads(scope_path.read_text(encoding="utf-8")) if scope_path.is_file() else None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BatchStoreError(f"Cannot read batch creation scope/receipt: {exc}") from exc
+    if not isinstance(receipt, Mapping):
+        raise BatchStoreError("Batch creation receipt must be a JSON object.")
+    status = receipt.get("status")
+    if scope is not None and not isinstance(scope, Mapping):
+        raise BatchStoreError("Batch creation scope must be a JSON object.")
+    if scope is None and status != "abandoned_before_ledger_commit":
+        raise BatchStoreError("Only a pre-commit abandoned batch may omit its immutable scope.")
+    selected_ids = actual_intent.get("all_selected_task_ids", actual_intent.get("selected_task_ids"))
+    batch_ids = actual_intent.get("selected_task_ids")
+    patch_ids = scope.get("patch_ids") if isinstance(scope, Mapping) else None
+    expected = {
+        "schema_version": "1.0",
+        "batch_id": actual_intent.get("batch_id"),
+        "revision_ledger_file": str(Path(revision_file).expanduser().resolve()),
+        "revision_ledger_sha256_before": before_sha,
+        "revision_ledger_sha256_after": after_sha,
+        "batch_intent_sha256": sha256_file(root / "batch_intent.json"),
+        "batch_scope_sha256": sha256_file(scope_path) if scope_path.is_file() else None,
+    }
+    if (
+        actual_intent.get("batch_id") != root.name.removeprefix("batch-")
+        or receipt.get("schema_version") != expected["schema_version"]
+        or receipt.get("batch_id") != expected["batch_id"]
+        or receipt.get("revision_ledger_file") != expected["revision_ledger_file"]
+        or receipt.get("revision_ledger_sha256_before") != expected["revision_ledger_sha256_before"]
+        or receipt.get("revision_ledger_sha256_after") != expected["revision_ledger_sha256_after"]
+        or receipt.get("batch_intent_sha256") != expected["batch_intent_sha256"]
+        or receipt.get("batch_scope_sha256") != expected["batch_scope_sha256"]
+        or not _is_aware_iso_timestamp(receipt.get("created_at_utc"))
+        or status not in {"committed", "abandoned_before_ledger_commit"}
+        or receipt.get("active_parent_pointers_unchanged") is not True
+        or receipt.get("retained_batch_files") is not True
+    ):
+        raise BatchStoreError("Batch creation receipt does not match its immutable intent and scope.")
+    if isinstance(scope, Mapping):
+        if (
+            scope.get("batch_id") != actual_intent.get("batch_id")
+            or scope.get("revision_round_id") != actual_intent.get("revision_round_id")
+            or Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve()
+                != Path(revision_file).expanduser().resolve()
+            or scope.get("batch_intent_sha256") != expected["batch_intent_sha256"]
+            or not isinstance(selected_ids, list)
+            or scope.get("selected_task_ids") != selected_ids
+            or not isinstance(batch_ids, list)
+            or scope.get("batch_task_ids") != batch_ids
+            or not isinstance(patch_ids, list)
+            or not patch_ids
+            or any(not isinstance(value, str) or not value.strip() for value in patch_ids)
+            or len(patch_ids) != len(set(patch_ids))
+            or not isinstance(scope.get("documents"), Mapping)
+            or set(scope["documents"]) != set(actual_intent.get("documents", {}))
+        ):
+            raise BatchStoreError("Batch creation scope does not match its immutable intent.")
+        for role, record in actual_intent["documents"].items():
+            scope_record = scope["documents"].get(role)
+            if (
+                not isinstance(scope_record, Mapping)
+                or Path(str(scope_record.get("input_file", ""))).expanduser().resolve()
+                    != Path(record["parent_file"]).expanduser().resolve()
+                or scope_record.get("input_sha256") != record["parent_sha256"]
+                or Path(str(scope_record.get("output_file", ""))).expanduser().resolve()
+                    != Path(record["output_file"]).expanduser().resolve()
+            ):
+                raise BatchStoreError(f"Batch creation scope document paths/hashes differ for role {role}.")
+    if status == "abandoned_before_ledger_commit" and (
+        receipt.get("revision_ledger_committed") is not False
+        or receipt.get("no_patch_records_committed") is not True
+        or receipt.get("execution_artifacts_present") is not False
+    ):
+        raise BatchStoreError("Abandoned batch-creation receipt lacks proof that no execution or Ledger commit occurred.")
+    if status == "committed" and (
+        scope is None
+        or receipt.get("revision_ledger_committed") is not True
+        or receipt.get("no_patch_records_committed") is not False
+        or receipt.get("execution_artifacts_present") is not False
+    ):
+        raise BatchStoreError("Committed batch-creation receipt has invalid commit/initial-state evidence.")
+    return dict(receipt)
 
 
 def publish_active_pointers(
