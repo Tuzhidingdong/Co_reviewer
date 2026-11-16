@@ -10,7 +10,7 @@
 
 The P1 main workflow is substantially implemented: inventory/audit and author-approved task planning connect to Workflow Ledger and RevisionLedger; incremental Patch batches use immutable directories; the existing Word-native Track Changes adapter is retained; verification and DAG synchronization feed Working Clean projections and Response Letter generation; publication, rollback, failed-batch recovery and final release evidence have dedicated gates.
 
-P1's automated synthetic validation is now **passed locally** at code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`: the two targeted recovery tests passed and the Windows quality-check script completed with 258/258 unit tests, compileall, dependency and CLI smoke checks passing (exit code 0). This is not final product acceptance. Microsoft Word GUI save/reopen, Word COM pagination/PDF mapping and a real user review round remain outstanding.
+P1's automated synthetic validation passed locally at code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`: both targeted recovery tests and all 258 unit tests passed; compileall, dependency and CLI smoke checks passed (exit code 0). The user then ran the updated five-target compatibility fixture at `f2f2913`, saved/reopened it in Word and obtained a passing post-Word verification: 5/5 targets, zero failures and zero untracked-text violations. This is still not final product acceptance. The new Word COM/PDF mapping runner has now been added, but has not yet been independently tested or run; real review-round acceptance also remains outstanding.
 
 The clearest scope deviation is the size of the P1 adaptation to word_pdf_mapper.py. The module was extended from Patch-level mapping to ResponseUnit/locator-level mapping and document-role reuse. The underlying Word COM pagination path remains, but the module is not byte-for-byte unchanged from P0. An audit also found that the P0 PDF page-text corroboration had been removed and that the changed exporter call omitted its new PDF-path parameter. Both issues were corrected in commit 4a5a364; a subsequent audit added the same PDF corroboration to reused mappings.
 
@@ -60,15 +60,14 @@ GitHub Actions Run #1148 for `e7f818f` remains marked failed, but all four matri
 The local report did not identify the PowerShell edition/version. Therefore the result proves that the Windows PowerShell quality-check script ran successfully, but it does not independently establish that the host was Windows PowerShell 5.1.
 
 The remaining acceptance gates are:
-1. Run the isolated five-target Word compatibility fixture with the repository runner.
-2. Inspect native Track Changes and true subscript/superscript formatting in Microsoft Word; save, close and reopen the same DOCX; rerun post-Word mechanical verification.
-3. Exercise actual Word COM pagination, Clean DOCX/PDF export and PDF-backed page/line mapping on a completed synthetic/approved RevisionLedger.
-4. Have the user complete the real workflow acceptance on their supplied review files before treating the release as ready for normal use.
+1. Independently test the newly added synthetic Word COM/PDF fixture builder, verification helper and PowerShell runner without executing Word COM as the test agent.
+2. On the user's Word-enabled machine, run `scripts/run_word_pdf_mapping_acceptance.ps1` against the five-target synthetic fixture. Verify Word page count, exported PDF, exact PDF-page text corroboration, location-map hashes, final Clean DOCX quality and Response Letter Markdown/DOCX quality.
+3. Complete the real workflow acceptance on supplied review files, including real Manuscript/SI incremental batches, manual table/non-body handling where applicable, final Response Letter and Release Package.
 
 ## Closure checklist
 
-1. Complete the isolated five-target Word GUI save/reopen acceptance using `scripts/run_word_compatibility_check.ps1` and its `-VerifyAfterWord` mode.
-2. Complete the separate Word COM/PDF location-mapping acceptance and check the Clean DOCX, exported PDF, response-location map and quality report.
+1. Run read-only regression tests for the newly added Word COM/PDF acceptance fixture and PowerShell runner; only the developer changes code.
+2. Execute the synthetic Word COM/PDF mapping runner on the user's existing five-target fixture and inspect its page/line map, final Clean DOCX/PDF and Response Letter outputs.
 3. Complete the user's real workflow acceptance on supplied review files. Keep PR #3 Draft and unmerged until Word/COM and real-workflow acceptance pass.
 
 ## Verdict
