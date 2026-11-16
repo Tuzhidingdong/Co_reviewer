@@ -197,6 +197,71 @@ class DecisionPlanValidationTests(unittest.TestCase):
             self.assertTrue(audit_path.is_file())
             self.assertTrue(inventory_path.is_file())
 
+    def test_round_manifest_binds_workflow_ledger_to_starter_round_and_sources(self):
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            plan_path = root / "plan.json"
+            audit_path = root / "audit.json"
+            inventory_path = root / "inventory.json"
+            manifest_path = root / "round_manifest.json"
+            ledger_path = root / "plan" / "workflow_ledger.json"
+            for path, payload in (
+                (plan_path, plan), (audit_path, audit), (inventory_path, inventory)
+            ):
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            manifest_path.write_text(json.dumps({
+                "review_round_id": "round-from-starter",
+                "artifacts": {
+                    "review_audit_report": str(audit_path),
+                    "workspace_inventory": str(inventory_path),
+                },
+            }), encoding="utf-8")
+            args = [
+                "--plan", str(plan_path),
+                "--audit", str(audit_path),
+                "--inventory", str(inventory_path),
+                "--workflow-ledger-out", str(ledger_path),
+                "--round-manifest", str(manifest_path),
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 0)
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(ledger["revision_round_id"], "round-from-starter")
+
+            mismatch_manifest = root / "mismatch_manifest.json"
+            mismatch_manifest.write_text(json.dumps({
+                "review_round_id": "round-from-starter",
+                "artifacts": {
+                    "review_audit_report": str(root / "other-audit.json"),
+                    "workspace_inventory": str(inventory_path),
+                },
+            }), encoding="utf-8")
+            mismatch_out = root / "mismatch-ledger.json"
+            mismatch_args = list(args)
+            mismatch_args[mismatch_args.index(str(ledger_path))] = str(mismatch_out)
+            mismatch_args[mismatch_args.index(str(manifest_path))] = str(mismatch_manifest)
+            self.assertEqual(validate_decision_plan_main(mismatch_args), 2)
+            self.assertFalse(mismatch_out.exists())
+
+    def test_round_manifest_and_explicit_round_id_conflict_is_rejected(self):
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            plan_path, audit_path, inventory_path = (
+                root / "plan.json", root / "audit.json", root / "inventory.json"
+            )
+            for path, payload in ((plan_path, plan), (audit_path, audit), (inventory_path, inventory)):
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            manifest_path = root / "round_manifest.json"
+            manifest_path.write_text(json.dumps({"review_round_id": "round-manifest"}), encoding="utf-8")
+            args = [
+                "--plan", str(plan_path), "--audit", str(audit_path),
+                "--inventory", str(inventory_path), "--workflow-ledger-out", str(root / "ledger.json"),
+                "--round-manifest", str(manifest_path), "--revision-round-id", "round-other",
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 2)
+            self.assertFalse((root / "ledger.json").exists())
+
     def test_identity_manifest_promotes_stable_targetrefs_into_workflow_ledger(self):
         from co_reviewer.docx_identity import build_document_identity_manifest
         plan, audit, inventory = fixture()

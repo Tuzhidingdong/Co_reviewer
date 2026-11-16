@@ -56,7 +56,7 @@ Each task must be atomic, retain every source reviewer comment ID, link exact so
 
 Validate provenance and persist the initial Workflow Ledger in one pass:
 
-    python scripts/validate_decision_plan.py --plan revision_decision_plan.json --audit review_audit_report.json --inventory workspace_inventory.json --workflow-ledger-out workflow_ledger.json --revision-round-id round-2026-11-14
+    python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --round-manifest "$roundRoot\round_manifest.json"
 
 Use --identity-manifest document_identity_manifest.json when a current parser-backed identity manifest is available. Do not invent a TargetRef or reuse an old identity manifest against changed source hashes. The validator must pass before the Workflow Ledger is used. If evidence, comment coverage, source hashes, target coordinates or dependency order fail, correct the plan from the actual inventory and rerun validation; do not weaken the validator.
 

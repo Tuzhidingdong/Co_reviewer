@@ -90,7 +90,7 @@ The Workflow Ledger is the round-level control plane; the RevisionLedger is the 
 After the author accepts the pending Decision Plan's scientific dispositions and target scope, validate provenance and create the initial Workflow Ledger:
 
 ```powershell
-python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --revision-round-id "round-2026-11-16"
+python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --round-manifest "$roundRoot\round_manifest.json"
 ```
 
 Use a parser-backed identity manifest only when its source hashes match the current inputs. The resulting tasks remain planned and require explicit approval.

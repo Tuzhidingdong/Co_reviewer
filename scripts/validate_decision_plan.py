@@ -385,9 +385,15 @@ def main(argv: list[str] | None = None) -> int:
         "--revision-round-id",
         help="Optional stable round ID; generated when ledger output is requested and omitted.",
     )
+    parser.add_argument(
+        "--round-manifest",
+        help="Optional round_manifest.json; binds the Workflow Ledger to the exact round created by Start-CoReviewerRound.ps1.",
+    )
     args = parser.parse_args(argv)
     if args.revision_round_id and not args.workflow_ledger_out:
         parser.error("--revision-round-id requires --workflow-ledger-out")
+    if args.round_manifest and not args.workflow_ledger_out:
+        parser.error("--round-manifest requires --workflow-ledger-out")
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
         audit = json.loads(Path(args.audit).read_text(encoding="utf-8")) if args.audit else None
@@ -396,9 +402,35 @@ def main(argv: list[str] | None = None) -> int:
             json.loads(Path(args.identity_manifest).read_text(encoding="utf-8"))
             if args.identity_manifest else None
         )
+        round_manifest = (
+            json.loads(Path(args.round_manifest).read_text(encoding="utf-8"))
+            if args.round_manifest else None
+        )
     except (OSError, json.JSONDecodeError) as exc:
         print(f"[INVALID] Cannot read decision-plan inputs: {exc}", file=sys.stderr)
         return 2
+    if round_manifest is not None:
+        manifest_round_id = round_manifest.get("review_round_id")
+        if not isinstance(manifest_round_id, str) or not manifest_round_id.strip():
+            print("[INVALID] round_manifest.json has no valid review_round_id.", file=sys.stderr)
+            return 2
+        if args.revision_round_id and args.revision_round_id != manifest_round_id:
+            print("[INVALID] --revision-round-id conflicts with round_manifest.json.", file=sys.stderr)
+            return 2
+        artifacts = round_manifest.get("artifacts", {})
+        for label, supplied, key in (
+            ("audit", args.audit, "review_audit_report"),
+            ("inventory", args.inventory, "workspace_inventory"),
+        ):
+            expected = artifacts.get(key) if isinstance(artifacts, dict) else None
+            if expected:
+                if Path(supplied).expanduser().resolve() != Path(expected).expanduser().resolve():
+                    print(
+                        f"[INVALID] {label} input does not match round_manifest.json: "
+                        f"expected {expected}; received {supplied}",
+                        file=sys.stderr,
+                    )
+                    return 2
     errors = validate_decision_plan(plan, audit=audit, inventory=inventory)
     target_refs_by_task: dict[str, list[dict[str, Any]]] = {}
     if identity_manifest is not None:
@@ -443,9 +475,13 @@ def main(argv: list[str] | None = None) -> int:
         if output_path.exists():
             print(f"[INVALID] Workflow Ledger output already exists; choose a new path: {output_path}", file=sys.stderr)
             return 2
-        round_id = args.revision_round_id or (
-            "round-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + "-" + uuid.uuid4().hex[:8]
+        round_id = (
+            str(round_manifest["review_round_id"]).strip()
+            if round_manifest is not None
+            else args.revision_round_id or (
+                "round-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                + "-" + uuid.uuid4().hex[:8]
+            )
         )
         try:
             ledger = build_workflow_ledger(
