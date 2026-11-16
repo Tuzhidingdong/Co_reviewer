@@ -417,20 +417,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.revision_round_id and args.revision_round_id != manifest_round_id:
             print("[INVALID] --revision-round-id conflicts with round_manifest.json.", file=sys.stderr)
             return 2
-        artifacts = round_manifest.get("artifacts", {})
+        artifacts = round_manifest.get("artifacts")
+        if not isinstance(artifacts, dict):
+            print("[INVALID] round_manifest.json has no artifacts object.", file=sys.stderr)
+            return 2
         for label, supplied, key in (
             ("audit", args.audit, "review_audit_report"),
             ("inventory", args.inventory, "workspace_inventory"),
         ):
-            expected = artifacts.get(key) if isinstance(artifacts, dict) else None
-            if expected:
-                if Path(supplied).expanduser().resolve() != Path(expected).expanduser().resolve():
-                    print(
-                        f"[INVALID] {label} input does not match round_manifest.json: "
-                        f"expected {expected}; received {supplied}",
-                        file=sys.stderr,
-                    )
-                    return 2
+            expected = artifacts.get(key)
+            if not isinstance(expected, str) or not expected.strip():
+                print(f"[INVALID] round_manifest.json has no {key} path.", file=sys.stderr)
+                return 2
+            if Path(supplied).expanduser().resolve() != Path(expected).expanduser().resolve():
+                print(
+                    f"[INVALID] {label} input does not match round_manifest.json: "
+                    f"expected {expected}; received {supplied}",
+                    file=sys.stderr,
+                )
+                return 2
     errors = validate_decision_plan(plan, audit=audit, inventory=inventory)
     target_refs_by_task: dict[str, list[dict[str, Any]]] = {}
     if identity_manifest is not None:

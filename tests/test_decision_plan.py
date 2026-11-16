@@ -243,6 +243,26 @@ class DecisionPlanValidationTests(unittest.TestCase):
             self.assertEqual(validate_decision_plan_main(mismatch_args), 2)
             self.assertFalse(mismatch_out.exists())
 
+    def test_round_manifest_without_audit_inventory_paths_is_rejected(self):
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            plan_path, audit_path, inventory_path = (
+                root / "plan.json", root / "audit.json", root / "inventory.json"
+            )
+            for path, payload in ((plan_path, plan), (audit_path, audit), (inventory_path, inventory)):
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            manifest_path = root / "round_manifest.json"
+            manifest_path.write_text(json.dumps({"review_round_id": "round-manifest"}), encoding="utf-8")
+            ledger_path = root / "ledger.json"
+            args = [
+                "--plan", str(plan_path), "--audit", str(audit_path),
+                "--inventory", str(inventory_path), "--workflow-ledger-out", str(ledger_path),
+                "--round-manifest", str(manifest_path),
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 2)
+            self.assertFalse(ledger_path.exists())
+
     def test_round_manifest_and_explicit_round_id_conflict_is_rejected(self):
         plan, audit, inventory = fixture()
         with tempfile.TemporaryDirectory() as folder:
