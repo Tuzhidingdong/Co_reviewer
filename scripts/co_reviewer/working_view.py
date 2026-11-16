@@ -241,8 +241,17 @@ def _comment_metadata_in_relationships(data: bytes, part: str) -> list[dict[str,
     ]
 
 
-def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
-    """Fail-closed scan for unresolved revisions and all native Word comment metadata."""
+def inspect_clean_baseline(
+    input_file: str | Path,
+    *,
+    allow_tracked_text_revisions: bool = False,
+) -> dict[str, Any]:
+    """Scan unresolved revisions/comments; optionally allow only native text insertions/deletions.
+
+    The optional allowance is intended solely for files whose exact SHA-256 has
+    already been verified against a published Workflow Ledger active pointer.
+    Formatting/move revisions and every comment part/anchor remain blocking.
+    """
     source = Path(input_file).expanduser().resolve()
     if not source.is_file() or source.suffix.casefold() != ".docx":
         raise WorkingViewError(f"Baseline source must be an existing DOCX: {source}")
@@ -337,12 +346,30 @@ def inspect_clean_baseline(input_file: str | Path) -> dict[str, Any]:
                     })
     except (OSError, zipfile.BadZipFile) as exc:
         raise WorkingViewError(f"Cannot inspect baseline DOCX {source}: {exc}") from exc
-    blocking = {key: value for key, value in counts.items() if value}
+    allowed_categories = (
+        {"insertions", "deletions"}
+        if allow_tracked_text_revisions
+        else set()
+    )
+    allowed_counts = {
+        key: value for key, value in counts.items()
+        if key in allowed_categories and value
+    }
+    blocking = {
+        key: value for key, value in counts.items()
+        if key not in allowed_categories and value
+    }
     return {
         "file": str(source),
         "source_sha256": _sha256(source.read_bytes()),
         "clean": not blocking,
+        "mode": (
+            "published_active_allow_text_revisions"
+            if allow_tracked_text_revisions
+            else "initial_clean_baseline"
+        ),
         "counts": counts,
+        "allowed_counts": allowed_counts,
         "blocking_counts": blocking,
         "issues": issues,
     }

@@ -1002,6 +1002,66 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
         "results": results
     }
 
+
+
+def _validate_active_workflow_audit_sources(args, workflow_ledger_path: str | Path) -> dict[str, str]:
+    """Allow Marked active DOCX inputs only when paths/hashes equal published Workflow pointers."""
+    from co_reviewer.batch_store import load_active_document_pointers
+    from co_reviewer.workflow_engine import validate_workflow_ledger
+
+    workflow_path = Path(workflow_ledger_path).expanduser().resolve()
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise ValueError(
+            "Cannot run an active-version Audit from an invalid Workflow Ledger:\n- "
+            + "\n- ".join(errors)
+        )
+    pointers = load_active_document_pointers(workflow)
+    selected = {
+        role: Path(path).expanduser().resolve()
+        for role, path in (
+            ("Reviewers", getattr(args, "rev", None)),
+            ("Manuscript", getattr(args, "man", None)),
+            ("SI", getattr(args, "si", None)),
+        )
+        if path
+    }
+    expected_roles = set(pointers)
+    if set(selected) != expected_roles:
+        missing = sorted(expected_roles - set(selected))
+        extra = sorted(set(selected) - expected_roles)
+        details = []
+        if missing:
+            details.append("missing active role(s): " + ", ".join(missing))
+        if extra:
+            details.append("unconfigured role(s): " + ", ".join(extra))
+        raise ValueError(
+            "Active-version Audit must include exactly the current Workflow Ledger roles ("
+            + "; ".join(details)
+            + ")."
+        )
+
+    expected_hashes: dict[str, str] = {}
+    for role, path in selected.items():
+        pointer = pointers[role]
+        expected_path = Path(pointer["file"]).expanduser().resolve()
+        expected_sha = pointer["sha256"]
+        if path != expected_path:
+            raise ValueError(
+                f"Active-version Audit input path for {role} does not match the Workflow Ledger pointer: "
+                f"expected {expected_path}; received {path}."
+            )
+        actual_sha = sha256_file(path)
+        if actual_sha != expected_sha:
+            raise ValueError(
+                f"Active-version Audit input hash for {role} does not match the published Workflow Ledger pointer: "
+                f"expected {expected_sha}; received {actual_sha}; file={path}."
+            )
+        expected_hashes[role] = expected_sha
+    return expected_hashes
+
+
 def _inspect_selected_files(args):
     files = [("Reviewers", args.rev), ("Manuscript", args.man), ("SI", args.si)]
     selected = [(role, path) for role, path in files if path]
@@ -1021,13 +1081,28 @@ def _inspect_selected_files(args):
             path, args.comment_author, cache_dir, inspect_docx, refresh=refresh
         )
         result["role"] = role
+        active_expected_hashes = getattr(args, "active_expected_sha256_by_role", {})
+        if role in active_expected_hashes and (
+            result.get("source_sha256") != active_expected_hashes[role]
+            or sha256_file(path) != active_expected_hashes[role]
+        ):
+            raise ValueError(
+                f"{role} changed during active Workflow Ledger SHA verification/inspection; refusing to audit a different document version."
+            )
         if role in {"Manuscript", "SI"}:
-            baseline = inspect_clean_baseline(path)
+            baseline = inspect_clean_baseline(
+                path,
+                allow_tracked_text_revisions=role in active_expected_hashes,
+            )
             result["baseline_hygiene"] = baseline
+            if role in active_expected_hashes and baseline.get("source_sha256") != active_expected_hashes[role]:
+                raise ValueError(
+                    f"{role} changed during active-version baseline inspection; refusing a mixed-version inventory."
+                )
             if not baseline["clean"]:
                 result.setdefault("errors", []).append(
                     f"Baseline is not clean for {role}: unresolved Word revision/comment markup "
-                    f"{baseline['blocking_counts']}. Supply a clean baseline DOCX before starting the revision round."
+                    f"{baseline['blocking_counts']}. Initial round inputs must be clean; active versions may contain only published text insertions/deletions."
                 )
         reports.append(result)
         cache_results.append((str(path), cache_status))
@@ -1078,6 +1153,16 @@ def cmd_audit(args):
     source_paths = [path for path in (args.rev, args.man, args.si) if path]
     output_paths = [args.out, args.audit_md_out, args.audit_out, args.decision_queue_out]
     output_paths.extend([args.json_out] if args.json_out else [])
+    active_workflow_ledger = getattr(args, "active_workflow_ledger", None)
+    if active_workflow_ledger:
+        workflow_path = Path(active_workflow_ledger).expanduser().resolve()
+        if workflow_path in {
+            Path(path).expanduser().resolve() for path in output_paths if path
+        }:
+            raise ValueError("Active Workflow Ledger path must be distinct from every Audit output.")
+        args.active_expected_sha256_by_role = _validate_active_workflow_audit_sources(
+            args, workflow_path
+        )
     validate_inspection_artifact_paths(source_paths, output_paths)
     reports, cache = _inspect_selected_files(args)
     audit = build_review_audit(reports)
@@ -3908,6 +3993,7 @@ def build_parser():
     au.add_argument("--cache-dir", default=".co-reviewer-cache")
     au.add_argument("--usage-ledger", help="Optional JSONL metadata ledger for DOCX parse/cache observations; no document text is stored.")
     au.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
+    au.add_argument("--active-workflow-ledger", help="Use only for published Marked DOCX versions; verifies every input path/SHA against the Workflow Ledger's current active pointers before allowing native text insertion/deletion markup.")
     au.add_argument("--max-items-per-section", type=int, default=50)
     au.set_defaults(func=cmd_audit)
     v = sub.add_parser("validate-plan", help="Validate a plan without editing files.")

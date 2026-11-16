@@ -112,6 +112,32 @@ class WorkingCleanViewTests(unittest.TestCase):
         self.assertGreater(report["counts"]["comment_anchors_removed"], 0)
 
 
+    def test_published_active_baseline_allows_only_native_text_revisions(self):
+        make_docx(self.original, [[
+            ("The ", False),
+            ("old phrase", True),
+            (" remains unchanged.", False),
+        ]])
+        cli.apply_document(
+            str(self.original),
+            str(self.marked),
+            [{"p_idx": 0, "find": "old phrase", "replace": "new wording"}],
+            "Published Active Test",
+        )
+
+        strict = inspect_clean_baseline(self.marked)
+        active = inspect_clean_baseline(
+            self.marked,
+            allow_tracked_text_revisions=True,
+        )
+
+        self.assertFalse(strict["clean"])
+        self.assertTrue(active["clean"])
+        self.assertEqual(active["mode"], "published_active_allow_text_revisions")
+        self.assertGreater(active["allowed_counts"]["insertions"], 0)
+        self.assertGreater(active["allowed_counts"]["deletions"], 0)
+        self.assertFalse(active["blocking_counts"])
+
     def test_baseline_gate_detects_all_unresolved_revision_and_comment_categories(self):
         make_docx(self.original, [[("A baseline paragraph with evidence.", False)]])
         with zipfile.ZipFile(self.original, "r") as archive:
@@ -180,7 +206,12 @@ class WorkingCleanViewTests(unittest.TestCase):
                 archive.writestr(name, data)
 
         report = inspect_clean_baseline(self.original)
+        active_report = inspect_clean_baseline(self.original, allow_tracked_text_revisions=True)
         self.assertFalse(report["clean"])
+        self.assertFalse(active_report["clean"])
+        self.assertIn("move_from", active_report["blocking_counts"])
+        self.assertIn("formatting_changes", active_report["blocking_counts"])
+        self.assertIn("comments", active_report["blocking_counts"])
         self.assertGreater(report["blocking_counts"]["insertions"], 0)
         self.assertGreater(report["blocking_counts"]["deletions"], 0)
         self.assertGreater(report["blocking_counts"]["move_from"], 0)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import co_reviewer_cli as cli
 from co_reviewer.workflow_engine import build_workflow_ledger
 from co_reviewer.workflow_preparation import (
     WorkflowPreparationError,
@@ -297,6 +298,37 @@ class WorkflowPreparationTests(unittest.TestCase):
                 workflow_path=self.workflow_path,
                 execution_scope_path=self.scope_path,
             )
+
+    def test_active_audit_requires_exact_published_workflow_paths_and_hashes(self) -> None:
+        from argparse import Namespace
+
+        args = Namespace(
+            rev=str(self.reviewers),
+            man=str(self.manuscript),
+            si=None,
+        )
+        expected = cli._validate_active_workflow_audit_sources(args, self.workflow_path)
+        self.assertEqual(
+            expected,
+            {
+                "Reviewers": hashlib.sha256(self.reviewers.read_bytes()).hexdigest(),
+                "Manuscript": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+            },
+        )
+
+        wrong_manuscript = self.root / "Manuscript.copy.docx"
+        wrong_manuscript.write_bytes(self.manuscript.read_bytes())
+        wrong_args = Namespace(
+            rev=str(self.reviewers),
+            man=str(wrong_manuscript),
+            si=None,
+        )
+        with self.assertRaisesRegex(ValueError, "path for Manuscript does not match"):
+            cli._validate_active_workflow_audit_sources(wrong_args, self.workflow_path)
+
+        self.manuscript.write_bytes(b"changed after publication")
+        with self.assertRaisesRegex(ValueError, "hash for Manuscript does not match"):
+            cli._validate_active_workflow_audit_sources(args, self.workflow_path)
 
     def test_rejects_stale_workflow_hash(self) -> None:
         stale_scope = json.loads(json.dumps(self.scope))

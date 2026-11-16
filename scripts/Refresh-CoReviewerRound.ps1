@@ -117,6 +117,7 @@ $auditArgs = @(
     "audit",
     "--rev", $reviewers.file,
     "--man", $manuscript.file,
+    "--active-workflow-ledger", $workflowPath,
     "--out", $digestPath,
     "--json-out", $inventoryPath,
     "--audit-md-out", $auditMarkdownPath,

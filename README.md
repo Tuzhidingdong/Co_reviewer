@@ -136,7 +136,7 @@ $iterationLabel = "<published-batch-id>"
 $iteration = Join-Path $roundRoot ("reports\after-batch-" + $iterationLabel)
 ```
 
-The refresher verifies every active file against its Workflow Ledger SHA-256 before running Audit. It includes SI only when that role is configured and never changes the Workflow Ledger or source DOCX files.
+The refresher verifies every active file against its Workflow Ledger SHA-256 before running Audit, and passes that Ledger to the CLI for a second path/hash check. Only these published active versions may contain native text insertions/deletions; formatting/move revisions and every comment part/anchor remain blocking. The initial round starter retains the strict clean-baseline gate. It includes SI only when that role is configured and never changes the Workflow Ledger or source DOCX files.
 
 Create a new execution-scope file from `examples/workflow_execution_scope_refresh.example.json`. For each `recheck_required` document task, include both `evidence` and `targets` from the new inventory, assign fresh evidence IDs, and bind each operation's `find` text to its current target excerpt. If the task uses persistent TargetRefs, refresh `target_refs` as well. The current Workflow Ledger hash—not the initial round hash—must be used:
 
