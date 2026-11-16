@@ -67,9 +67,9 @@ The remaining acceptance gates are:
 
 ## Closure checklist
 
-1. Use the existing Windows/Python environment to execute the complete synthetic suite with `scripts/run_quality_checks.ps1`; Actions has repeatedly failed before runner assignment and identical retries are not useful.
-2. Perform the user's own Microsoft Word COM/GUI acceptance: open the generated Marked and final Clean DOCX/PDF outputs, verify native Track Changes and actual page/line mapping.
-3. Reconcile any failures and update the PR's validation status. Keep PR #3 Draft until the automated suite and Word/PowerShell gates produce actual results.
+1. Complete the isolated five-target Word GUI save/reopen acceptance using `scripts/run_word_compatibility_check.ps1` and its `-VerifyAfterWord` mode.
+2. Complete the separate Word COM/PDF location-mapping acceptance and check the Clean DOCX, exported PDF, response-location map and quality report.
+3. Complete the user's real workflow acceptance on supplied review files. Keep PR #3 Draft and unmerged until Word/COM and real-workflow acceptance pass.
 
 ## Verdict
 
