@@ -262,14 +262,22 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $wordPdfPath = $null
 $locationMapPath = $null
 if ($totalDocuments -gt 0) {
+$manifestWordPdfPath = [string]$roundManifest.word_pdf_output_directory
 $wordPdfPath = if ($WordPdfOutputDirectory) {
     Get-FullPath $WordPdfOutputDirectory $roundPath
+} elseif (-not [string]::IsNullOrWhiteSpace($manifestWordPdfPath)) {
+    Get-FullPath $manifestWordPdfPath $roundPath
 } else {
     Join-Path $roundPath "output\word_pdf_final-$stamp"
 }
 [void](Assert-PathInRoundRoot $wordPdfPath "Word/PDF output directory")
 $script:WordPdfPath = $wordPdfPath
 $locationMapPath = Join-Path $wordPdfPath "response_location_map.json"
+Update-RoundManifest -EventType "word_pdf_mapping_started" -Event @{
+    current_workflow_ledger = $workflowPath
+    revision_ledger = $revisionPath
+    word_pdf_output_directory = $wordPdfPath
+}
 if (Test-Path -LiteralPath $locationMapPath -PathType Leaf) {
     $ledger = Read-JsonFile $revisionPath "RevisionLedger before location-map resume"
     $map = Read-JsonFile $locationMapPath "Response Location Map"
