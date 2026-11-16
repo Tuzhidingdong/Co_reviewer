@@ -209,3 +209,8 @@ A final source-only integration review identified two remaining transaction hand
 - The batch-intent schema conditionally requires the protocol-v1 RevisionLedger path and before/after hashes. A dedicated batch-creation-receipt schema defines committed and safely abandoned states, with schema contract coverage for both new receipts and legacy intent compatibility.
 
 The regression coverage is authored but **not run**. It remains part of the single deferred unified acceptance cycle; these source changes are not a test pass.
+
+
+## Final source-audit hardening after the P1 development freeze
+
+A final read-only review of the batch reservation path found that `assert_no_uncommitted_role_batches` ignored a non-empty `batch-*` directory when its immutable `batch_intent.json` was missing and no known transaction receipt existed. The round reconciler already blocked this state, but callers using the lower-level batch builder could bypass that protection. The role-lock validator now rejects every such orphaned payload. It permits only the exact empty `documents/` shell that `create_batch_intent` may leave if interrupted between directory creation and writing the intent. A regression case covers both states. This source change is untested and remains part of the single unified acceptance cycle.

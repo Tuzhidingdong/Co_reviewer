@@ -1287,6 +1287,23 @@ def assert_no_uncommitted_role_batches(
                 raise BatchStoreError(
                     f"Batch directory {batch_dir} has transaction control records but no immutable batch intent."
                 )
+            entries_without_intent = list(batch_dir.iterdir())
+            # create_batch_intent creates the batch directory and its empty
+            # documents/ folder immediately before writing batch_intent.json.
+            # That exact empty shell is safe after a crash; any other content
+            # is an orphaned artifact that cannot be assigned trustworthy
+            # parent pointers or task ownership and must block new batches.
+            safe_pre_intent_shell = (
+                len(entries_without_intent) == 1
+                and entries_without_intent[0].name == "documents"
+                and entries_without_intent[0].is_dir()
+                and not entries_without_intent[0].is_symlink()
+                and not any(entries_without_intent[0].iterdir())
+            )
+            if entries_without_intent and not safe_pre_intent_shell:
+                raise BatchStoreError(
+                    f"Batch directory {batch_dir} contains artifacts without an immutable batch intent."
+                )
             continue
         intent = read_batch_intent(batch_dir)
         superseded_receipt = batch_dir / "batch_superseded.json"

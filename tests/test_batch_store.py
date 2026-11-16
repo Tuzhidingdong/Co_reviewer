@@ -152,6 +152,38 @@ class BatchStoreTests(unittest.TestCase):
                 self.workflow,
             )
 
+    def test_role_lock_rejects_artifacts_without_intent_but_allows_empty_pre_intent_shell(self):
+        self.runs_dir.mkdir()
+
+        # A crash immediately after creating the batch directory and its
+        # empty documents/ child but before writing batch_intent.json is safe.
+        empty_pre_intent = self.runs_dir / "batch-pre-intent"
+        (empty_pre_intent / "documents").mkdir(parents=True)
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T1"],
+            {},
+            self.workflow,
+        )
+
+        # Any other payload without an immutable intent has no trustworthy
+        # parent/task binding and must stop the next batch from being created.
+        orphan = self.runs_dir / "batch-orphaned-payload"
+        orphan.mkdir()
+        (orphan / "batch_scope.json").write_text(
+            json.dumps({"batch_id": "orphaned"}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(BatchStoreError, "contains artifacts without an immutable batch intent"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T1"],
+                {},
+                self.workflow,
+            )
+
     def _intent(self, batch_id="run-001"):
         return create_batch_intent(
             self.workflow,
