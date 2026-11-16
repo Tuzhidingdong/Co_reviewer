@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -271,7 +272,24 @@ def prepare_workflow_execution(
             ]
             if len(candidates) != 1:
                 raise WorkflowPreparationError(f"PatchOperation {op_id} matches {len(candidates)} evidence-linked targets; expected exactly one.")
-            target_index, _target = candidates[0]
+            target_index, target = candidates[0]
+            target_evidence_ids = [str(value) for value in target.get("evidence_ids", [])]
+            evidence_by_id = {
+                str(item.get("evidence_id")): item
+                for item in task.get("evidence", [])
+                if isinstance(item, Mapping) and item.get("evidence_id") is not None
+            }
+            source_excerpt = " ".join(
+                str(evidence_by_id[evidence_id].get("source_excerpt") or "")
+                for evidence_id in target_evidence_ids
+                if evidence_id in evidence_by_id
+            )
+            source_excerpt = " ".join(unicodedata.normalize("NFKC", source_excerpt).split())
+            find_excerpt = " ".join(unicodedata.normalize("NFKC", str(operation.get("find") or "")).split())
+            if not find_excerpt or find_excerpt not in source_excerpt:
+                raise WorkflowPreparationError(
+                    f"PatchOperation {op_id} find text is not present in its exact target evidence excerpt."
+                )
             if target_index in matched_targets:
                 raise WorkflowPreparationError(f"Task {task_id} maps multiple operations to the same Decision target.")
             matched_targets.add(target_index)

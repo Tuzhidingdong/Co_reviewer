@@ -163,6 +163,18 @@ class WorkflowPreparationTests(unittest.TestCase):
                 execution_scope_path=self.scope_path,
             )
 
+    def test_rejects_find_text_outside_target_evidence_excerpt(self) -> None:
+        invalid_scope = json.loads(json.dumps(self.scope))
+        invalid_scope["tasks"][0]["patch_operations"][0]["find"] = "NOT IN THE EVIDENCE"
+        with self.assertRaisesRegex(WorkflowPreparationError, "find text is not present"):
+            prepare_workflow_execution(
+                self.workflow,
+                invalid_scope,
+                self.inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
     def test_rejects_operation_without_same_target_evidence(self) -> None:
         invalid_scope = json.loads(json.dumps(self.scope))
         invalid_scope["tasks"][0]["patch_operations"][0]["evidence_ids"] = ["E-COMMENT-1"]
