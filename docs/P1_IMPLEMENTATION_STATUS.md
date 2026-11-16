@@ -92,16 +92,37 @@ Use the manual-location command for table/non-body cases explicitly marked `manu
 - `tests/test_release_manifest.py`: release blocking for incomplete ResponseUnits, reply-only completion without invented document locations, comment-to-ResponseUnit coverage, unresolved Figure/Table references, strict quality/SEQ status allowlists, SEQ audit structure consistency, positive non-boolean Word page counts, final-map consistency, DOCX/PDF/page-count/profile-bound quality reports, exact batch task/Patch/document scope, historical published/rolled-back batch-chain retention with rollback-intent hash tamper rejection, recovered-unpublished batch evidence with retained-inventory, forged Ledger-path rejection, Workflow after-image hash/pointer/invalidation-event tamper rejection, and stale-parent/task rejection, and tampered Response Letter DOCX rejection. Continuous published-batch parent-pointer replay now covers sequential publications and rollbacks; a regression rehashes a discontinuous later parent chain to verify that cross-batch history is still rejected. Patch supersession now requires matching predecessor/replacement events for every lineage edge, and the final Manifest exposes predecessor IDs plus those events. Recovered-batch downstream task IDs must also remain present in the current Workflow Ledger.
 - `tests/test_schema_contracts.py` validates all repository JSON Schema definitions against their declared meta-schemas; `tests/test_release_manifest.py` validates a generated representative Release Manifest instance with Draft 2020-12 and format checking.
 
-These tests are present in the repository but have **not been established as passing** in this implementation session.
-
 ## Validation status and remaining boundary
 
-- `tests/test_schema_contracts.py` now validates every repository `*.schema.json` against its declared JSON Schema meta-schema. The successful synthetic Response Letter release test also validates an actual generated `final_release_manifest.json` instance with the Draft 2020-12 validator and format checking. These checks are implemented but have not executed in this session because GitHub Actions still fails before runner allocation.
-- Install the development test extra with `python -m pip install -e ".[test]"` before running the complete suite manually. `requirements.txt` remains limited to runtime dependencies.
-- The existing Windows matrix runs the PowerShell 5.1 quality-check script and remains the Windows-specific gate. A separate Ubuntu Python-unit matrix (Python 3.10 and 3.13) has been added to isolate compile/unit-test execution from Windows runner allocation; this does not replace the Windows job or Word GUI/COM acceptance.
-- GitHub Actions Runs #1133 and #1134 for commit `72c64a6` failed all four Ubuntu/Windows matrix jobs before runner allocation (`runner_id=0`, empty runner name, zero steps). No Python compilation, unit tests or PowerShell checks started. The follow-up fixture-import commit `1e2d6c4`, documentation commit `331e77a`, and P1 scope-convergence commit `dab5681` used `[skip ci]`; none has a test result. These runner failures are environment blockers, not code test failures or passes. Repeating identical retries is not a substitute for local execution.
-- No real manuscript, Worker, model call, local Word COM run or final Windows acceptance was performed.
-- The final acceptance boundary remains: run the complete synthetic suite on the target Windows/Python environment, then perform the user's own Word GUI/COM acceptance. Do not describe static inspection or schema parsing as final acceptance.
+**Automated validation is now complete for code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`.**
+
+- The two recovery/release targeted tests passed on the exact HEAD above.
+- The Windows local quality-check run completed with exit code 0: compileall passed; **258 unit tests passed** (0 failures, 0 errors, 0 skips); required package checks and core CLI smoke checks passed; the script reported `All automated Co_Reviewer checks passed.`
+- The local tester report records the persistent log path. The report did not identify the PowerShell edition/version, so this result must not be described as proof of Windows PowerShell 5.1 specifically.
+- GitHub Actions Run #1148 for `e7f818f` is marked failed. Its four matrix jobs report failure but expose zero steps; therefore this run provides no executed Python/PowerShell test result. It does not override the successful local run, and it must not be described as a code-test failure without an executed step/log.
+- The synthetic suite includes the second-batch immutable directory, staged plan, preflight/approval/apply, Track Changes verification, Workflow synchronization and publication path. These tests passed as part of the 258-test run. The first-batch publication and second-batch sequence are covered across the integration and dedicated batch tests rather than one single all-real-Word end-to-end process.
+- **Not yet accepted:** Microsoft Word GUI display/save/reopen of native Track Changes; Word COM pagination and PDF export; PDF-backed page/line-map corroboration; visual inspection of the final Word/PDF pair; an end-to-end run using actual user-supplied review files. These are separate acceptance gates, not covered by the 258 unit tests.
+- The synthetic Word compatibility runner is separate from the quality suite. It prepares a DOCX with five edit targets (body, formula formatting, table cell, header and footer), which must be inspected and round-tripped through the user's installed Microsoft Word. It does not by itself prove Word COM page/line mapping.
+
+## Immediate local Word acceptance path
+
+From the repository root in PowerShell, prepare the isolated fixture using the same Python interpreter that passed the quality checks:
+
+```powershell
+.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe"
+```
+
+Open `artifacts\\word-compatibility-check\\word_compatibility_revised.docx` in Microsoft Word. Set Review > Tracking > All Markup. Inspect both body edits, the formula, table cell, header and footer. Confirm each edit is a native deletion/insertion and the formula uses true subscript/superscript formatting. Save the same file, close Word, then reopen it without accepting or rejecting revisions.
+
+After that save/reopen, run:
+
+```powershell
+.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe" -VerifyAfterWord
+```
+
+The post-Word report must confirm all five planned target edits still pass mechanical verification. Then perform the separate Word COM/PDF location-mapping acceptance on a completed synthetic/approved RevisionLedger. Do not infer pagination from XML or use this five-edit fixture as evidence that page/line mapping has passed.
+
+PR #3 remains Draft until the Word/COM and final user acceptance gates have valid evidence.
 
 ## Mainline audit and deviation report
 
