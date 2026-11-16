@@ -29,90 +29,120 @@ The current implementation branch extends the original revision engine with type
 
 ## Quick start
 
-Python 3.10+ is required. Install the DOCX/XML dependencies with: python -m pip install -r requirements.txt.
+Python 3.10+ is required. Install the DOCX/XML dependencies with:
 
-PowerShell — one parse/cache pass followed by deterministic auditing:
+```powershell
+python -m pip install -r requirements.txt
+```
 
-    python scripts/co_reviewer_cli.py audit --rev .\input\Reply.docx --man .\input\Manuscript.docx --si .\input\SI.docx --out workspace_digest.md --json-out workspace_inventory.json --audit-md-out review_audit_report.md --audit-out review_audit_report.json --decision-queue-out review_decision_queue.json --cache-dir .co-reviewer-cache
+### 1. Start an isolated review round
 
-By default, the decision queue includes all Word comments in the round. Add `--comment-ids 3` only when the user explicitly requests a selected subset; do not process a normal review round one comment per user turn.
+From the repository root, run the round starter. It copies source documents into a unique workspace, preserves the originals, creates the standard folders and performs the single inventory/audit pass. Every output is written inside that workspace, not into the repository root:
 
-The command writes:
-- `workspace_inventory.json`: parsed paragraph, native comment, anchor, caption and reference inventory.
-- `review_audit_report.json/.md`: exact and candidate cross-document matches plus classified figure/table references, subpanels/ranges, internal collisions and cross-document caption groups.
-- `review_decision_queue.json`: a bounded packet conforming to `schemas/review-decision.schema.json`; it includes each native anchor once and at most 8 context excerpts (1,200 characters each).
+```powershell
+.\scripts\Start-CoReviewerRound.ps1 -ReviewersDocx "D:\Review\Reviewers.docx" -ManuscriptDocx "D:\Review\Manuscript.docx" -SupportingInformationDocx "D:\Review\SI.docx" -PythonExe "D:\Software\Anacoda\python.exe"
+```
 
-For the complete decision stage, analyse all queue items plus the workspace-level audit together. Split compound reviewer requests into atomic tasks, merge overlapping tasks while retaining all source comment IDs, and add global consistency tasks that are not anchored to one comment. Draft one `revision_decision_plan.json` conforming to `schemas/revision-decision-plan.schema.json`; every task remains pending and requires author approval. The validator checks provenance and dependency integrity, not scientific correctness. Present the proposed dispositions and targets to the author first; only after the author accepts that scope should the Workflow Ledger be created and the execution tasks prepared.
+Copy the printed `[WORKSPACE]` path into:
 
-Each DOCX inventory is cached by its SHA-256 and parser cache-schema version. The first run parses the files; a later run with unchanged source bytes reports cache hits and performs matching/numbering over the cached JSON without reopening the DOCX. If one input changes, only that input is reparsed. Use `--refresh-cache` to force a fresh parse. The cache directory is local and ignored by Git.
+```powershell
+$roundRoot = "<printed workspace path>"
+```
 
-A native target match is confirmed only when a resolved Word selection matches exactly and uniquely in a target document. Similarity/token-overlap results are candidates, not confirmed locations. Figure/table numbering checks are diagnostic only; the tool never renumbers files.
+The `round_manifest.json` records the copied inputs and hashes, audit artifacts and round directories. Supporting Information is optional. The starter never modifies the selected originals and refuses to reuse an existing round folder.
 
-After the author accepts the proposed dispositions and target scope, create one pending Decision Plan conforming to `schemas/revision-decision-plan.schema.json`. Validate provenance and create the round's Workflow Ledger together:
+The Audit outputs are:
+- `reports/workspace_inventory.json`: paragraph, comment, anchor, caption and reference inventory.
+- `reports/review_audit_report.json/.md`: cross-document matches and deterministic figure/table reference findings.
+- `reports/review_decision_queue.json`: bounded evidence packets for semantic review.
 
-    python scripts/validate_decision_plan.py --plan revision_decision_plan.json --audit review_audit_report.json --inventory workspace_inventory.json --workflow-ledger-out workflow_ledger.json --revision-round-id round-2026-11-14
+The first run parses each DOCX once per SHA-256/cache-schema version. Unchanged files are reused from the local cache; a changed source invalidates only its own cache entry. Similarity/token-overlap matches are candidates, not confirmed targets. Figure/table numbering results are diagnostic; the tool never renumbers a document automatically.
 
-Use `--identity-manifest` only with a parser-backed manifest whose source hashes match the current inputs. The Decision Plan remains pending; this command does not authorize edits.
+### 2. Prepare and validate the Decision Plan
 
-Before authorizing tasks, enrich the relevant Workflow Ledger tasks with exact executable Patch operations: document role, immutable input path, separate output path, Word part, paragraph index, exact find/replace strings, readable location and same-target evidence IDs. Add only an author-reviewed proposed response. Preserve task IDs, reviewer comment IDs, evidence, dependencies and target groups. Do not add executable operations for unresolved or ambiguous targets.
+Review the complete decision queue and audit together. Split compound reviewer requests into atomic tasks, preserve every source comment ID, include target-document evidence for each proposed edit, record dependencies and keep all tasks pending with user approval required. Do not invent scientific claims, numerical values, citations or replacement text.
 
-Preserve reviewer identity per comment. When one task combines comments from different reviewers, provide a nested `reviewer_map.json`:
+Create `plan/revision_decision_plan.json` conforming to `schemas/revision-decision-plan.schema.json`, then validate it against the exact round inventory/audit:
 
-    {
-      "T1": {
-        "comment_ids": {
-          "1": "Reviewer 1",
-          "2": "Reviewer 2"
-        }
-      }
-    }
+```powershell
+python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --revision-round-id "round-2026-11-16"
+```
 
-Prepare the complete reviewer map before the first batch when possible. Across later batches, the RevisionLedger preserves previously recorded reviewer identities when a generic fallback is used; it permits upgrading a generic placeholder to an explicit label but rejects conflicting explicit reassignment.
+Use `--identity-manifest` only when a current parser-backed identity manifest matches the copied source DOCX hashes. The generated Workflow Ledger remains planned; validation does not authorize edits.
 
-Then authorize only the selected, fully prepared task scopes and build the conflict-free Patch batch:
+### 3. Prepare exact PatchOperations without hand-editing the Workflow Ledger
 
-    python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger workflow_ledger.json --ids T1 --plan-approved --actor "Human Author"
-    python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --reviewer-map reviewer_map.json --out revision_ledger.json
-    python scripts/co_reviewer_cli.py export-revision-plan --ledger revision_ledger.json --out edits_plan_batch_01.json
+Keep the validated `workflow_ledger.json` unchanged. Create `plan/workflow_execution_scope.json` using `schemas/workflow-execution-scope.schema.json`; use `examples/workflow_execution_scope.example.json` as a structural template and replace every illustrative value with current-round IDs and evidence. Bind it to the initial Workflow Ledger:
 
-The Workflow Ledger controls task dependencies and target conflicts. The RevisionLedger is the durable Patch/ResponseUnit history. The exported revision plan is only an adapter for the existing Word-native Track Changes writer; do not create a competing manually maintained plan. Later batches reuse the same Workflow Ledger and RevisionLedger paths but receive new numbered plan files.
+```powershell
+$workflow = Join-Path $roundRoot "plan\workflow_ledger.json"
+$workflowSha = (Get-FileHash -LiteralPath $workflow -Algorithm SHA256).Hash.ToLowerInvariant()
+```
 
-Preflight the exact Patch operations, then obtain the second approval bound to their source hashes and operands:
+The execution scope records the current round ID and that hash, plus the author-reviewed execution details:
+- One exact PatchOperation per mutating Decision Plan target, with operation ID, document role, Word part, paragraph index, find/replace, same-target evidence IDs and source reviewer comment IDs.
+- Reviewed proposed response wording for each executable task.
+- Explicit ResponseUnit dispositions for reply-only, no-change and clarification-needed comments. A no-change unit requires anchor evidence; a reply-only unit uses `not_required` location.
+- Optional reviewer label overrides. Otherwise the preparation command takes reviewer labels from native Word comment authors in the inventory.
 
-    python scripts/co_reviewer_cli.py preflight-plan --plan edits_plan_batch_01.json --out preflight_report_batch_01.json --revision-ledger revision_ledger.json
-    python scripts/co_reviewer_cli.py approve-plan --plan edits_plan_batch_01.json --ids T1 --revision-ledger revision_ledger.json --actor "Human Author"
+Do not put source/output paths or source hashes into the scope; the CLI resolves them from the current active document pointers. Run:
 
-Both task-scope authorization and exact Patch approval are required. Apply only after both gates pass:
+```powershell
+python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $workflow --execution-scope "$roundRoot\plan\workflow_execution_scope.json" --inventory "$roundRoot\reports\workspace_inventory.json" --out "$roundRoot\plan\workflow_ledger.prepared.json" --reviewer-map-out "$roundRoot\plan\reviewer_map.json" --report "$roundRoot\reports\workflow_preparation_report.json"
+```
 
-    python scripts/co_reviewer_cli.py apply --plan edits_plan_batch_01.json --author "Author Name" --report revision_apply_report.json --revision-ledger revision_ledger.json
-    python scripts/co_reviewer_cli.py verify --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --out revision_verification_batch_01.json
-    python scripts/co_reviewer_cli.py confirm-verified --plan edits_plan_batch_01.json --apply-report revision_apply_report.json --ids T1 --semantic-review-confirmed --revision-ledger revision_ledger.json
-    python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
+The command checks source hashes, task/comment ownership, target/evidence matching, PatchOperation structure, reviewer attribution and ResponseUnit classification. It writes a new prepared Workflow Ledger, reviewer map and report. It does not change task status, grant author approval or edit a DOCX. Review the generated report and exact proposed responses before continuing.
 
-Reuse `revision_apply_report.json` across batches because the apply command appends execution records. Give every batch its own plan, preflight report and verification report. When a verified task unlocks dependents or invalidates an overlapping task, refresh the affected evidence and target paths against the latest DOCX outputs, obtain renewed authorization, and build the next ready batch. Never apply a dependent Patch against an outdated document.
+### 4. Authorize tasks and build an immutable batch
 
-After all in-scope Patch batches are verified, create separate Working Clean projections:
+Only after the author accepts the prepared scope, authorize the selected tasks:
 
-    python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
+```powershell
+$preparedWorkflow = Join-Path $roundRoot "plan\workflow_ledger.prepared.json"
+$reviewerMap = Join-Path $roundRoot "plan\reviewer_map.json"
+$revisionLedger = Join-Path $roundRoot "plan\revision_ledger.json"
+$runs = Join-Path $roundRoot "runs"
 
-Working Clean Views are intermediate accepted-changes projections, not final Word-layout Clean files. Inspect Marked and Working Clean outputs together, then confirm the author-reviewed ResponseUnits:
+python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger $preparedWorkflow --ids T1 --plan-approved --actor "Human Author"
+python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger $preparedWorkflow --reviewer-map $reviewerMap --runs-dir $runs --out $revisionLedger
+python scripts/co_reviewer_cli.py export-revision-plan --ledger $revisionLedger --batch-dir "<full batch directory printed by build-revision-ledger>"
+```
 
-    python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-T1-1 --semantic-review-confirmed --actor "Human Author"
+Use the actual task IDs and Patch IDs. The scheduler enforces dependencies and target-group conflicts. Candidate Patch/ResponseUnit data is validated before the immutable batch intent is created; the batch pins active parent paths/hashes and assigns new Marked DOCX output paths. Reuse the same prepared Workflow Ledger, RevisionLedger and `runs/` folder throughout the round.
 
-On Windows with Microsoft Word installed and the optional Word/PDF dependencies, generate the final Word-layout Clean DOCX, PDF and actual page/line map:
+### 5. Preflight, approve, apply, verify and publish
 
-    python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
+Each immutable batch uses append-only plan snapshots. Use the exact paths printed by each command:
 
-Only actual Word COM pagination and the exported PDF can establish final page/line numbers. Do not calculate them from XML or estimate them. Complete ResponseUnits only after semantic review, PDF-backed locations and explicit author readiness:
+```powershell
+python scripts/co_reviewer_cli.py preflight-plan --plan "<batch>\revision_plan.json" --revision-ledger $revisionLedger
+python scripts/co_reviewer_cli.py approve-plan --plan "<batch>\revision_plan.preflighted.json" --ids P-T1 --revision-ledger $revisionLedger --actor "Human Author"
+python scripts/co_reviewer_cli.py apply --plan "<batch>\revision_plan.approved.json" --revision-ledger $revisionLedger --author "Author Name"
+python scripts/co_reviewer_cli.py verify --plan "<batch>\revision_plan.applied.json"
+python scripts/co_reviewer_cli.py confirm-verified --plan "<batch>\revision_plan.applied.json" --ids P-T1 --semantic-review-confirmed --revision-ledger $revisionLedger
+python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger $preparedWorkflow --revision-ledger $revisionLedger
+python scripts/co_reviewer_cli.py publish-batch --workflow-ledger $preparedWorkflow --revision-ledger $revisionLedger --batch-dir "<full batch directory>"
+```
 
-    python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-T1-1 --ready-for-submission-confirmed --actor "Human Author"
+Replace the example IDs with the actual Patch IDs in that batch. Both task authorization and exact Patch approval are mandatory. Apply writes native Word Track Changes to separate Marked DOCX files. Verify checks exact revisions and whole-document untracked-text integrity. Publish only after all Patches are verified and Workflow task state is synchronized. A later batch must use the newly published active pointers, not the original input DOCX.
 
-Render the Response Letter from the RevisionLedger, preserving draft/location-pending/completed states:
+The batch lifecycle, recovery boundaries and final release requirements are documented in [docs/WORKFLOW.md](docs/WORKFLOW.md). Do not delete or reuse a failed batch. A scope-less, intent-only orphan is not a failed Apply and must only be resolved through the dedicated retirement command after a fully verified matching successor publication.
 
-    python scripts/co_reviewer_cli.py render-response-docx --revision-ledger revision_ledger.json --out Response_to_Reviewers.docx --manuscript-title "Manuscript title" --author "Corresponding Author" --quality-report ResponseLetter_quality_report.json
-    python scripts/co_reviewer_cli.py render-response --revision-ledger revision_ledger.json --out Response_to_Reviewers.md
+### 6. Finalize the round and create the Release Package
 
-A semantically reviewed ResponseUnit without final PDF locations is still location-pending, not submission-ready. Deliver Marked and final Clean Manuscript/SI files, the Response Letter, verification/quality reports, PDF-backed location map and unresolved-item list. See `examples/revision_plan.example.json` and `docs/WORKFLOW.md`.
+After all document-changing batches have been published, create Working Clean projections and review the complete cross-document result. Confirm the semantics of each ResponseUnit, then use Microsoft Word COM on Windows to generate final Word-layout Clean DOCX/PDF files and actual page/line locations:
+
+```powershell
+python scripts/co_reviewer_cli.py create-working-clean-views --ledger $revisionLedger
+python scripts/co_reviewer_cli.py confirm-response-units --ledger $revisionLedger --ids RU-T1-1 --semantic-review-confirmed --actor "Human Author"
+python scripts/co_reviewer_cli.py map-response-locations --ledger $revisionLedger --out-dir (Join-Path $roundRoot "output\word_pdf_final")
+python scripts/co_reviewer_cli.py complete-response-units --ledger $revisionLedger --ids RU-T1-1 --ready-for-submission-confirmed --actor "Human Author"
+python scripts/co_reviewer_cli.py create-release-package --workflow-ledger $preparedWorkflow --revision-ledger $revisionLedger --out-dir (Join-Path $runs "release-final") --manuscript-title "Manuscript title" --author "Corresponding Author"
+```
+
+Use the actual ResponseUnit IDs. The Word COM mapper is the only source of page/line values; PDF extraction independently checks page-level target presence. The mapper records location evidence in the RevisionLedger, so do not separately record the same map again. Complete each ResponseUnit only after semantic review, final location evidence (when required) and explicit author readiness.
+
+The final command creates a unique `runs/release-{id}/` directory with Markdown/DOCX Response Letters, a quality report and `final_release_manifest.json`. It rechecks current pointers, Patch evidence, completed ResponseUnits, Word/PDF hashes, page counts, figure/table audit and exact Response Letter excerpts. A generated package is still subject to the author's final Word/PDF visual review; synthetic workflow acceptance is not scientific peer review.
 
 ## Safe revision engine: supported scope
 

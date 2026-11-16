@@ -26,5 +26,9 @@ co-reviewer = "co_reviewer_cli:main"
 package-dir = {"" = "scripts"}
 py-modules = ["co_reviewer_cli", "response_letter_docx"]
 
+[tool.setuptools.packages.find]
+where = ["scripts"]
+include = ["co_reviewer", "co_reviewer.*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

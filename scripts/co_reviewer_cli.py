@@ -1891,6 +1891,65 @@ def cmd_sync_workflow_ledger(args):
     return 0
 
 
+def cmd_prepare_workflow_execution(args):
+    """Merge a prepared, evidence-bound execution scope into a new Workflow Ledger."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    scope_path = Path(args.execution_scope).expanduser().resolve()
+    inventory_path = Path(args.inventory).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    reviewer_map_path = (
+        Path(args.reviewer_map_out).expanduser().resolve()
+        if args.reviewer_map_out
+        else output_path.with_name("reviewer_map.json")
+    )
+    report_path = (
+        Path(args.report).expanduser().resolve()
+        if args.report
+        else output_path.with_name("workflow_preparation_report.json")
+    )
+    inputs = {workflow_path, scope_path, inventory_path}
+    outputs = [output_path, reviewer_map_path, report_path]
+    if len(set(outputs)) != len(outputs) or any(path in inputs for path in outputs):
+        raise ValueError("Prepared Workflow Ledger, reviewer map and report must use distinct paths from all inputs.")
+    existing = [str(path) for path in outputs if path.exists()]
+    if existing:
+        raise FileExistsError(
+            "Refusing to overwrite existing workflow-preparation outputs: " + ", ".join(existing)
+        )
+
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    scope = json.loads(scope_path.read_text(encoding="utf-8"))
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    from co_reviewer.workflow_preparation import prepare_workflow_execution
+
+    prepared, reviewer_map, report = prepare_workflow_execution(
+        workflow,
+        scope,
+        inventory,
+        workflow_path=workflow_path,
+        execution_scope_path=scope_path,
+    )
+    from co_reviewer.batch_store import write_json_new
+
+    output_sha = write_json_new(output_path, prepared)
+    reviewer_sha = write_json_new(reviewer_map_path, reviewer_map)
+    report.update({
+        "prepared_workflow_ledger": str(output_path),
+        "prepared_workflow_ledger_sha256": output_sha,
+        "reviewer_map_file": str(reviewer_map_path),
+        "reviewer_map_sha256": reviewer_sha,
+        "preparation_report": str(report_path),
+    })
+    report_sha = write_json_new(report_path, report)
+    print(f"[PREPARED] {len(report['prepared_task_ids'])} task(s): {', '.join(report['prepared_task_ids'])}")
+    print("[APPROVAL] No task was authorized; all author-approval gates remain pending.")
+    print("[DOCUMENTS] No DOCX was edited. Batch-specific output paths are assigned later by build-revision-ledger.")
+    print(f"[WORKFLOW LEDGER] {output_path} | {output_sha}")
+    print(f"[REVIEWER MAP] {reviewer_map_path} | {reviewer_sha}")
+    print(f"[REPORT] {report_path} | {report_sha}")
+    return 0
+
+
 def cmd_build_revision_ledger(args):
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     output_path = Path(args.out).expanduser().resolve()
@@ -1936,6 +1995,8 @@ def cmd_build_revision_ledger(args):
     })
     batch_intent = None
     batch_document_paths: dict[str, dict[str, str]] = {}
+    batch_id_for_intent = getattr(args, "batch_id", None)
+    runs_root = None
     existing_patch_statuses: dict[str, str] = {}
     existing_revision_events = None
     existing_revision_patches_by_id: dict[str, Any] = {}
@@ -1950,14 +2011,18 @@ def cmd_build_revision_ledger(args):
         existing_revision_events = existing_before_build.events
     if selected_roles:
         from co_reviewer.batch_store import (
+            _safe_component,
             assert_no_uncommitted_role_batches,
-            create_batch_intent,
+            load_active_document_pointers,
         )
         runs_root = (
             Path(getattr(args, "runs_dir")).expanduser()
             if getattr(args, "runs_dir", None)
             else workflow_path.parent / "runs"
         )
+        if not runs_root.is_absolute():
+            runs_root = workflow_path.parent / runs_root
+        runs_root = runs_root.resolve()
         assert_no_uncommitted_role_batches(
             runs_root,
             selected_roles,
@@ -1968,20 +2033,30 @@ def cmd_build_revision_ledger(args):
             revision_patches_by_id=existing_revision_patches_by_id,
             revision_ledger_path=output_path,
         )
-        batch_intent = create_batch_intent(
-            workflow,
-            workflow_path,
-            selected_document_task_ids,
-            selected_roles,
-            all_selected_task_ids=selected_task_ids,
-            runs_dir=getattr(args, "runs_dir", None),
-            batch_id=getattr(args, "batch_id", None),
-        )
-        for role, record in batch_intent["documents"].items():
+        if batch_id_for_intent is None:
+            batch_id_for_intent = (
+                datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                + "-"
+                + uuid.uuid4().hex[:8]
+            )
+        planned_batch_dir = runs_root / f"batch-{batch_id_for_intent}"
+        if planned_batch_dir.exists():
+            raise FileExistsError(
+                f"Batch directory already exists; refusing to reuse it: {planned_batch_dir}"
+            )
+        active_pointers = load_active_document_pointers(workflow)
+        for role in selected_roles:
+            parent = active_pointers.get(role)
+            if parent is None:
+                raise ValueError(f"No active document pointer exists for batch role {role}.")
             batch_document_paths[role] = {
-                "input_file": record["parent_file"],
-                "output_file": record["output_file"],
-                "source_sha256": record["parent_sha256"],
+                "input_file": parent["file"],
+                "output_file": str(
+                    planned_batch_dir
+                    / "documents"
+                    / f"{_safe_component(role)}.marked.docx"
+                ),
+                "source_sha256": parent["sha256"],
             }
 
     document_paths = (
@@ -2179,6 +2254,29 @@ def cmd_build_revision_ledger(args):
             allow_scope_refresh_for_task_ids=sorted(changed_scope_tasks),
         )
         ledger = existing_ledger
+    if selected_roles:
+        from co_reviewer.batch_store import create_batch_intent
+        batch_intent = create_batch_intent(
+            workflow,
+            workflow_path,
+            selected_document_task_ids,
+            selected_roles,
+            all_selected_task_ids=selected_task_ids,
+            runs_dir=str(runs_root),
+            batch_id=batch_id_for_intent,
+        )
+        for role, record in batch_intent["documents"].items():
+            expected = batch_document_paths[role]
+            if (
+                Path(record["parent_file"]).expanduser().resolve()
+                != Path(expected["input_file"]).expanduser().resolve()
+                or Path(record["output_file"]).expanduser().resolve()
+                != Path(expected["output_file"]).expanduser().resolve()
+                or record["parent_sha256"] != expected["source_sha256"]
+            ):
+                raise ValueError(
+                    f"Created batch intent differs from the prevalidated Patch paths for {role}."
+                )
     if batch_intent is not None:
         from co_reviewer.batch_store import write_json_new
         scope = {
@@ -3871,6 +3969,14 @@ def build_parser():
     syncwl.add_argument("--workflow-ledger", required=True)
     syncwl.add_argument("--revision-ledger", required=True)
     syncwl.set_defaults(func=cmd_sync_workflow_ledger)
+    prep_scope = sub.add_parser("prepare-workflow-execution", help="Validate exact evidence-linked PatchOperations and prepare a new pending Workflow Ledger without authorizing edits.")
+    prep_scope.add_argument("--workflow-ledger", required=True)
+    prep_scope.add_argument("--execution-scope", required=True, help="JSON scope containing exact PatchOperations and reviewed ResponseUnit dispositions.")
+    prep_scope.add_argument("--inventory", required=True, help="The same source-hash-bound workspace inventory used for the Decision Plan.")
+    prep_scope.add_argument("--out", required=True, help="New output path for the prepared Workflow Ledger; the input ledger is preserved.")
+    prep_scope.add_argument("--reviewer-map-out", help="New reviewer-map JSON path; defaults beside --out.")
+    prep_scope.add_argument("--report", help="New preparation report path; defaults beside --out.")
+    prep_scope.set_defaults(func=cmd_prepare_workflow_execution)
     awt = sub.add_parser("approve-workflow-tasks", help="Explicitly authorize planned tasks to enter the ready queue.")
     awt.add_argument("--workflow-ledger", required=True)
     awt.add_argument("--ids", nargs="+", required=True)

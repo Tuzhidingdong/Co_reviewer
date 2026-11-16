@@ -84,6 +84,9 @@ python scripts/co_reviewer_cli.py create-release-package --workflow-ledger workf
 The map-response-locations command writes its generated map and location evidence back to the RevisionLedger. Do not call record-response-locations again for that same output. The standalone command is only for attaching a separately generated, still-unrecorded map that matches the exact current Ledger. Use record-manual-response-locations for author-confirmed table/non-body cases explicitly marked manual_required; never infer page/line values.
 
 ## Synthetic test coverage added
+- The workflow execution-scope contract is now represented by `schemas/workflow-execution-scope.schema.json`; the new `prepare-workflow-execution` CLI creates a separate pending Workflow Ledger, reviewer map and preparation report from an exact author-reviewed scope. `tests/test_workflow_preparation.py` has been added for source-hash binding, same-target evidence matching, author-approval preservation and input immutability. These newly authored tests are **not yet run**; they are part of the deferred unified acceptance stage.
+- `build-revision-ledger` now validates candidate Patch/ResponseUnit construction and existing-ledger merge before creating a batch intent. The regression test for this lifecycle ordering remains part of the unified test stage.
+- `scripts/Start-CoReviewerRound.ps1` creates an isolated round workspace, copies and hash-compares the original inputs, runs Audit into the round's reports folder and writes a round manifest. The normal workflow instructions in `SKILL.md`, `README.md` and `docs/WORKFLOW.md` now use the same execution-scope preparation path instead of asking the Supervisor to hand-edit Workflow Ledger JSON.
 
 - `tests/test_batch_store.py`: unique batch storage, no-overwrite semantics, same-role reservation, active-pointer source hash integrity, verified-only publication, atomic pointer result and non-destructive rollback, and interrupted failed-batch recovery with receipt integrity. Retained-inventory regressions cover root-only control exclusions, nested same-named artifacts and symbolic-link rejection. Transaction regressions cover rejection of bare publication/rollback receipts and acceptance of complete hash-bound publication and rollback chains. Recovery DAG coverage now includes selected, conflicting and downstream dependent tasks; a regression removes a downstream invalidation event and recomputes the staged snapshot hash to confirm the transaction is rejected. Dedicated Recovery Intent and Receipt JSON Schemas are validated against generated instances in `tests/test_release_manifest.py`. Runtime recovery receipt checks now compare the entire staged per-Patch event set to the persisted RevisionLedger events before releasing a batch lock; tests reject missing and altered persisted events. The batch scheduler receives the current Ledger event list from `cmd_build_revision_ledger`; without it a recovered batch cannot release its document-role reservation. The idempotent recovery command and Release Gate use the same exact event comparison. Runtime receipt validation also requires the exact pre-recovery Patch status map and one well-formed staged RevisionLedger recovery event per Patch; the Release Gate compares those records to the persisted RevisionLedger.
 - `tests/test_revision_models.py`: abandoned-plan replay rejection, exact final-location coverage for every linked PatchOperation or anchor, rejection of missing/duplicate locator records, and persisted-ledger validation of location coverage. `tests/test_revision_ledger_cli.py` also verifies that CLI batch-directory arguments reject final-directory symlinks and symlinked parent paths before canonicalization. All four CLI batch-directory entry points (export, recover, publish and rollback) apply this check before resolving the path.
@@ -91,9 +94,12 @@ The map-response-locations command writes its generated map and location evidenc
 - `tests/test_release_manifest.py`: release blocking for incomplete ResponseUnits, reply-only completion without invented document locations, comment-to-ResponseUnit coverage, unresolved Figure/Table references, strict quality/SEQ status allowlists, SEQ audit structure consistency, positive non-boolean Word page counts, final-map consistency, DOCX/PDF/page-count/profile-bound quality reports, exact batch task/Patch/document scope, historical published/rolled-back batch-chain retention with rollback-intent hash tamper rejection, recovered-unpublished batch evidence with retained-inventory, forged Ledger-path rejection, Workflow after-image hash/pointer/invalidation-event tamper rejection, and stale-parent/task rejection, and tampered Response Letter DOCX rejection. Continuous published-batch parent-pointer replay now covers sequential publications and rollbacks; a regression rehashes a discontinuous later parent chain to verify that cross-batch history is still rejected. Patch supersession now requires matching predecessor/replacement events for every lineage edge, and the final Manifest exposes predecessor IDs plus those events. Recovered-batch downstream task IDs must also remain present in the current Workflow Ledger.
 - `tests/test_schema_contracts.py` validates all repository JSON Schema definitions against their declared meta-schemas; `tests/test_release_manifest.py` validates a generated representative Release Manifest instance with Draft 2020-12 and format checking.
 
-## Validation status and remaining boundary
+## Historical acceptance evidence and current implementation status
 
-**Current acceptance baseline:** code HEAD `b144f4b282f76efcced165815d713747138bc831`.
+**Important:** the test/acceptance results below are historical evidence for code HEAD `b144f4b282f76efcced165815d713747138bc831` only. They do not validate later commits, including the intent-only prepared-batch retirement fix or the current workflow-entry implementation. Per the current development direction, no further tests are being run mid-implementation. The complete test and acceptance suites will be run together after the end-to-end product workflow is implemented.
+
+### Historical baseline on b144f4b
+
 
 - Dedicated Word/PDF acceptance regression: **3/3 tests passed**.
 - Windows quality-check run: **261/261 tests passed**, zero failures/errors/skips; compileall, package checks and core CLI smoke checks passed (exit code 0).
@@ -111,9 +117,17 @@ The five-target compatibility fixture has passed the Microsoft Word save/close/r
 
 This is still a synthetic one-ResponseUnit mapping run. It does not constitute full multi-batch workflow acceptance, visual acceptance of the final Clean DOCX/PDF, or acceptance of a real review round.
 
-## Next acceptance boundary
+## Remaining product implementation and unified acceptance boundary
 
-Run one complete synthetic review round through the actual CLI/PowerShell entry points, including Reviewer comment inventory, Decision Plan approval, immutable batch creation, preflight/approval, native Track Changes Apply, verification, Workflow synchronization, batch publication, final Working Clean, Word COM/PDF mapping, ResponseUnit completion and final Release Package/Manifest. Keep all generated test files isolated under a new Temp directory. After that, the user must visually inspect the final Word/PDF output and the workflow must be exercised with user-approved real review files.
+The immediate development priority is to finish the normal user workflow, not to expand isolated audit checks:
+
+- Start a review round in a dedicated workspace with copied, hash-tracked inputs and all Audit outputs contained inside that workspace.
+- Prepare exact PatchOperations, proposed responses, ResponseUnit dispositions and reviewer attribution through the structured execution-scope input and `prepare-workflow-execution` CLI. The validated initial Workflow Ledger remains immutable; the prepared Ledger is a separate output and all approval gates remain pending.
+- Ensure candidate Patch/ResponseUnit construction and existing-ledger merge complete before a new immutable batch intent is created, preventing invalid execution input from leaving avoidable orphan batches.
+- Continue multiple published batches from the latest active document pointers, then create final Working Clean, run final Word COM/PDF mapping, complete ResponseUnits and generate the Release Package/Manifest.
+- Keep all round artifacts under the round workspace and make the primary SKILL/README/workflow instructions consistent with the same CLI sequence.
+
+After these implementation items are complete, run one unified automated test/quality suite and one continuous synthetic end-to-end round. Then perform the user's separate visual Word/PDF acceptance and a user-approved real review round. Until then, do not report P1 as fully implemented or accepted.
 
 ## Mainline audit and deviation report
 
@@ -122,19 +136,17 @@ Run one complete synthetic review round through the actual CLI/PowerShell entry 
 - The P0 Word/PDF mapper's independent PDF page-text corroboration has been restored. It only checks that the Word-reported PDF page contains the target phrase; Word COM remains the sole source of page/line coordinates. Reused role mappings now undergo the same page-level corroboration before reuse.
 
 
-## Immediate local acceptance path
+## Unified acceptance path (deferred until implementation is complete)
 
-From the repository root, in Windows PowerShell 5.1, execute the existing quality-check entry point with the intended Python 3.10+ interpreter:
+Do not use this section during the current implementation phase. Once the end-to-end workflow and its user-facing entry points are complete, perform one unified run from the repository root in Windows PowerShell 5.1:
 
 ```powershell
-.\scripts\run_quality_checks.ps1 -PythonExe "D:\Anaconda\python.exe" -InstallDependencies
+.\scripts\run_quality_checks.ps1 -PythonExe "D:\Software\Anacoda\python.exe"
 ```
 
-This installs the test extra, compiles `scripts` and `tests`, runs the complete `unittest` suite, and checks the core CLI entry points. It writes a persistent log and prints its path. Do not treat a partial test run as PASS.
+Then run one continuous synthetic review round through the documented CLI/PowerShell path, including two published batches, final Working Clean, Word COM/PDF mapping for every changed document role, ResponseUnit completion, Response Letter and Release Manifest validation. Keep all generated artifacts under a fresh temporary round workspace. Do not rerun isolated subsets after every small code edit; diagnose and fix the first failure from the unified run.
 
-After the automated suite passes, perform the separate Microsoft Word GUI/COM acceptance on the existing Windows installation: open a generated Marked DOCX and confirm native Track Changes; run `map-response-locations` on a completed synthetic/approved test ledger; confirm Word-generated Clean DOCX, PDF, page/line map and quality report agree. Word/COM execution is not performed by the automated quality-check script.
-
-P1 remains Draft until the automated suite and the user's Word/PowerShell acceptance evidence are available. When a check fails, preserve the complete output and log; diagnose the first failure rather than repeating the whole workflow without a specific fix.
+After the unified synthetic run passes, the user performs the separate Microsoft Word GUI/PDF visual acceptance and a real user-approved review round. PR #3 remains Draft/Open/Unmerged until those acceptance gates are documented.
 
 ## Branch / PR
 

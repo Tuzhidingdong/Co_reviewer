@@ -77,7 +77,7 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "targets", "target_refs", "source_versions", "dependencies", "target_groups", "readiness",
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
-    "response_unit_ids",
+    "response_unit_ids", "response_unit_specs",
 )
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 

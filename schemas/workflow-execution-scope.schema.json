@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Workflow Execution Scope",
+  "description": "Author-reviewed exact PatchOperations and ResponseUnit dispositions attached to a validated pending Workflow Ledger. Does not authorize edits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "revision_round_id",
+    "workflow_ledger_sha256",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "revision_round_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "patch_operations"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "patch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "proposed_response": {
+            "type": "string"
+          },
+          "supersedes_patch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "patch_operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "operation_id",
+                "document",
+                "part",
+                "p_idx",
+                "find",
+                "replace",
+                "evidence_ids",
+                "source_comment_ids"
+              ],
+              "properties": {
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "document": {
+                  "enum": [
+                    "Manuscript",
+                    "SI"
+                  ]
+                },
+                "part": {
+                  "type": "string",
+                  "pattern": "^word/"
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "find": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "replace": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "string"
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "source_comment_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "location_phrase": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "target_ref": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "response_unit_specs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "comment_id",
+                "disposition",
+                "location_requirement"
+              ],
+              "properties": {
+                "comment_id": {
+                  "type": [
+                    "string",
+                    "integer"
+                  ]
+                },
+                "disposition": {
+                  "enum": [
+                    "revised",
+                    "reply_only",
+                    "no_change",
+                    "clarification_needed"
+                  ]
+                },
+                "location_requirement": {
+                  "enum": [
+                    "required",
+                    "existing_anchor_required",
+                    "not_required",
+                    "manual_required"
+                  ]
+                },
+                "resolution_reason": {
+                  "type": "string"
+                },
+                "anchor_evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "disposition": {
+                        "const": "no_change"
+                      }
+                    },
+                    "required": [
+                      "disposition"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "anchor_evidence_id"
+                    ],
+                    "properties": {
+                      "location_requirement": {
+                        "enum": [
+                          "existing_anchor_required",
+                          "manual_required"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "disposition": {
+                        "const": "reply_only"
+                      }
+                    },
+                    "required": [
+                      "disposition"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "location_requirement": {
+                        "const": "not_required"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "disposition": {
+                        "const": "clarification_needed"
+                      }
+                    },
+                    "required": [
+                      "disposition"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "location_requirement": {
+                        "not": {
+                          "const": "not_required"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "reviewer_map": {
+      "type": "object",
+      "description": "Optional task-level reviewer overrides. Native comment authors are used by default; unknown author labels fall back to Reviewer.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "type": "string",
+                "minLength": 1
+              },
+              "patch_label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "comment_ids": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
