@@ -172,9 +172,21 @@ def _refresh_task_evidence(
     if has_evidence != has_targets:
         raise WorkflowPreparationError(f"Task {task.get('task_id')} must supply both refreshed evidence and targets.")
     if not has_evidence:
-        has_mutating = any(isinstance(row, Mapping) and row.get("action") in _MUTATING for row in task.get("targets", []))
-        if task.get("status") == "recheck_required" and has_mutating:
-            raise WorkflowPreparationError(f"Task {task.get('task_id')} requires refreshed evidence/targets from current active documents.")
+        has_mutating = any(
+            isinstance(row, Mapping) and row.get("action") in _MUTATING
+            for row in task.get("targets", [])
+        )
+        existing_unit_specs = spec.get(
+            "response_unit_specs", task.get("response_unit_specs", [])
+        )
+        has_no_change_units = isinstance(existing_unit_specs, list) and any(
+            isinstance(row, Mapping) and row.get("disposition") == "no_change"
+            for row in existing_unit_specs
+        )
+        if task.get("status") == "recheck_required" and (has_mutating or has_no_change_units):
+            raise WorkflowPreparationError(
+                f"Task {task.get('task_id')} requires refreshed evidence/targets and no-change anchors from current active documents."
+            )
         return False
 
     raw_evidence, raw_targets = spec.get("evidence"), spec.get("targets")
@@ -387,9 +399,25 @@ def prepare_workflow_execution(
         if task.get("requires_user_approval") is not True:
             raise WorkflowPreparationError(f"Task {task_id} does not require explicit user approval.")
         refreshed = _refresh_task_evidence(task, spec, inventory_by_role, pointers)
-        has_mutating = any(isinstance(target, Mapping) and target.get("action") in _MUTATING for target in task.get("targets", []))
-        if task.get("status") == "recheck_required" and has_mutating and not refreshed:
-            raise WorkflowPreparationError(f"Task {task_id} must be rebound to current active evidence before renewed author approval.")
+        has_mutating = any(
+            isinstance(target, Mapping) and target.get("action") in _MUTATING
+            for target in task.get("targets", [])
+        )
+        current_unit_specs = spec.get(
+            "response_unit_specs", task.get("response_unit_specs", [])
+        )
+        has_no_change_units = isinstance(current_unit_specs, list) and any(
+            isinstance(row, Mapping) and row.get("disposition") == "no_change"
+            for row in current_unit_specs
+        )
+        if (
+            task.get("status") == "recheck_required"
+            and (has_mutating or has_no_change_units)
+            and not refreshed
+        ):
+            raise WorkflowPreparationError(
+                f"Task {task_id} must be rebound to current active evidence before renewed author approval."
+            )
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
         targets = task.get("targets", [])
         if not isinstance(targets, list):
@@ -558,6 +586,17 @@ def prepare_workflow_execution(
                 anchor_id = item.get("anchor_evidence_id")
                 if anchor_id not in evidence_by_id or requirement not in {"existing_anchor_required", "manual_required"}:
                     raise WorkflowPreparationError(f"Task {task_id} no_change {comment_id} needs a valid anchor_evidence_id.")
+                if (
+                    task.get("status") == "recheck_required"
+                    and refreshed
+                    and anchor_id not in {
+                        row.get("evidence_id") for row in spec.get("evidence", [])
+                        if isinstance(row, Mapping)
+                    }
+                ):
+                    raise WorkflowPreparationError(
+                        f"no_change {comment_id} must use a newly refreshed anchor_evidence_id from the current active document."
+                    )
             if disposition == "clarification_needed" and requirement == "not_required":
                 raise WorkflowPreparationError(f"Task {task_id} clarification_needed {comment_id} cannot use not_required location.")
         uncovered = set(comment_ids) - linked_comments - set(spec_comments)

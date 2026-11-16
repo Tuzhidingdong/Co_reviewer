@@ -330,6 +330,96 @@ class WorkflowPreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hash for Manuscript does not match"):
             cli._validate_active_workflow_audit_sources(args, self.workflow_path)
 
+    def _prepare_rechecked_no_change_task(self, anchor_evidence_id: str):
+        current_manuscript = self.root / "Manuscript.no-change-current.docx"
+        current_manuscript.write_bytes(b"synthetic current manuscript")
+        current_sha = hashlib.sha256(current_manuscript.read_bytes()).hexdigest()
+        current_workflow = json.loads(json.dumps(self.workflow))
+        current_workflow["active_documents"]["Manuscript"] = {
+            "file": str(current_manuscript),
+            "sha256": current_sha,
+            "batch_id": "batch-upstream-published",
+            "updated_at_utc": STAMP,
+        }
+        task = current_workflow["tasks"][0]
+        task["status"] = "recheck_required"
+        task["recheck_from"] = "ready"
+        task["invalidation_reason"] = "An upstream batch changed the active Manuscript."
+        task["targets"][0]["action"] = "keep"
+        task["patch_operations"] = []
+        task["response_unit_specs"] = [{
+            "comment_id": "1",
+            "disposition": "no_change",
+            "location_requirement": "existing_anchor_required",
+            "anchor_evidence_id": "E-MAN-1",
+        }]
+        self.workflow_path.write_text(
+            json.dumps(current_workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        scope = {
+            "schema_version": "1.0",
+            "revision_round_id": "round-workflow-preparation",
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "tasks": [{
+                "task_id": "T1",
+                "evidence": [{
+                    "evidence_id": "E-MAN-02",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "The selected sample is ZB-02.",
+                    "evidence_type": "paragraph",
+                    "match_status": "confirmed",
+                }],
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "action": "keep",
+                    "evidence_ids": ["E-MAN-02"],
+                }],
+                "patch_operations": [],
+                "response_unit_specs": [{
+                    "comment_id": "1",
+                    "disposition": "no_change",
+                    "location_requirement": "existing_anchor_required",
+                    "anchor_evidence_id": anchor_evidence_id,
+                }],
+            }],
+        }
+        refreshed_inventory = [
+            self.inventory[0],
+            {
+                "role": "Manuscript",
+                "file": str(current_manuscript),
+                "source_sha256": current_sha,
+                "paragraphs": [{
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "text": "The selected sample is ZB-02.",
+                }],
+            },
+        ]
+        return prepare_workflow_execution(
+            current_workflow,
+            scope,
+            refreshed_inventory,
+            workflow_path=self.workflow_path,
+            execution_scope_path=self.scope_path,
+        )
+
+    def test_recheck_no_change_accepts_only_current_version_anchor_evidence(self) -> None:
+        prepared, _, report = self._prepare_rechecked_no_change_task("E-MAN-02")
+        unit_spec = prepared["tasks"][0]["response_unit_specs"][0]
+        self.assertEqual(prepared["tasks"][0]["status"], "recheck_required")
+        self.assertEqual(unit_spec["anchor_evidence_id"], "E-MAN-02")
+        self.assertEqual(report["refreshed_task_ids"], ["T1"])
+
+    def test_recheck_no_change_rejects_stale_anchor_evidence(self) -> None:
+        with self.assertRaisesRegex(WorkflowPreparationError, "newly refreshed anchor_evidence_id"):
+            self._prepare_rechecked_no_change_task("E-MAN-1")
+
     def test_rejects_stale_workflow_hash(self) -> None:
         stale_scope = json.loads(json.dumps(self.scope))
         stale_scope["workflow_ledger_sha256"] = "0" * 64
