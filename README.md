@@ -49,7 +49,7 @@ Copy the printed `[WORKSPACE]` path into:
 $roundRoot = "<printed workspace path>"
 ```
 
-The `round_manifest.json` records the copied inputs and hashes, audit artifacts and round directories. Supporting Information is optional. The starter never modifies the selected originals and refuses to reuse an existing round folder.
+The `round_manifest.json` records copied inputs, audit/inventory artifact paths and their SHA-256 hashes, and round directories. Decision Plan validation must use this manifest so the generated Workflow Ledger inherits the exact random round ID; do not invent or hard-code a separate round ID. Supporting Information is optional. The starter never modifies the selected originals and refuses to reuse an existing round folder.
 
 The Audit outputs are:
 - `reports/workspace_inventory.json`: paragraph, comment, anchor, caption and reference inventory.
@@ -65,7 +65,7 @@ Review the complete decision queue and audit together. Split compound reviewer r
 Create `plan/revision_decision_plan.json` conforming to `schemas/revision-decision-plan.schema.json`, then validate it against the exact round inventory/audit:
 
 ```powershell
-python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --revision-round-id "round-2026-11-16"
+python scripts/validate_decision_plan.py --plan "$roundRoot\plan\revision_decision_plan.json" --audit "$roundRoot\reports\review_audit_report.json" --inventory "$roundRoot\reports\workspace_inventory.json" --workflow-ledger-out "$roundRoot\plan\workflow_ledger.json" --round-manifest "$roundRoot\round_manifest.json"
 ```
 
 Use `--identity-manifest` only when a current parser-backed identity manifest matches the copied source DOCX hashes. The generated Workflow Ledger remains planned; validation does not authorize edits.
@@ -88,10 +88,11 @@ The execution scope records the current round ID and that hash, plus the author-
 Do not put source/output paths or source hashes into the scope; the CLI resolves them from the current active document pointers. Run:
 
 ```powershell
-python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $workflow --execution-scope "$roundRoot\plan\workflow_execution_scope.json" --inventory "$roundRoot\reports\workspace_inventory.json" --out "$roundRoot\plan\workflow_ledger.prepared.json" --reviewer-map-out "$roundRoot\plan\reviewer_map.json" --report "$roundRoot\reports\workflow_preparation_report.json"
+python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $workflow --execution-scope "$roundRoot\plan\workflow_execution_scope.json" --inventory "$roundRoot\reports\workspace_inventory.json" --round-manifest "$roundRoot\round_manifest.json" --round-root-manifest "$roundRoot\round_manifest.json" --out "$roundRoot\plan\workflow_ledger.prepared.json" --reviewer-map-out "$roundRoot\plan\reviewer_map.json" --report "$roundRoot\reports\workflow_preparation_report.json"
 ```
 
-The command checks source hashes, task/comment ownership, target/evidence matching, PatchOperation structure, reviewer attribution and ResponseUnit classification. It writes a new prepared Workflow Ledger, reviewer map and report. It does not change task status, grant author approval or edit a DOCX. Review the generated report and exact proposed responses before continuing.
+The command checks the current Workflow Ledger path/hash and the exact inventory path/SHA-256 recorded by the root round manifest (starter or latest refresh), in addition to task/comment ownership, target/evidence matching, PatchOperation structure, reviewer attribution and ResponseUnit classification. It writes a new prepared Workflow Ledger, reviewer map and report, then records their paths and hashes back into the root round manifest so later Refresh/Reconcile calls find the same current Workflow version. When `--round-manifest` is a dedicated `refresh_manifest.json`, also pass `--round-root-manifest` for that round's root manifest. It does not change task status, grant author approval or edit a DOCX. Review the generated report and exact proposed responses before continuing.
+This is the **manual/low-level preparation route**. For the PowerShell orchestrator in Section 4, do not run this command first: pass the author-reviewed ExecutionScope and Inventory to `Invoke-CoReviewerBatch.ps1`, which performs this preparation once and registers the outputs. Do not run both preparation routes for the same scope.
 
 ### Recommended Windows workflow: use the round orchestrators
 
@@ -106,6 +107,7 @@ $roundRoot = "<printed workspace path>"
 .\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "plan\workflow_ledger.json" -ExecutionScope "plan\workflow_execution_scope.json" -Inventory "reports\workspace_inventory.json" -TaskIds T1 -PythonExe "D:\Software\Anacoda\python.exe"
 ```
 
+The PowerShell command below assumes you skipped the manual preparation command above. It prepares exactly once from the base Workflow Ledger and supplied ExecutionScope/Inventory. If you already used the manual CLI route, omit `-ExecutionScope` and `-Inventory`, pass the registered prepared Workflow Ledger as `-WorkflowLedger`, and pass the generated Reviewer Map with `-ReviewerMap`.
 The entry point prepares a new Workflow Ledger, Reviewer Map and report, then connects task authorization, immutable batch construction, plan export, preflight, exact Patch approval, Track Changes Apply, verification, untracked-text audit, semantic confirmation, Workflow synchronization and publication. It prints the actual generated paths and batch ID; use those returned paths rather than guessing names.
 
 The script pauses for exact author confirmations at task authorization, Patch approval, scientific semantic review and publication. It stops at the first error and preserves the batch artifacts. It does not retry a failed batch in place.
@@ -206,7 +208,7 @@ $iterationLabel = "<published-batch-id>"
 $iteration = Join-Path $roundRoot ("reports\after-batch-" + $iterationLabel)
 ```
 
-The refresher verifies every active file against its Workflow Ledger SHA-256 before running Audit, and passes that Ledger to the CLI for a second path/hash check. Only these published active versions may contain native text insertions/deletions; formatting/move revisions and every comment part/anchor remain blocking. The initial round starter retains the strict clean-baseline gate. It includes SI only when that role is configured and never changes the Workflow Ledger or source DOCX files.
+The refresher verifies every active file against its Workflow Ledger SHA-256 before running Audit, and passes that Ledger to the CLI for a second path/hash check. The generated `refresh_manifest.json` binds the exact latest audit/inventory paths and their SHA-256 hashes; the root `round_manifest.json` also records the latest-refresh paths/hashes. If you create a revised Decision Plan from this refresh, pass the dedicated `refresh_manifest.json` as `--round-manifest` and the root `round_manifest.json` as `--round-root-manifest` (or pass the root manifest for both, using its latest-refresh pointers). The validator checks both audit/inventory path+hash bindings and registers the newly generated Workflow Ledger path/hash back into the root manifest. Only these published active versions may contain native text insertions/deletions; formatting/move revisions and every comment part/anchor remain blocking. The initial round starter retains the strict clean-baseline gate. It includes SI only when that role is configured and never changes the Workflow Ledger or source DOCX files.
 
 Create a new execution-scope file from `examples/workflow_execution_scope_refresh.example.json`. For each `recheck_required` document task, include both `evidence` and `targets` from the new inventory, assign fresh evidence IDs, and bind each operation's `find` text to its current target excerpt. If the task uses persistent TargetRefs, refresh `target_refs` as well. The current Workflow Ledger hash—not the initial round hash—must be used:
 
@@ -220,7 +222,7 @@ Then prepare to a **new** Ledger/map/report path, keeping the previous prepared 
 $refreshedWorkflow = Join-Path $roundRoot "plan\workflow_ledger.prepared.after-<batch-id>.json"
 $refreshedReviewerMap = Join-Path $roundRoot "plan\reviewer_map.after-<batch-id>.json"
 $refreshScope = Join-Path $roundRoot "plan\workflow_execution_scope.after-<batch-id>.json"
-python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $preparedWorkflow --execution-scope $refreshScope --inventory (Join-Path $iteration "workspace_inventory.json") --out $refreshedWorkflow --reviewer-map-out $refreshedReviewerMap --report (Join-Path $iteration "workflow_preparation_report.json")
+python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $preparedWorkflow --execution-scope $refreshScope --inventory (Join-Path $iteration "workspace_inventory.json") --round-manifest (Join-Path $roundRoot "round_manifest.json") --round-root-manifest (Join-Path $roundRoot "round_manifest.json") --out $refreshedWorkflow --reviewer-map-out $refreshedReviewerMap --report (Join-Path $iteration "workflow_preparation_report.json")
 ```
 
 Review the refreshed evidence, targets, exact PatchOperations and proposed response. Then set `$preparedWorkflow = $refreshedWorkflow` and `$reviewerMap = $refreshedReviewerMap`, explicitly authorize the now-eligible task, and build the next batch with the **same** `$revisionLedger` and `$runs` paths. The preparation step preserves old evidence rows, appends current evidence, and updates the task source-version references; it does not authorize or edit a document. A `no_change` ResponseUnit on a `recheck_required` task must also point to a newly refreshed `anchor_evidence_id` from the current active DOCX; an old-version anchor is rejected. Pure `reply_only` units do not need a document anchor.

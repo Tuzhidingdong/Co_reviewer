@@ -144,6 +144,15 @@ $reconcileScript = Join-Path $PSScriptRoot "Reconcile-CoReviewerRound.ps1"
 if (-not (Test-Path -LiteralPath $reconcileScript -PathType Leaf)) { throw "Round reconciliation entry point is missing: $reconcileScript" }
 & $reconcileScript -RoundRoot $roundPath -WorkflowLedger $workflowPath -RevisionLedger $revisionLedgerForRecovery -RunsDirectory $roundRunsPath -PythonExe $pythonResolved
 $roundManifest = Get-Content -LiteralPath $roundManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$unresolvedBatches = @($roundManifest.batch_transaction_history | Where-Object {
+    $_.transaction_status -in @("verified_unpublished","applied_unpublished","approved_unapplied","prepared_or_unpublished")
+})
+if ($unresolvedBatches.Count -gt 0) {
+    $summary = @($unresolvedBatches | ForEach-Object {
+        "$($_.batch_id):$($_.transaction_status) tasks=$(@($_.selected_task_ids) -join ',')"
+    })
+    throw "Refresh is blocked by unresolved unpublished batch transaction(s). Resume a verified batch or explicitly recover an unverified batch first: $($summary -join '; ')"
+}
 $workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ([string]$workflow.revision_round_id -ne $roundId) {
     throw "Workflow Ledger belongs to round '$($workflow.revision_round_id)', but RoundRoot is '$roundId'."
@@ -236,6 +245,13 @@ $manifest = [ordered]@{
         review_audit_markdown = $auditMarkdownPath
         decision_queue = $decisionQueuePath
     }
+    artifact_sha256 = [ordered]@{
+        workspace_inventory = (Get-Sha256 $inventoryPath)
+        workspace_digest = (Get-Sha256 $digestPath)
+        review_audit_report = (Get-Sha256 $auditJsonPath)
+        review_audit_markdown = (Get-Sha256 $auditMarkdownPath)
+        decision_queue = (Get-Sha256 $decisionQueuePath)
+    }
 }
 $manifestPath = Join-Path $iterationDir "refresh_manifest.json"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -251,8 +267,12 @@ Update-RoundManifest -ManifestPath $roundManifestPath -Event @{
     workflow_ledger_sha256 = (Get-Sha256 $workflowPath)
     latest_refresh_directory = $iterationDir
     latest_refresh_inventory = $inventoryPath
+    latest_refresh_inventory_sha256 = (Get-Sha256 $inventoryPath)
     latest_refresh_manifest = $manifestPath
     latest_refresh_audit = $auditJsonPath
+    latest_refresh_audit_sha256 = (Get-Sha256 $auditJsonPath)
+    latest_refresh_manifest_sha256 = (Get-Sha256 $manifestPath)
+    latest_refresh_artifact_sha256 = $manifest.artifact_sha256
     active_documents = $sourceRows
     last_refresh_batch_label = $label
 }

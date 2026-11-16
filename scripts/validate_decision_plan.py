@@ -17,6 +17,7 @@ from co_reviewer.docx_identity import (
     build_target_refs_by_task,
     validate_manifest_sources,
 )
+from co_reviewer.identity import sha256_file
 from co_reviewer.workflow_engine import (
     build_workflow_ledger,
     build_workflow_schedule,
@@ -387,13 +388,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--round-manifest",
-        help="Optional round_manifest.json; binds the Workflow Ledger to the exact round created by Start-CoReviewerRound.ps1.",
+        help="Optional round_manifest.json or refresh_manifest.json; binds the Workflow Ledger and audit/inventory files to one exact review-round source snapshot.",
+    )
+    parser.add_argument(
+        "--round-root-manifest",
+        help="Root round_manifest.json to register the newly generated Workflow Ledger path/hash; required when --round-manifest is a dedicated refresh_manifest.json.",
     )
     args = parser.parse_args(argv)
     if args.revision_round_id and not args.workflow_ledger_out:
         parser.error("--revision-round-id requires --workflow-ledger-out")
     if args.round_manifest and not args.workflow_ledger_out:
         parser.error("--round-manifest requires --workflow-ledger-out")
+    if args.round_root_manifest and not args.workflow_ledger_out:
+        parser.error("--round-root-manifest requires --workflow-ledger-out")
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
         audit = json.loads(Path(args.audit).read_text(encoding="utf-8")) if args.audit else None
@@ -406,36 +413,162 @@ def main(argv: list[str] | None = None) -> int:
             json.loads(Path(args.round_manifest).read_text(encoding="utf-8"))
             if args.round_manifest else None
         )
+        root_manifest_path = (
+            Path(args.round_root_manifest).expanduser().resolve()
+            if args.round_root_manifest else None
+        )
+        root_manifest_sha_at_load = None
+        if root_manifest_path is not None:
+            root_manifest_sha_at_load = sha256_file(root_manifest_path)
+            root_round_manifest = json.loads(root_manifest_path.read_text(encoding="utf-8"))
+            if sha256_file(root_manifest_path) != root_manifest_sha_at_load:
+                raise ValueError("Root round manifest changed while it was being read.")
+        else:
+            root_round_manifest = None
+        if round_manifest is None and root_round_manifest is not None:
+            round_manifest = root_round_manifest
     except (OSError, json.JSONDecodeError) as exc:
         print(f"[INVALID] Cannot read decision-plan inputs: {exc}", file=sys.stderr)
         return 2
     if round_manifest is not None:
         manifest_round_id = round_manifest.get("review_round_id")
         if not isinstance(manifest_round_id, str) or not manifest_round_id.strip():
-            print("[INVALID] round_manifest.json has no valid review_round_id.", file=sys.stderr)
+            print("[INVALID] round/refresh manifest has no valid review_round_id.", file=sys.stderr)
             return 2
         if args.revision_round_id and args.revision_round_id != manifest_round_id:
-            print("[INVALID] --revision-round-id conflicts with round_manifest.json.", file=sys.stderr)
+            print("[INVALID] --revision-round-id conflicts with the supplied round/refresh manifest.", file=sys.stderr)
             return 2
-        artifacts = round_manifest.get("artifacts")
-        if not isinstance(artifacts, dict):
-            print("[INVALID] round_manifest.json has no artifacts object.", file=sys.stderr)
+
+        supplied_paths = {
+            "review_audit_report": Path(args.audit).expanduser().resolve(),
+            "workspace_inventory": Path(args.inventory).expanduser().resolve(),
+        }
+        candidates: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        # A dedicated refresh_manifest.json carries audit_artifacts; the starter
+        # round manifest carries artifacts and can additionally point at its
+        # most recent refresh artifacts.
+        refresh_artifacts = round_manifest.get("audit_artifacts")
+        if isinstance(refresh_artifacts, dict):
+            candidates.append((
+                "refresh manifest",
+                refresh_artifacts,
+                round_manifest.get("artifact_sha256", {}),
+            ))
+        latest_refresh = {}
+        if isinstance(round_manifest.get("latest_refresh_audit"), str):
+            latest_refresh["review_audit_report"] = round_manifest["latest_refresh_audit"]
+        if isinstance(round_manifest.get("latest_refresh_inventory"), str):
+            latest_refresh["workspace_inventory"] = round_manifest["latest_refresh_inventory"]
+        if set(latest_refresh) == set(supplied_paths):
+            latest_hashes = round_manifest.get("latest_refresh_artifact_sha256", {})
+            if not isinstance(latest_hashes, dict):
+                latest_hashes = {}
+            candidates.append(("latest refresh recorded in round manifest", latest_refresh, latest_hashes))
+        initial_artifacts = round_manifest.get("artifacts")
+        if isinstance(initial_artifacts, dict):
+            candidates.append((
+                "starter round manifest",
+                initial_artifacts,
+                round_manifest.get("artifact_sha256", {}),
+            ))
+        matched = None
+        for label, artifacts, hashes in candidates:
+            expected_paths = {
+                "review_audit_report": artifacts.get("review_audit_report"),
+                "workspace_inventory": artifacts.get("workspace_inventory"),
+            }
+            if all(
+                isinstance(expected_paths[key], str)
+                and supplied_paths[key] == Path(expected_paths[key]).expanduser().resolve()
+                for key in supplied_paths
+            ):
+                matched = (label, expected_paths, hashes if isinstance(hashes, dict) else {})
+                break
+        if matched is None:
+            print(
+                "[INVALID] Supplied audit/inventory paths do not match the starter or latest-refresh artifacts "
+                "recorded in the supplied manifest.",
+                file=sys.stderr,
+            )
             return 2
-        for label, supplied, key in (
-            ("audit", args.audit, "review_audit_report"),
-            ("inventory", args.inventory, "workspace_inventory"),
-        ):
-            expected = artifacts.get(key)
-            if not isinstance(expected, str) or not expected.strip():
-                print(f"[INVALID] round_manifest.json has no {key} path.", file=sys.stderr)
+        binding_label, expected_paths, expected_hashes = matched
+        for key, supplied_path in supplied_paths.items():
+            expected_hash = expected_hashes.get(key)
+            if expected_hash is not None:
+                if not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+                    print(f"[INVALID] Manifest contains an invalid {key} SHA-256.", file=sys.stderr)
+                    return 2
+                if not supplied_path.is_file() or sha256_file(supplied_path) != expected_hash:
+                    print(
+                        f"[INVALID] {key} content hash does not match the {binding_label}: {supplied_path}",
+                        file=sys.stderr,
+                    )
+                    return 2
+            elif not supplied_path.is_file():
+                print(f"[INVALID] {key} file does not exist: {supplied_path}", file=sys.stderr)
                 return 2
-            if Path(supplied).expanduser().resolve() != Path(expected).expanduser().resolve():
-                print(
-                    f"[INVALID] {label} input does not match round_manifest.json: "
-                    f"expected {expected}; received {supplied}",
-                    file=sys.stderr,
+        if any(key not in expected_hashes for key in supplied_paths):
+            print(
+                f"[LEGACY] {binding_label} has no complete artifact SHA-256 map; path binding was checked, "
+                "but this older manifest cannot prove the audit/inventory file bytes.",
+                file=sys.stderr,
+            )
+    if args.round_manifest and root_manifest_path is None:
+        # A starter round manifest carries an artifacts map. A dedicated refresh manifest
+        # carries audit_artifacts and must be paired with the root manifest for write-back.
+        if isinstance(round_manifest, dict) and isinstance(round_manifest.get("artifacts"), dict) and not isinstance(round_manifest.get("audit_artifacts"), dict):
+            root_manifest_path = Path(args.round_manifest).expanduser().resolve()
+            if root_manifest_sha_at_load is None:
+                root_manifest_sha_at_load = sha256_file(root_manifest_path)
+            root_round_manifest = round_manifest
+        else:
+            print("[INVALID] A dedicated refresh_manifest.json must be paired with --round-root-manifest so the generated Workflow Ledger can be registered in the round.", file=sys.stderr)
+            return 2
+    if root_round_manifest is not None:
+        if not isinstance(root_round_manifest, dict) or root_round_manifest.get("review_round_id") != round_manifest.get("review_round_id"):
+            print("[INVALID] Root round manifest and audit/refresh manifest do not identify the same review round.", file=sys.stderr)
+            return 2
+        root_candidates = []
+        latest_audit = root_round_manifest.get("latest_refresh_audit")
+        latest_inventory = root_round_manifest.get("latest_refresh_inventory")
+        if isinstance(latest_audit, str) and isinstance(latest_inventory, str):
+            root_candidates.append((
+                {"review_audit_report": latest_audit, "workspace_inventory": latest_inventory},
+                root_round_manifest.get("latest_refresh_artifact_sha256", {}),
+            ))
+        initial_artifacts = root_round_manifest.get("artifacts")
+        if isinstance(initial_artifacts, dict):
+            root_candidates.append((initial_artifacts, root_round_manifest.get("artifact_sha256", {})))
+        root_match = None
+        for artifact_paths, artifact_hashes in root_candidates:
+            if not isinstance(artifact_hashes, dict):
+                artifact_hashes = {}
+            try:
+                matched_paths = (
+                    Path(str(artifact_paths.get("review_audit_report", ""))).expanduser().resolve()
+                    == Path(args.audit).expanduser().resolve()
+                    and Path(str(artifact_paths.get("workspace_inventory", ""))).expanduser().resolve()
+                    == Path(args.inventory).expanduser().resolve()
                 )
-                return 2
+            except (OSError, RuntimeError):
+                matched_paths = False
+            if matched_paths:
+                root_match = artifact_hashes
+                break
+        if root_match is None:
+            print("[INVALID] Audit/inventory paths do not match the starter or latest-refresh artifacts recorded in the root round manifest.", file=sys.stderr)
+            return 2
+        for key, supplied_path in (("review_audit_report", args.audit), ("workspace_inventory", args.inventory)):
+            expected_hash = root_match.get(key)
+            if expected_hash is not None:
+                if (
+                    not isinstance(expected_hash, str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+                    or not Path(supplied_path).is_file()
+                    or sha256_file(supplied_path) != expected_hash
+                ):
+                    print(f"[INVALID] {key} bytes do not match the root round manifest SHA-256.", file=sys.stderr)
+                    return 2
     errors = validate_decision_plan(plan, audit=audit, inventory=inventory)
     target_refs_by_task: dict[str, list[dict[str, Any]]] = {}
     if identity_manifest is not None:
@@ -474,8 +607,12 @@ def main(argv: list[str] | None = None) -> int:
             for value in (args.plan, args.audit, args.inventory, args.identity_manifest)
             if value
         }
+        if root_manifest_path is not None:
+            source_paths.add(root_manifest_path)
+        if args.round_manifest:
+            source_paths.add(Path(args.round_manifest).expanduser().resolve())
         if output_path in source_paths:
-            print("[INVALID] Workflow Ledger output must not overwrite a plan, audit or inventory input.", file=sys.stderr)
+            print("[INVALID] Workflow Ledger output must not overwrite a plan, audit, inventory or manifest input.", file=sys.stderr)
             return 2
         if output_path.exists():
             print(f"[INVALID] Workflow Ledger output already exists; choose a new path: {output_path}", file=sys.stderr)
@@ -510,6 +647,28 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(ledger, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            if root_manifest_path is not None:
+                if (
+                    root_manifest_sha_at_load is None
+                    or not root_manifest_path.is_file()
+                    or sha256_file(root_manifest_path) != root_manifest_sha_at_load
+                ):
+                    raise ValueError("Root round manifest changed during Decision Plan validation; the new Workflow Ledger was retained but the manifest was not overwritten.")
+                root_round_manifest.update({
+                    "current_workflow_ledger": str(output_path),
+                    "workflow_ledger_sha256": sha256_file(output_path),
+                })
+                temporary_manifest = root_manifest_path.with_name(
+                    root_manifest_path.name + "." + uuid.uuid4().hex + ".tmp"
+                )
+                try:
+                    temporary_manifest.write_text(
+                        json.dumps(root_round_manifest, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                    temporary_manifest.replace(root_manifest_path)
+                finally:
+                    temporary_manifest.unlink(missing_ok=True)
         except (OSError, ValueError, TypeError) as exc:
             print(f"[INVALID] Cannot write Workflow Ledger: {exc}", file=sys.stderr)
             return 2

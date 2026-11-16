@@ -181,6 +181,13 @@ $manifest = [ordered]@{
         review_audit_markdown = $auditMarkdownPath
         decision_queue = $decisionQueuePath
     }
+    artifact_sha256 = [ordered]@{
+        workspace_inventory = (Get-Sha256 $inventoryPath)
+        workspace_digest = (Get-Sha256 $digestPath)
+        review_audit_report = (Get-Sha256 $auditJsonPath)
+        review_audit_markdown = (Get-Sha256 $auditMarkdownPath)
+        decision_queue = (Get-Sha256 $decisionQueuePath)
+    }
     workflow_ledger = (Join-Path $planDir "workflow_ledger.json")
     execution_scope = (Join-Path $planDir "workflow_execution_scope.json")
     prepared_workflow_ledger = (Join-Path $planDir "workflow_ledger.prepared.json")

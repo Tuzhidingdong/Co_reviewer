@@ -32,6 +32,13 @@ The changes add a common round reconciler; receipt-verified idempotency for publ
 
 The earlier `b144f4b` automated/Word COM evidence remains historical and does not validate this increment. PR #3 remains Draft/Open/Unmerged. Unified validation is deferred until development is frozen; no isolated test loop is being run during implementation.
 
+## Additional source-provenance and reconciliation hardening
+
+The subsequent source-only review found and corrected a further refresh/decision-plan connection: the starter and refreshed audit/inventory files now carry explicit SHA-256 bindings, and Decision Plan validation accepts the dedicated refresh manifest or the root manifest's exact latest-refresh pointers. The validator rejects same-path audit/inventory byte changes. The refresh and finalization entry points also block while an unpublished batch remains after reconciliation.
+
+The round reconciler now fails closed when a batch directory contains artifacts without its immutable intent, when retained batch history points to a missing directory, or when historical Workflow sync transaction directories/receipts disappear or remain incomplete. Historical syncs from superseded prepared Workflow Ledger files are still scanned and verified. This increment is also **not tested**.
+The lower-level `prepare-workflow-execution` CLI now binds the input inventory to the exact starter/latest-refresh artifact hash, verifies that the input Workflow Ledger is the current manifest path/hash, and registers the newly prepared Workflow Ledger/Reviewer Map/report paths and hashes back into the root round manifest. The Decision Plan validator performs the corresponding registration for a newly generated base Workflow Ledger and requires a root-manifest write-back path when its source binding is a dedicated refresh manifest. The PowerShell batch entry point supplies the same root manifest. These changes are implementation-only and were not tested.
+
 ## Audit against the PR's declared P1 scope
 
 | PR requirement | Finding | Status |

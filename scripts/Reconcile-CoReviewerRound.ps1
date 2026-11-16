@@ -117,15 +117,19 @@ $manifest = Read-JsonFile $manifestPath "round_manifest"
 $roundId = [string]$manifest.review_round_id
 if ([string]::IsNullOrWhiteSpace($roundId)) { throw "round_manifest.json has no review_round_id." }
 
-$workflowValue = if ($WorkflowLedger) {
-    $WorkflowLedger
-} elseif ($manifest.current_workflow_ledger) {
+$recordedWorkflowValue = if ($manifest.current_workflow_ledger) {
     [string]$manifest.current_workflow_ledger
 } elseif ($manifest.prepared_workflow_ledger) {
-    [string]$manifest.prepared_workflow_ledger
+    $preparedCandidate = Get-FullPath ([string]$manifest.prepared_workflow_ledger) $script:RoundPath
+    if (Test-Path -LiteralPath $preparedCandidate -PathType Leaf) {
+        $preparedCandidate
+    } else {
+        [string]$manifest.workflow_ledger
+    }
 } else {
     [string]$manifest.workflow_ledger
 }
+$workflowValue = if ($WorkflowLedger) { $WorkflowLedger } else { $recordedWorkflowValue }
 $revisionValue = if ($RevisionLedger) {
     $RevisionLedger
 } elseif ($manifest.current_revision_ledger) {
@@ -138,6 +142,12 @@ if ([string]::IsNullOrWhiteSpace($workflowValue) -or [string]::IsNullOrWhiteSpac
 }
 $script:WorkflowPath = Get-FullPath $workflowValue $script:RoundPath
 $script:RevisionPath = Get-FullPath $revisionValue $script:RoundPath
+if (-not [string]::IsNullOrWhiteSpace([string]$recordedWorkflowValue)) {
+    $recordedWorkflowPath = Get-FullPath ([string]$recordedWorkflowValue) $script:RoundPath
+    if ([System.IO.Path]::GetFullPath($recordedWorkflowPath) -ne [System.IO.Path]::GetFullPath($script:WorkflowPath)) {
+        throw "Requested Workflow Ledger is not the current path recorded in round_manifest.json. Recorded=$recordedWorkflowPath; requested=$script:WorkflowPath. Reconcile the recorded current Ledger; do not roll the round back to an older snapshot."
+    }
+}
 [void](Assert-PathInRoundRoot $script:WorkflowPath "Workflow Ledger")
 [void](Assert-PathInRoundRoot $script:RevisionPath "RevisionLedger")
 if (-not (Test-Path -LiteralPath $script:WorkflowPath -PathType Leaf)) {
@@ -198,15 +208,11 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
         $intentPath = Join-Path $batchDir.FullName "batch_intent.json"
         [void](Assert-OrdinaryPath $intentPath "Batch intent")
         if (-not (Test-Path -LiteralPath $intentPath -PathType Leaf)) {
-            $controls = @(
-                "batch_published.json","batch_publish_intent.json",
-                "batch_recovered.json","batch_recovery_intent.json",
-                "batch_rollback.json","batch_rollback_intent.json",
-                "batch_superseded.json"
-            ) | Where-Object { Test-Path -LiteralPath (Join-Path $batchDir.FullName $_) -PathType Leaf }
-            if ($controls.Count -gt 0) {
-                throw "Batch transaction controls exist without batch_intent.json: $($batchDir.FullName)"
+            $remainingWithoutIntent = @(Get-ChildItem -LiteralPath $batchDir.FullName -Force)
+            if ($remainingWithoutIntent.Count -gt 0) {
+                throw "Batch directory contains artifacts but has no immutable batch_intent.json. Preserve it for manual investigation: $($batchDir.FullName)"
             }
+            Write-Warning "Ignoring an empty batch directory with no intent (interrupted before batch creation committed): $($batchDir.FullName)"
             continue
         }
         $intent = Read-JsonFile $intentPath "Batch Intent"
@@ -265,10 +271,8 @@ if (Test-Path -LiteralPath $runsPath -PathType Container) {
                 continue
             }
             $remaining = @(Get-ChildItem -LiteralPath $batchDir.FullName -Force)
-            if ($remaining.Count -le 2 -and
-                -not (Test-Path -LiteralPath (Join-Path $batchDir.FullName "batch_published.json")) -and
-                -not (Test-Path -LiteralPath (Join-Path $batchDir.FullName "batch_publish_intent.json")) -and
-                -not (Test-Path -LiteralPath (Join-Path $batchDir.FullName "batch_recovery_intent.json"))) {
+            $intentOnlyPayload = @($remaining | Where-Object { $_.Name -ne "batch_intent.json" })
+            if ($remaining.Count -eq 1 -and $intentOnlyPayload.Count -eq 0) {
                 Write-Warning "Intent-only prepared batch has no scope or execution artifacts and is retained without changing it: $($batchDir.FullName). The same selected task set may be re-prepared; after an exact successor is published, use retire-superseded-prepared-batch."
                 $batchTransactions += [pscustomobject]@{
                     batch_id = [string]$intent.batch_id
@@ -405,6 +409,18 @@ if (Test-Path -LiteralPath $script:RevisionPath -PathType Leaf) {
     }
     $revisionSha = Get-Sha256 $script:RevisionPath
 }
+# Historical syncs may belong to a prepared Workflow Ledger that is no longer the current pointer
+# and has no remaining batch directory. Keep those transaction directories in the reconciliation set.
+foreach ($priorSync in @($manifest.workflow_sync_history)) {
+    if (-not $priorSync -or [string]::IsNullOrWhiteSpace([string]$priorSync.workflow_ledger)) { continue }
+    $priorWorkflowPath = Get-FullPath ([string]$priorSync.workflow_ledger) $script:RoundPath
+    [void](Assert-PathInRoundRoot $priorWorkflowPath "Historical Workflow sync source")
+    [void](Assert-OrdinaryPath $priorWorkflowPath "Historical Workflow sync source")
+    if (-not (Test-Path -LiteralPath $priorWorkflowPath -PathType Leaf)) {
+        throw "A Workflow Ledger referenced by sync history is missing: $priorWorkflowPath"
+    }
+    if (-not $workflowPathsForSync.Contains($priorWorkflowPath)) { [void]$workflowPathsForSync.Add($priorWorkflowPath) }
+}
 $workflowSyncHistory = @()
 foreach ($workflowCandidate in $workflowPathsForSync) {
     $workflowFile = [System.IO.Path]::GetFullPath([string]$workflowCandidate)
@@ -430,14 +446,11 @@ foreach ($workflowCandidate in $workflowPathsForSync) {
         [void](Assert-OrdinaryPath $intentPath "Workflow sync intent")
         $receiptPath = Join-Path $stage.FullName "workflow_sync_receipt.json"
         if (-not (Test-Path -LiteralPath $intentPath -PathType Leaf)) {
-            $workflowSyncHistory += [pscustomobject]@{
-                sync_id = $stage.Name
-                workflow_ledger = $workflowFile
-                transaction_status = "orphaned_stage_without_intent"
-                intent_file = $null
-                receipt_file = $null
-                receipt_sha256 = $null
+            $stageContents = @(Get-ChildItem -LiteralPath $stage.FullName -Force)
+            if ($stageContents.Count -gt 0) {
+                throw "Workflow sync transaction directory contains staged files but no immutable intent: $($stage.FullName)"
             }
+            Write-Warning "Ignoring an empty Workflow sync transaction directory left before staging began: $($stage.FullName)"
             continue
         }
         $syncIntent = Read-JsonFile $intentPath "Workflow Sync Intent"
@@ -445,6 +458,19 @@ foreach ($workflowCandidate in $workflowPathsForSync) {
             [string]$syncIntent.schema_version -ne "1.0" -or
             [System.IO.Path]::GetFullPath([string]$syncIntent.workflow_ledger_file) -ne $workflowFile) {
             throw "Workflow sync intent identity/path mismatch in $($stage.FullName)"
+        }
+        $syncRevisionCandidate = Get-FullPath ([string]$syncIntent.revision_ledger_file) $script:RoundPath
+        [void](Assert-PathInRoundRoot $syncRevisionCandidate "Workflow sync RevisionLedger")
+        [void](Assert-OrdinaryPath $syncRevisionCandidate "Workflow sync RevisionLedger")
+        if (-not (Test-Path -LiteralPath $syncRevisionCandidate -PathType Leaf)) {
+            throw "Workflow sync transaction references a missing RevisionLedger: $syncRevisionCandidate"
+        }
+        if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+            Invoke-CoReviewerCli @(
+                "recover-workflow-sync",
+                "--workflow-ledger",$workflowFile,
+                "--revision-ledger",$syncRevisionCandidate
+            ) "recover exact Workflow sync transaction $($syncIntent.sync_id)"
         }
         $workflowAfter = Get-FullPath ([string]$syncIntent.workflow_after_file) $script:RoundPath
         $revisionAfter = Get-FullPath ([string]$syncIntent.revision_after_file) $script:RoundPath
@@ -484,6 +510,9 @@ foreach ($workflowCandidate in $workflowPathsForSync) {
         elseif (Test-Path -LiteralPath $pendingPath -PathType Leaf) {
             $syncStatus = "pending_recovery"
         }
+        if ($syncStatus -ne "committed") {
+            throw "Workflow sync transaction '$($syncIntent.sync_id)' remains '$syncStatus' after recovery attempt; finalization and new batches are blocked."
+        }
         $workflowSyncHistory += [pscustomobject]@{
             sync_id = [string]$syncIntent.sync_id
             workflow_ledger = $workflowFile
@@ -496,6 +525,26 @@ foreach ($workflowCandidate in $workflowPathsForSync) {
             revision_after_sha256 = [string]$syncIntent.revision_after_sha256
             transaction_status = $syncStatus
         }
+    }
+}
+foreach ($priorSync in @($manifest.workflow_sync_history)) {
+    if (-not $priorSync -or [string]::IsNullOrWhiteSpace([string]$priorSync.sync_id)) { continue }
+    $priorWorkflow = [System.IO.Path]::GetFullPath((Get-FullPath ([string]$priorSync.workflow_ledger) $script:RoundPath))
+    $priorSyncId = [string]$priorSync.sync_id
+    $currentSync = @($workflowSyncHistory | Where-Object {
+        [string]$_.sync_id -eq $priorSyncId -and
+        [System.IO.Path]::GetFullPath([string]$_.workflow_ledger) -eq $priorWorkflow
+    })
+    if ($currentSync.Count -ne 1) {
+        throw "round_manifest.json retains Workflow sync '$priorSyncId' for '$priorWorkflow', but its transaction directory/intent was not found exactly once."
+    }
+    if ($priorSync.intent_sha256 -and $currentSync[0].intent_sha256 -and
+        [string]$priorSync.intent_sha256 -ne [string]$currentSync[0].intent_sha256) {
+        throw "Workflow sync intent hash changed for historical transaction '$priorSyncId'."
+    }
+    if ($priorSync.receipt_sha256 -and $currentSync[0].receipt_sha256 -and
+        [string]$priorSync.receipt_sha256 -ne [string]$currentSync[0].receipt_sha256) {
+        throw "Workflow sync receipt hash changed for historical transaction '$priorSyncId'."
     }
 }
 $manifestWorkflowSha = Get-Sha256 $script:WorkflowPath
@@ -552,6 +601,15 @@ foreach ($transaction in $batchTransactions) {
     $historyById[[string]$transaction.batch_id] = $entry
 }
 $history = @($historyById.Values | Sort-Object batch_id)
+$observedBatchIds = @($batchTransactions | ForEach-Object { [string]$_.batch_id })
+foreach ($priorEntry in @($manifest.batch_transaction_history)) {
+    if (-not $priorEntry -or [string]::IsNullOrWhiteSpace([string]$priorEntry.batch_id)) { continue }
+    $priorBatchId = [string]$priorEntry.batch_id
+    if ($observedBatchIds -notcontains $priorBatchId) {
+        $priorDirectory = Join-Path $runsPath ("batch-" + $priorBatchId)
+        throw "round_manifest.json retains batch transaction '$priorBatchId', but its immutable batch directory was not found during reconciliation: $priorDirectory. Do not discard its history or continue release."
+    }
+}
 $manifest | Add-Member -Force -NotePropertyMembers @{
     current_workflow_ledger = $script:WorkflowPath
     current_revision_ledger = $script:RevisionPath
@@ -569,6 +627,15 @@ $manifest | Add-Member -Force -NotePropertyMembers @{
 # the CLI either completes its missing artifacts or verifies the immutable receipt.
 $releaseDirValue = [string]$manifest.release_directory
 if ($ResumeReleasePackage -and -not [string]::IsNullOrWhiteSpace($releaseDirValue)) {
+    $unfinishedReleaseBatches = @($history | Where-Object {
+        $_.transaction_status -in @("verified_unpublished","applied_unpublished","approved_unapplied","prepared_or_unpublished")
+    })
+    if ($unfinishedReleaseBatches.Count -gt 0) {
+        $summary = @($unfinishedReleaseBatches | ForEach-Object {
+            "$($_.batch_id):$($_.transaction_status) tasks=$(@($_.selected_task_ids) -join ',')"
+        })
+        throw "Release Package recovery is blocked by unpublished batch transaction(s). Resume or recover them first: $($summary -join '; ')"
+    }
     $releaseDir = Get-FullPath $releaseDirValue $script:RoundPath
     [void](Assert-PathInRoundRoot $releaseDir "Release Package")
     [void](Assert-OrdinaryPath $releaseDir "Release Package directory")

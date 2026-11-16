@@ -129,6 +129,85 @@ class WorkflowPreparationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_prepare_cli_rejects_inventory_bytes_changed_after_manifest_binding(self) -> None:
+        from argparse import Namespace
+
+        inventory_path = self.root / "workspace_inventory.json"
+        manifest_path = self.root / "round_manifest.json"
+        prepared_path = self.root / "prepared.json"
+        reviewer_map_path = self.root / "reviewer_map.json"
+        report_path = self.root / "preparation_report.json"
+        inventory_path.write_text(json.dumps(self.inventory), encoding="utf-8")
+        expected_inventory_sha = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps({
+            "review_round_id": self.workflow["revision_round_id"],
+            "workspace": str(self.root),
+            "directories": {"plan": str(self.root / "plan")},
+            "workflow_ledger": str(self.workflow_path),
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "artifacts": {"workspace_inventory": str(inventory_path)},
+            "artifact_sha256": {"workspace_inventory": expected_inventory_sha},
+        }), encoding="utf-8")
+        inventory_path.write_text(json.dumps(self.inventory) + " ", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Workspace Inventory bytes"):
+            cli.cmd_prepare_workflow_execution(Namespace(
+                workflow_ledger=str(self.workflow_path),
+                execution_scope=str(self.scope_path),
+                inventory=str(inventory_path),
+                out=str(prepared_path),
+                reviewer_map_out=str(reviewer_map_path),
+                report=str(report_path),
+                round_manifest=str(manifest_path),
+            ))
+        self.assertFalse(prepared_path.exists())
+        self.assertFalse(reviewer_map_path.exists())
+        self.assertFalse(report_path.exists())
+
+    def test_prepare_cli_accepts_dedicated_refresh_manifest(self) -> None:
+        from argparse import Namespace
+
+        inventory_path = self.root / "refreshed_inventory.json"
+        manifest_path = self.root / "refresh_manifest.json"
+        root_manifest_path = self.root / "round_manifest.json"
+        prepared_path = self.root / "prepared_refresh.json"
+        reviewer_map_path = self.root / "reviewer_map_refresh.json"
+        report_path = self.root / "preparation_refresh.json"
+        inventory_path.write_text(json.dumps(self.inventory), encoding="utf-8")
+        manifest_path.write_text(json.dumps({
+            "review_round_id": self.workflow["revision_round_id"],
+            "workflow_ledger": str(self.workflow_path),
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "audit_artifacts": {"workspace_inventory": str(inventory_path)},
+            "artifact_sha256": {
+                "workspace_inventory": hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+            },
+        }), encoding="utf-8")
+        root_manifest_path.write_text(json.dumps({
+            "review_round_id": self.workflow["revision_round_id"],
+            "workspace": str(self.root),
+            "directories": {"plan": str(self.root / "plan")},
+            "workflow_ledger": str(self.workflow_path),
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "latest_refresh_inventory": str(inventory_path),
+            "latest_refresh_inventory_sha256": hashlib.sha256(inventory_path.read_bytes()).hexdigest(),
+        }), encoding="utf-8")
+        self.assertEqual(cli.cmd_prepare_workflow_execution(Namespace(
+            workflow_ledger=str(self.workflow_path),
+            execution_scope=str(self.scope_path),
+            inventory=str(inventory_path),
+            out=str(prepared_path),
+            reviewer_map_out=str(reviewer_map_path),
+            report=str(report_path),
+            round_manifest=str(manifest_path),
+            round_root_manifest=str(self.root / "round_manifest.json"),
+        )), 0)
+        root_manifest = json.loads((self.root / "round_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(root_manifest["current_workflow_ledger"], str(prepared_path))
+        self.assertEqual(root_manifest["workflow_ledger_sha256"], hashlib.sha256(prepared_path.read_bytes()).hexdigest())
+        self.assertTrue(prepared_path.is_file())
+        self.assertTrue(reviewer_map_path.is_file())
+        self.assertTrue(report_path.is_file())
+
     def test_prepares_exact_operation_without_authorizing_or_editing_documents(self) -> None:
         prepared, reviewer_map, report = prepare_workflow_execution(
             self.workflow,

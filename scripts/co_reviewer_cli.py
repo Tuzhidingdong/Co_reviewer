@@ -2301,6 +2301,103 @@ def cmd_sync_workflow_ledger(args):
     return 0
 
 
+def _verify_workflow_preparation_manifest(
+    manifest_path: str | Path,
+    workflow_path: str | Path,
+    inventory_path: str | Path,
+    workflow: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind preparation to the exact current Workflow and audited inventory bytes."""
+    manifest_file = Path(manifest_path).expanduser().resolve()
+    workflow_file = Path(workflow_path).expanduser().resolve()
+    inventory_file = Path(inventory_path).expanduser().resolve()
+    if not manifest_file.is_file():
+        raise FileNotFoundError(f"Round/refresh manifest does not exist: {manifest_file}")
+    try:
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read round/refresh manifest: {exc}") from exc
+    if not isinstance(manifest, Mapping):
+        raise ValueError("Round/refresh manifest must be a JSON object.")
+    manifest_round_id = manifest.get("review_round_id")
+    if (
+        not isinstance(manifest_round_id, str)
+        or not manifest_round_id.strip()
+        or manifest_round_id != workflow.get("revision_round_id")
+    ):
+        raise ValueError("Round/refresh manifest review_round_id does not match the supplied Workflow Ledger.")
+
+    def resolve_manifest_path(value: Any, label: str) -> Path:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Round/refresh manifest has no valid {label} path.")
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = manifest_file.parent / candidate
+        return candidate.resolve()
+
+    expected_workflow_value = manifest.get("current_workflow_ledger") or manifest.get("workflow_ledger")
+    if expected_workflow_value:
+        expected_workflow = resolve_manifest_path(expected_workflow_value, "current Workflow Ledger")
+        if expected_workflow != workflow_file:
+            raise ValueError("Workflow preparation input is not the current Workflow Ledger recorded in the manifest. "
+                             f"Expected {expected_workflow}; received {workflow_file}.")
+    expected_workflow_sha = manifest.get("workflow_ledger_sha256")
+    if expected_workflow_sha is None and manifest.get("prepared_workflow_ledger"):
+        prepared_path = resolve_manifest_path(manifest["prepared_workflow_ledger"], "prepared Workflow Ledger")
+        if prepared_path == workflow_file:
+            expected_workflow_sha = manifest.get("prepared_workflow_ledger_sha256")
+    if expected_workflow_sha is not None:
+        if (
+            not isinstance(expected_workflow_sha, str)
+            or re.fullmatch(r"[a-f0-9]{64}", expected_workflow_sha) is None
+            or not workflow_file.is_file()
+            or sha256_file(workflow_file) != expected_workflow_sha
+        ):
+            raise ValueError("Current Workflow Ledger bytes do not match the path/hash recorded in the round/refresh manifest.")
+
+    candidates: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
+    if isinstance(manifest.get("audit_artifacts"), Mapping):
+        hashes = manifest.get("artifact_sha256", {})
+        candidates.append(("refresh_manifest.audit_artifacts", manifest["audit_artifacts"], hashes if isinstance(hashes, Mapping) else {}))
+    latest_inventory = manifest.get("latest_refresh_inventory")
+    if isinstance(latest_inventory, str) and latest_inventory.strip():
+        latest_hashes = manifest.get("latest_refresh_artifact_sha256", {})
+        latest_hashes = dict(latest_hashes) if isinstance(latest_hashes, Mapping) else {}
+        if manifest.get("latest_refresh_inventory_sha256"):
+            latest_hashes.setdefault("workspace_inventory", manifest["latest_refresh_inventory_sha256"])
+        candidates.append(("round_manifest.latest_refresh_inventory", {"workspace_inventory": latest_inventory}, latest_hashes))
+    if isinstance(manifest.get("artifacts"), Mapping):
+        hashes = manifest.get("artifact_sha256", {})
+        candidates.append(("round_manifest.artifacts", manifest["artifacts"], hashes if isinstance(hashes, Mapping) else {}))
+
+    matched: tuple[str, Mapping[str, Any]] | None = None
+    for label, artifact_paths, artifact_hashes in candidates:
+        expected_inventory = artifact_paths.get("workspace_inventory")
+        if (
+            isinstance(expected_inventory, str)
+            and expected_inventory.strip()
+            and resolve_manifest_path(expected_inventory, "workspace_inventory") == inventory_file
+        ):
+            matched = (label, artifact_hashes)
+            break
+    if matched is None:
+        raise ValueError("Inventory path does not match the starter inventory or exact latest-refresh inventory recorded in the supplied manifest.")
+    binding_label, hashes = matched
+    expected_inventory_sha = hashes.get("workspace_inventory")
+    if expected_inventory_sha is not None:
+        if (
+            not isinstance(expected_inventory_sha, str)
+            or re.fullmatch(r"[a-f0-9]{64}", expected_inventory_sha) is None
+            or not inventory_file.is_file()
+            or sha256_file(inventory_file) != expected_inventory_sha
+        ):
+            raise ValueError(f"Workspace Inventory bytes do not match the SHA-256 recorded by {binding_label}: {inventory_file}")
+    elif not inventory_file.is_file():
+        raise FileNotFoundError(f"Workspace Inventory does not exist: {inventory_file}")
+    else:
+        print(f"[LEGACY MANIFEST] {binding_label} has no inventory SHA-256; exact path was checked, but its bytes cannot be proven.", file=sys.stderr)
+    return dict(manifest)
+
 def cmd_prepare_workflow_execution(args):
     """Merge a prepared, evidence-bound execution scope into a new Workflow Ledger."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
@@ -2318,6 +2415,45 @@ def cmd_prepare_workflow_execution(args):
         else output_path.with_name("workflow_preparation_report.json")
     )
     inputs = {workflow_path, scope_path, inventory_path}
+    manifest_argument = getattr(args, "round_manifest", None)
+    root_manifest_argument = getattr(args, "round_root_manifest", None)
+    binding_manifest = None
+    root_manifest_path = Path(root_manifest_argument).expanduser().resolve() if root_manifest_argument else None
+    if manifest_argument:
+        binding_manifest = _verify_workflow_preparation_manifest(
+            manifest_argument,
+            workflow_path,
+            inventory_path,
+            json.loads(workflow_path.read_text(encoding="utf-8")),
+        )
+        manifest_file = Path(manifest_argument).expanduser().resolve()
+        inputs.add(manifest_file)
+        if root_manifest_path is None:
+            is_root_manifest = (
+                isinstance(binding_manifest.get("directories"), Mapping)
+                and isinstance(binding_manifest.get("artifacts"), Mapping)
+            )
+            if not is_root_manifest:
+                raise ValueError(
+                    "--round-root-manifest is required when --round-manifest points to a dedicated refresh_manifest.json, "
+                    "so the newly prepared Workflow Ledger can be indexed by the round."
+                )
+            root_manifest_path = manifest_file
+    if root_manifest_path is not None:
+        root_manifest_path = root_manifest_path.resolve()
+        inputs.add(root_manifest_path)
+        if not manifest_argument or root_manifest_path != Path(manifest_argument).expanduser().resolve():
+            _verify_workflow_preparation_manifest(
+                root_manifest_path,
+                workflow_path,
+                inventory_path,
+                json.loads(workflow_path.read_text(encoding="utf-8")),
+            )
+    root_manifest_sha_at_load = (
+        sha256_file(root_manifest_path)
+        if root_manifest_path is not None and root_manifest_path.is_file()
+        else None
+    )
     outputs = [output_path, reviewer_map_path, report_path]
     if len(set(outputs)) != len(outputs) or any(path in inputs for path in outputs):
         raise ValueError("Prepared Workflow Ledger, reviewer map and report must use distinct paths from all inputs.")
@@ -2330,6 +2466,13 @@ def cmd_prepare_workflow_execution(args):
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     scope = json.loads(scope_path.read_text(encoding="utf-8"))
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    if getattr(args, "round_manifest", None):
+        _verify_workflow_preparation_manifest(
+            args.round_manifest,
+            workflow_path,
+            inventory_path,
+            workflow,
+        )
     from co_reviewer.workflow_preparation import prepare_workflow_execution
 
     prepared, reviewer_map, report = prepare_workflow_execution(
@@ -2351,6 +2494,32 @@ def cmd_prepare_workflow_execution(args):
         "preparation_report": str(report_path),
     })
     report_sha = write_json_new(report_path, report)
+    if root_manifest_path is not None:
+        if (
+            root_manifest_sha_at_load is None
+            or not root_manifest_path.is_file()
+            or sha256_file(root_manifest_path) != root_manifest_sha_at_load
+        ):
+            raise ValueError(
+                "Root round_manifest.json changed during Workflow preparation; prepared artifacts are retained, "
+                "but the manifest was not overwritten. Reconcile and inspect these outputs before continuing."
+            )
+        round_manifest = json.loads(root_manifest_path.read_text(encoding="utf-8"))
+        if round_manifest.get("review_round_id") != prepared.get("revision_round_id"):
+            raise ValueError("Round manifest review_round_id changed before prepared Workflow Ledger registration.")
+        round_manifest.update({
+            "current_workflow_ledger": str(output_path),
+            "workflow_ledger_sha256": output_sha,
+            "prepared_workflow_ledger": str(output_path),
+            "prepared_workflow_ledger_sha256": output_sha,
+            "current_reviewer_map": str(reviewer_map_path),
+            "reviewer_map_sha256": reviewer_sha,
+            "workflow_preparation_report": str(report_path),
+            "workflow_preparation_report_sha256": report_sha,
+        })
+        from co_reviewer.batch_store import write_json_atomic
+        write_json_atomic(root_manifest_path, round_manifest)
+        print(f"[ROUND MANIFEST] Current Workflow Ledger registered: {root_manifest_path}")
     print(f"[PREPARED] {len(report['prepared_task_ids'])} task(s): {', '.join(report['prepared_task_ids'])}")
     print("[APPROVAL] No task was authorized; all author-approval gates remain pending.")
     print("[DOCUMENTS] No DOCX was edited. Batch-specific output paths are assigned later by build-revision-ledger.")
@@ -4880,6 +5049,14 @@ def build_parser():
     prep_scope.add_argument("--out", required=True, help="New output path for the prepared Workflow Ledger; the input ledger is preserved.")
     prep_scope.add_argument("--reviewer-map-out", help="New reviewer-map JSON path; defaults beside --out.")
     prep_scope.add_argument("--report", help="New preparation report path; defaults beside --out.")
+    prep_scope.add_argument(
+        "--round-manifest",
+        help="Optional round_manifest.json or refresh_manifest.json; binds the Workflow Ledger and inventory to the exact round/source snapshot.",
+    )
+    prep_scope.add_argument(
+        "--round-root-manifest",
+        help="Root round_manifest.json to update with the newly prepared Workflow Ledger/reviewer-map/report paths and hashes; required with a dedicated refresh_manifest.json.",
+    )
     prep_scope.set_defaults(func=cmd_prepare_workflow_execution)
     awt = sub.add_parser("approve-workflow-tasks", help="Explicitly authorize planned tasks to enter the ready queue.")
     awt.add_argument("--workflow-ledger", required=True)

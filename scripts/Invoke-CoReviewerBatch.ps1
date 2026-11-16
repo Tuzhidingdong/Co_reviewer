@@ -389,7 +389,7 @@ if ($hasScope) {
         [void](Assert-PathInRoundRoot $path "Workflow preparation output")
         if (Test-Path -LiteralPath $path) { throw "Refusing to overwrite preparation output: $path" }
     }
-    [void](Invoke-CoReviewerCli @("prepare-workflow-execution", "--workflow-ledger", $workflowInput, "--execution-scope", $scopePath, "--inventory", $inventoryPath, "--out", $prepared, "--reviewer-map-out", $reviewerMapPath, "--report", $preparationReport))
+    [void](Invoke-CoReviewerCli @("prepare-workflow-execution", "--workflow-ledger", $workflowInput, "--execution-scope", $scopePath, "--inventory", $inventoryPath, "--round-manifest", $script:RoundManifestPath, "--round-root-manifest", $script:RoundManifestPath, "--out", $prepared, "--reviewer-map-out", $reviewerMapPath, "--report", $preparationReport))
     $currentWorkflow = $prepared
 }
 else {
@@ -409,6 +409,7 @@ if ($hasScope) {
         current_reviewer_map = $reviewerMapPath
         workflow_preparation_report = $preparationReport
         prepared_workflow_ledger_sha256 = (Get-Sha256 $currentWorkflow)
+        workflow_ledger_sha256 = (Get-Sha256 $currentWorkflow)
         reviewer_map_sha256 = (Get-Sha256 $reviewerMapPath)
         revision_ledger = $revisionPath
         runs_directory = $runsPath
@@ -417,6 +418,7 @@ if ($hasScope) {
 else {
     Update-RoundManifest -EventType "workflow_execution_resumed" -Event @{
         current_workflow_ledger = $currentWorkflow
+        workflow_ledger_sha256 = (Get-Sha256 $currentWorkflow)
         current_reviewer_map = $reviewerMapPath
         revision_ledger = $revisionPath
         runs_directory = $runsPath

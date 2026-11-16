@@ -174,17 +174,6 @@ $revisionPath = Resolve-ExistingFile $RevisionLedger "RevisionLedger" $roundPath
 [void](Assert-OrdinaryPath $workflowPath "Workflow Ledger")
 [void](Assert-OrdinaryPath $revisionPath "RevisionLedger")
 if ($workflowPath -eq $revisionPath) { throw "Workflow Ledger and RevisionLedger must be different files." }
-if ($recordedReleasePathForRequest -and
-    [System.IO.Path]::GetFullPath($requestedReleasePathForRequest) -eq [System.IO.Path]::GetFullPath($recordedReleasePathForRequest) -and
-    (Test-Path -LiteralPath $recordedIntentForRequest -PathType Leaf)) {
-    $recordedIntent = Read-JsonFile $recordedIntentForRequest "Recorded Release Package Intent"
-    if ($recordedIntent.workflow_ledger_file -ne $workflowPath -or
-        $recordedIntent.revision_ledger_file -ne $revisionPath -or
-        $recordedIntent.workflow_ledger_sha256 -ne (Get-Sha256 $workflowPath) -or
-        $recordedIntent.revision_ledger_sha256 -ne (Get-Sha256 $revisionPath)) {
-        throw "The recorded Release Package is bound to an older Workflow/RevisionLedger snapshot. It is preserved; specify a new -ReleaseOutputDirectory for this Ledger version."
-    }
-}
 $roundRunsValue = if ($roundManifest.runs_directory) { [string]$roundManifest.runs_directory } elseif ($roundManifest.directories.runs) { [string]$roundManifest.directories.runs } else { "runs" }
 $roundRunsPath = Get-FullPath $roundRunsValue $roundPath
 [void](Assert-PathInRoundRoot $roundRunsPath "RunsDirectory")
@@ -205,6 +194,26 @@ else {
     & $reconcileScript -RoundRoot $roundPath -WorkflowLedger $workflowPath -RevisionLedger $revisionPath -RunsDirectory $roundRunsPath -PythonExe $script:PythonResolved
 }
 $roundManifest = Read-JsonFile $roundManifestPath "round_manifest after reconciliation"
+$unresolvedBatches = @($roundManifest.batch_transaction_history | Where-Object {
+    $_.transaction_status -in @("verified_unpublished","applied_unpublished","approved_unapplied","prepared_or_unpublished")
+})
+if ($unresolvedBatches.Count -gt 0) {
+    $summary = @($unresolvedBatches | ForEach-Object {
+        "$($_.batch_id):$($_.transaction_status) tasks=$(@($_.selected_task_ids) -join ',')"
+    })
+    throw "Finalization is blocked by unresolved unpublished batch transaction(s). Resume the exact verified batch or recover the failed batch before producing a Release Package: $($summary -join '; ')"
+}
+if ($recordedReleasePathForRequest -and
+    [System.IO.Path]::GetFullPath($requestedReleasePathForRequest) -eq [System.IO.Path]::GetFullPath($recordedReleasePathForRequest) -and
+    (Test-Path -LiteralPath $recordedIntentForRequest -PathType Leaf)) {
+    $recordedIntent = Read-JsonFile $recordedIntentForRequest "Recorded Release Package Intent"
+    if ($recordedIntent.workflow_ledger_file -ne $workflowPath -or
+        $recordedIntent.revision_ledger_file -ne $revisionPath -or
+        $recordedIntent.workflow_ledger_sha256 -ne (Get-Sha256 $workflowPath) -or
+        $recordedIntent.revision_ledger_sha256 -ne (Get-Sha256 $revisionPath)) {
+        throw "The recorded Release Package is bound to an older Workflow/RevisionLedger snapshot. It is preserved; specify a new -ReleaseOutputDirectory for this Ledger version."
+    }
+}
 if ($roundManifest.release_package_receipt) {
     $completedReceipt = Get-FullPath ([string]$roundManifest.release_package_receipt) $roundPath
     $recordedReleaseDirectory = Split-Path -Parent $completedReceipt
