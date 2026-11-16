@@ -305,24 +305,25 @@ python scripts/co_reviewer_cli.py verify --plan "runs/batch-<id>/revision_plan.a
 python scripts/co_reviewer_cli.py confirm-verified --plan "runs/batch-<id>/revision_plan.applied.json" --revision-ledger revision_ledger.json --ids P1 --semantic-review-confirmed
 ```
 
-4. Create Working Clean views, confirm the scientific response text, map final Word locations, attach locations, then complete the ResponseUnits:
-
-```powershell
-python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
-python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-P1-C1 --verification-report-id "semantic-review-P1-C1" --semantic-review-confirmed
-python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir "runs/batch-<id>/word_pdf_final"
-python scripts/co_reviewer_cli.py record-response-locations --ledger revision_ledger.json --location-map "runs/batch-<id>/word_pdf_final/response_location_map.json"
-python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-P1-C1 --ready-for-submission-confirmed
-```
-
-For `manual_required` table/non-body locators, use `record-manual-response-locations` with the exact author-confirmed locator input described above. A batch cannot publish until every ResponseUnit linked to its selected tasks is completed.
-
-5. Synchronize verified Patch lifecycle state to the Workflow Ledger, then publish the entire batch. Publication rechecks parent pointers, every Patch verification hash, task state and ResponseUnit completion; the only active-state change is one atomic replacement of the Workflow Ledger file:
+4. Synchronize verified Patch lifecycle state to the Workflow Ledger, then publish the batch. Publication checks the immutable batch intent/scope, parent pointers, verified Patch hashes and Workflow task states. It deliberately does **not** require final ResponseUnit completion or final Word/PDF locations: a later batch can change pagination across the whole document role.
 
 ```powershell
 python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
 python scripts/co_reviewer_cli.py publish-batch --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir "runs/batch-<id>"
 ```
+
+5. After **all** document-changing batches have been published, create the final Working Clean views, confirm ResponseUnit semantics, map final Word/PDF locations and complete the ResponseUnits:
+
+```powershell
+python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
+python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-P1-C1 --verification-report-id "semantic-review-P1-C1" --semantic-review-confirmed
+python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir "word_pdf_final"
+python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-P1-C1 --ready-for-submission-confirmed
+```
+
+The map-response-locations command writes the Word COM map and records its location evidence in the RevisionLedger in the same command. Do **not** run record-response-locations again for that same map. The standalone command is for attaching a separately generated, still-unrecorded map after verifying that it matches the exact current Ledger. For manual_required table/non-body locators, use record-manual-response-locations with the exact author-confirmed locator input described above before completing those ResponseUnits.
+
+6. Create the final release package only after all batches are published and every required ResponseUnit is completed.
 
 ### Rollback and failed batches
 
