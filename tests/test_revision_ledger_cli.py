@@ -1151,7 +1151,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(patches["T1-r2"].operations[0].input_file, str(revision_one.resolve()))
         rebased_output = Path(patches["T1-r2"].operations[0].output_file)
         self.assertEqual(rebased_output.parent.name, "documents")
-        self.assertEqual(rebased_output.parents[1].parent, self.root / "runs")
+        self.assertEqual(rebased_output.parents[1].parent, (self.root / "runs").resolve())
         self.assertEqual(rebased_output, Path(merged.documents[0].output_file))
         unit = merged.response_units[0]
         self.assertEqual(unit.linked_patch_ids, ["T1-r2"])

@@ -331,7 +331,7 @@ class WorkflowPreparationTests(unittest.TestCase):
             [row["evidence_id"] for row in updated["evidence"]],
             ["E-COMMENT-1", "E-MAN-1", "E-MAN-02"],
         )
-        self.assertEqual(updated["patch_operations"][0]["input_file"], str(current_manuscript))
+        self.assertEqual(updated["patch_operations"][0]["input_file"], str(current_manuscript.resolve()))
         self.assertEqual(updated["patch_operations"][0]["source_sha256"], current_sha)
         self.assertEqual(report["refreshed_task_ids"], ["T1"])
         self.assertEqual(report["active_document_versions"]["Manuscript"]["batch_id"], "batch-t1-published")

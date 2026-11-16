@@ -239,3 +239,8 @@ The second unified run on `f89d833a53d061962b5bf1dc54be5beed07a53f3` confirmed t
 - The Windows PowerShell parser stage passed; all remaining failures were inside the quality-check test suite, not runner provisioning or PowerShell argument conversion.
 
 These source/test corrections are not accepted until a new unified matrix completes. Actual Microsoft Word COM/PDF rendering remains a separate local-Word acceptance requirement and is not claimed by GitHub-hosted tests.
+
+
+## Windows final path-assertion cleanup after the 385e331 matrix
+
+The unified run on `385e331b68ab31145c1635124d6a8cbe4e1897cd` completed with both Ubuntu suites green (294/294 on Python 3.10 and 3.13), and both Windows PowerShell 5.1 parser stages green. The Windows quality suites each had exactly two remaining failures, both asserting raw temporary-directory spellings instead of canonical file identity: the expected `runs` directory in the rebase test and the refreshed Manuscript input path in the preparation test. Those assertions now compare resolved paths. The code under test had already normalized the output/input paths; no production behavior or safety gate was weakened. The next unified run on the resulting commit is still required before recommending local use.
