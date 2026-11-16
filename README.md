@@ -148,23 +148,25 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 
 The automated tests verify the generated WordprocessingML, but they cannot prove how Microsoft Word displays and re-saves Track Changes. A separate synthetic acceptance fixture is provided for that purpose. It uses no manuscript or SI files.
 
-Run from the repository root in PowerShell:
+Run from the repository root in PowerShell, using the same Python environment that passed the quality checks:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run_word_compatibility_check.ps1
+.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe"
 ```
 
 The runner creates a local test folder under `artifacts/word-compatibility-check`, performs preflight, approves the synthetic test item, applies five native Track Changes replacements, and verifies exact deletion/insertion text plus the absence of untracked text changes before Word is opened. The fixture covers two body paragraphs (including a scientific formula with subscript and superscript), one table cell, the header and the footer. Generated files are ignored by Git.
 
 Open `word_compatibility_revised.docx` in Microsoft Word. On the Review tab, set Display for Review to **All Markup** and ensure insertions and deletions are shown. Inspect all five locations: each old value should appear as a deletion and each new value as an insertion; the formula should display 4 as subscript and 2− as superscript using native Word formatting. Color is not an acceptance criterion. Do not accept or reject any changes. Save the same DOCX, close Word, and reopen it.
 
-After saving in Word, rerun mechanical verification from the repository root:
+After saving the same DOCX in Word, close Word, reopen the file, and confirm that the five changes remain visible with All Markup. Then run the repository runner in post-Word verification mode:
 
 ```powershell
-python scripts/co_reviewer_cli.py verify --plan artifacts/word-compatibility-check/word_compatibility_plan.json --apply-report artifacts/word-compatibility-check/word_compatibility_apply_report.json --out artifacts/word-compatibility-check/word_compatibility_verification_after_word.json
+.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe" -VerifyAfterWord
 ```
 
-A successful post-Word verification means all four exact revision IDs and their deleted/inserted text survived the Word save round-trip. It does not replace the visual inspection. Do not run `confirm-verified` on this synthetic fixture; semantic confirmation is intended for actual manuscript/SI revisions after scientific review.
+The runner writes `word_compatibility_verification_after_word.json` and prints the verification summary. A successful post-Word verification means all five planned target edits and their deleted/inserted text survived the Word save round-trip. It does not replace visual inspection or the separate Word COM pagination/PDF location-mapping acceptance. Do not run `confirm-verified` on this synthetic fixture; semantic confirmation is intended for actual manuscript/SI revisions after scientific review.
+
+Use the same `-OutputDirectory` value on both invocations if you override the default output directory.
 
 ## Tests
 
