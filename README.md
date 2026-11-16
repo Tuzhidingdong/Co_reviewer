@@ -109,6 +109,16 @@ $roundRoot = "<printed workspace path>"
 The entry point prepares a new Workflow Ledger, Reviewer Map and report, then connects task authorization, immutable batch construction, plan export, preflight, exact Patch approval, Track Changes Apply, verification, untracked-text audit, semantic confirmation, Workflow synchronization and publication. It prints the actual generated paths and batch ID; use those returned paths rather than guessing names.
 
 The script pauses for exact author confirmations at task authorization, Patch approval, scientific semantic review and publication. It stops at the first error and preserves the batch artifacts. It does not retry a failed batch in place.
+Before preparing another scope, the batch runner calls `Reconcile-CoReviewerRound.ps1`. The refresh and finalization entry points use the same reconciler. It resolves hash-bound two-Ledger sync transactions, completes only already-authorized publication/rollback/recovery transactions, validates their original batch bindings and receipts, and reconstructs the round-manifest transaction index from those records. You can invoke it manually after an interrupted PowerShell session:
+
+```powershell
+.\scripts\Reconcile-CoReviewerRound.ps1 -RoundRoot $roundRoot -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+The manifest is an index, not the commit authority. A publication is committed only when its immutable batch intent/scope, Workflow publication events, active-document pointer hashes and `batch_published.json` receipt agree. If the process stops after pointer replacement but before the receipt or manifest update, reconciliation resumes that same publication from its persisted intent; it does not rerun Apply. A receipt that already exists is revalidated against the append-only Workflow event history and retained output hashes, including when a later batch has replaced the active pointer.
+
+A batch that reached mechanical verification but stopped before publication is recorded as `verified_unpublished`. Re-entering the batch runner with that state requires an explicit `RESUME VERIFIED BATCH` confirmation, reuses the existing Applied/Verified plan and DOCX outputs, completes only missing semantic/Workflow state records, then asks for a separate publication confirmation. It never reapplies the DOCX edits. A partially applied or merely approved batch is not automatically retried: the runner requires explicit `RECOVER FAILED BATCH`, preserves all outputs, invalidates the affected Workflow DAG and stops so the author can refresh evidence before preparing a new batch.
+
 The script updates `round_manifest.json` with the latest prepared Workflow Ledger, Reviewer Map, RevisionLedger, runs directory, preparation history and publication receipt. The refresher records refreshed inventory/audit paths, and the finalizer records final Word/PDF and Release Package paths. All round inputs and outputs remain inside that workspace.
 
 **B. Continue with another batch**
@@ -139,13 +149,13 @@ Pure reply-only rounds do not receive artificial document versions or page/line 
 
 If table/non-body locations require author input, the finalizer prints the exact ResponseUnit and locator IDs, then pauses without completing the round. Prepare a JSON file conforming to `schemas/manual-response-locations.schema.json` using `examples/manual_response_locations.example.json` as a structural example. Replace every illustrative value with the actual text and final location visible in the Word/PDF output; never copy the example page numbers.
 
-Resume with the same `-WordPdfOutputDirectory` and add `-ManualLocationsJson`:
+On resume, the finalizer automatically reuses the Word/PDF directory recorded in `round_manifest.json`; add `-ManualLocationsJson` and omit `-WordPdfOutputDirectory` unless selecting that recorded directory explicitly:
 
 ```powershell
 .\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -WordPdfOutputDirectory "output\word_pdf_final-<stamp>" -ManualLocationsJson "plan\manual_locations.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "D:\Software\Anacoda\python.exe"
 ```
 
-A partial/stale Working Clean set, partial Word/PDF output directory, or existing Release directory is never overwritten. The Release Package is generated locally and is not submitted to a journal. Final Word GUI/PDF visual inspection remains a separate author acceptance step.
+A partial/stale Working Clean set or Word/PDF output directory is preserved and never overwritten. Release Package generation has a separate intent/receipt protocol: the intent binds the exact review round, title/author and Workflow/RevisionLedger path+SHA-256 snapshot; a matching partial package can resume in the same directory, while a changed source snapshot or metadata requires a new directory. Mismatched generated files are preserved under `.partial-<id>` names before they are rebuilt. The completion receipt is written last and hashes the Response Letter Markdown/DOCX, quality report and READY Final Release Manifest. A completed package is revalidated on retry rather than regenerated against newer source ledgers. The package is generated locally and is not submitted to a journal. Final Word GUI/PDF visual inspection remains a separate author acceptance step.
 
 ### 4. Low-level CLI alternative: authorize tasks and build an immutable batch
 
@@ -163,6 +173,12 @@ python scripts/co_reviewer_cli.py export-revision-plan --ledger $revisionLedger 
 ```
 
 Use the actual task IDs and Patch IDs. The scheduler enforces dependencies and target-group conflicts. Candidate Patch/ResponseUnit data is validated before the immutable batch intent is created; the batch pins active parent paths/hashes and assigns new Marked DOCX output paths. Reuse the same prepared Workflow Ledger, RevisionLedger and `runs/` folder throughout the round.
+
+Workflow/RevisionLedger synchronization is a two-file transaction. It stages both after-images and an immutable intent under `plan/.workflow_sync_transactions/<sync_id>/`, then writes a pending marker before replacing either ledger. The `recover-workflow-sync` command completes the same transaction forward after a process interruption. If the marker itself was not written, recovery may promote one unique intent only when both current ledgers still match its exact before-hashes. A hash outside the recorded before/after pair is an out-of-band change and causes recovery to stop without overwriting it:
+
+```powershell
+python scripts/co_reviewer_cli.py recover-workflow-sync --workflow-ledger "<Workflow Ledger>" --revision-ledger "<RevisionLedger>"
+```
 
 ### 5. Low-level CLI alternative: preflight, approve, apply, verify and publish
 

@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import sys
@@ -845,6 +846,15 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 revision_ledger=str(revision_path),
                 batch_dir=str(batch_dir),
             )), 0)
+            # A caller may lose the successful CLI response or Round Manifest
+            # write after the Workflow pointer and receipt have committed. A
+            # repeat must verify the original publication chain, not blindly
+            # return success merely because batch_published.json exists.
+            self.assertEqual(cli.cmd_publish_batch(Namespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+                batch_dir=str(batch_dir),
+            )), 0)
         self.assertTrue((batch_dir / "batch_published.json").is_file())
 
         final_ledger = revision_ledger_from_mapping(
@@ -1182,6 +1192,121 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
         ])
         self.assertEqual(parsed.revision_ledger, str(self.ledger_path))
 
+
+class WorkflowSyncCrashRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.workflow_path = self.root / "workflow_ledger.json"
+        self.revision_path = self.root / "revision_ledger.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _stage_transaction(self, *, workflow_is_after: bool):
+        sync_id = "sync-crash-window-001"
+        stage_root = self.root / ".workflow_sync_transactions"
+        stage_dir = stage_root / sync_id
+        stage_dir.mkdir(parents=True)
+        workflow_before = b'{"revision_round_id":"round-sync","events":[]}\n'
+        revision_before = b'{"revision_round_id":"round-sync","patches":[]}\n'
+        workflow_after = b'{"revision_round_id":"round-sync","events":[{"event_type":"synthetic_sync"}]}\n'
+        revision_after = b'{"revision_round_id":"round-sync","patches":[],"workflow_ledger_fingerprint":"synthetic"}\n'
+        self.workflow_path.write_bytes(workflow_after if workflow_is_after else workflow_before)
+        self.revision_path.write_bytes(revision_before)
+        workflow_stage = stage_dir / "workflow_ledger.after.json"
+        revision_stage = stage_dir / "revision_ledger.after.json"
+        workflow_stage.write_bytes(workflow_after)
+        revision_stage.write_bytes(revision_after)
+        intent_path = stage_dir / "workflow_sync_intent.json"
+        intent = {
+            "schema_version": "1.0",
+            "sync_id": sync_id,
+            "prepared_at_utc": "2026-11-16T00:00:00+00:00",
+            "workflow_ledger_file": str(self.workflow_path.resolve()),
+            "workflow_before_sha256": hashlib.sha256(workflow_before).hexdigest(),
+            "workflow_after_file": str(workflow_stage.resolve()),
+            "workflow_after_sha256": hashlib.sha256(workflow_after).hexdigest(),
+            "revision_ledger_file": str(self.revision_path.resolve()),
+            "revision_before_sha256": hashlib.sha256(revision_before).hexdigest(),
+            "revision_after_file": str(revision_stage.resolve()),
+            "revision_after_sha256": hashlib.sha256(revision_after).hexdigest(),
+        }
+        intent_path.write_text(json.dumps(intent, ensure_ascii=False, indent=2), encoding="utf-8")
+        pending_path = cli._workflow_sync_pending_path(self.workflow_path)
+        pending = {
+            "schema_version": "1.0",
+            "sync_id": sync_id,
+            "workflow_ledger_file": str(self.workflow_path.resolve()),
+            "revision_ledger_file": str(self.revision_path.resolve()),
+            "intent_file": str(intent_path.resolve()),
+            "intent_sha256": sha256_file(intent_path),
+        }
+        pending_path.write_text(json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8")
+        return pending_path, intent_path, workflow_after, revision_after
+
+    def test_pending_sync_finishes_second_ledger_after_first_commit(self):
+        pending_path, intent_path, workflow_after, revision_after = self._stage_transaction(
+            workflow_is_after=True
+        )
+        receipt = cli._resume_workflow_sync_transaction(self.workflow_path, self.revision_path)
+        self.assertIsNotNone(receipt)
+        self.assertEqual(self.workflow_path.read_bytes(), workflow_after)
+        self.assertEqual(self.revision_path.read_bytes(), revision_after)
+        self.assertFalse(pending_path.exists())
+        receipt_path = intent_path.with_name("workflow_sync_receipt.json")
+        self.assertTrue(receipt_path.is_file())
+        stored = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["status"], "committed")
+        self.assertEqual(stored["workflow_ledger_sha256"], sha256_file(self.workflow_path))
+        self.assertEqual(stored["revision_ledger_sha256"], sha256_file(self.revision_path))
+
+    def test_orphaned_sync_intent_before_pending_marker_is_promoted_safely(self):
+        pending_path, intent_path, workflow_after, revision_after = self._stage_transaction(
+            workflow_is_after=False
+        )
+        pending_path.unlink()
+        receipt = cli._resume_workflow_sync_transaction(self.workflow_path, self.revision_path)
+        self.assertIsNotNone(receipt)
+        self.assertEqual(self.workflow_path.read_bytes(), workflow_after)
+        self.assertEqual(self.revision_path.read_bytes(), revision_after)
+        self.assertFalse(pending_path.exists())
+        self.assertTrue(intent_path.with_name("workflow_sync_receipt.json").is_file())
+
+    def test_pending_sync_refuses_to_overwrite_an_out_of_band_ledger_change(self):
+        pending_path, _intent_path, workflow_after, _revision_after = self._stage_transaction(
+            workflow_is_after=True
+        )
+        self.revision_path.write_text(
+            '{"revision_round_id":"round-sync","patches":[{"patch_id":"external"}]}',
+            encoding="utf-8",
+        )
+        unexpected = self.revision_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "changed outside the pending sync transaction"):
+            cli._resume_workflow_sync_transaction(self.workflow_path, self.revision_path)
+        self.assertEqual(self.revision_path.read_bytes(), unexpected)
+        self.assertEqual(self.workflow_path.read_bytes(), workflow_after)
+        self.assertTrue(pending_path.exists())
+
+
+    def test_sync_commit_rejects_source_ledger_changed_after_load(self):
+        self.workflow_path.write_text('{"revision_round_id":"round-sync","events":[]}\n', encoding="utf-8")
+        self.revision_path.write_text('{"revision_round_id":"round-sync","patches":[]}\n', encoding="utf-8")
+        workflow_expected = sha256_file(self.workflow_path)
+        revision_expected = sha256_file(self.revision_path)
+        self.workflow_path.write_text('{"revision_round_id":"round-sync","events":[{"external":true}]}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Workflow Ledger changed after it was loaded"):
+            cli._commit_workflow_sync_transaction(
+                self.workflow_path,
+                self.revision_path,
+                {"revision_round_id": "round-sync", "events": [{"stale": True}]},
+                {"revision_round_id": "round-sync", "patches": []},
+                expected_workflow_before_sha256=workflow_expected,
+                expected_revision_before_sha256=revision_expected,
+            )
+        self.assertFalse(cli._workflow_sync_pending_path(self.workflow_path).exists())
+        self.assertFalse((self.root / ".workflow_sync_transactions").exists())
+        self.assertIn("external", self.workflow_path.read_text(encoding="utf-8"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,14 @@ The same increment adds strict round-workspace path containment, a manual respon
 
 This development increment is committed at head `cf823155441667bb635cbddceded6c32b1ccdbc1` and the mainline implementation phase is now frozen for unified acceptance. No parser check, unit test, quality-check run, synthetic multi-batch workflow or Word COM/PDF run has been performed against this increment. Do not perform isolated validation between further feature edits; the next activity is one coordinated acceptance cycle. Any genuine blocker from that cycle should return as one evidence-complete report for focused development repair.
 
+## Subsequent development increment — crash recovery and transaction continuity
+
+Development continued after the round-orchestration increment to close the failure windows connecting batch publication, two-Ledger Workflow synchronization, failed-batch recovery and Release Package generation. This increment is **not tested**.
+
+The changes add a common round reconciler; receipt-verified idempotency for publication and rollback; explicit resumption of verified-but-unpublished batches without repeating Apply; forward-only Workflow/RevisionLedger recovery including the pre-pending-marker crash window; idempotent failed-batch recovery with retained invalidation events; and Release Package intent/receipt semantics that preserve partial files, reject changed source snapshots and verify completed packages. The corresponding schemas and regression cases are included.
+
+The earlier `b144f4b` automated/Word COM evidence remains historical and does not validate this increment. PR #3 remains Draft/Open/Unmerged. Unified validation is deferred until development is frozen; no isolated test loop is being run during implementation.
+
 ## Audit against the PR's declared P1 scope
 
 | PR requirement | Finding | Status |

@@ -2081,15 +2081,25 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Verification seals for Patch {patch.patch_id} do not match the RevisionLedger."
                 )
+            item_output_hashes = copy.deepcopy(item.get("verified_output_hashes", []))
+            if patch.status == "verified":
+                if (
+                    patch.verification_report_id != verification_report_id
+                    or patch.verified_output_hashes != item_output_hashes
+                ):
+                    raise RevisionModelError(
+                        f"Patch {patch.patch_id} is already verified with different report/hash evidence."
+                    )
+                # Idempotent retry after a process interruption between writing
+                # the verified plan snapshot and committing the RevisionLedger.
+                continue
             if patch.status != "applied":
                 raise RevisionModelError(
                     f"Patch {patch.patch_id} must be applied before verification; current state is {patch.status}."
                 )
             patch.status = "verified"
             patch.verification_report_id = verification_report_id
-            patch.verified_output_hashes = copy.deepcopy(
-                item.get("verified_output_hashes", [])
-            )
+            patch.verified_output_hashes = item_output_hashes
             if not patch.verified_output_hashes:
                 raise RevisionModelError(
                     f"Verified patch {patch.patch_id} has no sealed output hashes."

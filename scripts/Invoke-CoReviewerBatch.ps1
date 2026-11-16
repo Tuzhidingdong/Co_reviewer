@@ -122,6 +122,143 @@ function Confirm-Exact {
     }
 }
 
+function Complete-VerifiedUnpublishedBatch {
+    param(
+        [object]$HistoryEntry,
+        [string[]]$RequestedTaskIds
+    )
+    $batchDirectory = Get-FullPath ([string]$HistoryEntry.batch_directory) $script:RoundPath
+    [void](Assert-PathInRoundRoot $batchDirectory "Verified-unpublished Batch")
+    $batchIntentPath = Join-Path $batchDirectory "batch_intent.json"
+    $batchScopePath = Join-Path $batchDirectory "batch_scope.json"
+    $verificationPath = Join-Path $batchDirectory "verification_report.json"
+    $appliedPlanPath = Join-Path $batchDirectory "revision_plan.applied.json"
+    foreach ($path in @($batchIntentPath,$batchScopePath,$verificationPath,$appliedPlanPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Verified-unpublished batch is missing required recovery artifact: $path"
+        }
+    }
+    $intent = Read-JsonFile $batchIntentPath "Batch Intent for verified resume"
+    $scope = Read-JsonFile $batchScopePath "Batch Scope for verified resume"
+    $batchId = [string]$intent.batch_id
+    $patchIds = @($scope.patch_ids | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+    $selectedIds = @($scope.selected_task_ids | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+    if ($patchIds.Count -eq 0 -or $selectedIds.Count -eq 0) {
+        throw "Verified-unpublished batch scope has no selected Task IDs or Patch IDs."
+    }
+    $requestedSorted = @($RequestedTaskIds | Sort-Object)
+    $selectedSorted = @($selectedIds | Sort-Object)
+    if ($requestedSorted.Count -ne $selectedSorted.Count -or
+        @(Compare-Object -ReferenceObject $requestedSorted -DifferenceObject $selectedSorted).Count -gt 0) {
+        throw "Task IDs requested for this invocation do not exactly match the verified-unpublished batch. Preserve the batch and rerun with its exact task set: $($selectedIds -join ', ')."
+    }
+    $verification = Read-JsonFile $verificationPath "Verification Report"
+    if ($verification.passed -ne $true -or
+        [int]$verification.targets_total -le 0 -or
+        [int]$verification.targets_verified -ne [int]$verification.targets_total -or
+        -not $verification.untracked_text_audit.passed) {
+        throw "Verified-unpublished batch does not have a complete passing verification/untracked-text report."
+    }
+    $ledger = Read-JsonFile $script:CurrentRevisionLedgerPath "RevisionLedger for verified resume"
+    $workflow = Read-JsonFile $script:CurrentWorkflowPath "Workflow Ledger for verified resume"
+    if ([string]$ledger.revision_round_id -ne $script:RoundId -or
+        [string]$workflow.revision_round_id -ne $script:RoundId) {
+        throw "Verified-unpublished batch ledgers belong to a different review round."
+    }
+    $patches = @($ledger.patches | Where-Object { $patchIds -contains [string]$_.patch_id })
+    if ($patches.Count -ne $patchIds.Count) {
+        throw "RevisionLedger does not contain every Patch declared by the verified-unpublished batch."
+    }
+    $invalidStatuses = @($patches | Where-Object { $_.status -notin @("applied","verified") })
+    if ($invalidStatuses.Count -gt 0) {
+        throw "Verified-unpublished batch contains Patch states that cannot resume semantic confirmation: $((@($invalidStatuses | ForEach-Object { $_.patch_id + ':' + $_.status })) -join ', ')"
+    }
+    Write-Host ""
+    Write-Host "========== RESUMING VERIFIED-UNPUBLISHED BATCH =========="
+    Write-Host ("BATCH: " + $batchId)
+    Write-Host ("PATCH IDS: " + ($patchIds -join ", "))
+    foreach ($patch in $patches) {
+        Write-Host ("PATCH: " + $patch.patch_id + " | " + $patch.status + " | REVIEWER " + $patch.reviewer)
+        Write-Host ("COMMENT: " + $patch.comment)
+        Write-Host ("RESPONSE: " + $patch.proposed_response)
+        foreach ($operation in $patch.operations) {
+            Write-Host ("OP: " + $operation.operation_id + " | " + $operation.document + " | " + $operation.part + " | p_idx=" + $operation.p_idx)
+            Write-Host ("FIND: " + $operation.find)
+            Write-Host ("REPLACE: " + $operation.replace)
+            Write-Host ("OUTPUT: " + $operation.output_file)
+            if (Test-Path -LiteralPath $operation.output_file -PathType Leaf) {
+                Write-Host ("OUTPUT SHA256: " + (Get-Sha256 $operation.output_file))
+            }
+        }
+    }
+    Write-Host "========================================================="
+    $needsSemanticConfirmation = @($patches | Where-Object { $_.status -ne "verified" })
+    if ($needsSemanticConfirmation.Count -gt 0) {
+        Confirm-Exact "The exact Track Changes and mechanical audit already passed. Open the Marked DOCX files above and confirm scientific meaning, values, units, sample identities, citations, figures/tables and Manuscript/SI consistency." ("SEMANTIC REVIEW CONFIRMED " + ($patchIds -join ","))
+        [void](Invoke-CoReviewerCli ((@("confirm-verified","--plan",$appliedPlanPath,"--ids") + $patchIds) + @("--revision-ledger",$script:CurrentRevisionLedgerPath,"--semantic-review-confirmed")))
+    }
+    else {
+        Write-Host "[SEMANTIC REVIEW] Already committed in RevisionLedger; no duplicate confirmation is written."
+    }
+
+    $ledger = Read-JsonFile $script:CurrentRevisionLedgerPath "RevisionLedger after semantic recovery"
+    $patches = @($ledger.patches | Where-Object { $patchIds -contains [string]$_.patch_id })
+    if ($patches.Count -ne $patchIds.Count -or @($patches | Where-Object { $_.status -ne "verified" }).Count -gt 0) {
+        throw "Not every Patch reached the verified state; publication remains blocked."
+    }
+    $workflow = Read-JsonFile $script:CurrentWorkflowPath "Workflow Ledger before recovery sync"
+    $tasks = @($workflow.tasks | Where-Object { $selectedIds -contains [string]$_.task_id })
+    if ($tasks.Count -ne $selectedIds.Count) {
+        throw "Workflow Ledger does not contain every selected task from the verified-unpublished batch."
+    }
+    if (@($tasks | Where-Object { $_.status -notin @("verified","completed") }).Count -gt 0) {
+        [void](Invoke-CoReviewerCli @("sync-workflow-ledger","--workflow-ledger",$script:CurrentWorkflowPath,"--revision-ledger",$script:CurrentRevisionLedgerPath))
+    }
+    $workflow = Read-JsonFile $script:CurrentWorkflowPath "Workflow Ledger after recovery sync"
+    $tasks = @($workflow.tasks | Where-Object { $selectedIds -contains [string]$_.task_id })
+    if (@($tasks | Where-Object { $_.status -notin @("verified","completed") }).Count -gt 0) {
+        throw "Workflow task states are not fully synchronized; verified batch was not published."
+    }
+
+    Confirm-Exact "This verified batch has not yet been published. Review its immutable receipt scope and approve moving the active document pointers." ("PUBLISH " + $batchId)
+    [void](Invoke-CoReviewerCli @("publish-batch","--workflow-ledger",$script:CurrentWorkflowPath,"--revision-ledger",$script:CurrentRevisionLedgerPath,"--batch-dir",$batchDirectory))
+    $receiptPath = Join-Path $batchDirectory "batch_published.json"
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        throw "Publish returned without a committed batch_published.json receipt. Preserve the batch and rerun reconciliation."
+    }
+    $receipt = Read-JsonFile $receiptPath "Batch Publication Receipt"
+    $workflow = Read-JsonFile $script:CurrentWorkflowPath "Workflow Ledger after verified batch publication"
+    foreach ($property in $receipt.active_documents.PSObject.Properties) {
+        $role = $property.Name
+        $expected = $property.Value
+        $actual = $workflow.active_documents.$role
+        if (-not $actual -or
+            $actual.file -ne $expected.file -or
+            $actual.sha256 -ne $expected.sha256 -or
+            $actual.batch_id -ne $expected.batch_id) {
+            throw "Published active pointer for $role does not match the committed receipt."
+        }
+        if (-not (Test-Path -LiteralPath $expected.file -PathType Leaf) -or
+            (Get-Sha256 $expected.file) -ne [string]$expected.sha256) {
+            throw "Published active document for $role is missing or has a SHA-256 mismatch."
+        }
+    }
+    Update-RoundManifest -EventType "batch_published_after_resume" -Event @{
+        last_published_batch_id = $batchId
+        last_published_batch_directory = $batchDirectory
+        last_publication_receipt = $receiptPath
+        last_publication_receipt_sha256 = (Get-Sha256 $receiptPath)
+        workflow_ledger_sha256 = (Get-Sha256 $script:CurrentWorkflowPath)
+        revision_ledger_sha256 = (Get-Sha256 $script:CurrentRevisionLedgerPath)
+        active_documents = $receipt.active_documents
+    }
+    Write-Host ""
+    Write-Host "[BATCH RESUMED AND PUBLISHED] $batchId"
+    Write-Host ("[BATCH DIRECTORY] " + $batchDirectory)
+    Write-Host ("[PUBLICATION RECEIPT] " + $receiptPath)
+    Write-Host ("[WORKFLOW LEDGER] " + $script:CurrentWorkflowPath)
+    Write-Host ("[REVISION LEDGER] " + $script:CurrentRevisionLedgerPath)
+}
 $script:RoundPath = (Resolve-Path -LiteralPath $RoundRoot -ErrorAction Stop).Path
 $script:RoundManifestPath = Join-Path $script:RoundPath "round_manifest.json"
 if (-not (Test-Path -LiteralPath $script:RoundManifestPath -PathType Leaf)) {
@@ -164,6 +301,80 @@ $hasInventory = -not [string]::IsNullOrWhiteSpace($Inventory)
 if ($hasScope -ne $hasInventory) { throw "ExecutionScope and Inventory must be supplied together." }
 
 $currentWorkflow = $workflowInput
+$revisionPath = if ($RevisionLedger) { Get-FullPath $RevisionLedger $script:RoundPath } else { Join-Path $script:RoundPath "plan\revision_ledger.json" }
+$runsPath = if ($RunsDirectory) { Get-FullPath $RunsDirectory $script:RoundPath } else { Join-Path $script:RoundPath "runs" }
+[void](Assert-PathInRoundRoot $revisionPath "RevisionLedger")
+[void](Assert-PathInRoundRoot $runsPath "RunsDirectory")
+if (-not [string]::IsNullOrWhiteSpace($PreparedWorkflowLedgerOut) -and -not $hasScope) {
+    throw "PreparedWorkflowLedgerOut can only be supplied when creating a newly prepared Workflow Ledger from ExecutionScope/Inventory."
+}
+$parent = Split-Path -Parent $revisionPath
+if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+if (-not (Test-Path -LiteralPath $runsPath -PathType Container)) { New-Item -ItemType Directory -Path $runsPath -Force | Out-Null }
+$script:CurrentWorkflowPath = $workflowInput
+$script:CurrentReviewerMapPath = $null
+$script:CurrentRevisionLedgerPath = $revisionPath
+$script:CurrentRunsPath = $runsPath
+$reconcileScript = Join-Path $PSScriptRoot "Reconcile-CoReviewerRound.ps1"
+if (-not (Test-Path -LiteralPath $reconcileScript -PathType Leaf)) { throw "Round reconciliation entry point is missing: $reconcileScript" }
+& $reconcileScript -RoundRoot $script:RoundPath -WorkflowLedger $workflowInput -RevisionLedger $revisionPath -RunsDirectory $runsPath -PythonExe $script:PythonResolved
+$reconciledManifest = Read-JsonFile $script:RoundManifestPath "round_manifest after transaction reconciliation"
+$openTransactions = @($reconciledManifest.batch_transaction_history | Where-Object {
+    $_.workflow_ledger -and
+    [System.IO.Path]::GetFullPath([string]$_.workflow_ledger) -eq [System.IO.Path]::GetFullPath($workflowInput) -and
+    $_.revision_ledger -and
+    [System.IO.Path]::GetFullPath([string]$_.revision_ledger) -eq [System.IO.Path]::GetFullPath($revisionPath) -and
+    $_.transaction_status -in @("verified_unpublished","applied_unpublished","approved_unapplied","prepared_or_unpublished")
+})
+if ($openTransactions.Count -gt 0) {
+    $matchingVerified = @($openTransactions | Where-Object {
+        $_.transaction_status -eq "verified_unpublished" -and
+        @($_.selected_task_ids | Sort-Object).Count -eq @($ids | Sort-Object).Count -and
+        @(Compare-Object -ReferenceObject @($_.selected_task_ids | Sort-Object) -DifferenceObject @($ids | Sort-Object)).Count -eq 0
+    })
+    if ($matchingVerified.Count -gt 1) {
+        throw "More than one verified-unpublished batch is recorded for this Workflow/RevisionLedger pair. Resolve them one at a time from their exact Task IDs before starting another batch."
+    }
+    if ($matchingVerified.Count -eq 1) {
+        $resumeEntry = $matchingVerified[0]
+        $resumeBatchId = [string]$resumeEntry.batch_id
+        Confirm-Exact "An earlier batch has passed mechanical verification but was not published before the previous session ended. Resume that exact batch before preparing or applying any new task." ("RESUME VERIFIED BATCH " + $resumeBatchId)
+        $script:CurrentWorkflowPath = $workflowInput
+        $script:CurrentReviewerMapPath = [string]$reconciledManifest.current_reviewer_map
+        $script:CurrentRevisionLedgerPath = $revisionPath
+        $script:CurrentRunsPath = $runsPath
+        Complete-VerifiedUnpublishedBatch -HistoryEntry $resumeEntry -RequestedTaskIds @($resumeEntry.selected_task_ids)
+        return
+    }
+    $failedCandidates = @($openTransactions | Where-Object {
+        $_.transaction_status -in @("applied_unpublished","approved_unapplied","prepared_or_unpublished")
+    })
+    if ($failedCandidates.Count -gt 0) {
+        if ($failedCandidates.Count -gt 1) {
+            throw "Multiple unpublished, non-verified batches require recovery. Resolve each exact batch separately; no new Patch batch was created."
+        }
+        $failedEntry = $failedCandidates[0]
+        $failedBatchId = [string]$failedEntry.batch_id
+        $failedBatchDirectory = Get-FullPath ([string]$failedEntry.batch_directory) $script:RoundPath
+        Confirm-Exact "This batch has not reached verified state. Recovery will abandon only this unpublished batch, preserve all Marked outputs/reports, keep active parent pointers unchanged, and require fresh Audit evidence before reauthorization." ("RECOVER FAILED BATCH " + $failedBatchId)
+        [void](Invoke-CoReviewerCli @(
+            "recover-failed-batch",
+            "--workflow-ledger",$workflowInput,
+            "--revision-ledger",$revisionPath,
+            "--batch-dir",$failedBatchDirectory,
+            "--reason","Author explicitly abandoned this unpublished batch after inspecting its retained artifacts.",
+            "--actor",$Actor
+        ))
+        & $reconcileScript -RoundRoot $script:RoundPath -WorkflowLedger $workflowInput -RevisionLedger $revisionPath -RunsDirectory $runsPath -PythonExe $script:PythonResolved
+        Write-Host "[FAILED BATCH RECOVERED] $failedBatchId"
+        Write-Host "[NEXT] Refresh the current active Manuscript/SI and prepare a new evidence-bound execution scope before reauthorizing these tasks."
+        return
+    }
+    $details = @($openTransactions | ForEach-Object {
+        "$($_.batch_id):$($_.transaction_status) tasks=$(@($_.selected_task_ids) -join ',')"
+    })
+    throw "Unpublished batch transaction(s) must be resumed or explicitly recovered before a new batch can start: $($details -join '; '). Do not rerun Apply."
+}
 if ($hasScope) {
     $scopePath = Resolve-ExistingFile $ExecutionScope "Execution Scope" $script:RoundPath
     $inventoryPath = Resolve-ExistingFile $Inventory "Workspace Inventory" $script:RoundPath
@@ -185,16 +396,6 @@ else {
     if (-not $ReviewerMap) { throw "ReviewerMap is required when ExecutionScope and Inventory are omitted." }
     $reviewerMapPath = Resolve-ExistingFile $ReviewerMap "Reviewer Map" $script:RoundPath
 }
-$revisionPath = if ($RevisionLedger) { Get-FullPath $RevisionLedger $script:RoundPath } else { Join-Path $script:RoundPath "plan\revision_ledger.json" }
-$runsPath = if ($RunsDirectory) { Get-FullPath $RunsDirectory $script:RoundPath } else { Join-Path $script:RoundPath "runs" }
-[void](Assert-PathInRoundRoot $revisionPath "RevisionLedger")
-[void](Assert-PathInRoundRoot $runsPath "RunsDirectory")
-if (-not [string]::IsNullOrWhiteSpace($PreparedWorkflowLedgerOut) -and -not $hasScope) {
-    throw "PreparedWorkflowLedgerOut can only be supplied when creating a newly prepared Workflow Ledger from ExecutionScope/Inventory."
-}
-$parent = Split-Path -Parent $revisionPath
-if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-if (-not (Test-Path -LiteralPath $runsPath -PathType Container)) { New-Item -ItemType Directory -Path $runsPath -Force | Out-Null }
 if ($revisionPath -eq $currentWorkflow -or $revisionPath -eq $reviewerMapPath) { throw "RevisionLedger must be a distinct file." }
 [void](Assert-PathInRoundRoot $currentWorkflow "Prepared Workflow Ledger")
 [void](Assert-PathInRoundRoot $reviewerMapPath "Reviewer Map")

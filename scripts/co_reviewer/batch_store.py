@@ -224,6 +224,7 @@ def _validate_recovered_batch_receipt(
     patch_status_by_id: Mapping[str, str],
     *,
     revision_events: Sequence[Any] | None = None,
+    workflow_events: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Fail closed unless the recovery receipt matches its staged evidence."""
     root = Path(batch_dir).expanduser().resolve()
@@ -276,6 +277,12 @@ def _validate_recovered_batch_receipt(
     # the expected record for comparison with the current RevisionLedger.
     if revision_events is not None:
         _validate_recovery_revision_event_lineage(recovery, revision_events)
+    if workflow_events is not None:
+        _validate_recovery_workflow_event_history(
+            recovery,
+            intent,
+            {"events": list(workflow_events)},
+        )
 
     expected_ledger_paths = {
         "workflow_ledger_file": intent.get("workflow_ledger_file"),
@@ -1952,6 +1959,63 @@ def _validate_recovery_workflow_invalidation_evidence(
     return affected_task_ids
 
 
+def _validate_recovery_workflow_event_history(
+    recovery: Mapping[str, Any],
+    intent: Mapping[str, Any],
+    workflow: Mapping[str, Any],
+) -> None:
+    """Verify the recovery invalidation events remain in the append-only Workflow history.
+
+    Later batches may legitimately move the affected tasks beyond recheck_required;
+    the immutable event lineage must nevertheless remain present and exact.
+    """
+    batch_id = intent.get("batch_id")
+    reason = recovery.get("reason")
+    actor = recovery.get("actor")
+    timestamp = recovery.get("created_at_utc")
+    invalidated_ids = recovery.get("invalidated_task_ids")
+    if (
+        not isinstance(batch_id, str) or not batch_id.strip()
+        or not isinstance(reason, str) or not reason.strip()
+        or not isinstance(actor, str) or not actor.strip()
+        or not isinstance(timestamp, str) or not timestamp.strip()
+        or not isinstance(invalidated_ids, list) or not invalidated_ids
+        or any(not isinstance(value, str) or not value.strip() for value in invalidated_ids)
+        or len(invalidated_ids) != len(set(invalidated_ids))
+    ):
+        raise BatchStoreError("Recovery intent lacks valid Workflow invalidation event identity.")
+    events = workflow.get("events")
+    if not isinstance(events, list):
+        raise BatchStoreError("Current Workflow Ledger has no append-only event history.")
+    matching = [
+        row for row in events
+        if isinstance(row, Mapping)
+        and row.get("event_type") == "invalidation"
+        and row.get("batch_id") == batch_id
+    ]
+    task_ids = [row.get("task_id") for row in matching]
+    if (
+        len(task_ids) != len(invalidated_ids)
+        or any(not isinstance(value, str) or not value.strip() for value in task_ids)
+        or len(task_ids) != len(set(task_ids))
+        or set(task_ids) != set(invalidated_ids)
+    ):
+        raise BatchStoreError(
+            "Current Workflow Ledger does not retain exactly one recovery invalidation event "
+            "for each task in the recovered batch."
+        )
+    expected_reason = f"Unpublished batch {batch_id} abandoned after Apply failure: {reason}"
+    if any(
+        row.get("reason") != expected_reason
+        or row.get("actor") != actor
+        or row.get("timestamp_utc") != timestamp
+        for row in matching
+    ):
+        raise BatchStoreError(
+            "Current Workflow recovery event reason/actor/timestamp differs from its immutable recovery intent."
+        )
+
+
 def _prepare_recovery_workflow(
     workflow: Mapping[str, Any],
     selected_task_ids: Sequence[str],
@@ -2055,6 +2119,7 @@ def recover_unpublished_batch(
             intent,
             patch_status_by_id,
             revision_events=revision_ledger.events,
+            workflow_events=workflow.get("events", []),
         )
         return dict(workflow), revision_ledger, dict(receipt), False, False, True
 

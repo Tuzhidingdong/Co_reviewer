@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/workflow-sync-pending.schema.json",
+  "title": "Co_Reviewer Pending Two-Ledger Workflow Sync Pointer",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sync_id",
+    "workflow_ledger_file",
+    "revision_ledger_file",
+    "intent_file",
+    "intent_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "sync_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

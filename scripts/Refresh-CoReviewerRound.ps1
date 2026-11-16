@@ -116,7 +116,34 @@ $workflowCandidate = if ([System.IO.Path]::IsPathRooted($WorkflowLedger)) {
     Join-Path $roundPath $WorkflowLedger
 }
 $workflowPath = (Resolve-Path -LiteralPath $workflowCandidate -ErrorAction Stop).Path
-[void](Assert-PathInRoundRoot $workflowPath "Workflow Ledger" $roundPath)
+[void](Assert-PathInRoundRoot $workflowPath "Workflow Ledger")
+if ($PythonExe -match '[\\/]' -and (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    $pythonResolved = (Resolve-Path -LiteralPath $PythonExe).Path
+}
+else {
+    $pythonCommand = Get-Command $PythonExe -ErrorAction SilentlyContinue
+    if (-not $pythonCommand) {
+        throw "Python executable was not found: $PythonExe"
+    }
+    $pythonResolved = $pythonCommand.Source
+}
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$cliPath = Join-Path $repoRoot "scripts/co_reviewer_cli.py"
+$revisionLedgerForRecovery = if ($roundManifest.revision_ledger) {
+    $candidate = [string]$roundManifest.revision_ledger
+    if ([System.IO.Path]::IsPathRooted($candidate)) { $candidate } else { Join-Path $roundPath $candidate }
+} else {
+    Join-Path $roundPath "plan\revision_ledger.json"
+}
+[void](Assert-PathInRoundRoot $revisionLedgerForRecovery "RevisionLedger" $roundPath)
+$roundRunsValue = if ($roundManifest.runs_directory) { [string]$roundManifest.runs_directory } elseif ($roundManifest.directories.runs) { [string]$roundManifest.directories.runs } else { "runs" }
+$roundRunsPath = if ([System.IO.Path]::IsPathRooted($roundRunsValue)) { $roundRunsValue } else { Join-Path $roundPath $roundRunsValue }
+$roundRunsPath = [System.IO.Path]::GetFullPath($roundRunsPath)
+[void](Assert-PathInRoundRoot $roundRunsPath "RunsDirectory" $roundPath)
+$reconcileScript = Join-Path $PSScriptRoot "Reconcile-CoReviewerRound.ps1"
+if (-not (Test-Path -LiteralPath $reconcileScript -PathType Leaf)) { throw "Round reconciliation entry point is missing: $reconcileScript" }
+& $reconcileScript -RoundRoot $roundPath -WorkflowLedger $workflowPath -RevisionLedger $revisionLedgerForRecovery -RunsDirectory $roundRunsPath -PythonExe $pythonResolved
+$roundManifest = Get-Content -LiteralPath $roundManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ([string]$workflow.revision_round_id -ne $roundId) {
     throw "Workflow Ledger belongs to round '$($workflow.revision_round_id)', but RoundRoot is '$roundId'."
@@ -156,19 +183,6 @@ New-Item -ItemType Directory -Path $iterationDir | Out-Null
 $cacheDir = Join-Path $roundPath ".co-reviewer-cache"
 New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
 
-if ($PythonExe -match '[\\/]' -and (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
-    $pythonResolved = (Resolve-Path -LiteralPath $PythonExe).Path
-}
-else {
-    $pythonCommand = Get-Command $PythonExe -ErrorAction SilentlyContinue
-    if (-not $pythonCommand) {
-        throw "Python executable was not found: $PythonExe"
-    }
-    $pythonResolved = $pythonCommand.Source
-}
-
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$cliPath = Join-Path $repoRoot "scripts/co_reviewer_cli.py"
 $inventoryPath = Join-Path $iterationDir "workspace_inventory.json"
 $digestPath = Join-Path $iterationDir "workspace_digest.md"
 $auditJsonPath = Join-Path $iterationDir "review_audit_report.json"

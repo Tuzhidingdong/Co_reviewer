@@ -18,7 +18,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from lxml import etree as ET
 from review_audit import (
     build_decision_queue, build_review_audit, cache_summary,
@@ -1603,6 +1603,310 @@ def cmd_authorize_workflow_tasks(args):
     return 0
 
 
+def _workflow_sync_pending_path(workflow_path: Path) -> Path:
+    return workflow_path.with_name("." + workflow_path.name + ".sync-pending.json")
+
+
+def _atomic_copy_file(source: Path, target: Path) -> None:
+    """Atomically replace target with the exact bytes of a staged transaction file."""
+    import shutil
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        fd, raw_path = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".sync-tmp", dir=str(target.parent)
+        )
+        temporary_path = Path(raw_path)
+        with os.fdopen(fd, "wb") as stream, source.open("rb") as staged:
+            shutil.copyfileobj(staged, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, target)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _resume_workflow_sync_transaction(
+    workflow_path: Path,
+    revision_path: Path,
+) -> dict[str, Any] | None:
+    """Finish a staged two-ledger Workflow sync after any process interruption."""
+    pending_path = _workflow_sync_pending_path(workflow_path)
+    if pending_path.is_symlink():
+        raise ValueError(f"Pending Workflow sync marker must not be a symlink: {pending_path}")
+    if pending_path.exists() and not pending_path.is_file():
+        raise ValueError(f"Pending Workflow sync marker is not a regular file: {pending_path}")
+    if not pending_path.is_file():
+        # Crash window: the two after-images and immutable intent may have been
+        # written, but the pending marker may not yet have been linked into place.
+        # Such a transaction has not started replacing either Ledger. Promote it
+        # only when exactly one matching intent is complete and both current
+        # ledgers still equal its before-hashes.
+        stage_root = workflow_path.parent / ".workflow_sync_transactions"
+        if stage_root.is_symlink():
+            raise ValueError(f"Workflow sync transaction root must not be a symbolic link: {stage_root}")
+        matching: list[tuple[Path, dict[str, Any]]] = []
+        if stage_root.is_dir():
+            for stage_dir in sorted(path for path in stage_root.iterdir() if path.is_dir()):
+                if stage_dir.is_symlink():
+                    raise ValueError(f"Workflow sync transaction directory must not be a symbolic link: {stage_dir}")
+                intent_path = stage_dir / "workflow_sync_intent.json"
+                if not intent_path.exists():
+                    continue
+                if intent_path.is_symlink() or not intent_path.is_file():
+                    raise ValueError(f"Workflow sync intent is not a regular file: {intent_path}")
+                try:
+                    candidate = json.loads(intent_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ValueError(f"Cannot read orphaned Workflow sync intent: {exc}") from exc
+                if (
+                    candidate.get("workflow_ledger_file") != str(workflow_path)
+                    or candidate.get("revision_ledger_file") != str(revision_path)
+                ):
+                    continue
+                if (
+                    candidate.get("schema_version") != "1.0"
+                    or candidate.get("sync_id") != stage_dir.name
+                    or intent_path.name != "workflow_sync_intent.json"
+                ):
+                    raise ValueError(f"Orphaned Workflow sync intent has invalid identity: {intent_path}")
+                if (stage_dir / "workflow_sync_receipt.json").exists():
+                    # A receipt means this transaction completed; the reconciler
+                    # validates it separately. It is not eligible for promotion.
+                    continue
+                workflow_after = Path(str(candidate.get("workflow_after_file", ""))).expanduser()
+                revision_after = Path(str(candidate.get("revision_after_file", ""))).expanduser()
+                if (
+                    workflow_after.is_symlink() or revision_after.is_symlink()
+                    or workflow_after.resolve().parent != stage_dir.resolve()
+                    or revision_after.resolve().parent != stage_dir.resolve()
+                    or not workflow_after.is_file() or not revision_after.is_file()
+                    or sha256_file(workflow_after) != candidate.get("workflow_after_sha256")
+                    or sha256_file(revision_after) != candidate.get("revision_after_sha256")
+                ):
+                    raise ValueError(f"Orphaned Workflow sync after-images are missing or hash-invalid: {stage_dir}")
+                if (
+                    sha256_file(workflow_path) != candidate.get("workflow_before_sha256")
+                    or sha256_file(revision_path) != candidate.get("revision_before_sha256")
+                ):
+                    raise ValueError(
+                        "Orphaned Workflow sync intent has no pending marker and the current ledgers do not both "
+                        "match its before-hashes. Refusing automatic promotion."
+                    )
+                matching.append((intent_path, candidate))
+        if len(matching) > 1:
+            raise ValueError(
+                "More than one orphaned Workflow sync intent matches the current before-hashes; "
+                "manual selection is required."
+            )
+        if not matching:
+            return None
+        orphan_intent_path, orphan_intent = matching[0]
+        pending = {
+            "schema_version": "1.0",
+            "sync_id": orphan_intent["sync_id"],
+            "workflow_ledger_file": str(workflow_path),
+            "revision_ledger_file": str(revision_path),
+            "intent_file": str(orphan_intent_path.resolve()),
+            "intent_sha256": sha256_file(orphan_intent_path),
+        }
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(pending_path, pending)
+        print(f"[WORKFLOW SYNC PROMOTED] Recovered pre-marker intent {orphan_intent['sync_id']}")
+    try:
+        pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read pending Workflow sync transaction: {exc}") from exc
+    if not isinstance(pending, dict):
+        raise ValueError("Pending Workflow sync transaction must be a JSON object.")
+    if pending.get("schema_version") != "1.0":
+        raise ValueError("Pending Workflow sync marker has an unsupported schema version.")
+    if (
+        Path(str(pending.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_path
+        or Path(str(pending.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path
+    ):
+        raise ValueError("Pending Workflow sync marker is bound to different ledger paths.")
+    intent_candidate = Path(str(pending.get("intent_file", ""))).expanduser()
+    if intent_candidate.is_symlink():
+        raise ValueError(f"Workflow sync intent must not be a symlink: {intent_candidate}")
+    intent_path = intent_candidate.resolve()
+    if (
+        Path(str(pending.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_path
+        or Path(str(pending.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path
+        or not intent_path.is_file()
+        or sha256_file(intent_path) != pending.get("intent_sha256")
+    ):
+        raise ValueError(
+            "Pending Workflow sync transaction does not match the requested ledger paths or immutable intent."
+        )
+    try:
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read immutable Workflow sync intent: {exc}") from exc
+    sync_id = intent.get("sync_id")
+    if (
+        intent.get("schema_version") != "1.0"
+        or intent.get("sync_id") != pending.get("sync_id")
+        or intent.get("workflow_ledger_file") != str(workflow_path)
+        or intent.get("revision_ledger_file") != str(revision_path)
+    ):
+        raise ValueError("Pending Workflow sync intent has invalid identity or source paths.")
+    stage_dir = intent_path.parent
+    expected_stage_root = workflow_path.parent / ".workflow_sync_transactions"
+    if expected_stage_root.is_symlink() or stage_dir.is_symlink():
+        raise ValueError("Workflow sync transaction directories must not be symbolic links.")
+    if (
+        stage_dir.parent != expected_stage_root.resolve()
+        or stage_dir.name != sync_id
+        or intent_path.name != "workflow_sync_intent.json"
+    ):
+        raise ValueError("Workflow sync transaction escaped its expected round-local transaction directory.")
+    if Path(str(intent.get("workflow_after_file", ""))).expanduser().resolve().parent != stage_dir:
+        raise ValueError("Workflow sync staged Workflow Ledger escaped its transaction directory.")
+    if Path(str(intent.get("revision_after_file", ""))).expanduser().resolve().parent != stage_dir:
+        raise ValueError("Workflow sync staged RevisionLedger escaped its transaction directory.")
+    staged_workflow = Path(intent["workflow_after_file"]).expanduser().resolve()
+    staged_revision = Path(intent["revision_after_file"]).expanduser().resolve()
+    expected_hashes = (
+        (workflow_path, staged_workflow, intent.get("workflow_before_sha256"), intent.get("workflow_after_sha256"), "Workflow Ledger"),
+        (revision_path, staged_revision, intent.get("revision_before_sha256"), intent.get("revision_after_sha256"), "RevisionLedger"),
+    )
+    for target, staged, before_sha, after_sha, label in expected_hashes:
+        if (
+            not isinstance(before_sha, str) or re.fullmatch(r"[a-f0-9]{64}", before_sha) is None
+            or not isinstance(after_sha, str) or re.fullmatch(r"[a-f0-9]{64}", after_sha) is None
+            or not staged.is_file() or sha256_file(staged) != after_sha
+        ):
+            raise ValueError(f"Workflow sync transaction has a missing or hash-invalid staged {label}.")
+        if not target.is_file():
+            raise ValueError(f"Workflow sync target is missing; refusing recovery: {target}")
+        current_sha = sha256_file(target)
+        if current_sha not in {before_sha, after_sha}:
+            raise ValueError(
+                f"{label} changed outside the pending sync transaction; refusing to overwrite it. "
+                f"Current={current_sha}; before={before_sha}; staged-after={after_sha}."
+            )
+    # Forward-only recovery: finish either replacement that was not committed.
+    for target, staged, before_sha, after_sha, label in expected_hashes:
+        if sha256_file(target) == before_sha:
+            _atomic_copy_file(staged, target)
+        if sha256_file(target) != after_sha:
+            raise ValueError(f"{label} did not reach the staged after-image during recovery.")
+    receipt_path = stage_dir / "workflow_sync_receipt.json"
+    if receipt_path.is_symlink():
+        raise ValueError(f"Workflow sync receipt must not be a symbolic link: {receipt_path}")
+    receipt = {
+        "schema_version": "1.0",
+        "status": "committed",
+        "sync_id": sync_id,
+        "committed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_ledger_sha256": intent["workflow_after_sha256"],
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256": intent["revision_after_sha256"],
+        "intent_file": str(intent_path),
+        "intent_sha256": sha256_file(intent_path),
+    }
+    if receipt_path.exists():
+        existing = json.loads(receipt_path.read_text(encoding="utf-8"))
+        for key in (
+            "schema_version", "status", "sync_id", "workflow_ledger_file",
+            "workflow_ledger_sha256", "revision_ledger_file",
+            "revision_ledger_sha256", "intent_file", "intent_sha256",
+        ):
+            if existing.get(key) != receipt.get(key):
+                raise ValueError("Existing Workflow sync receipt conflicts with the pending transaction.")
+    else:
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(receipt_path, receipt)
+    pending_path.unlink()
+    return receipt
+
+
+def _commit_workflow_sync_transaction(
+    workflow_path: Path,
+    revision_path: Path,
+    workflow_after: dict[str, Any],
+    revision_after: dict[str, Any],
+    *,
+    expected_workflow_before_sha256: str,
+    expected_revision_before_sha256: str,
+) -> dict[str, Any]:
+    """Stage both ledger after-images, then commit them with crash-recoverable intent."""
+    from co_reviewer.batch_store import write_json_new
+
+    pending_path = _workflow_sync_pending_path(workflow_path)
+    if pending_path.exists():
+        raise ValueError(
+            "A Workflow sync transaction is already pending. Run recover-workflow-sync before starting another sync."
+        )
+    workflow_before = sha256_file(workflow_path)
+    revision_before = sha256_file(revision_path)
+    if workflow_before != expected_workflow_before_sha256:
+        raise ValueError("Workflow Ledger changed after it was loaded for synchronization; refusing a stale after-image.")
+    if revision_before != expected_revision_before_sha256:
+        raise ValueError("RevisionLedger changed after it was loaded for synchronization; refusing a stale after-image.")
+    sync_id = uuid.uuid4().hex
+    stage_dir = workflow_path.parent / ".workflow_sync_transactions" / sync_id
+    stage_dir.mkdir(parents=True, exist_ok=False)
+    workflow_stage = stage_dir / "workflow_ledger.after.json"
+    revision_stage = stage_dir / "revision_ledger.after.json"
+    write_json_new(workflow_stage, workflow_after)
+    write_json_new(revision_stage, revision_after)
+    if sha256_file(workflow_path) != workflow_before or sha256_file(revision_path) != revision_before:
+        raise ValueError("A source ledger changed while Workflow sync after-images were being staged.")
+    intent_path = stage_dir / "workflow_sync_intent.json"
+    intent = {
+        "schema_version": "1.0",
+        "sync_id": sync_id,
+        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_before_sha256": workflow_before,
+        "workflow_after_file": str(workflow_stage),
+        "workflow_after_sha256": sha256_file(workflow_stage),
+        "revision_ledger_file": str(revision_path),
+        "revision_before_sha256": revision_before,
+        "revision_after_file": str(revision_stage),
+        "revision_after_sha256": sha256_file(revision_stage),
+    }
+    write_json_new(intent_path, intent)
+    pending = {
+        "schema_version": "1.0",
+        "sync_id": sync_id,
+        "workflow_ledger_file": str(workflow_path),
+        "revision_ledger_file": str(revision_path),
+        "intent_file": str(intent_path),
+        "intent_sha256": sha256_file(intent_path),
+    }
+    write_json_new(pending_path, pending)
+    receipt = _resume_workflow_sync_transaction(workflow_path, revision_path)
+    if receipt is None:
+        raise ValueError("Workflow sync pending marker disappeared before commit recovery.")
+    return receipt
+
+
+def cmd_recover_workflow_sync(args):
+    workflow_source_path = Path(args.workflow_ledger).expanduser()
+    revision_source_path = Path(args.revision_ledger).expanduser()
+    if workflow_source_path.is_symlink() or revision_source_path.is_symlink():
+        raise ValueError("Workflow Ledger and RevisionLedger paths must not be symbolic links.")
+    workflow_path = workflow_source_path.resolve()
+    revision_path = revision_source_path.resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    receipt = _resume_workflow_sync_transaction(workflow_path, revision_path)
+    if receipt is None:
+        print("[NO PENDING WORKFLOW SYNC] Both ledgers are outside an interrupted sync transaction.")
+        return 0
+    print(f"[WORKFLOW SYNC RECOVERED] {receipt['sync_id']}")
+    print(f"[WORKFLOW LEDGER] {workflow_path} | SHA-256 {receipt['workflow_ledger_sha256']}")
+    print(f"[REVISION LEDGER] {revision_path} | SHA-256 {receipt['revision_ledger_sha256']}")
+    print(f"[RECEIPT] {Path(receipt['intent_file']).with_name('workflow_sync_receipt.json')}")
+    return 0
+
 def cmd_sync_workflow_ledger(args):
     from co_reviewer.workflow_engine import (
         invalidate_affected_tasks,
@@ -1615,8 +1919,20 @@ def cmd_sync_workflow_ledger(args):
     revision_path = Path(args.revision_ledger).expanduser().resolve()
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    pending_receipt = _resume_workflow_sync_transaction(workflow_path, revision_path)
+    if pending_receipt is not None:
+        print(f"[WORKFLOW SYNC RECOVERED BEFORE NEW SYNC] {pending_receipt['sync_id']}")
+        print("[CONTINUE] The recovered after-images are now authoritative; reconcile the current Patch and ResponseUnit events against them.")
+    workflow_sha_at_load = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_at_load:
+        raise ValueError("Workflow Ledger changed while it was being loaded for synchronization.")
+    revision_sha_at_load = sha256_file(revision_path)
     revision_ledger = _load_revision_ledger(revision_path)
+    if sha256_file(revision_path) != revision_sha_at_load:
+        raise ValueError("RevisionLedger changed while it was being loaded for synchronization.")
+    workflow_payload_at_load = _json_payload_sha256(workflow)
+    revision_payload_at_load = _json_payload_sha256(revision_ledger.to_dict())
     errors = validate_workflow_ledger(workflow)
     if errors:
         raise ValueError(
@@ -1951,15 +2267,23 @@ def cmd_sync_workflow_ledger(args):
     revision_ledger.workflow_ledger_fingerprint = canonical_fingerprint(workflow)
     revision_ledger.validate_or_raise()
 
-    old_workflow = workflow_path.read_bytes()
-    old_revision = revision_path.read_bytes()
-    try:
-        write_json_atomic(workflow_path, workflow)
-        write_json_atomic(revision_path, revision_ledger.to_dict())
-    except Exception:
-        workflow_path.write_bytes(old_workflow)
-        revision_path.write_bytes(old_revision)
-        raise
+    if (
+        _json_payload_sha256(workflow) == workflow_payload_at_load
+        and _json_payload_sha256(revision_ledger.to_dict()) == revision_payload_at_load
+    ):
+        if sha256_file(workflow_path) != workflow_sha_at_load or sha256_file(revision_path) != revision_sha_at_load:
+            raise ValueError("A Ledger changed during a no-op Workflow sync check; reload both files.")
+        print("[WORKFLOW ALREADY SYNCHRONIZED] No Ledger state transition was needed; no duplicate sync transaction was created.")
+        return 0
+
+    sync_receipt = _commit_workflow_sync_transaction(
+        workflow_path,
+        revision_path,
+        workflow,
+        revision_ledger.to_dict(),
+        expected_workflow_before_sha256=workflow_sha_at_load,
+        expected_revision_before_sha256=revision_sha_at_load,
+    )
 
     print(
         "[WORKFLOW VERIFIED] "
@@ -1973,6 +2297,7 @@ def cmd_sync_workflow_ledger(args):
         print("[RESPONSE REOPENED] " + ", ".join(reopened_units))
     print(f"[OK] Workflow Ledger: {workflow_path}")
     print(f"[OK] RevisionLedger: {revision_path}")
+    print(f"[SYNC TRANSACTION] {sync_receipt['sync_id']} | committed | receipt: {Path(sync_receipt['intent_file']).with_name('workflow_sync_receipt.json')}")
     return 0
 
 
@@ -3324,12 +3649,17 @@ def cmd_confirm_verified(args):
     )
     if batch_dir is not None and batch_dir not in Path(apply_report_value).expanduser().resolve().parents:
         raise ValueError("Apply report for an immutable batch must remain inside its batch directory.")
-    output_plan_path = _batch_plan_snapshot(batch_dir, "verified") if batch_dir is not None else plan_path
+    output_plan_path = (
+        batch_dir / "revision_plan.verified.json"
+        if batch_dir is not None else plan_path
+    )
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if not isinstance(plan, dict) or not isinstance(plan.get("revision_items"), list):
         raise ValueError("Plan must contain a revision_items array.")
     validate_apply_artifact_paths(plan, plan_path, apply_report_value)
     revision_ledger = None
+    ledger_path: Path | None = None
+    ledger_sha_at_load: str | None = None
     if getattr(args, "revision_ledger", None):
         ledger_path = Path(args.revision_ledger).expanduser().resolve()
         if ledger_path in {
@@ -3338,8 +3668,51 @@ def cmd_confirm_verified(args):
             output_plan_path.expanduser().resolve(),
         }:
             raise ValueError("RevisionLedger path must be distinct from plan/apply-report/verified-snapshot paths.")
+        ledger_sha_at_load = sha256_file(ledger_path)
         revision_ledger = _load_revision_ledger(ledger_path)
+        if sha256_file(ledger_path) != ledger_sha_at_load:
+            raise ValueError("RevisionLedger changed while loading verification state.")
         revision_ledger.assert_legacy_plan_matches(plan)
+
+    # If a process stopped after writing revision_plan.verified.json but before
+    # committing the corresponding RevisionLedger update, reuse that immutable
+    # snapshot only when every non-verification field still matches the applied
+    # input plan. This makes the author confirmation stage resumable without
+    # overwriting or silently adopting an unrelated verified plan.
+    if batch_dir is not None and output_plan_path.exists():
+        existing_verified = json.loads(output_plan_path.read_text(encoding="utf-8"))
+        def verification_scope_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
+            projected = copy.deepcopy(dict(payload))
+            projected_items = []
+            for row in projected.get("revision_items", []):
+                item = dict(row)
+                for key in (
+                    "status", "semantic_review_confirmed", "verified_at_utc",
+                    "verified_output_hashes", "verification_fingerprint",
+                ):
+                    item.pop(key, None)
+                projected_items.append(item)
+            projected["revision_items"] = projected_items
+            return projected
+        if (
+            not isinstance(existing_verified, dict)
+            or not isinstance(existing_verified.get("revision_items"), list)
+            or verification_scope_projection(existing_verified) != verification_scope_projection(plan)
+        ):
+            raise ValueError(
+                "An existing verified-plan snapshot belongs to a different applied plan; "
+                "preserve it and do not overwrite this immutable batch."
+            )
+        for item_id in args.ids:
+            existing_item = next(
+                (row for row in existing_verified["revision_items"] if row.get("id") == item_id),
+                None,
+            )
+            if not existing_item or existing_item.get("status") != "verified" or existing_item.get("semantic_review_confirmed") is not True:
+                raise ValueError(
+                    f"Existing verified-plan snapshot does not contain a semantically confirmed item: {item_id}"
+                )
+        plan = existing_verified
     errors = validate_plan(plan, require_approval=False)
     if errors:
         raise ValueError("Cannot verify an invalid revision plan:\n- " + "\n- ".join(errors))
@@ -3403,6 +3776,23 @@ def cmd_confirm_verified(args):
 
     for item_id in requested:
         item = by_id[item_id]
+        if item.get("status") == "verified" and item.get("semantic_review_confirmed") is True:
+            existing_hashes = item.get("verified_output_hashes", [])
+            expected_paths = {
+                os.path.normcase(str(Path(target["output_file"]).expanduser().resolve()))
+                for target in item["targets"]
+            }
+            existing_paths = {
+                os.path.normcase(str(Path(row.get("path", "")).expanduser().resolve()))
+                for row in existing_hashes if isinstance(row, Mapping)
+            }
+            if existing_paths != expected_paths or any(
+                not isinstance(row, Mapping)
+                or sha256_file(str(row.get("path", ""))) != row.get("sha256")
+                for row in existing_hashes
+            ):
+                raise ValueError(f"Existing verified item {item_id} has stale or incomplete output hashes.")
+            continue
         item["verified_output_hashes"] = [
             {"path": output_paths[key], "sha256": hashes_after[key]}
             for key in sorted(output_paths)
@@ -3423,7 +3813,7 @@ def cmd_confirm_verified(args):
             "confirm-verified:"
             + Path(apply_report_value).name
             + ":"
-            + datetime.now(timezone.utc).isoformat()
+            + sha256_file(Path(apply_report_value))
         )
         revision_ledger.record_legacy_verified_items(
             plan,
@@ -3431,13 +3821,23 @@ def cmd_confirm_verified(args):
         )
         ledger_payload = revision_ledger.to_dict()
     if batch_dir is not None:
-        from co_reviewer.batch_store import write_json_new
-        write_json_new(output_plan_path, plan)
+        if output_plan_path.exists():
+            existing_payload = json.loads(output_plan_path.read_text(encoding="utf-8"))
+            if existing_payload != plan:
+                raise ValueError("Existing verified-plan snapshot differs from the idempotently reconstructed confirmation.")
+        else:
+            from co_reviewer.batch_store import write_json_new
+            write_json_new(output_plan_path, plan)
     else:
         write_json_atomic(plan_path, plan)
     if ledger_payload is not None:
-        write_json_atomic(args.revision_ledger, ledger_payload)
-        print(f"[LEDGER] RevisionLedger synchronized: {args.revision_ledger}")
+        if sha256_file(ledger_path) != ledger_sha_at_load:
+            raise ValueError(
+                "RevisionLedger changed during semantic confirmation; verified plan snapshot is retained, "
+                "but no stale Ledger state was written."
+            )
+        write_json_atomic(ledger_path, ledger_payload)
+        print(f"[LEDGER] RevisionLedger synchronized: {ledger_path}")
     print(f"[VERIFIED] {len(requested)} revision item(s): {', '.join(requested)}")
     if batch_dir is not None:
         print(f"[NEXT PLAN] {output_plan_path}")
@@ -3469,8 +3869,14 @@ def cmd_recover_failed_batch(args):
     batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    workflow_sha_at_load = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_at_load:
+        raise ValueError("Workflow Ledger changed while loading failed-batch recovery state.")
+    revision_sha_at_load = sha256_file(revision_path)
     ledger = _load_revision_ledger(revision_path)
+    if sha256_file(revision_path) != revision_sha_at_load:
+        raise ValueError("RevisionLedger changed while loading failed-batch recovery state.")
     from co_reviewer.batch_store import recover_unpublished_batch, write_json_new
 
     recovered_workflow, recovered_ledger, recovery_intent, workflow_changed, ledger_changed, already_recovered = recover_unpublished_batch(
@@ -3488,30 +3894,40 @@ def cmd_recover_failed_batch(args):
         return 0
 
     if workflow_changed:
-        current_sha = sha256_file(workflow_path)
-        before_sha = recovery_intent["workflow_ledger_sha256_before"]
-        after_sha = recovery_intent["workflow_ledger_sha256_after"]
-        if current_sha == before_sha:
+        current_raw_sha = sha256_file(workflow_path)
+        current_payload_sha = _json_payload_sha256(
+            json.loads(workflow_path.read_text(encoding="utf-8"))
+        )
+        before_raw_sha = recovery_intent["workflow_ledger_sha256_before"]
+        before_payload_sha = recovery_intent["workflow_ledger_payload_sha256_before"]
+        after_payload_sha = recovery_intent["workflow_ledger_sha256_after"]
+        if current_raw_sha == before_raw_sha and current_payload_sha == before_payload_sha:
+            if sha256_file(workflow_path) != before_raw_sha:
+                raise ValueError("Workflow Ledger changed immediately before failed-batch recovery commit.")
             write_json_atomic(workflow_path, recovered_workflow)
-        elif current_sha != after_sha:
+        elif current_payload_sha != after_payload_sha:
             raise ValueError(
                 "Workflow Ledger changed during recovery; active parent pointers were not changed."
             )
-        if sha256_file(workflow_path) != after_sha:
-            raise ValueError("Workflow Ledger recovery write did not match its staged SHA-256.")
+        if _json_payload_sha256(json.loads(workflow_path.read_text(encoding="utf-8"))) != after_payload_sha:
+            raise ValueError("Workflow Ledger recovery write did not match its staged payload SHA-256.")
 
     if ledger_changed:
-        current_sha = sha256_file(revision_path)
-        before_sha = recovery_intent["revision_ledger_sha256_before"]
-        after_sha = recovery_intent["revision_ledger_sha256_after"]
-        if current_sha == before_sha:
+        current_raw_sha = sha256_file(revision_path)
+        current_payload_sha = _json_payload_sha256(_load_revision_ledger(revision_path).to_dict())
+        before_raw_sha = recovery_intent["revision_ledger_sha256_before"]
+        before_payload_sha = recovery_intent["revision_ledger_payload_sha256_before"]
+        after_payload_sha = recovery_intent["revision_ledger_sha256_after"]
+        if current_raw_sha == before_raw_sha and current_payload_sha == before_payload_sha:
+            if sha256_file(revision_path) != before_raw_sha:
+                raise ValueError("RevisionLedger changed immediately before failed-batch recovery commit.")
             write_json_atomic(revision_path, recovered_ledger.to_dict())
-        elif current_sha != after_sha:
+        elif current_payload_sha != after_payload_sha:
             raise ValueError(
                 "RevisionLedger changed during recovery; staged Patch lineage was not overwritten."
             )
-        if sha256_file(revision_path) != after_sha:
-            raise ValueError("RevisionLedger recovery write did not match its staged SHA-256.")
+        if _json_payload_sha256(_load_revision_ledger(revision_path).to_dict()) != after_payload_sha:
+            raise ValueError("RevisionLedger recovery write did not match its staged payload SHA-256.")
 
     receipt_path = batch_dir / "batch_recovered.json"
     receipt = {
@@ -3590,8 +4006,28 @@ def cmd_publish_batch(args):
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
     if (batch_dir / "batch_published.json").exists():
+        from co_reviewer.batch_store import (
+            _validate_committed_batch_publication,
+            read_batch_intent,
+        )
+        existing_intent = read_batch_intent(batch_dir)
+        if Path(str(existing_intent.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_path:
+            raise ValueError("Published batch belongs to a different Workflow Ledger.")
+        if not workflow_path.is_file() or not revision_path.is_file():
+            raise ValueError("Cannot verify existing publication without both current ledgers.")
+        existing_workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        existing_ledger = _load_revision_ledger(revision_path)
         existing_receipt = json.loads((batch_dir / "batch_published.json").read_text(encoding="utf-8"))
-        print(f"[ALREADY PUBLISHED] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        if Path(str(existing_receipt.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
+            raise ValueError("Published batch receipt belongs to a different RevisionLedger.")
+        _validate_committed_batch_publication(
+            batch_dir,
+            existing_intent,
+            existing_workflow,
+            {patch.patch_id: patch.status for patch in existing_ledger.patches},
+        )
+        print(f"[ALREADY PUBLISHED: VERIFIED] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        print("[RECEIPT] Intent, scope, Workflow events, output hashes and publication receipt are consistent.")
         return 0
     from co_reviewer.batch_store import (
         publish_active_pointers,
@@ -3615,7 +4051,10 @@ def cmd_publish_batch(args):
         raise ValueError("RevisionLedger path does not match the immutable batch scope.")
     batch_intent_sha256 = sha256_file(batch_dir / "batch_intent.json")
     batch_scope_sha256 = sha256_file(scope_path)
+    revision_sha_before = sha256_file(revision_path)
     ledger = _load_revision_ledger(revision_path)
+    if sha256_file(revision_path) != revision_sha_before:
+        raise ValueError("RevisionLedger changed while preparing batch publication; reload it before publishing.")
     workflow_sha_before = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     if sha256_file(workflow_path) != workflow_sha_before:
@@ -3673,7 +4112,7 @@ def cmd_publish_batch(args):
     )
     # Validate and stage the receipt before replacing the sole mutable active pointer file.
     receipt["revision_ledger_file"] = str(revision_path)
-    receipt["revision_ledger_sha256"] = sha256_file(revision_path)
+    receipt["revision_ledger_sha256"] = revision_sha_before
     receipt["batch_intent_sha256"] = batch_intent_sha256
     receipt["batch_scope_sha256"] = batch_scope_sha256
     publish_intent_path = batch_dir / "batch_publish_intent.json"
@@ -3715,6 +4154,10 @@ def cmd_publish_batch(args):
         and current_active[role].get("batch_id") == pointer.get("batch_id")
         for role, pointer in receipt["active_documents"].items()
     )
+    if sha256_file(revision_path) != revision_sha_before:
+        raise ValueError(
+            "RevisionLedger changed while publication was being prepared; the active pointer update was not committed."
+        )
     if not pointers_already_committed:
         if sha256_file(workflow_path) != workflow_sha_before:
             raise ValueError(
@@ -3739,8 +4182,18 @@ def cmd_rollback_batch(args):
         raise ValueError("Only a batch with a committed batch_published.json receipt can be rolled back.")
     receipt_path = batch_dir / "batch_rollback.json"
     if receipt_path.exists():
+        from co_reviewer.batch_store import (
+            _validate_committed_batch_rollback,
+            read_batch_intent,
+        )
+        intent = read_batch_intent(batch_dir)
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
         existing_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        print(f"[ALREADY ROLLED BACK] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        if Path(str(intent.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_path:
+            raise ValueError("Rolled-back batch belongs to a different Workflow Ledger.")
+        _validate_committed_batch_rollback(batch_dir, intent, workflow)
+        print(f"[ALREADY ROLLED BACK: VERIFIED] Batch {existing_receipt.get('batch_id', batch_dir.name)}")
+        print("[RECEIPT] Rollback intent, retained parent hashes and Workflow invalidation events are consistent.")
         return 0
     intent_path = batch_dir / "batch_intent.json"
     scope_path = batch_dir / "batch_scope.json"
@@ -3821,14 +4274,117 @@ def cmd_rollback_batch(args):
     return 0
 
 
+def _archive_release_partial(path: Path, label: str) -> Path:
+    """Preserve a mismatched generated artifact before regenerating its canonical file."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing to move a Release Package symlink: {path}")
+    archived = path.with_name(path.name + ".partial-" + uuid.uuid4().hex[:12])
+    os.replace(path, archived)
+    print(f"[PRESERVED PARTIAL] {label}: {archived}")
+    return archived
+
+
+def _write_release_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        fd, raw_path = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".release-tmp", dir=str(path.parent)
+        )
+        temporary = Path(raw_path)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _verify_completed_release_package(
+    release_dir: Path,
+    *,
+    intent: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    workflow_path: Path,
+    revision_path: Path,
+) -> None:
+    intent_path = release_dir / "release_package_intent.json"
+    manifest_path = release_dir / "final_release_manifest.json"
+    expected_inputs = {
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_ledger_sha256": sha256_file(workflow_path),
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256": sha256_file(revision_path),
+    }
+    if (
+        intent.get("schema_version") != "1.0"
+        or receipt.get("schema_version") != "1.0"
+        or receipt.get("status") != "complete"
+        or receipt.get("release_id") != intent.get("release_id")
+        or not isinstance(intent.get("release_id"), str)
+        or not intent.get("release_id")
+        or receipt.get("intent_sha256") != sha256_file(intent_path)
+    ):
+        raise ValueError("Existing Release Package intent/receipt identity is invalid.")
+    for key, expected in expected_inputs.items():
+        if intent.get(key) != expected or receipt.get(key) != expected:
+            raise ValueError(
+                f"Completed Release Package is bound to a different source snapshot ({key}); "
+                "use a new release directory for the current Workflow/RevisionLedger."
+            )
+    for name in (
+        "Response_to_Reviewers.md",
+        "Response_to_Reviewers.docx",
+        "Response_to_Reviewers.quality.json",
+        "final_release_manifest.json",
+    ):
+        path = release_dir / name
+        expected_sha = receipt.get("artifacts", {}).get(name)
+        if not path.is_file() or not isinstance(expected_sha, str) or sha256_file(path) != expected_sha:
+            raise ValueError(f"Completed Release Package artifact is missing or hash-stale: {path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        quality = json.loads((release_dir / "Response_to_Reviewers.quality.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot reload completed Release Package metadata: {exc}") from exc
+    consistency_audit = manifest.get("deterministic_consistency_audit", {})
+    if (
+        manifest.get("release_status") != "READY"
+        or consistency_audit.get("status") != "PASS"
+        or consistency_audit.get("blocking_findings")
+        or manifest.get("revision_round_id") != intent.get("revision_round_id")
+        or manifest.get("source_ledgers", {}).get("workflow_ledger", {}).get("sha256")
+            != expected_inputs["workflow_ledger_sha256"]
+        or manifest.get("source_ledgers", {}).get("revision_ledger", {}).get("sha256")
+            != expected_inputs["revision_ledger_sha256"]
+        or quality.get("status") not in {"PASS", "PASS_WITH_WARNINGS"}
+    ):
+        raise ValueError("Completed Release Package metadata does not match its committed intent.")
+    from co_reviewer.release_manifest import _require_bound_response_quality_report
+    _require_bound_response_quality_report(
+        quality,
+        docx_path=str(release_dir / "Response_to_Reviewers.docx"),
+        docx_sha256=sha256_file(release_dir / "Response_to_Reviewers.docx"),
+    )
+
+
 def cmd_create_release_package(args):
-    """Create Response Letter artifacts and a manifest only after the release gate is ready."""
+    """Create or safely resume a hash-bound Release Package after every final gate passes."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
     revision_path = Path(args.revision_ledger).expanduser().resolve()
     if workflow_path == revision_path:
         raise ValueError("Workflow Ledger and RevisionLedger must be distinct files.")
+    workflow_sha_snapshot = sha256_file(workflow_path)
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if sha256_file(workflow_path) != workflow_sha_snapshot:
+        raise ValueError("Workflow Ledger changed while loading the Release Package source snapshot.")
+    revision_sha_snapshot = sha256_file(revision_path)
     ledger = _load_revision_ledger(revision_path)
+    if sha256_file(revision_path) != revision_sha_snapshot:
+        raise ValueError("RevisionLedger changed while loading the Release Package source snapshot.")
 
     from co_reviewer.workflow_engine import validate_workflow_ledger
     workflow_errors = validate_workflow_ledger(workflow)
@@ -3855,34 +4411,139 @@ def cmd_create_release_package(args):
             "Final release is blocked by incomplete ResponseUnit(s): "
             + ", ".join(sorted(pending_units))
         )
-    if not workflow.get("active_documents"):
+    if not workflow.get("active_documents") and ledger.documents:
         raise ValueError("Publish all verified batches before generating a final release package.")
 
     if args.out_dir:
         release_dir = Path(args.out_dir).expanduser()
         if not release_dir.is_absolute():
             release_dir = workflow_path.parent / release_dir
-        release_dir = release_dir.resolve()
+        raw_release_dir = release_dir
+        for candidate in (raw_release_dir, *raw_release_dir.parents):
+            if candidate.exists() and candidate.is_symlink():
+                raise ValueError(f"Release output path contains a symbolic link: {candidate}")
+        release_dir = raw_release_dir.resolve()
     else:
         release_id = (
             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            + "-"
-            + uuid.uuid4().hex[:8]
+            + "-" + uuid.uuid4().hex[:8]
         )
-        release_dir = (
-            workflow_path.parent / "runs" / f"release-{release_id}"
-        ).resolve()
-    if release_dir.exists():
-        raise FileExistsError(
-            f"Release output directory already exists; use a new release directory: {release_dir}"
+        release_dir = (workflow_path.parent / "runs" / f"release-{release_id}").resolve()
+
+    if sha256_file(workflow_path) != workflow_sha_snapshot:
+        raise ValueError("Workflow Ledger changed before Release Package intent binding; reload the round.")
+    if sha256_file(revision_path) != revision_sha_snapshot:
+        raise ValueError("RevisionLedger changed before Release Package intent binding; reload the round.")
+    workflow_sha = workflow_sha_snapshot
+    revision_sha = revision_sha_snapshot
+    intent_path = release_dir / "release_package_intent.json"
+    receipt_path = release_dir / "release_package_receipt.json"
+    manifest_path = release_dir / "final_release_manifest.json"
+    md_path = release_dir / "Response_to_Reviewers.md"
+    docx_path = release_dir / "Response_to_Reviewers.docx"
+    quality_path = release_dir / "Response_to_Reviewers.quality.json"
+
+    for canonical_path in (intent_path, receipt_path, manifest_path, md_path, docx_path, quality_path):
+        if canonical_path.is_symlink():
+            raise ValueError(f"Release Package canonical artifact must not be a symbolic link: {canonical_path}")
+
+    if release_dir.is_symlink():
+        raise ValueError(f"Release output directory must not be a symbolic link: {release_dir}")
+    if release_dir.exists() and not release_dir.is_dir():
+        raise ValueError(f"Release output path is not a directory: {release_dir}")
+    if not release_dir.exists():
+        release_dir.mkdir(parents=True, exist_ok=False)
+
+    binding = {
+        "schema_version": "1.0",
+        "release_id": uuid.uuid4().hex,
+        "status": "building",
+        "revision_round_id": ledger.revision_round_id,
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_ledger_sha256": workflow_sha,
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256": revision_sha,
+        "manuscript_title": args.manuscript_title,
+        "author": args.author,
+    }
+    if intent_path.exists():
+        if intent_path.is_symlink():
+            raise ValueError(f"Release Package intent must not be a symlink: {intent_path}")
+        try:
+            intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Existing Release Package intent is unreadable: {exc}") from exc
+        for key in (
+            "schema_version", "revision_round_id", "workflow_ledger_file",
+            "workflow_ledger_sha256", "revision_ledger_file",
+            "revision_ledger_sha256", "manuscript_title", "author",
+        ):
+            if intent.get(key) != binding.get(key):
+                raise ValueError(
+                    f"Existing partial Release Package belongs to a different source snapshot or metadata ({key}); "
+                    "preserve it and choose a new release directory."
+                )
+    else:
+        existing_entries = list(release_dir.iterdir())
+        known_crash_temporaries = (
+            ".release_package_intent.json.",
+            ".Response_to_Reviewers.md.",
+            ".Response_to_Reviewers.quality.json.",
+            ".Response_to_Reviewers.",
+            ".final_release_manifest.json.",
+            ".release_package_receipt.json.",
         )
-    release_dir.mkdir(parents=True, exist_ok=False)
+        unexpected_entries = []
+        for entry in existing_entries:
+            if entry.is_symlink():
+                raise ValueError(f"Release output directory contains a symlink; refusing to adopt it: {entry}")
+            if entry.is_file() and any(entry.name.startswith(prefix) for prefix in known_crash_temporaries):
+                _archive_release_partial(entry, "Orphaned release temporary")
+            else:
+                unexpected_entries.append(entry)
+        if unexpected_entries:
+            raise ValueError(
+                "Release output directory contains files but has no release_package_intent.json. "
+                "Unknown artifacts were preserved; choose a new directory: "
+                + ", ".join(str(path) for path in unexpected_entries)
+            )
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(intent_path, binding)
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+
+    intent_sha_for_build = sha256_file(intent_path)
+    if receipt_path.exists():
+        if receipt_path.is_symlink():
+            raise ValueError(f"Release Package receipt must not be a symlink: {receipt_path}")
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if (
+            intent.get("manuscript_title") != args.manuscript_title
+            or intent.get("author") != args.author
+            or intent.get("revision_round_id") != ledger.revision_round_id
+        ):
+            raise ValueError("Completed Release Package title/author/round differs from the requested release metadata.")
+        _verify_completed_release_package(
+            release_dir, intent=intent, receipt=receipt,
+            workflow_path=workflow_path, revision_path=revision_path,
+        )
+        print(f"[ALREADY COMPLETE: VERIFIED] Release Package: {release_dir}")
+        print(f"[FINAL RELEASE MANIFEST] {manifest_path}")
+        print(f"[RELEASE RECEIPT] {receipt_path}")
+        return 0
 
     response_plan = response_units_to_legacy_plan(ledger.response_units, ledger.patches)
     markdown = render_response_letter(response_plan)
-    markdown_path = release_dir / "Response_to_Reviewers.md"
-    with markdown_path.open("x", encoding="utf-8", newline="\n") as handle:
-        handle.write(markdown)
+    if md_path.exists():
+        if md_path.is_symlink():
+            raise ValueError(f"Response Letter Markdown must not be a symbolic link: {md_path}")
+        try:
+            current_markdown = md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            current_markdown = None
+        if current_markdown != markdown:
+            _archive_release_partial(md_path, "Response Letter Markdown")
+    if not md_path.exists():
+        _write_release_text_atomic(md_path, markdown)
 
     try:
         from response_letter_docx import render_response_docx
@@ -3890,24 +4551,89 @@ def cmd_create_release_package(args):
         raise ValueError(
             "Final release package requires python-docx; install project requirements."
         ) from exc
-    docx_path = release_dir / "Response_to_Reviewers.docx"
+    for orphan_candidate in release_dir.glob(".Response_to_Reviewers.*.candidate.docx"):
+        if orphan_candidate.is_symlink():
+            raise ValueError(f"Release output contains a symlink candidate: {orphan_candidate}")
+        if orphan_candidate.is_file():
+            _archive_release_partial(orphan_candidate, "Orphaned Response Letter candidate")
+    candidate_docx = release_dir / (".Response_to_Reviewers." + uuid.uuid4().hex + ".candidate.docx")
     render_response_docx(
         response_plan,
-        docx_path,
+        candidate_docx,
         manuscript_title=args.manuscript_title,
         author=args.author,
     )
-    quality_path = release_dir / "Response_to_Reviewers.quality.json"
+    from co_reviewer.release_manifest import _normalise_whitespace, _response_docx_body_text
+    from docx import Document as _DocxDocument
+    def _response_docx_header_metadata(path: Path) -> list[str]:
+        paragraphs = [paragraph.text for paragraph in _DocxDocument(str(path)).paragraphs]
+        summary_index = next(
+            (index for index, value in enumerate(paragraphs) if value.startswith("Revision items: ")),
+            None,
+        )
+        if summary_index is None or not paragraphs or paragraphs[0] != "Response to Reviewers":
+            raise ValueError("Response Letter DOCX has a non-canonical title/metadata header.")
+        return paragraphs[1:summary_index]
+    if docx_path.exists():
+        if docx_path.is_symlink():
+            raise ValueError(f"Response Letter DOCX must not be a symbolic link: {docx_path}")
+        existing_docx_matches = False
+        try:
+            existing_docx_matches = (
+                _normalise_whitespace(_response_docx_body_text(docx_path))
+                == _normalise_whitespace(_response_docx_body_text(candidate_docx))
+                and _response_docx_header_metadata(docx_path)
+                == _response_docx_header_metadata(candidate_docx)
+            )
+            existing_quality = audit_docx_quality(docx_path, profile="response-letter")
+            existing_docx_matches = existing_docx_matches and existing_quality["status"] != "FAIL"
+        except Exception:
+            existing_docx_matches = False
+        if not existing_docx_matches:
+            _archive_release_partial(docx_path, "Response Letter DOCX")
+    if docx_path.exists():
+        candidate_docx.unlink(missing_ok=True)
+    else:
+        os.replace(candidate_docx, docx_path)
+
     response_quality = audit_docx_quality(docx_path, profile="response-letter")
     if response_quality["status"] == "FAIL":
-        from co_reviewer.batch_store import write_json_new
-        write_json_new(quality_path, response_quality)
         raise ValueError(
             "Generated Response Letter failed deterministic quality checks: "
             + json.dumps(response_quality["summary"], ensure_ascii=False)
         )
-    from co_reviewer.batch_store import write_json_new
-    write_json_new(quality_path, response_quality)
+    if quality_path.exists():
+        if quality_path.is_symlink():
+            raise ValueError(f"Response Letter quality report must not be a symbolic link: {quality_path}")
+        try:
+            existing_quality = json.loads(quality_path.read_text(encoding="utf-8"))
+            from co_reviewer.release_manifest import _require_bound_response_quality_report
+            _require_bound_response_quality_report(
+                existing_quality,
+                docx_path=str(docx_path),
+                docx_sha256=sha256_file(docx_path),
+            )
+            if existing_quality.get("status") not in {"PASS", "PASS_WITH_WARNINGS"}:
+                raise ValueError("Existing Response Letter quality report is not passing.")
+            existing_quality_stable = dict(existing_quality)
+            current_quality_stable = dict(response_quality)
+            # The quality report carries a new generated_at_utc on each audit.
+            # Compare the deterministic metrics and checks, not that timestamp.
+            existing_quality_stable.pop("generated_at_utc", None)
+            current_quality_stable.pop("generated_at_utc", None)
+            if existing_quality_stable != current_quality_stable:
+                raise ValueError("Existing Response Letter quality report differs from the current deterministic audit.")
+            response_quality = existing_quality
+        except Exception:
+            _archive_release_partial(quality_path, "Response Letter quality report")
+    if not quality_path.exists():
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(quality_path, response_quality)
+    if response_quality["status"] == "FAIL":
+        raise ValueError(
+            "Generated Response Letter failed deterministic quality checks: "
+            + json.dumps(response_quality["summary"], ensure_ascii=False)
+        )
 
     from co_reviewer.release_manifest import build_final_release_manifest
     manifest = build_final_release_manifest(
@@ -3915,20 +4641,84 @@ def cmd_create_release_package(args):
         workflow,
         revision_ledger_path=revision_path,
         workflow_ledger_path=workflow_path,
-        response_letter_md=markdown_path,
+        response_letter_md=md_path,
         response_letter_docx=docx_path,
         response_letter_quality=quality_path,
     )
-    manifest_path = release_dir / "final_release_manifest.json"
-    manifest_sha = write_json_new(manifest_path, manifest)
+    consistency_audit = manifest.get("deterministic_consistency_audit", {})
+    if (
+        manifest.get("release_status") != "READY"
+        or consistency_audit.get("status") != "PASS"
+        or consistency_audit.get("blocking_findings")
+    ):
+        raise ValueError("Release Manifest is not READY with a passing deterministic consistency audit; completion receipt will not be written.")
+    if manifest_path.exists():
+        if manifest_path.is_symlink():
+            raise ValueError(f"Final Release Manifest must not be a symbolic link: {manifest_path}")
+        try:
+            existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            expected_manifest = dict(manifest)
+            existing_stable = dict(existing_manifest)
+            expected_manifest.pop("generated_at_utc", None)
+            existing_stable.pop("generated_at_utc", None)
+            manifest_matches = existing_stable == expected_manifest
+        except (OSError, json.JSONDecodeError, TypeError):
+            manifest_matches = False
+        if not manifest_matches:
+            _archive_release_partial(manifest_path, "Final Release Manifest")
+    if not manifest_path.exists():
+        from co_reviewer.batch_store import write_json_new
+        write_json_new(manifest_path, manifest)
+
+    if sha256_file(intent_path) != intent_sha_for_build:
+        raise ValueError("Release Package intent changed during finalization; no completion receipt will be written.")
+    if manifest_path.is_symlink() or md_path.is_symlink() or docx_path.is_symlink() or quality_path.is_symlink():
+        raise ValueError("Release package canonical artifact path must not be a symbolic link.")
+    artifacts = {
+        "Response_to_Reviewers.md": sha256_file(md_path),
+        "Response_to_Reviewers.docx": sha256_file(docx_path),
+        "Response_to_Reviewers.quality.json": sha256_file(quality_path),
+        "final_release_manifest.json": sha256_file(manifest_path),
+    }
+    receipt = {
+        "schema_version": "1.0",
+        "status": "complete",
+        "release_id": intent["release_id"],
+        "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "workflow_ledger_file": str(workflow_path),
+        "workflow_ledger_sha256": workflow_sha,
+        "revision_ledger_file": str(revision_path),
+        "revision_ledger_sha256": revision_sha,
+        "intent_file": str(intent_path),
+        "intent_sha256": sha256_file(intent_path),
+        "artifacts": artifacts,
+    }
+    if receipt_path.exists():
+        raise ValueError("Release completion receipt appeared during finalization; inspect the concurrent run.")
+    # The receipt is the commit marker. Recheck both mutable Ledger sources immediately
+    # before writing it so a concurrent Workflow sync cannot make a stale Manifest
+    # appear to be the final Release Package.
+    if sha256_file(workflow_path) != workflow_sha_snapshot:
+        raise ValueError(
+            "Workflow Ledger changed during Release Package generation. No completion receipt was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+    if sha256_file(revision_path) != revision_sha_snapshot:
+        raise ValueError(
+            "RevisionLedger changed during Release Package generation. No completion receipt was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+    from co_reviewer.batch_store import write_json_new
+    write_json_new(receipt_path, receipt)
 
     print(f"[RELEASE READY] {ledger.revision_round_id}")
     print(f"[RELEASE PACKAGE] {release_dir}")
-    print(f"[RESPONSE MARKDOWN] {markdown_path}")
+    print(f"[RESPONSE MARKDOWN] {md_path}")
     print(f"[RESPONSE DOCX] {docx_path}")
     print(f"[QUALITY REPORT] {quality_path} | {response_quality['status']}")
     print(f"[FINAL RELEASE MANIFEST] {manifest_path}")
-    print(f"[MANIFEST SHA-256] {manifest_sha}")
+    print(f"[RELEASE RECEIPT] {receipt_path}")
+    print(f"[MANIFEST SHA-256] {artifacts['final_release_manifest.json']}")
     print("[GATE] Active pointers, verified PatchOperations, completed ResponseUnits, final Word/PDF hashes, SEQ audit and exact Response Letter excerpts were rechecked.")
     return 0
 
@@ -4079,6 +4869,10 @@ def build_parser():
     syncwl.add_argument("--workflow-ledger", required=True)
     syncwl.add_argument("--revision-ledger", required=True)
     syncwl.set_defaults(func=cmd_sync_workflow_ledger)
+    rws = sub.add_parser("recover-workflow-sync", help="Finish an interrupted two-ledger Workflow synchronization from its hash-bound staged after-images.")
+    rws.add_argument("--workflow-ledger", required=True)
+    rws.add_argument("--revision-ledger", required=True)
+    rws.set_defaults(func=cmd_recover_workflow_sync)
     prep_scope = sub.add_parser("prepare-workflow-execution", help="Validate exact evidence-linked PatchOperations and prepare a new pending Workflow Ledger without authorizing edits.")
     prep_scope.add_argument("--workflow-ledger", required=True)
     prep_scope.add_argument("--execution-scope", required=True, help="JSON scope containing exact PatchOperations and reviewed ResponseUnit dispositions.")

@@ -13,6 +13,9 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import co_reviewer_cli as cli
+from unittest import mock
+
 from co_reviewer.docx_quality import audit_docx_quality
 from co_reviewer.release_manifest import (
     ReleaseGateError,
@@ -152,6 +155,109 @@ class ReleaseManifestGateTests(unittest.TestCase):
             response_letter_docx=self.root / "missing.docx",
             response_letter_quality=self.root / "missing-quality.json",
         )
+
+    def test_release_package_resumes_after_partial_manifest_generation_and_verifies_receipt(self):
+        ledger = RevisionLedger(
+            revision_round_id="round-release-tests",
+            response_units=[self._unit(status="completed")],
+        )
+        self.revision_path.write_text(
+            json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        release_dir = self.root / "runs" / "release-resume-001"
+        args = SimpleNamespace(
+            workflow_ledger=str(self.workflow_path),
+            revision_ledger=str(self.revision_path),
+            out_dir=str(release_dir),
+            manuscript_title="Synthetic manuscript",
+            author="Synthetic Author",
+        )
+
+        # Simulate a process failure after the response letter and quality report
+        # have been generated, but before the final Release Manifest is committed.
+        with mock.patch(
+            "co_reviewer.release_manifest.build_final_release_manifest",
+            side_effect=RuntimeError("synthetic interruption before manifest commit"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "synthetic interruption"):
+                cli.cmd_create_release_package(args)
+
+        self.assertTrue((release_dir / "release_package_intent.json").is_file())
+        self.assertTrue((release_dir / "Response_to_Reviewers.md").is_file())
+        self.assertTrue((release_dir / "Response_to_Reviewers.docx").is_file())
+        self.assertTrue((release_dir / "Response_to_Reviewers.quality.json").is_file())
+        self.assertFalse((release_dir / "final_release_manifest.json").exists())
+        self.assertFalse((release_dir / "release_package_receipt.json").exists())
+
+        with mock.patch("co_reviewer.release_manifest.build_final_release_manifest", wraps=build_final_release_manifest):
+            self.assertEqual(cli.cmd_create_release_package(args), 0)
+
+        required = (
+            "Response_to_Reviewers.md",
+            "Response_to_Reviewers.docx",
+            "Response_to_Reviewers.quality.json",
+            "final_release_manifest.json",
+            "release_package_intent.json",
+            "release_package_receipt.json",
+        )
+        hashes = {
+            name: hashlib.sha256((release_dir / name).read_bytes()).hexdigest()
+            for name in required
+        }
+        receipt = json.loads((release_dir / "release_package_receipt.json").read_text(encoding="utf-8"))
+        manifest = json.loads((release_dir / "final_release_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "complete")
+        self.assertEqual(receipt["artifacts"]["final_release_manifest.json"], hashes["final_release_manifest.json"])
+        self.assertEqual(manifest["release_status"], "READY")
+
+        # A lost success response is idempotent: a rerun verifies the receipt and
+        # all package hashes without changing the committed artifacts.
+        self.assertEqual(cli.cmd_create_release_package(args), 0)
+        self.assertEqual(
+            hashes,
+            {
+                name: hashlib.sha256((release_dir / name).read_bytes()).hexdigest()
+                for name in required
+            },
+        )
+
+    def test_release_package_does_not_commit_receipt_if_source_ledger_changes_mid_build(self):
+        ledger = RevisionLedger(
+            revision_round_id="round-release-tests",
+            response_units=[self._unit(status="completed")],
+        )
+        self.revision_path.write_text(
+            json.dumps(ledger.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        release_dir = self.root / "runs" / "release-race-001"
+        args = SimpleNamespace(
+            workflow_ledger=str(self.workflow_path),
+            revision_ledger=str(self.revision_path),
+            out_dir=str(release_dir),
+            manuscript_title="Synthetic manuscript",
+            author="Synthetic Author",
+        )
+
+        def build_then_change_workflow(*builder_args, **builder_kwargs):
+            manifest = build_final_release_manifest(*builder_args, **builder_kwargs)
+            with self.workflow_path.open("ab") as stream:
+                stream.write(b" ")
+            return manifest
+
+        with mock.patch(
+            "co_reviewer.release_manifest.build_final_release_manifest",
+            side_effect=build_then_change_workflow,
+        ):
+            with self.assertRaisesRegex(ValueError, "Workflow Ledger changed during Release Package generation"):
+                cli.cmd_create_release_package(args)
+
+        self.assertTrue((release_dir / "release_package_intent.json").is_file())
+        self.assertTrue((release_dir / "final_release_manifest.json").is_file())
+        self.assertFalse((release_dir / "release_package_receipt.json").exists())
+        with self.assertRaisesRegex(ValueError, "different source snapshot"):
+            cli.cmd_create_release_package(args)
 
     def test_release_gate_accepts_only_schema_defined_quality_statuses(self):
         self.assertEqual(

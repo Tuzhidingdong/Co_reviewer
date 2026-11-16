@@ -35,6 +35,15 @@ function Assert-PathInRoundRoot {
     }
     return $full
 }
+function Assert-OrdinaryPath {
+    param([string]$Path, [string]$Label)
+    if (Test-Path -LiteralPath $Path) {
+        $item = Get-Item -LiteralPath $Path -Force
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Label must not be a symbolic link or reparse point: $Path"
+        }
+    }
+}
 function Update-RoundManifest {
     param([string]$EventType, [hashtable]$Event)
     $manifestPath = Join-Path $roundPath "round_manifest.json"
@@ -121,11 +130,33 @@ function Confirm-Exact {
 
 $roundPath = (Resolve-Path -LiteralPath $RoundRoot -ErrorAction Stop).Path
 $roundManifestPath = Join-Path $roundPath "round_manifest.json"
+[void](Assert-OrdinaryPath $roundManifestPath "Round manifest")
 if (-not (Test-Path -LiteralPath $roundManifestPath -PathType Leaf)) {
     throw "RoundRoot does not contain round_manifest.json: $roundPath"
 }
 $roundManifest = Read-JsonFile $roundManifestPath "round_manifest"
 $roundId = [string]$roundManifest.review_round_id
+$recordedReleaseForRequest = [string]$roundManifest.release_directory
+if (-not [string]::IsNullOrWhiteSpace($recordedReleaseForRequest)) {
+    $recordedReleasePathForRequest = Get-FullPath $recordedReleaseForRequest $roundPath
+    [void](Assert-PathInRoundRoot $recordedReleasePathForRequest "Recorded Release Package")
+    [void](Assert-OrdinaryPath $recordedReleasePathForRequest "Recorded Release Package")
+    $requestedReleasePathForRequest = if ($ReleaseOutputDirectory) { Get-FullPath $ReleaseOutputDirectory $roundPath } else { $recordedReleasePathForRequest }
+    if ([System.IO.Path]::GetFullPath($requestedReleasePathForRequest) -eq [System.IO.Path]::GetFullPath($recordedReleasePathForRequest)) {
+        $recordedIntentForRequest = Join-Path $recordedReleasePathForRequest "release_package_intent.json"
+        [void](Assert-OrdinaryPath $recordedIntentForRequest "Recorded Release Package Intent")
+        if (Test-Path -LiteralPath $recordedIntentForRequest -PathType Leaf) {
+            [void](Assert-PathInRoundRoot $recordedIntentForRequest "Recorded Release Package Intent")
+            $recordedIntent = Read-JsonFile $recordedIntentForRequest "Recorded Release Package Intent"
+            if (($ManuscriptTitle -and $ManuscriptTitle -ne [string]$recordedIntent.manuscript_title) -or
+                ($Author -and $Author -ne [string]$recordedIntent.author)) {
+                throw "The recorded Release Package uses different title/author metadata. Preserve it and choose a new -ReleaseOutputDirectory."
+            }
+            if (-not $ManuscriptTitle) { $ManuscriptTitle = [string]$recordedIntent.manuscript_title }
+            if (-not $Author) { $Author = [string]$recordedIntent.author }
+        }
+    }
+}
 if ([string]::IsNullOrWhiteSpace($roundId)) {
     throw "round_manifest.json has no review_round_id."
 }
@@ -140,8 +171,76 @@ $workflowPath = Resolve-ExistingFile $WorkflowLedger "Workflow Ledger" $roundPat
 $revisionPath = Resolve-ExistingFile $RevisionLedger "RevisionLedger" $roundPath
 [void](Assert-PathInRoundRoot $workflowPath "Workflow Ledger")
 [void](Assert-PathInRoundRoot $revisionPath "RevisionLedger")
+[void](Assert-OrdinaryPath $workflowPath "Workflow Ledger")
+[void](Assert-OrdinaryPath $revisionPath "RevisionLedger")
 if ($workflowPath -eq $revisionPath) { throw "Workflow Ledger and RevisionLedger must be different files." }
-
+if ($recordedReleasePathForRequest -and
+    [System.IO.Path]::GetFullPath($requestedReleasePathForRequest) -eq [System.IO.Path]::GetFullPath($recordedReleasePathForRequest) -and
+    (Test-Path -LiteralPath $recordedIntentForRequest -PathType Leaf)) {
+    $recordedIntent = Read-JsonFile $recordedIntentForRequest "Recorded Release Package Intent"
+    if ($recordedIntent.workflow_ledger_file -ne $workflowPath -or
+        $recordedIntent.revision_ledger_file -ne $revisionPath -or
+        $recordedIntent.workflow_ledger_sha256 -ne (Get-Sha256 $workflowPath) -or
+        $recordedIntent.revision_ledger_sha256 -ne (Get-Sha256 $revisionPath)) {
+        throw "The recorded Release Package is bound to an older Workflow/RevisionLedger snapshot. It is preserved; specify a new -ReleaseOutputDirectory for this Ledger version."
+    }
+}
+$roundRunsValue = if ($roundManifest.runs_directory) { [string]$roundManifest.runs_directory } elseif ($roundManifest.directories.runs) { [string]$roundManifest.directories.runs } else { "runs" }
+$roundRunsPath = Get-FullPath $roundRunsValue $roundPath
+[void](Assert-PathInRoundRoot $roundRunsPath "RunsDirectory")
+$reconcileScript = Join-Path $PSScriptRoot "Reconcile-CoReviewerRound.ps1"
+if (-not (Test-Path -LiteralPath $reconcileScript -PathType Leaf)) { throw "Round reconciliation entry point is missing: $reconcileScript" }
+$resumeReleasePackage = $true
+if ($ReleaseOutputDirectory -and $roundManifest.release_directory) {
+    $requestedReleaseForRecovery = Get-FullPath $ReleaseOutputDirectory $roundPath
+    $recordedReleaseForRecovery = Get-FullPath ([string]$roundManifest.release_directory) $roundPath
+    if ([System.IO.Path]::GetFullPath($requestedReleaseForRecovery) -ne [System.IO.Path]::GetFullPath($recordedReleaseForRecovery)) {
+        $resumeReleasePackage = $false
+    }
+}
+if ($resumeReleasePackage) {
+    & $reconcileScript -RoundRoot $roundPath -WorkflowLedger $workflowPath -RevisionLedger $revisionPath -RunsDirectory $roundRunsPath -ResumeReleasePackage -PythonExe $script:PythonResolved
+}
+else {
+    & $reconcileScript -RoundRoot $roundPath -WorkflowLedger $workflowPath -RevisionLedger $revisionPath -RunsDirectory $roundRunsPath -PythonExe $script:PythonResolved
+}
+$roundManifest = Read-JsonFile $roundManifestPath "round_manifest after reconciliation"
+if ($roundManifest.release_package_receipt) {
+    $completedReceipt = Get-FullPath ([string]$roundManifest.release_package_receipt) $roundPath
+    $recordedReleaseDirectory = Split-Path -Parent $completedReceipt
+    $requestedReleaseDirectory = if ($ReleaseOutputDirectory) { Get-FullPath $ReleaseOutputDirectory $roundPath } else { $null }
+    $sameRequestedRelease = -not $requestedReleaseDirectory -or
+        ([System.IO.Path]::GetFullPath($requestedReleaseDirectory) -eq [System.IO.Path]::GetFullPath($recordedReleaseDirectory))
+    if ($sameRequestedRelease -and (Test-Path -LiteralPath $completedReceipt -PathType Leaf)) {
+        $completed = Read-JsonFile $completedReceipt "Completed Release Package Receipt"
+        $completedIntentPath = Join-Path $recordedReleaseDirectory "release_package_intent.json"
+        $completedIntent = Read-JsonFile $completedIntentPath "Completed Release Package Intent"
+        if ($completed.status -ne "complete") { throw "Recorded Release Package receipt is not complete." }
+        if ($completed.workflow_ledger_file -ne $workflowPath -or
+            $completed.revision_ledger_file -ne $revisionPath -or
+            $completed.workflow_ledger_sha256 -ne (Get-Sha256 $workflowPath) -or
+            $completed.revision_ledger_sha256 -ne (Get-Sha256 $revisionPath) -or
+            $completed.intent_file -ne $completedIntentPath -or
+            $completed.intent_sha256 -ne (Get-Sha256 $completedIntentPath)) {
+            throw "Completed Release Package receipt is not bound to the current Workflow/RevisionLedger snapshot."
+        }
+        if (($ManuscriptTitle -and $completedIntent.manuscript_title -ne $ManuscriptTitle) -or
+            ($Author -and $completedIntent.author -ne $Author)) {
+            throw "A completed Release Package exists with a different manuscript title or author. Choose a new -ReleaseOutputDirectory; the completed package is preserved."
+        }
+        foreach ($artifactName in @("Response_to_Reviewers.md","Response_to_Reviewers.docx","Response_to_Reviewers.quality.json","final_release_manifest.json")) {
+            $artifactPath = Join-Path $recordedReleaseDirectory $artifactName
+            if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf) -or
+                $completed.artifacts.$artifactName -ne (Get-Sha256 $artifactPath)) {
+                throw "Completed Release Package artifact is missing or hash-stale: $artifactPath"
+            }
+        }
+        Write-Host "[RELEASE ALREADY COMPLETE: VERIFIED]"
+        Write-Host ("[RELEASE PACKAGE] " + $recordedReleaseDirectory)
+        Write-Host ("[RELEASE RECEIPT] " + $completedReceipt)
+        return
+    }
+}
 $workflow = Read-JsonFile $workflowPath "Workflow Ledger"
 $ledger = Read-JsonFile $revisionPath "RevisionLedger"
 if ([string]$workflow.revision_round_id -ne [string]$ledger.revision_round_id -or
@@ -397,14 +496,26 @@ if ($toComplete.Count -gt 0) {
 # after completion so the Release Manifest sees the actual completed task states.
 [void](Invoke-CoReviewerCli @("sync-workflow-ledger", "--workflow-ledger", $workflowPath, "--revision-ledger", $revisionPath))
 
+$recordedReleasePath = [string]$roundManifest.release_directory
 $releasePath = if ($ReleaseOutputDirectory) {
     Get-FullPath $ReleaseOutputDirectory $roundPath
+} elseif (-not [string]::IsNullOrWhiteSpace($recordedReleasePath)) {
+    Get-FullPath $recordedReleasePath $roundPath
 } else {
     Join-Path $roundPath "runs\release-final-$stamp"
 }
 [void](Assert-PathInRoundRoot $releasePath "Release output directory")
 $script:ReleasePath = $releasePath
-if (Test-Path -LiteralPath $releasePath) { throw "Release directory already exists; choose a new path: $releasePath" }
+if (Test-Path -LiteralPath $releasePath -PathType Leaf) {
+    throw "Release output path exists as a file: $releasePath"
+}
+Update-RoundManifest -EventType "release_package_started" -Event @{
+    current_workflow_ledger = $workflowPath
+    revision_ledger = $revisionPath
+    workflow_ledger_sha256 = (Get-Sha256 $workflowPath)
+    revision_ledger_sha256 = (Get-Sha256 $revisionPath)
+    release_directory = $releasePath
+}
 [void](Invoke-CoReviewerCli @(
     "create-release-package",
     "--workflow-ledger", $workflowPath,
@@ -414,7 +525,7 @@ if (Test-Path -LiteralPath $releasePath) { throw "Release directory already exis
     "--author", $Author
 ))
 
-$required = @("Response_to_Reviewers.md", "Response_to_Reviewers.docx", "Response_to_Reviewers.quality.json", "final_release_manifest.json")
+$required = @("Response_to_Reviewers.md", "Response_to_Reviewers.docx", "Response_to_Reviewers.quality.json", "final_release_manifest.json", "release_package_intent.json", "release_package_receipt.json")
 foreach ($name in $required) {
     $path = Join-Path $releasePath $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release package is missing required artifact: $path" }
@@ -429,6 +540,27 @@ if ($manifest.release_status -ne "READY" -or
 $responseQuality = Read-JsonFile (Join-Path $releasePath "Response_to_Reviewers.quality.json") "Response Letter Quality Report"
 if ($responseQuality.status -notin @("PASS", "PASS_WITH_WARNINGS")) {
     throw "Response Letter quality report is not passing: $($responseQuality.status)"
+}
+$releaseReceiptPath = Join-Path $releasePath "release_package_receipt.json"
+$releaseIntentPath = Join-Path $releasePath "release_package_intent.json"
+$releaseReceipt = Read-JsonFile $releaseReceiptPath "Release Package Receipt"
+$releaseIntent = Read-JsonFile $releaseIntentPath "Release Package Intent"
+if ($releaseReceipt.status -ne "complete" -or
+    $releaseReceipt.workflow_ledger_file -ne $workflowPath -or
+    $releaseReceipt.revision_ledger_file -ne $revisionPath -or
+    $releaseReceipt.workflow_ledger_sha256 -ne (Get-Sha256 $workflowPath) -or
+    $releaseReceipt.revision_ledger_sha256 -ne (Get-Sha256 $revisionPath) -or
+    $releaseReceipt.intent_file -ne $releaseIntentPath -or
+    $releaseReceipt.intent_sha256 -ne (Get-Sha256 $releaseIntentPath) -or
+    $releaseReceipt.artifacts."final_release_manifest.json" -ne (Get-Sha256 $manifestPath)) {
+    throw "Release Package Receipt does not bind the current ledgers, Intent and Final Release Manifest."
+}
+foreach ($artifactName in @("Response_to_Reviewers.md","Response_to_Reviewers.docx","Response_to_Reviewers.quality.json","final_release_manifest.json")) {
+    $artifactPath = Join-Path $releasePath $artifactName
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf) -or
+        $releaseReceipt.artifacts.$artifactName -ne (Get-Sha256 $artifactPath)) {
+        throw "Release Package Receipt artifact hash mismatch: $artifactPath"
+    }
 }
 
 Write-Host ""
@@ -456,5 +588,8 @@ Update-RoundManifest -EventType "release_package_created" -Event @{
     final_release_manifest_sha256 = (Get-Sha256 $manifestPath)
     response_letter_markdown = Join-Path $releasePath "Response_to_Reviewers.md"
     response_letter_docx = Join-Path $releasePath "Response_to_Reviewers.docx"
+    release_package_intent = Join-Path $releasePath "release_package_intent.json"
+    release_package_receipt = Join-Path $releasePath "release_package_receipt.json"
+    release_package_receipt_sha256 = (Get-Sha256 (Join-Path $releasePath "release_package_receipt.json"))
 }
 Write-Host "[BOUNDARY] The package is locally generated and not submitted to a journal. Final Word GUI/PDF visual inspection and author approval remain separate."

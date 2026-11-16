@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/release-package-intent.schema.json",
+  "title": "Co_Reviewer Release Package Intent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "release_id",
+    "status",
+    "revision_round_id",
+    "workflow_ledger_file",
+    "workflow_ledger_sha256",
+    "revision_ledger_file",
+    "revision_ledger_sha256",
+    "manuscript_title",
+    "author"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "const": "building"
+    },
+    "revision_round_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "manuscript_title": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
