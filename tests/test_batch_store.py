@@ -20,6 +20,7 @@ from co_reviewer.batch_store import (
     publish_active_pointers,
     read_batch_intent,
     recover_unpublished_batch,
+    retire_unscoped_prepared_batch,
     rollback_active_pointers,
     write_json_new,
 )
@@ -210,6 +211,177 @@ class BatchStoreTests(unittest.TestCase):
             {"P1": "superseded"},
             self.workflow,
         )
+
+
+
+    def _make_orphaned_prepared_batch_with_published_successor(self):
+        orphan = self._intent(batch_id="orphan-prepared")
+        successor = create_batch_intent(
+            self.workflow,
+            self.workflow_path,
+            ["T1"],
+            ["Manuscript"],
+            runs_dir=self.runs_dir,
+            batch_id="successor-published",
+        )
+        successor_dir = Path(successor["batch_dir"])
+        output = Path(successor["documents"]["Manuscript"]["output_file"])
+        output.write_bytes(b"verified successor marked DOCX")
+        source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+        revision_path = self.root / "revision_ledger.json"
+        revision_path.write_text("{}", encoding="utf-8")
+        operation = SimpleNamespace(
+            document="Manuscript",
+            input_file=str(self.source.resolve()),
+            output_file=str(output.resolve()),
+            source_sha256=source_sha,
+        )
+        patch = SimpleNamespace(
+            patch_id="P1",
+            task_id="T1",
+            status="verified",
+            operations=[operation],
+            verified_output_hashes=[{"path": str(output), "sha256": output_sha}],
+        )
+        scope = {
+            "schema_version": "1.0",
+            "batch_id": successor["batch_id"],
+            "revision_ledger_file": str(revision_path.resolve()),
+            "batch_intent_sha256": hashlib.sha256(
+                (successor_dir / "batch_intent.json").read_bytes()
+            ).hexdigest(),
+            "selected_task_ids": ["T1"],
+            "batch_task_ids": ["T1"],
+            "patch_ids": ["P1"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.source.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output.resolve()),
+                }
+            },
+        }
+        write_json_new(successor_dir / "batch_scope.json", scope)
+        revision_ledger = SimpleNamespace(patches=[patch])
+        published_workflow, publish_receipt = publish_active_pointers(
+            self.workflow,
+            self.workflow_path,
+            successor_dir,
+            revision_ledger,
+        )
+        intent_sha = hashlib.sha256((successor_dir / "batch_intent.json").read_bytes()).hexdigest()
+        scope_sha = hashlib.sha256((successor_dir / "batch_scope.json").read_bytes()).hexdigest()
+        revision_sha = hashlib.sha256(revision_path.read_bytes()).hexdigest()
+        publish_receipt.update({
+            "revision_ledger_file": str(revision_path.resolve()),
+            "revision_ledger_sha256": revision_sha,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+        })
+        publish_intent = {
+            "schema_version": "1.0",
+            "batch_id": successor["batch_id"],
+            "prepared_at_utc": STAMP,
+            "active_documents_to_publish": publish_receipt["active_documents"],
+            "revision_ledger_sha256": revision_sha,
+            "batch_intent_sha256": intent_sha,
+            "batch_scope_sha256": scope_sha,
+        }
+        write_json_new(successor_dir / "batch_publish_intent.json", publish_intent)
+        write_json_new(successor_dir / "batch_published.json", publish_receipt)
+        self.workflow_path.write_text(
+            json.dumps(published_workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return orphan, successor, revision_ledger, revision_path, published_workflow
+
+    def test_intent_only_prepared_batch_can_be_retired_by_exact_published_successor(self):
+        orphan, successor, ledger, revision_path, workflow = (
+            self._make_orphaned_prepared_batch_with_published_successor()
+        )
+        orphan_dir = Path(orphan["batch_dir"])
+        workflow_before = json.loads(self.workflow_path.read_text(encoding="utf-8"))
+        ledger_before = revision_path.read_bytes()
+        receipt = retire_unscoped_prepared_batch(
+            orphan_dir,
+            successor["batch_dir"],
+            workflow,
+            self.workflow_path,
+            ledger,
+            revision_path,
+            actor="Acceptance Tester",
+            reason="The intent-only preparation was replaced by the exact verified published batch.",
+        )
+        self.assertEqual(receipt["status"], "superseded_prepared")
+        self.assertTrue((orphan_dir / "batch_superseded.json").is_file())
+        self.assertEqual(
+            json.loads(self.workflow_path.read_text(encoding="utf-8")),
+            workflow_before,
+        )
+        self.assertEqual(revision_path.read_bytes(), ledger_before)
+        self.assertEqual(
+            load_active_document_pointers(workflow)["Manuscript"]["batch_id"],
+            successor["batch_id"],
+        )
+        assert_no_uncommitted_role_batches(
+            self.runs_dir,
+            ["Manuscript"],
+            ["T2"],
+            {"P1": "verified"},
+            workflow,
+            revision_patches_by_id={"P1": ledger.patches[0]},
+            revision_ledger_path=revision_path,
+        )
+
+    def test_intent_only_prepared_batch_retirement_rejects_extra_artifacts(self):
+        orphan, successor, ledger, revision_path, workflow = (
+            self._make_orphaned_prepared_batch_with_published_successor()
+        )
+        orphan_dir = Path(orphan["batch_dir"])
+        (orphan_dir / "unexpected.txt").write_text("not an intent-only orphan", encoding="utf-8")
+        with self.assertRaisesRegex(BatchStoreError, "additional artifacts"):
+            retire_unscoped_prepared_batch(
+                orphan_dir,
+                successor["batch_dir"],
+                workflow,
+                self.workflow_path,
+                ledger,
+                revision_path,
+                actor="Acceptance Tester",
+                reason="Must not retire a batch with additional artifacts.",
+            )
+
+    def test_intent_only_prepared_batch_retirement_receipt_is_hash_bound(self):
+        orphan, successor, ledger, revision_path, workflow = (
+            self._make_orphaned_prepared_batch_with_published_successor()
+        )
+        orphan_dir = Path(orphan["batch_dir"])
+        retire_unscoped_prepared_batch(
+            orphan_dir,
+            successor["batch_dir"],
+            workflow,
+            self.workflow_path,
+            ledger,
+            revision_path,
+            actor="Acceptance Tester",
+            reason="Hash-binding regression fixture.",
+        )
+        receipt_path = orphan_dir / "batch_superseded.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["successor_batch_id"] = "forged-successor"
+        receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self.assertRaisesRegex(BatchStoreError, "missing/unsafe successor"):
+            assert_no_uncommitted_role_batches(
+                self.runs_dir,
+                ["Manuscript"],
+                ["T2"],
+                {"P1": "verified"},
+                workflow,
+                revision_patches_by_id={"P1": ledger.patches[0]},
+                revision_ledger_path=revision_path,
+            )
+
 
     def test_role_lock_rejects_receipts_without_a_complete_transaction_chain(self):
         cases = (

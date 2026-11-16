@@ -336,6 +336,13 @@ python scripts/co_reviewer_cli.py rollback-batch --workflow-ledger workflow_ledg
 Rollback restores all parent active pointers atomically and marks the affected tasks/dependents `recheck_required`. If an uncommitted batch has already created a partial output, do not reuse or overwrite that output. Preserve the failed batch as evidence; explicitly supersede/re-authorize the affected Patch and build a fresh batch with new output paths. A second batch must not silently reuse the failed batch's files.
 
 Publication and rollback use intent/receipt records so a retry after an interrupted pointer update can finish the receipt without overwriting later Workflow Ledger edits. If a concurrent Workflow Ledger update is detected before pointer replacement, the command fails closed.
+An orphaned preparation that stopped **before** writing `batch_scope.json` is a different case from a failed Apply and must not be passed to `recover-failed-batch`. It may be retired only when its batch directory contains exactly the immutable `batch_intent.json` plus an empty `documents/` directory, every declared parent still matches its recorded hash, and a later batch has published the exact same task set and document roles from those same parents. The successor publication, scope, Patch operation paths and hashes are revalidated before an append-only `batch_superseded.json` receipt is written:
+
+```powershell
+python scripts/co_reviewer_cli.py retire-superseded-prepared-batch --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir "runs/batch-{orphan-id}" --successor-batch-dir "runs/batch-{published-id}" --actor "Human Author" --reason "Intent-only preparation replaced by the exact verified published batch."
+```
+
+This retirement changes neither Ledger nor active-document pointers. It refuses batches with a scope, any extra artifact, any output, incomplete publication evidence, or a successor based on different parents. Do not manually delete an orphaned batch or fabricate its missing scope.
 
 ## P1 final Response Letter and release manifest
 

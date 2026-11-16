@@ -791,6 +791,453 @@ def _validate_committed_batch_rollback(
     )
 
 
+
+
+def _prepared_batch_inventory_for_retirement(
+    batch_dir: Path,
+    intent: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Require an orphaned preparation with no scope, transaction or execution artifacts."""
+    root = batch_dir.expanduser().resolve()
+    if (root / "batch_scope.json").exists():
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} has a scope; it is not an unscoped orphan."
+        )
+    documents_dir = root / "documents"
+    if documents_dir.is_symlink() or not documents_dir.is_dir():
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} must retain an ordinary documents directory."
+        )
+    try:
+        document_children = list(documents_dir.iterdir())
+        root_children = {path.name for path in root.iterdir()}
+    except OSError as exc:
+        raise BatchStoreError(f"Cannot inspect prepared batch {root}: {exc}") from exc
+    if document_children:
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} contains document artifacts; retirement is refused."
+        )
+    allowed_root_children = {"batch_intent.json", "documents", "batch_superseded.json"}
+    unexpected = sorted(root_children - allowed_root_children)
+    if unexpected:
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} contains additional artifacts: "
+            + ", ".join(unexpected)
+        )
+    inventory = _batch_artifact_inventory(root)
+    if [row.get("path") for row in inventory] != ["batch_intent.json"]:
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} is not an intent-only orphan."
+        )
+    if intent.get("status") != "prepared":
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} has status {intent.get('status')!r}, not 'prepared'."
+        )
+    if not _is_aware_iso_timestamp(intent.get("created_at_utc")):
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} has no valid creation timestamp."
+        )
+    workflow_sha = intent.get("workflow_ledger_sha256_at_prepare")
+    if not isinstance(workflow_sha, str) or re.fullmatch(r"[a-f0-9]{64}", workflow_sha) is None:
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} has no valid Workflow Ledger preparation hash."
+        )
+
+    selected = intent.get("selected_task_ids")
+    all_selected = intent.get("all_selected_task_ids", selected)
+    if not isinstance(selected, list) or not selected or selected != all_selected:
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} does not declare the exact full task set."
+        )
+    parent_documents: dict[str, dict[str, Any]] = {}
+    for role, record in intent.get("documents", {}).items():
+        parent_file = Path(record["parent_file"]).expanduser().resolve()
+        output_file = Path(record["output_file"]).expanduser().resolve()
+        if output_file.exists():
+            raise BatchStoreError(
+                f"Prepared batch {intent.get('batch_id')} already has an output for {role}; retirement is refused."
+            )
+        if not parent_file.is_file() or sha256_file(parent_file) != record["parent_sha256"]:
+            raise BatchStoreError(
+                f"Prepared batch {intent.get('batch_id')} parent file/hash is missing or changed for {role}."
+            )
+        parent_documents[role] = {
+            "file": str(parent_file),
+            "sha256": record["parent_sha256"],
+            "batch_id": record.get("parent_batch_id"),
+        }
+    return inventory
+
+
+def _successor_publication_for_prepared_batch(
+    orphan_dir: Path,
+    orphan_intent: Mapping[str, Any],
+    successor_batch_dir: Path,
+    workflow: Mapping[str, Any],
+    patch_status_by_id: Mapping[str, str],
+    revision_patches_by_id: Mapping[str, Any],
+    revision_ledger_path: str | Path,
+    *,
+    require_current_pointers: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
+    """Validate a later, fully published batch that exactly replaces an orphan preparation."""
+    successor_root = successor_batch_dir.expanduser()
+    if successor_root.is_symlink():
+        raise BatchStoreError("Successor batch directory must not be a symbolic link.")
+    successor_root = successor_root.resolve()
+    if successor_root.parent != orphan_dir.resolve().parent:
+        raise BatchStoreError("Successor batch must be a sibling in the same append-only runs directory.")
+    successor_intent = read_batch_intent(successor_root)
+    successor_id = successor_intent["batch_id"]
+    if successor_id == orphan_intent.get("batch_id"):
+        raise BatchStoreError("A prepared batch cannot supersede itself.")
+    if (successor_root / "batch_superseded.json").exists():
+        raise BatchStoreError("A retired prepared batch cannot serve as a publication successor.")
+    if any((successor_root / name).exists() for name in (
+        "batch_recovery_intent.json", "batch_recovered.json",
+        "batch_rollback_intent.json", "batch_rollback.json",
+    )):
+        raise BatchStoreError("A recovered or rolled-back successor cannot retire a prepared batch.")
+
+    old_created = datetime.fromisoformat(
+        str(orphan_intent["created_at_utc"]).replace("Z", "+00:00")
+    )
+    new_created_value = successor_intent.get("created_at_utc")
+    if not _is_aware_iso_timestamp(new_created_value):
+        raise BatchStoreError("Successor batch has no valid creation timestamp.")
+    new_created = datetime.fromisoformat(str(new_created_value).replace("Z", "+00:00"))
+    if new_created < old_created:
+        raise BatchStoreError("Successor batch was prepared before the orphan batch.")
+
+    for field in ("revision_round_id", "workflow_ledger_file"):
+        old_value = orphan_intent.get(field)
+        new_value = successor_intent.get(field)
+        if field == "workflow_ledger_file" and isinstance(old_value, str) and isinstance(new_value, str):
+            equal = Path(old_value).expanduser().resolve() == Path(new_value).expanduser().resolve()
+        else:
+            equal = old_value == new_value
+        if not equal:
+            raise BatchStoreError(f"Successor batch differs from orphan preparation in {field}.")
+
+    old_selected = orphan_intent.get("selected_task_ids")
+    old_all_selected = orphan_intent.get("all_selected_task_ids", old_selected)
+    if (
+        successor_intent.get("selected_task_ids") != old_selected
+        or successor_intent.get("all_selected_task_ids", successor_intent.get("selected_task_ids"))
+        != old_all_selected
+    ):
+        raise BatchStoreError("Successor batch does not cover the exact prepared task set.")
+
+    old_documents = orphan_intent.get("documents")
+    new_documents = successor_intent.get("documents")
+    if (
+        not isinstance(old_documents, Mapping)
+        or not isinstance(new_documents, Mapping)
+        or set(old_documents) != set(new_documents)
+    ):
+        raise BatchStoreError("Successor batch does not cover the exact prepared document roles.")
+    for role, old_record in old_documents.items():
+        new_record = new_documents.get(role)
+        if not isinstance(new_record, Mapping):
+            raise BatchStoreError(f"Successor batch has no document record for {role}.")
+        if (
+            Path(str(new_record.get("parent_file", ""))).expanduser().resolve()
+            != Path(str(old_record.get("parent_file", ""))).expanduser().resolve()
+            or new_record.get("parent_sha256") != old_record.get("parent_sha256")
+            or new_record.get("parent_batch_id") != old_record.get("parent_batch_id")
+        ):
+            raise BatchStoreError(
+                f"Successor batch did not start from the exact prepared parent for {role}."
+            )
+
+    scope_path = successor_root / "batch_scope.json"
+    publish_intent_path = successor_root / "batch_publish_intent.json"
+    published_path = successor_root / "batch_published.json"
+    if not scope_path.is_file() or not publish_intent_path.is_file() or not published_path.is_file():
+        raise BatchStoreError("Successor batch lacks a complete scope/publication transaction.")
+    scope = _read_batch_transaction_record(scope_path, "Successor batch scope")
+    revision_path = Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve()
+    expected_revision_path = Path(revision_ledger_path).expanduser().resolve()
+    if revision_path != expected_revision_path:
+        raise BatchStoreError("Successor batch scope points to a different RevisionLedger.")
+    published = _validate_committed_batch_publication(
+        successor_root,
+        successor_intent,
+        workflow,
+        patch_status_by_id,
+    )
+    patch_ids = scope.get("patch_ids")
+    if not isinstance(patch_ids, list) or not patch_ids:
+        raise BatchStoreError("Successor publication has no Patch inventory.")
+
+    operated_roles: set[str] = set()
+    operated_tasks: set[str] = set()
+    for patch_id in patch_ids:
+        patch = revision_patches_by_id.get(patch_id)
+        if patch is None:
+            raise BatchStoreError(f"Successor publication Patch {patch_id} is missing from the RevisionLedger.")
+        task_id = getattr(patch, "task_id", None)
+        if task_id not in set(old_selected):
+            raise BatchStoreError(f"Successor Patch {patch_id} is outside the prepared task set.")
+        if getattr(patch, "status", None) not in {"verified", "superseded"}:
+            raise BatchStoreError(f"Successor Patch {patch_id} has no verified lineage.")
+        operated_tasks.add(task_id)
+        operations = getattr(patch, "operations", None)
+        if not isinstance(operations, list) or not operations:
+            raise BatchStoreError(f"Successor Patch {patch_id} has no document operations.")
+        for operation in operations:
+            role = getattr(operation, "document", None)
+            if role not in old_documents:
+                raise BatchStoreError(
+                    f"Successor Patch {patch_id} has an operation outside the prepared roles."
+                )
+            old_record = old_documents[role]
+            new_record = new_documents[role]
+            if (
+                Path(str(getattr(operation, "input_file", ""))).expanduser().resolve()
+                != Path(str(old_record["parent_file"])).expanduser().resolve()
+                or Path(str(getattr(operation, "output_file", ""))).expanduser().resolve()
+                != Path(str(new_record["output_file"])).expanduser().resolve()
+                or getattr(operation, "source_sha256", None) != old_record["parent_sha256"]
+            ):
+                raise BatchStoreError(
+                    f"Successor Patch {patch_id} operation does not bind to the exact parent/output for {role}."
+                )
+            operated_roles.add(role)
+    if operated_roles != set(old_documents):
+        raise BatchStoreError(
+            "Successor Patch operations do not cover every prepared document role."
+        )
+    if operated_tasks != set(old_selected):
+        raise BatchStoreError(
+            "Successor Patch operations do not cover every prepared document-changing task."
+        )
+
+    if require_current_pointers:
+        current = _batch_pointer_projection(
+            load_active_document_pointers(workflow),
+            "Current Workflow Ledger active document pointers",
+        )
+        for role, pointer in published.items():
+            if current.get(role) != pointer:
+                raise BatchStoreError(
+                    f"Successor publication is not the current active pointer for {role}."
+                )
+    return successor_intent, scope, published
+
+
+def _validate_superseded_prepared_batch_receipt(
+    batch_dir: Path,
+    intent: Mapping[str, Any],
+    workflow: Mapping[str, Any],
+    patch_status_by_id: Mapping[str, str],
+    revision_patches_by_id: Mapping[str, Any],
+    revision_ledger_path: str | Path,
+) -> dict[str, Any]:
+    root = batch_dir.expanduser().resolve()
+    receipt_path = root / "batch_superseded.json"
+    if not receipt_path.is_file():
+        raise BatchStoreError(f"Prepared batch {intent.get('batch_id')} has no supersession receipt.")
+    if any((root / name).exists() for name in (
+        "batch_scope.json", "batch_recovery_intent.json", "batch_recovered.json",
+        "batch_publish_intent.json", "batch_published.json",
+        "batch_rollback_intent.json", "batch_rollback.json",
+    )):
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} has conflicting scope or transaction records."
+        )
+    inventory = _prepared_batch_inventory_for_retirement(root, intent)
+    try:
+        receipt = _read_batch_transaction_record(receipt_path, "Prepared batch supersession receipt")
+    except BatchStoreError:
+        raise
+    intent_sha = sha256_file(root / "batch_intent.json")
+    expected_parents = {
+        role: {
+            "file": str(Path(record["parent_file"]).expanduser().resolve()),
+            "sha256": record["parent_sha256"],
+            "batch_id": record.get("parent_batch_id"),
+        }
+        for role, record in intent["documents"].items()
+    }
+    if (
+        receipt.get("schema_version") != "1.0"
+        or receipt.get("status") != "superseded_prepared"
+        or not isinstance(receipt.get("retirement_id"), str)
+        or not receipt.get("retirement_id", "").strip()
+        or receipt.get("batch_id") != intent.get("batch_id")
+        or receipt.get("batch_intent_sha256") != intent_sha
+        or receipt.get("artifact_inventory") != inventory
+        or receipt.get("workflow_ledger_file") is None
+        or Path(str(receipt.get("workflow_ledger_file"))).expanduser().resolve()
+        != Path(str(intent.get("workflow_ledger_file", ""))).expanduser().resolve()
+        or Path(str(receipt.get("revision_ledger_file", ""))).expanduser().resolve()
+        != Path(revision_ledger_path).expanduser().resolve()
+        or not _is_aware_iso_timestamp(receipt.get("retired_at_utc"))
+        or not isinstance(receipt.get("actor"), str)
+        or not receipt.get("actor", "").strip()
+        or not isinstance(receipt.get("reason"), str)
+        or not receipt.get("reason", "").strip()
+        or receipt.get("selected_task_ids") != intent.get("selected_task_ids")
+        or receipt.get("all_selected_task_ids")
+        != intent.get("all_selected_task_ids", intent.get("selected_task_ids"))
+        or receipt.get("parent_documents") != expected_parents
+        or not isinstance(receipt.get("workflow_ledger_sha256_at_retirement"), str)
+        or re.fullmatch(r"[a-f0-9]{64}", receipt["workflow_ledger_sha256_at_retirement"]) is None
+        or not isinstance(receipt.get("revision_ledger_sha256_at_retirement"), str)
+        or re.fullmatch(r"[a-f0-9]{64}", receipt["revision_ledger_sha256_at_retirement"]) is None
+    ):
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} supersession receipt does not match its immutable intent."
+        )
+
+    successor_id = receipt.get("successor_batch_id")
+    if not isinstance(successor_id, str) or not successor_id.strip():
+        raise BatchStoreError("Prepared batch supersession receipt has no successor batch ID.")
+    successor_root = root.parent / f"batch-{successor_id}"
+    if successor_root.is_symlink() or not successor_root.is_dir():
+        raise BatchStoreError("Prepared batch supersession receipt points to a missing/unsafe successor.")
+    successor_intent, scope, published = _successor_publication_for_prepared_batch(
+        root,
+        intent,
+        successor_root,
+        workflow,
+        patch_status_by_id,
+        revision_patches_by_id,
+        revision_ledger_path,
+        require_current_pointers=False,
+    )
+    expected_hashes = {
+        "successor_batch_intent_sha256": sha256_file(successor_root / "batch_intent.json"),
+        "successor_batch_scope_sha256": sha256_file(successor_root / "batch_scope.json"),
+        "successor_publish_intent_sha256": sha256_file(successor_root / "batch_publish_intent.json"),
+        "successor_published_sha256": sha256_file(successor_root / "batch_published.json"),
+    }
+    if (
+        receipt.get("successor_batch_id") != successor_intent.get("batch_id")
+        or any(receipt.get(field) != digest for field, digest in expected_hashes.items())
+        or receipt.get("successor_patch_ids") != scope.get("patch_ids")
+        or receipt.get("published_active_documents") != published
+        or Path(str(receipt.get("revision_ledger_file", ""))).expanduser().resolve()
+        != Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve()
+    ):
+        raise BatchStoreError(
+            f"Prepared batch {intent.get('batch_id')} supersession receipt does not match its published successor."
+        )
+    return dict(receipt)
+
+
+def retire_unscoped_prepared_batch(
+    batch_dir: str | Path,
+    successor_batch_dir: str | Path,
+    workflow: Mapping[str, Any],
+    workflow_path: str | Path,
+    revision_ledger: Any,
+    revision_ledger_path: str | Path,
+    *,
+    actor: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Append a receipt for an intent-only batch replaced by a verified published successor."""
+    requested_root = Path(batch_dir).expanduser()
+    if requested_root.is_symlink():
+        raise BatchStoreError("Prepared batch directory must not be a symbolic link.")
+    root = requested_root.resolve()
+    workflow_file = Path(workflow_path).expanduser().resolve()
+    ledger_file = Path(revision_ledger_path).expanduser().resolve()
+    if workflow_file == ledger_file or not workflow_file.is_file() or not ledger_file.is_file():
+        raise BatchStoreError("Distinct Workflow Ledger and RevisionLedger files must both exist.")
+    errors = validate_workflow_ledger(workflow)
+    if errors:
+        raise BatchStoreError("Cannot retire against an invalid Workflow Ledger: " + "; ".join(errors))
+    try:
+        workflow_on_disk = json.loads(workflow_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BatchStoreError(f"Cannot read current Workflow Ledger {workflow_file}: {exc}") from exc
+    if workflow_on_disk != json.loads(json.dumps(workflow, ensure_ascii=False)):
+        raise BatchStoreError("In-memory Workflow Ledger differs from the current file on disk.")
+    if callable(getattr(revision_ledger, "to_dict", None)):
+        try:
+            ledger_on_disk = json.loads(ledger_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BatchStoreError(f"Cannot read current RevisionLedger {ledger_file}: {exc}") from exc
+        if ledger_on_disk != json.loads(json.dumps(revision_ledger.to_dict(), ensure_ascii=False)):
+            raise BatchStoreError("In-memory RevisionLedger differs from the current file on disk.")
+    intent = read_batch_intent(root)
+    if Path(str(intent.get("workflow_ledger_file", ""))).expanduser().resolve() != workflow_file:
+        raise BatchStoreError("Prepared batch belongs to a different Workflow Ledger.")
+    if intent.get("revision_round_id") != workflow.get("revision_round_id"):
+        raise BatchStoreError("Prepared batch belongs to a different revision round.")
+    inventory = _prepared_batch_inventory_for_retirement(root, intent)
+    patch_status_by_id = {
+        patch.patch_id: patch.status for patch in revision_ledger.patches
+    }
+    revision_patches_by_id = {
+        patch.patch_id: patch for patch in revision_ledger.patches
+    }
+    receipt_path = root / "batch_superseded.json"
+    if receipt_path.is_file():
+        return _validate_superseded_prepared_batch_receipt(
+            root,
+            intent,
+            workflow,
+            patch_status_by_id,
+            revision_patches_by_id,
+            ledger_file,
+        )
+
+    actor_value = actor.strip() if isinstance(actor, str) else ""
+    reason_value = reason.strip() if isinstance(reason, str) else ""
+    if not actor_value or not reason_value:
+        raise BatchStoreError("Retirement actor and reason must be non-empty.")
+    successor_root = Path(successor_batch_dir).expanduser()
+    successor_intent, scope, published = _successor_publication_for_prepared_batch(
+        root,
+        intent,
+        successor_root,
+        workflow,
+        patch_status_by_id,
+        revision_patches_by_id,
+        ledger_file,
+        require_current_pointers=True,
+    )
+    receipt = {
+        "schema_version": "1.0",
+        "status": "superseded_prepared",
+        "retirement_id": "retirement-" + uuid.uuid4().hex,
+        "batch_id": intent["batch_id"],
+        "retired_at_utc": _timestamp(),
+        "actor": actor_value,
+        "reason": reason_value,
+        "batch_intent_sha256": sha256_file(root / "batch_intent.json"),
+        "artifact_inventory": inventory,
+        "workflow_ledger_file": str(workflow_file),
+        "workflow_ledger_sha256_at_retirement": sha256_file(workflow_file),
+        "revision_ledger_file": str(ledger_file),
+        "revision_ledger_sha256_at_retirement": sha256_file(ledger_file),
+        "selected_task_ids": list(intent["selected_task_ids"]),
+        "all_selected_task_ids": list(intent.get("all_selected_task_ids", intent["selected_task_ids"])),
+        "parent_documents": {
+            role: {
+                "file": str(Path(record["parent_file"]).expanduser().resolve()),
+                "sha256": record["parent_sha256"],
+                "batch_id": record.get("parent_batch_id"),
+            }
+            for role, record in intent["documents"].items()
+        },
+        "successor_batch_id": successor_intent["batch_id"],
+        "successor_batch_intent_sha256": sha256_file(successor_root / "batch_intent.json"),
+        "successor_batch_scope_sha256": sha256_file(successor_root / "batch_scope.json"),
+        "successor_publish_intent_sha256": sha256_file(successor_root / "batch_publish_intent.json"),
+        "successor_published_sha256": sha256_file(successor_root / "batch_published.json"),
+        "successor_patch_ids": list(scope["patch_ids"]),
+        "published_active_documents": published,
+    }
+    write_json_new(receipt_path, receipt)
+    return receipt
+
+
+
 def assert_no_uncommitted_role_batches(
     runs_dir: str | Path,
     roles: Sequence[str],
@@ -799,6 +1246,8 @@ def assert_no_uncommitted_role_batches(
     workflow: Mapping[str, Any],
     *,
     revision_events: Sequence[Any] | None = None,
+    revision_patches_by_id: Mapping[str, Any] | None = None,
+    revision_ledger_path: str | Path | None = None,
 ) -> None:
     """Prevent competing batches from branching from the same active document-role version."""
     root = Path(runs_dir).expanduser().resolve()
@@ -822,6 +1271,7 @@ def assert_no_uncommitted_role_batches(
             "batch_published.json",
             "batch_rollback_intent.json",
             "batch_rollback.json",
+            "batch_superseded.json",
         )
         present_controls = [name for name in control_names if (batch_dir / name).exists()]
         if not intent_path.is_file():
@@ -831,6 +1281,29 @@ def assert_no_uncommitted_role_batches(
                 )
             continue
         intent = read_batch_intent(batch_dir)
+        superseded_receipt = batch_dir / "batch_superseded.json"
+        if superseded_receipt.is_file():
+            if any((batch_dir / name).exists() for name in (
+                "batch_recovery_intent.json", "batch_recovered.json",
+                "batch_publish_intent.json", "batch_published.json",
+                "batch_rollback_intent.json", "batch_rollback.json", "batch_scope.json",
+            )):
+                raise BatchStoreError(
+                    f"Prepared batch {intent['batch_id']} has conflicting supersession and transaction records."
+                )
+            if revision_patches_by_id is None or revision_ledger_path is None:
+                raise BatchStoreError(
+                    f"Superseded prepared batch {intent['batch_id']} requires the current RevisionLedger for validation."
+                )
+            _validate_superseded_prepared_batch_receipt(
+                batch_dir,
+                intent,
+                workflow,
+                patch_status_by_id,
+                revision_patches_by_id,
+                revision_ledger_path,
+            )
+            continue
         recovery_receipt = batch_dir / "batch_recovered.json"
         publication_markers = (
             batch_dir / "batch_publish_intent.json",
@@ -1328,7 +1801,7 @@ def rollback_active_pointers(
 
 
 def _batch_artifact_inventory(batch_dir: Path) -> list[dict[str, Any]]:
-    """Hash every retained batch artifact, excluding only root recovery controls.
+    """Hash every retained batch artifact, excluding only root transaction controls.
 
     Symlinks are rejected rather than hashing their targets: the inventory must
     describe files retained inside this immutable batch directory, not mutable
@@ -1341,7 +1814,7 @@ def _batch_artifact_inventory(batch_dir: Path) -> list[dict[str, Any]]:
         )
     root = requested_root.resolve()
     rows: list[dict[str, Any]] = []
-    excluded_root_controls = {"batch_recovery_intent.json", "batch_recovered.json"}
+    excluded_root_transaction_controls = {"batch_recovery_intent.json", "batch_recovered.json", "batch_superseded.json"}
     for path in sorted(root.rglob("*")):
         try:
             if path.is_symlink():
@@ -1350,7 +1823,7 @@ def _batch_artifact_inventory(batch_dir: Path) -> list[dict[str, Any]]:
                 )
             if not path.is_file():
                 continue
-            if path.parent == root and path.name in excluded_root_controls:
+            if path.parent == root and path.name in excluded_root_transaction_controls:
                 continue
             rows.append({
                 "path": path.relative_to(root).as_posix(),

@@ -1938,10 +1938,14 @@ def cmd_build_revision_ledger(args):
     batch_document_paths: dict[str, dict[str, str]] = {}
     existing_patch_statuses: dict[str, str] = {}
     existing_revision_events = None
+    existing_revision_patches_by_id: dict[str, Any] = {}
     if selected_roles and output_path.exists():
         existing_before_build = _load_revision_ledger(output_path)
         existing_patch_statuses = {
             patch.patch_id: patch.status for patch in existing_before_build.patches
+        }
+        existing_revision_patches_by_id = {
+            patch.patch_id: patch for patch in existing_before_build.patches
         }
         existing_revision_events = existing_before_build.events
     if selected_roles:
@@ -1961,6 +1965,8 @@ def cmd_build_revision_ledger(args):
             existing_patch_statuses,
             workflow,
             revision_events=existing_revision_events,
+            revision_patches_by_id=existing_revision_patches_by_id,
+            revision_ledger_path=output_path,
         )
         batch_intent = create_batch_intent(
             workflow,
@@ -3337,6 +3343,38 @@ def cmd_recover_failed_batch(args):
     return 0
 
 
+
+
+def cmd_retire_superseded_prepared_batch(args):
+    """Retire an intent-only prepared batch after an exact successor was published."""
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
+    successor_batch_dir = _resolve_batch_dir_argument(args.successor_batch_dir)
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    ledger = _load_revision_ledger(revision_path)
+    from co_reviewer.batch_store import retire_unscoped_prepared_batch
+
+    receipt = retire_unscoped_prepared_batch(
+        batch_dir,
+        successor_batch_dir,
+        workflow,
+        workflow_path,
+        ledger,
+        revision_path,
+        actor=args.actor,
+        reason=args.reason,
+    )
+    print(f"[RETIRED] Intent-only prepared batch {receipt['batch_id']}")
+    print(f"[SUCCESSOR] Published batch {receipt['successor_batch_id']}")
+    print("[POINTERS] Workflow active document pointers were not changed.")
+    print("[LEDGERS] Workflow Ledger and RevisionLedger were not modified.")
+    print(f"[RECEIPT] {batch_dir / 'batch_superseded.json'}")
+    return 0
+
+
 def cmd_publish_batch(args):
     """Atomically publish all verified document outputs as the new active revision."""
     workflow_path = Path(args.workflow_ledger).expanduser().resolve()
@@ -3856,6 +3894,14 @@ def build_parser():
     rec.add_argument("--reason", required=True, help="Why the failed, unpublished batch is being abandoned.")
     rec.add_argument("--actor", default="Human Author")
     rec.set_defaults(func=cmd_recover_failed_batch)
+    retire = sub.add_parser("retire-superseded-prepared-batch", help="Record an orphaned intent-only preparation as superseded by an exact, verified published successor.")
+    retire.add_argument("--workflow-ledger", required=True)
+    retire.add_argument("--revision-ledger", required=True)
+    retire.add_argument("--batch-dir", required=True, help="The stale prepared batch with immutable intent only and no scope/artifacts.")
+    retire.add_argument("--successor-batch-dir", required=True, help="A later fully published batch from the exact same task set and parent documents.")
+    retire.add_argument("--actor", required=True)
+    retire.add_argument("--reason", required=True)
+    retire.set_defaults(func=cmd_retire_superseded_prepared_batch)
     pub = sub.add_parser("publish-batch", help="Atomically switch Workflow Ledger active document pointers after all batch Patches are verified.")
     pub.add_argument("--workflow-ledger", required=True)
     pub.add_argument("--revision-ledger", required=True)
