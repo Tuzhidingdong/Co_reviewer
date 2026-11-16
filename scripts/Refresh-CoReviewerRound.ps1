@@ -110,7 +110,12 @@ if (-not (Test-Path -LiteralPath $roundManifestPath -PathType Leaf)) {
 $roundManifest = Get-Content -LiteralPath $roundManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $roundId = [string]$roundManifest.review_round_id
 if ([string]::IsNullOrWhiteSpace($roundId)) { throw "round_manifest.json has no review_round_id." }
-$workflowPath = (Resolve-Path -LiteralPath $WorkflowLedger -ErrorAction Stop).Path
+$workflowCandidate = if ([System.IO.Path]::IsPathRooted($WorkflowLedger)) {
+    $WorkflowLedger
+} else {
+    Join-Path $roundPath $WorkflowLedger
+}
+$workflowPath = (Resolve-Path -LiteralPath $workflowCandidate -ErrorAction Stop).Path
 [void](Assert-PathInRoundRoot $workflowPath "Workflow Ledger" $roundPath)
 $workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ([string]$workflow.revision_round_id -ne $roundId) {
