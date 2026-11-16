@@ -1,6 +1,6 @@
 # P1 Mainline Deviation and Closure Report
 
-**Audit date:** 2026-11-15  
+**Audit date:** 2026-11-16  
 **Repository:** Tuzhidingdong/Co_reviewer  
 **Pull request:** [#3 — P1 core revision workflow](https://github.com/Tuzhidingdong/Co_reviewer/pull/3)  
 **Base:** upgrade/v0.5.1-p0-implementation-20261114  
@@ -10,7 +10,7 @@
 
 The P1 main workflow is substantially implemented: inventory/audit and author-approved task planning connect to Workflow Ledger and RevisionLedger; incremental Patch batches use immutable directories; the existing Word-native Track Changes adapter is retained; verification and DAG synchronization feed Working Clean projections and Response Letter generation; publication, rollback, failed-batch recovery and final release evidence have dedicated gates.
 
-P1 is **not accepted or test-verified**. GitHub Actions has repeatedly failed before runner allocation, and no Python, PowerShell 5.1 or Word COM test process has completed in this implementation session. The local Windows/Word acceptance remains outstanding.
+P1's automated synthetic validation is now **passed locally** at code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`: the two targeted recovery tests passed and the Windows quality-check script completed with 258/258 unit tests, compileall, dependency and CLI smoke checks passing (exit code 0). This is not final product acceptance. Microsoft Word GUI save/reopen, Word COM pagination/PDF mapping and a real user review round remain outstanding.
 
 The clearest scope deviation is the size of the P1 adaptation to word_pdf_mapper.py. The module was extended from Patch-level mapping to ResponseUnit/locator-level mapping and document-role reuse. The underlying Word COM pagination path remains, but the module is not byte-for-byte unchanged from P0. An audit also found that the P0 PDF page-text corroboration had been removed and that the changed exporter call omitted its new PDF-path parameter. Both issues were corrected in commit 4a5a364; a subsequent audit added the same PDF corroboration to reused mappings.
 
@@ -49,13 +49,21 @@ The second-batch test now covers immutable directory creation, batch plan export
 
 ### 3. Validation scope
 
-Automated JSON Schema meta-schema validation for every repository schema and Draft 2020-12 validation of a generated Release Manifest instance have now been added to the synthetic suite; they remain unverified until a runner executes the tests. Dedicated Draft 2020-12 schemas and instance checks also cover failed-batch Recovery Intent and Receipt, including the exact invalidated DAG task set. Synthetic tests are present in the repository but must not be described as passing until a runner actually executes them. Word COM pagination/export, PowerShell 5.1 execution and visual inspection of the final Word/PDF pair remain separate acceptance steps.
+Automated JSON Schema meta-schema validation for every repository schema and Draft 2020-12 validation of a generated Release Manifest instance are included in the synthetic suite and passed as part of the 258-test local run at `e7f818f`. Word COM pagination/export, Microsoft Word visual inspection and a real user review round remain separate acceptance steps.
 
-## Current verification blocker
+## Validation status and remaining acceptance gates
 
-The latest executed Actions runs are #1133 and #1134 for commit 72c64a6. All four matrix jobs in each run failed before runner assignment (`runner_id=0`, empty runner name, zero steps). No Python compilation, unit test or PowerShell step ran. The follow-up fixture-import commit 1e2d6c4, docs commit 331e77a and scope-convergence commit dab5681 skipped CI. No code pass/fail conclusion can be drawn from these runs. The immediate next validation is the user's local Windows PowerShell 5.1 quality-check script, followed by Word GUI/COM acceptance.
+The local Windows report at `e7f818f` records: both targeted recovery/release tests PASS; the full quality check PASS (258 tests, zero failures/errors/skips); compileall, dependency checks and CLI smoke checks PASS; and overall PowerShell wrapper exit code 0.
 
-Earlier runs show the same pre-runner failure pattern. Identical retries are not a useful code-debugging loop and have not been repeated as a substitute for test results.
+GitHub Actions Run #1148 for `e7f818f` remains marked failed, but all four matrix jobs expose zero steps in the Actions API. No executable test output was available from that run. The local report is therefore the current executed automated evidence; the Actions run is an infrastructure/status issue whose cause is not established by the available job records.
+
+The local report did not identify the PowerShell edition/version. Therefore the result proves that the Windows PowerShell quality-check script ran successfully, but it does not independently establish that the host was Windows PowerShell 5.1.
+
+The remaining acceptance gates are:
+1. Run the isolated five-target Word compatibility fixture with the repository runner.
+2. Inspect native Track Changes and true subscript/superscript formatting in Microsoft Word; save, close and reopen the same DOCX; rerun post-Word mechanical verification.
+3. Exercise actual Word COM pagination, Clean DOCX/PDF export and PDF-backed page/line mapping on a completed synthetic/approved RevisionLedger.
+4. Have the user complete the real workflow acceptance on their supplied review files before treating the release as ready for normal use.
 
 ## Closure checklist
 
@@ -65,4 +73,4 @@ Earlier runs show the same pre-runner failure pattern. Identical retries are not
 
 ## Verdict
 
-The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviation is the material but purposeful Word/PDF mapper adaptation; automated and local acceptance validation has not yet run. The code and test additions should not be treated as accepted until the runner and local Word/PowerShell gates complete.
+The P1 implementation is substantially aligned with its declared mainline. The latest code audit also closes continuous batch-parent replay and explicit Patch supersession event lineage in the Release Manifest and RevisionLedger validator. The remaining deviation is the material but purposeful Word/PDF mapper adaptation. Automated validation has passed locally; acceptance remains conditional on the outstanding Word GUI/COM and real-workflow gates.
