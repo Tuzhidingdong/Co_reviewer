@@ -12,6 +12,7 @@ import hashlib
 import heapq
 import json
 import re
+from pathlib import Path
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -1067,6 +1068,11 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                     errors.append(f"{prefix}.file must be non-empty.")
                 if not _is_sha256(digest):
                     errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest.")
+                if (
+                    isinstance(role, str) and isinstance(file_path, str)
+                    and isinstance(digest, str) and _is_sha256(digest)
+                ):
+                    source_records.add((role, str(Path(file_path).expanduser().resolve()), digest))
                 batch_id = pointer.get("batch_id")
                 if batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()):
                     errors.append(f"{prefix}.batch_id must be a non-empty string or null.")

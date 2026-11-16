@@ -24,7 +24,7 @@ _OPERATION_FIELDS = {
 }
 _TASK_FIELDS = {
     "task_id", "patch_id", "proposed_response", "patch_operations",
-    "response_unit_specs", "supersedes_patch_id",
+    "response_unit_specs", "supersedes_patch_id", "evidence", "targets", "target_refs",
 }
 _DISPOSITIONS = {"revised", "reply_only", "no_change", "clarification_needed"}
 _LOCATION_REQUIREMENTS = {"required", "existing_anchor_required", "not_required", "manual_required"}
@@ -41,7 +41,11 @@ def _slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-") or "item"
 
 
-def _read_inventory_sources(inventory: Any, workflow: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+def _read_inventory_sources(
+    inventory: Any,
+    workflow: Mapping[str, Any],
+    active_pointers: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, str], dict[str, str], dict[str, Mapping[str, Any]]]:
     if isinstance(inventory, list):
         docs = inventory
     elif isinstance(inventory, Mapping):
@@ -57,6 +61,7 @@ def _read_inventory_sources(inventory: Any, workflow: Mapping[str, Any]) -> tupl
     }
     hashes: dict[str, str] = {}
     authors: dict[str, str] = {}
+    reports_by_role: dict[str, Mapping[str, Any]] = {}
     reviewer_docs = 0
     for doc in docs:
         if not isinstance(doc, Mapping):
@@ -64,20 +69,32 @@ def _read_inventory_sources(inventory: Any, workflow: Mapping[str, Any]) -> tupl
         role = _role(doc.get("role"))
         if role not in {"Reviewers", "Manuscript", "SI"}:
             continue
+        pointer = active_pointers.get(role)
         source = workflow_sources.get(role)
+        expected_file = pointer.get("file") if isinstance(pointer, Mapping) else (
+            source.get("file") if isinstance(source, Mapping) else None
+        )
+        expected_sha = pointer.get("sha256") if isinstance(pointer, Mapping) else (
+            source.get("sha256") if isinstance(source, Mapping) else None
+        )
         digest = doc.get("source_sha256") or doc.get("sha256")
         path_value = doc.get("file")
         if (
-            not isinstance(source, Mapping)
+            not isinstance(expected_file, str)
             or not isinstance(path_value, str)
             or not isinstance(digest, str)
-            or Path(path_value).expanduser().resolve() != Path(str(source.get("file", ""))).expanduser().resolve()
-            or digest != source.get("sha256")
+            or Path(path_value).expanduser().resolve() != Path(expected_file).expanduser().resolve()
+            or digest != expected_sha
+            or not Path(path_value).is_file()
+            or sha256_file(path_value) != digest
         ):
             raise WorkflowPreparationError(
-                f"Inventory source identity for {role} does not match the Workflow Ledger."
+                f"Inventory source identity for {role} does not match the current active document path/hash."
             )
+        if role in hashes:
+            raise WorkflowPreparationError(f"Inventory contains multiple source records for role {role}.")
         hashes[role] = digest
+        reports_by_role[role] = doc
         if role == "Reviewers":
             reviewer_docs += 1
             comments = doc.get("comments", [])
@@ -91,7 +108,10 @@ def _read_inventory_sources(inventory: Any, workflow: Mapping[str, Any]) -> tupl
                     authors[str(comment["id"])] = author.strip()
     if reviewer_docs > 1:
         raise WorkflowPreparationError("Multiple Reviewers documents are not supported in one review round.")
-    return hashes, authors
+    missing = set(active_pointers) - set(hashes)
+    if missing:
+        raise WorkflowPreparationError("Workspace inventory is missing active role(s): " + ", ".join(sorted(missing)))
+    return hashes, authors, reports_by_role
 
 
 def _reviewer_spec(
@@ -135,10 +155,158 @@ def _reviewer_spec(
     return result
 
 
+
+
+def _normalised_excerpt(value: Any) -> str:
+    return " ".join(unicodedata.normalize("NFKC", str(value or "")).split())
+
+
+def _refresh_task_evidence(
+    task: dict[str, Any],
+    spec: Mapping[str, Any],
+    inventory_by_role: Mapping[str, Mapping[str, Any]],
+    active_pointers: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    has_evidence = "evidence" in spec
+    has_targets = "targets" in spec
+    if has_evidence != has_targets:
+        raise WorkflowPreparationError(f"Task {task.get('task_id')} must supply both refreshed evidence and targets.")
+    if not has_evidence:
+        has_mutating = any(isinstance(row, Mapping) and row.get("action") in _MUTATING for row in task.get("targets", []))
+        if task.get("status") == "recheck_required" and has_mutating:
+            raise WorkflowPreparationError(f"Task {task.get('task_id')} requires refreshed evidence/targets from current active documents.")
+        return False
+
+    raw_evidence, raw_targets = spec.get("evidence"), spec.get("targets")
+    if not isinstance(raw_evidence, list) or not raw_evidence or any(not isinstance(row, Mapping) for row in raw_evidence) or not isinstance(raw_targets, list):
+        raise WorkflowPreparationError("Refreshed evidence must be a non-empty array and targets must be an array.")
+    old_rows = task.get("evidence", [])
+    if not isinstance(old_rows, list):
+        raise WorkflowPreparationError(f"Task {task.get('task_id')} evidence must be an array.")
+    known_ids = {str(row.get("evidence_id")) for row in old_rows if isinstance(row, Mapping) and row.get("evidence_id") is not None}
+    fresh: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_evidence):
+        row = dict(raw)
+        allowed = {"evidence_id","document","part","p_idx","para_id","source_comment_id","source_excerpt","evidence_type","match_status"}
+        if set(row) - allowed:
+            raise WorkflowPreparationError(f"Refreshed evidence[{idx}] contains unsupported fields.")
+        evidence_id = row.get("evidence_id")
+        role = _role(row.get("document"))
+        part, p_idx = row.get("part"), row.get("p_idx")
+        excerpt = row.get("source_excerpt")
+        if not isinstance(evidence_id, str) or not evidence_id.strip() or evidence_id in known_ids:
+            raise WorkflowPreparationError("Refreshed evidence IDs must be new, unique and non-empty.")
+        known_ids.add(evidence_id)
+        if (
+            role not in {"Reviewers","Manuscript","SI"}
+            or not isinstance(part,str) or not part.startswith("word/")
+            or not isinstance(p_idx,int) or isinstance(p_idx,bool) or p_idx < 0
+            or not isinstance(excerpt,str) or not excerpt.strip()
+            or row.get("evidence_type") not in {"reviewer_comment","native_anchor","paragraph","caption","reference","table","figure","audit_finding"}
+            or row.get("match_status") not in {"confirmed","candidate","ambiguous","unresolved","not_applicable"}
+        ):
+            raise WorkflowPreparationError(f"Refreshed evidence[{idx}] has invalid fields.")
+        if row.get("evidence_type") == "reviewer_comment":
+            if part != "word/comments.xml" or row.get("source_comment_id") is None:
+                raise WorkflowPreparationError(f"Reviewer comment evidence {evidence_id} requires comments.xml and source_comment_id.")
+            task_comment_ids = {str(value) for value in task.get("source_comment_ids", [])}
+            if str(row.get("source_comment_id")) not in task_comment_ids:
+                raise WorkflowPreparationError(
+                    f"Reviewer evidence {evidence_id} refers to a comment outside task {task.get('task_id')}."
+                )
+            comments = inventory_by_role.get("Reviewers", {}).get("comments", [])
+            if not any(
+                isinstance(comment, Mapping)
+                and str(comment.get("id")) == str(row.get("source_comment_id"))
+                and _normalised_excerpt(comment.get("comment")) == _normalised_excerpt(excerpt)
+                for comment in comments
+            ):
+                raise WorkflowPreparationError(f"Reviewer evidence {evidence_id} is absent from the current Reviewers inventory.")
+        else:
+            report = inventory_by_role.get(role)
+            paragraphs = report.get("paragraphs", []) if isinstance(report, Mapping) else []
+            matched = any(
+                isinstance(paragraph, Mapping)
+                and paragraph.get("part") == part
+                and paragraph.get("p_idx") == p_idx
+                and (
+                    _normalised_excerpt(excerpt) in _normalised_excerpt(paragraph.get("text"))
+                    or _normalised_excerpt(paragraph.get("text")) in _normalised_excerpt(excerpt)
+                )
+                for paragraph in paragraphs
+            ) if isinstance(paragraphs, list) else False
+            if not matched or row.get("match_status") != "confirmed":
+                raise WorkflowPreparationError(f"Evidence {evidence_id} does not match current {role} inventory or is not confirmed.")
+        fresh.append(row)
+
+    evidence_by_id = {row["evidence_id"]: row for row in fresh}
+    targets: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_targets):
+        if not isinstance(raw, Mapping):
+            raise WorkflowPreparationError(f"Refreshed targets[{idx}] must be an object.")
+        target = dict(raw)
+        if set(target) - {"document","part","p_idx","para_id","action","evidence_ids"}:
+            raise WorkflowPreparationError(f"Refreshed targets[{idx}] contains unsupported fields.")
+        role, part, p_idx = _role(target.get("document")), target.get("part"), target.get("p_idx")
+        evidence_ids = target.get("evidence_ids")
+        action = target.get("action")
+        if (
+            role not in {"Manuscript","SI"}
+            or not isinstance(part,str) or not part.startswith("word/")
+            or not isinstance(p_idx,int) or isinstance(p_idx,bool) or p_idx < 0
+            or not isinstance(action,str) or action not in (_MUTATING | {"keep","inspect_only","reply_only"})
+            or not isinstance(evidence_ids,list) or not evidence_ids
+            or any(not isinstance(item,str) or item not in evidence_by_id for item in evidence_ids)
+        ):
+            raise WorkflowPreparationError(f"Refreshed target[{idx}] has invalid fields/evidence.")
+        for evidence_id in evidence_ids:
+            row = evidence_by_id[evidence_id]
+            if _role(row.get("document")) != role or row.get("part") != part or row.get("p_idx") != p_idx or row.get("match_status") != "confirmed":
+                raise WorkflowPreparationError(f"Refreshed target[{idx}] is not bound to confirmed evidence at the same document location.")
+        targets.append(target)
+
+    if not targets and task.get("task_type") != "response_only":
+        raise WorkflowPreparationError("Refreshed document task must retain at least one target.")
+    task["evidence"] = [*old_rows, *fresh]
+    task["targets"] = targets
+    task["target_documents"] = list(dict.fromkeys(_role(row.get("document")) for row in targets))
+
+    versions: dict[tuple[str,str,str], dict[str,str]] = {}
+    for row in task.get("source_versions", []):
+        if isinstance(row, Mapping):
+            key=(str(row.get("role","")),str(Path(str(row.get("file",""))).expanduser().resolve()),str(row.get("sha256","")))
+            versions[key]={"role":key[0],"file":key[1],"sha256":key[2]}
+    for role in task["target_documents"]:
+        pointer=active_pointers.get(role)
+        if pointer is None:
+            raise WorkflowPreparationError(f"No active pointer for refreshed role {role}.")
+        key=(role,str(Path(pointer["file"]).expanduser().resolve()),pointer["sha256"])
+        versions[key]={"role":role,"file":key[1],"sha256":pointer["sha256"]}
+    task["source_versions"]=[versions[key] for key in sorted(versions)]
+
+    if task.get("target_refs"):
+        refs=spec.get("target_refs")
+        if not isinstance(refs,list) or not refs or any(not isinstance(row,Mapping) for row in refs):
+            raise WorkflowPreparationError(f"Task {task.get('task_id')} requires refreshed target_refs.")
+        task["target_refs"]=[dict(row) for row in refs]
+    elif "target_refs" in spec:
+        refs=spec.get("target_refs")
+        if not isinstance(refs,list) or any(not isinstance(row,Mapping) for row in refs):
+            raise WorkflowPreparationError("target_refs must be an array of objects.")
+        task["target_refs"]=[dict(row) for row in refs]
+
+    from .workflow_engine import workflow_tasks_from_decision_plan
+    adapted=workflow_tasks_from_decision_plan([task],target_refs_by_task={task["task_id"]:task.get("target_refs",[])})
+    if not adapted:
+        raise WorkflowPreparationError(f"Task {task.get('task_id')} could not rebuild target groups.")
+    task["target_groups"]=adapted[0]["target_groups"]
+    return True
+
+
 def prepare_workflow_execution(
     workflow: Mapping[str, Any],
     execution_scope: Mapping[str, Any],
-    inventory: Mapping[str, Any],
+    inventory: Any,
     *,
     workflow_path: str | Path,
     execution_scope_path: str | Path,
@@ -170,8 +338,8 @@ def prepare_workflow_execution(
     if execution_scope.get("workflow_ledger_sha256") != workflow_sha:
         raise WorkflowPreparationError("Execution scope is stale: workflow_ledger_sha256 does not match the current Workflow Ledger.")
 
-    _inventory_hashes, authors = _read_inventory_sources(inventory, workflow)
     pointers = load_active_document_pointers(workflow)
+    _inventory_hashes, authors, inventory_by_role = _read_inventory_sources(inventory, workflow, pointers)
     base_tasks = workflow.get("tasks", [])
     by_id = {
         row.get("task_id"): row
@@ -218,6 +386,10 @@ def prepare_workflow_execution(
             )
         if task.get("requires_user_approval") is not True:
             raise WorkflowPreparationError(f"Task {task_id} does not require explicit user approval.")
+        refreshed = _refresh_task_evidence(task, spec, inventory_by_role, pointers)
+        has_mutating = any(isinstance(target, Mapping) and target.get("action") in _MUTATING for target in task.get("targets", []))
+        if task.get("status") == "recheck_required" and has_mutating and not refreshed:
+            raise WorkflowPreparationError(f"Task {task_id} must be rebound to current active evidence before renewed author approval.")
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
         targets = task.get("targets", [])
         if not isinstance(targets, list):
@@ -279,16 +451,31 @@ def prepare_workflow_execution(
                 for item in task.get("evidence", [])
                 if isinstance(item, Mapping) and item.get("evidence_id") is not None
             }
-            source_excerpt = " ".join(
-                str(evidence_by_id[evidence_id].get("source_excerpt") or "")
+            target_evidence_rows = [
+                evidence_by_id[evidence_id]
                 for evidence_id in target_evidence_ids
                 if evidence_id in evidence_by_id
-            )
-            source_excerpt = " ".join(unicodedata.normalize("NFKC", source_excerpt).split())
-            find_excerpt = " ".join(unicodedata.normalize("NFKC", str(operation.get("find") or "")).split())
-            if not find_excerpt or find_excerpt not in source_excerpt:
+            ]
+            if (
+                len(target_evidence_rows) != len(target_evidence_ids)
+                or any(
+                    _role(row.get("document")) != role
+                    or row.get("part") != part
+                    or row.get("p_idx") != p_idx
+                    or row.get("match_status") != "confirmed"
+                    for row in target_evidence_rows
+                )
+            ):
                 raise WorkflowPreparationError(
-                    f"PatchOperation {op_id} find text is not present in its exact target evidence excerpt."
+                    f"PatchOperation {op_id} target evidence must be confirmed at the exact role/part/paragraph."
+                )
+            find_excerpt = _normalised_excerpt(operation.get("find"))
+            if not find_excerpt or not any(
+                find_excerpt in _normalised_excerpt(row.get("source_excerpt"))
+                for row in target_evidence_rows
+            ):
+                raise WorkflowPreparationError(
+                    f"PatchOperation {op_id} find text must be present in one exact target evidence excerpt."
                 )
             if target_index in matched_targets:
                 raise WorkflowPreparationError(f"Task {task_id} maps multiple operations to the same Decision target.")
@@ -413,6 +600,16 @@ def prepare_workflow_execution(
         "execution_scope_source": str(scope_file),
         "execution_scope_sha256": sha256_file(scope_file),
         "prepared_task_ids": list(scope_ids),
+        "refreshed_task_ids": [
+            str(row["task_id"]) for row in rows
+            if isinstance(row, Mapping)
+            and "evidence" in row and "targets" in row
+            and by_id.get(row.get("task_id"), {}).get("status") == "recheck_required"
+        ],
+        "active_document_versions": {
+            role: {"file": row["file"], "sha256": row["sha256"], "batch_id": row.get("batch_id")}
+            for role, row in pointers.items()
+        },
         "reviewer_map": reviewer_map,
         "note": "This command does not authorize Workflow tasks or edit DOCX files. build-revision-ledger replaces planned output placeholders with immutable batch output paths.",
     }

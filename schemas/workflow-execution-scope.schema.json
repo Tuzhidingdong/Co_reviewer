@@ -229,8 +229,176 @@
                 }
               ]
             }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "description": "For a document-changing task in recheck_required, append fresh evidence from current active DOCX versions. Evidence IDs must be new. Executable target evidence must be confirmed and match the current inventory paragraph/part.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id",
+                "document",
+                "part",
+                "p_idx",
+                "source_excerpt",
+                "evidence_type",
+                "match_status"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI"
+                  ]
+                },
+                "part": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "para_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_comment_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ]
+                },
+                "source_excerpt": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_type": {
+                  "enum": [
+                    "reviewer_comment",
+                    "native_anchor",
+                    "paragraph",
+                    "caption",
+                    "reference",
+                    "table",
+                    "figure",
+                    "audit_finding"
+                  ]
+                },
+                "match_status": {
+                  "enum": [
+                    "confirmed",
+                    "candidate",
+                    "ambiguous",
+                    "unresolved",
+                    "not_applicable"
+                  ]
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "evidence_type": {
+                        "const": "reviewer_comment"
+                      }
+                    },
+                    "required": [
+                      "evidence_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "source_comment_id"
+                    ],
+                    "properties": {
+                      "part": {
+                        "const": "word/comments.xml"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "targets": {
+            "type": "array",
+            "description": "For a recheck_required document task, the complete refreshed target set from the current active inventory. Each target must reference fresh evidence in the same task scope.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "document",
+                "part",
+                "p_idx",
+                "action",
+                "evidence_ids"
+              ],
+              "properties": {
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI"
+                  ]
+                },
+                "part": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "para_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "action": {
+                  "enum": [
+                    "replace",
+                    "add",
+                    "remove",
+                    "renumber",
+                    "reference_update",
+                    "keep",
+                    "inspect_only",
+                    "reply_only"
+                  ]
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "target_refs": {
+            "type": "array",
+            "description": "Refresh persistent TargetRefs when a rechecked task's stable object identity changes.",
+            "items": {
+              "$ref": "document-identity.schema.json#/$defs/targetRef"
+            }
           }
-        }
+        },
+        "description": "For a task in recheck_required with document-mutating targets, include both refreshed evidence and refreshed targets; old paragraph coordinates and excerpts must not be reused."
       }
     },
     "reviewer_map": {

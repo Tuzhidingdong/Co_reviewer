@@ -151,6 +151,153 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
         self.assertEqual(self.reviewers.read_bytes(), b"synthetic reviewers source")
 
+    def test_recheck_task_refreshes_evidence_and_source_version_from_current_active_docx(self) -> None:
+        current_manuscript = self.root / "Manuscript.after-T1.docx"
+        current_manuscript.write_bytes(b"synthetic manuscript after T1")
+        current_sha = hashlib.sha256(current_manuscript.read_bytes()).hexdigest()
+        current_workflow = json.loads(json.dumps(self.workflow))
+        current_workflow["active_documents"] = {
+            "Reviewers": {
+                "file": str(self.reviewers),
+                "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+            "Manuscript": {
+                "file": str(current_manuscript),
+                "sha256": current_sha,
+                "batch_id": "batch-t1-published",
+            },
+        }
+        task = current_workflow["tasks"][0]
+        task["status"] = "recheck_required"
+        task["recheck_from"] = "ready"
+        task["invalidation_reason"] = "An upstream batch changed the active Manuscript."
+        self.workflow_path.write_text(
+            json.dumps(current_workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        refreshed_scope = {
+            "schema_version": "1.0",
+            "revision_round_id": "round-workflow-preparation",
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "tasks": [{
+                "task_id": "T1",
+                "patch_id": "P-T1-REFRESH",
+                "proposed_response": "We have updated the sample identifier in the current Manuscript version.",
+                "evidence": [{
+                    "evidence_id": "E-MAN-02",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "The selected sample is ZB-02.",
+                    "evidence_type": "paragraph",
+                    "match_status": "confirmed",
+                }],
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "action": "replace",
+                    "evidence_ids": ["E-MAN-02"],
+                }],
+                "patch_operations": [{
+                    "operation_id": "T1-OP-MAN-REFRESH",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "find": "ZB-02",
+                    "replace": "ZB-03",
+                    "location": "The selected sample is ZB-02.",
+                    "evidence_ids": ["E-MAN-02"],
+                    "source_comment_ids": ["1"],
+                }],
+                "response_unit_specs": [{
+                    "comment_id": "1",
+                    "disposition": "revised",
+                    "location_requirement": "required",
+                    "resolution_reason": "The current active version is revised at the refreshed target.",
+                }],
+            }],
+        }
+        refreshed_inventory = [
+            self.inventory[0],
+            {
+                "role": "Manuscript",
+                "file": str(current_manuscript),
+                "source_sha256": current_sha,
+                "paragraphs": [{
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "text": "The selected sample is ZB-02.",
+                }],
+            },
+        ]
+        prepared, _, report = prepare_workflow_execution(
+            current_workflow,
+            refreshed_scope,
+            refreshed_inventory,
+            workflow_path=self.workflow_path,
+            execution_scope_path=self.scope_path,
+        )
+        updated = prepared["tasks"][0]
+        self.assertEqual(updated["status"], "recheck_required")
+        self.assertIn({
+            "role": "Manuscript",
+            "file": str(current_manuscript),
+            "sha256": current_sha,
+        }, updated["source_versions"])
+        self.assertEqual(updated["targets"][0]["evidence_ids"], ["E-MAN-02"])
+        self.assertEqual(
+            [row["evidence_id"] for row in updated["evidence"]],
+            ["E-COMMENT-1", "E-MAN-1", "E-MAN-02"],
+        )
+        self.assertEqual(updated["patch_operations"][0]["input_file"], str(current_manuscript))
+        self.assertEqual(updated["patch_operations"][0]["source_sha256"], current_sha)
+        self.assertEqual(report["refreshed_task_ids"], ["T1"])
+        self.assertEqual(report["active_document_versions"]["Manuscript"]["batch_id"], "batch-t1-published")
+
+    def test_recheck_task_with_document_targets_requires_fresh_evidence(self) -> None:
+        current_workflow = json.loads(json.dumps(self.workflow))
+        current_workflow["active_documents"] = {
+            "Reviewers": {
+                "file": str(self.reviewers),
+                "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+            "Manuscript": {
+                "file": str(self.manuscript),
+                "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+        }
+        task = current_workflow["tasks"][0]
+        task["status"] = "recheck_required"
+        task["recheck_from"] = "ready"
+        task["invalidation_reason"] = "An upstream batch changed the active Manuscript."
+        self.workflow_path.write_text(
+            json.dumps(current_workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        stale_scope = {
+            "schema_version": "1.0",
+            "revision_round_id": "round-workflow-preparation",
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "tasks": [{
+                "task_id": "T1",
+                "patch_id": "P-T1-STALE",
+                "proposed_response": "A response from an outdated target.",
+                "patch_operations": [],
+            }],
+        }
+        with self.assertRaisesRegex(WorkflowPreparationError, "requires refreshed evidence/targets"):
+            prepare_workflow_execution(
+                current_workflow,
+                stale_scope,
+                self.inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
     def test_rejects_stale_workflow_hash(self) -> None:
         stale_scope = json.loads(json.dumps(self.scope))
         stale_scope["workflow_ledger_sha256"] = "0" * 64
@@ -166,7 +313,7 @@ class WorkflowPreparationTests(unittest.TestCase):
     def test_rejects_find_text_outside_target_evidence_excerpt(self) -> None:
         invalid_scope = json.loads(json.dumps(self.scope))
         invalid_scope["tasks"][0]["patch_operations"][0]["find"] = "NOT IN THE EVIDENCE"
-        with self.assertRaisesRegex(WorkflowPreparationError, "find text is not present"):
+        with self.assertRaisesRegex(WorkflowPreparationError, "find text must be present"):
             prepare_workflow_execution(
                 self.workflow,
                 invalid_scope,

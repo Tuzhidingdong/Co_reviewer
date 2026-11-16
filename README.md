@@ -126,6 +126,35 @@ python scripts/co_reviewer_cli.py publish-batch --workflow-ledger $preparedWorkf
 
 Replace the example IDs with the actual Patch IDs in that batch. Both task authorization and exact Patch approval are mandatory. Apply writes native Word Track Changes to separate Marked DOCX files. Verify checks exact revisions and whole-document untracked-text integrity. Publish only after all Patches are verified and Workflow task state is synchronized. A later batch must use the newly published active pointers, not the original input DOCX.
 
+### Refresh a dependent task after an upstream batch is published
+
+After `sync-workflow-ledger`/`publish-batch`, downstream or conflicting tasks may be marked `recheck_required`. Do not reuse their old paragraph coordinates or manually edit the prepared Workflow Ledger. Audit the **current active document versions** and prepare a fresh, author-approved scope:
+
+```powershell
+$iterationLabel = "<published-batch-id>"
+.\scripts\Refresh-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger $preparedWorkflow -BatchLabel $iterationLabel -PythonExe "D:\Software\Anacoda\python.exe"
+$iteration = Join-Path $roundRoot ("reports\after-batch-" + $iterationLabel)
+```
+
+The refresher verifies every active file against its Workflow Ledger SHA-256 before running Audit. It includes SI only when that role is configured and never changes the Workflow Ledger or source DOCX files.
+
+Create a new execution-scope file from `examples/workflow_execution_scope_refresh.example.json`. For each `recheck_required` document task, include both `evidence` and `targets` from the new inventory, assign fresh evidence IDs, and bind each operation's `find` text to its current target excerpt. If the task uses persistent TargetRefs, refresh `target_refs` as well. The current Workflow Ledger hash—not the initial round hash—must be used:
+
+```powershell
+$workflowSha = (Get-FileHash -LiteralPath $preparedWorkflow -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Then prepare to a **new** Ledger/map/report path, keeping the previous prepared Ledger and its history intact:
+
+```powershell
+$refreshedWorkflow = Join-Path $roundRoot "plan\workflow_ledger.prepared.after-<batch-id>.json"
+$refreshedReviewerMap = Join-Path $roundRoot "plan\reviewer_map.after-<batch-id>.json"
+$refreshScope = Join-Path $roundRoot "plan\workflow_execution_scope.after-<batch-id>.json"
+python scripts/co_reviewer_cli.py prepare-workflow-execution --workflow-ledger $preparedWorkflow --execution-scope $refreshScope --inventory (Join-Path $iteration "workspace_inventory.json") --out $refreshedWorkflow --reviewer-map-out $refreshedReviewerMap --report (Join-Path $iteration "workflow_preparation_report.json")
+```
+
+Review the refreshed evidence, targets, exact PatchOperations and proposed response. Then set `$preparedWorkflow = $refreshedWorkflow` and `$reviewerMap = $refreshedReviewerMap`, explicitly authorize the now-eligible task, and build the next batch with the **same** `$revisionLedger` and `$runs` paths. The preparation step preserves old evidence rows, appends current evidence, and updates the task source-version references; it does not authorize or edit a document.
+
 The batch lifecycle, recovery boundaries and final release requirements are documented in [docs/WORKFLOW.md](docs/WORKFLOW.md). Do not delete or reuse a failed batch. A scope-less, intent-only orphan is not a failed Apply and must only be resolved through the dedicated retirement command after a fully verified matching successor publication.
 
 ### 6. Finalize the round and create the Release Package

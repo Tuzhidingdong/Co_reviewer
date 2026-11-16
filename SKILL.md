@@ -159,6 +159,14 @@ python scripts/co_reviewer_cli.py publish-batch --workflow-ledger $preparedWorkf
 
 Publication atomically moves the Workflow Ledger's active-document pointers to the verified Marked DOCX outputs. Do not publish before every Patch in the batch is verified and the Workflow Ledger is synchronized. A later batch must be built from the newly published active pointers, never from the original source DOCX. Continue until all in-scope document-changing tasks are verified or explicitly blocked/deferred. Preserve the same Workflow Ledger, RevisionLedger and `runs/` root throughout the round.
 
+### Recheck dependent tasks against the current active documents
+
+After an upstream batch is verified and published, `sync-workflow-ledger` can mark dependent/conflicting tasks `recheck_required`. Before re-authorizing a document-changing task, run `scripts/Refresh-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger $preparedWorkflow -BatchLabel <published-batch-id> -PythonExe <python-path>`. It verifies each current active file against its Ledger SHA, audits the latest Manuscript/SI Marked DOCX with the unchanged Reviewers document, and writes all new inventory/audit outputs to `reports/after-batch-<id>/`.
+
+Build a new `workflow_execution_scope` from `examples/workflow_execution_scope_refresh.example.json`. Include both `evidence` and `targets` for each rechecked document-changing task. Evidence IDs must be new; each evidence row must match a paragraph/part in the newly generated inventory and have `match_status=confirmed`. Each refreshed target references that new evidence. Each PatchOperation must use the new target coordinates and an exact `find` excerpt from the current paragraph. Refresh `target_refs` when the task uses persistent identity references.
+
+Bind `workflow_ledger_sha256` to the current prepared Workflow Ledger after the upstream publication/synchronization. Run `prepare-workflow-execution` with the current prepared Ledger as input and a **new** output path for the next prepared Ledger/reviewer map/report. The command preserves the earlier evidence history, appends the fresh evidence, updates active `source_versions` and target groups, and leaves the task in `recheck_required` with approval still pending. Review the new scope, explicitly re-authorize the now-eligible task, then build the next batch with the same RevisionLedger and runs directory. Never hand-edit active pointers, source versions, status or approval fingerprints.
+
 ### Stage 6 — Prepare Clean views, final Word/PDF locations and Response Letter
 
 After the final Patch batch is verified and the Workflow Ledger is synchronized, create a separate accepted-changes projection for review:
