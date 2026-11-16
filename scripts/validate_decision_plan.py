@@ -427,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
             root_round_manifest = None
         if round_manifest is None and root_round_manifest is not None:
             round_manifest = root_round_manifest
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"[INVALID] Cannot read decision-plan inputs: {exc}", file=sys.stderr)
         return 2
     if round_manifest is not None:
