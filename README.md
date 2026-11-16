@@ -168,6 +168,26 @@ The runner writes `word_compatibility_verification_after_word.json` and prints t
 
 Use the same `-OutputDirectory` value on both invocations if you override the default output directory.
 
+## Microsoft Word COM and PDF location acceptance
+
+After the five-target Word compatibility fixture has been inspected in Word, saved, closed, reopened and passed `-VerifyAfterWord`, run the separate synthetic pagination/PDF acceptance. This path creates a test-only RevisionLedger from that fixture, creates its Working Clean View, asks Microsoft Word COM to produce the final Clean DOCX/PDF and page/line map, corroborates the Word-reported page against extracted PDF text, and renders a location-aware Response Letter draft with a quality report.
+
+Install the optional Word/PDF dependencies into the same Python environment if they are not already available:
+
+```powershell
+& "D:\Software\Anacoda\python.exe" -m pip install -e ".[word-pdf]"
+```
+
+Run from the repository root:
+
+```powershell
+.\scripts\run_word_pdf_mapping_acceptance.ps1 -FixtureDirectory "C:\Users\Administrator\AppData\Local\Temp\Co_Reviewer_Word_Acceptance_f2f2913" -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+The runner refuses to overwrite existing acceptance outputs. By default it writes a new `word_pdf_mapping_acceptance` folder inside the fixture directory. It verifies the Word COM page count against the exported PDF, the exact body phrase on the Word-reported PDF page, hash-bound final DOCX/PDF and DOCX quality reports, the RevisionLedger location record, and the rendered Response Letter Markdown/DOCX.
+
+The synthetic ResponseUnit remains `location_mapped`, not `completed`: the fixture does not provide author readiness for submission and does not create a journal-ready release package. It is only evidence that the Word COM/PDF mapping and Response Letter rendering path works on an isolated synthetic document. Real Manuscript/SI batches, semantic review, manual table/non-body locators and final release acceptance remain separate.
+
 ## Tests
 
 Run the complete local checks on Windows from PowerShell:
