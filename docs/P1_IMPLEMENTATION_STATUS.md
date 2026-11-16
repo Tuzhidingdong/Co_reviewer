@@ -71,18 +71,17 @@ Implemented:
 - `schemas/final-release-manifest.schema.json` defines the hash-bound release package structure and requires a passing deterministic consistency-audit section.
 - `create-release-package` creates a new `runs/release-{id}/` directory containing Markdown and DOCX Response Letters, its DOCX quality report, and `final_release_manifest.json`. The manifest is written only after the release gate passes. Failed release directories are retained and not reused.
 
-Primary finalization commands, after all batches are published:
+Primary finalization commands, after all document-changing batches are published:
 
 ```powershell
 python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
 python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-P1-C1 --semantic-review-confirmed
 python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
-python scripts/co_reviewer_cli.py record-response-locations --ledger revision_ledger.json --location-map word_pdf_final/response_location_map.json
 python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-P1-C1 --ready-for-submission-confirmed
 python scripts/co_reviewer_cli.py create-release-package --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json
 ```
 
-Use the manual-location command for table/non-body cases explicitly marked `manual_required`; do not infer page/line values.
+The map-response-locations command writes its generated map and location evidence back to the RevisionLedger. Do not call record-response-locations again for that same output. The standalone command is only for attaching a separately generated, still-unrecorded map that matches the exact current Ledger. Use record-manual-response-locations for author-confirmed table/non-body cases explicitly marked manual_required; never infer page/line values.
 
 ## Synthetic test coverage added
 
@@ -94,43 +93,27 @@ Use the manual-location command for table/non-body cases explicitly marked `manu
 
 ## Validation status and remaining boundary
 
-**Baseline automated validation passed at code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`.** New synthetic Word COM/PDF acceptance support has since been added at the current P1 HEAD and is awaiting its own regression run.
+**Current acceptance baseline:** code HEAD `b144f4b282f76efcced165815d713747138bc831`.
 
-- The two recovery/release targeted tests passed on the exact HEAD above.
-- The Windows local quality-check run completed with exit code 0: compileall passed; **258 unit tests passed** (0 failures, 0 errors, 0 skips); required package checks and core CLI smoke checks passed; the script reported `All automated Co_Reviewer checks passed.`
-- The local tester report records the persistent log path. The report did not identify the PowerShell edition/version, so this result must not be described as proof of Windows PowerShell 5.1 specifically.
-- GitHub Actions Run #1148 for `e7f818f` is marked failed. Its four matrix jobs report failure but expose zero steps; therefore this run provides no executed Python/PowerShell test result. It does not override the successful local run, and it must not be described as a code-test failure without an executed step/log.
-- The synthetic suite includes the second-batch immutable directory, staged plan, preflight/approval/apply, Track Changes verification, Workflow synchronization and publication path. These tests passed as part of the 258-test run. The first-batch publication and second-batch sequence are covered across the integration and dedicated batch tests rather than one single all-real-Word end-to-end process.
-- The user ran the five-target fixture through Microsoft Word save/close/reopen and the post-Word verifier passed **5/5 targets, 0 failures, 0 untracked-text violations**. A separate explicit visual checklist result was not included in the report. **Still not accepted:** Word COM pagination/PDF export, PDF-backed page/line-map corroboration, visual inspection of the final Word/PDF pair, and an end-to-end run using actual user-supplied review files.
-- The synthetic Word compatibility runner is separate from the quality suite. It prepares a DOCX with five edit targets (body, formula formatting, table cell, header and footer), which must be inspected and round-tripped through the user's installed Microsoft Word. It does not by itself prove Word COM page/line mapping.
+- Dedicated Word/PDF acceptance regression: **3/3 tests passed**.
+- Windows quality-check run: **261/261 tests passed**, zero failures/errors/skips; compileall, package checks and core CLI smoke checks passed (exit code 0).
+- The PowerShell parser check for run_word_pdf_mapping_acceptance.ps1 passed.
+- The five-target Microsoft Word save/close/reopen round-trip passed post-Word verification: **5/5 targets, 0 failures, 0 untracked-text violations**.
+- The real Microsoft Word COM/PDF synthetic runner completed on the exact code HEAD above: runner exit code 0 and `[WORD/PDF ACCEPTANCE] PASS`. Word and PDF page counts matched (1/1); the Word-reported PDF page contained the target phrase; final Clean DOCX/PDF and Response Letter quality reports were PASS with zero quality warnings.
+- The fitz API deprecation warning was non-blocking and did not appear as a quality-report warning.
+- The location map's revision_ledger_sha256 is expected to differ from the final on-disk RevisionLedger hash: the map binds the pre-recording Ledger snapshot, then the same command records the map file's own SHA-256 and location evidence into the Ledger, changing the Ledger bytes. This is the intended two-stage evidence chain, not by itself a hash failure.
+- The one-document synthetic mapping fixture does not exercise a complete multi-batch review round, cross-document final release, manual table/non-body locator input or all Release Manifest gates together.
+- **Still not accepted:** a complete end-to-end review round covering incremental batches through publication, final Word/PDF mapping and Release Package; visual inspection of the generated final Clean DOCX/PDF; and a real user-supplied Manuscript/Reviewers/SI round.
 
-## Immediate local Word acceptance path
+## Completed synthetic Word acceptance
 
-From the repository root in PowerShell, prepare the isolated fixture using the same Python interpreter that passed the quality checks:
+The five-target compatibility fixture has passed the Microsoft Word save/close/reopen round-trip and its post-Word verifier (5/5 targets, zero failures, zero untracked-text violations). The separate Word COM/PDF synthetic runner has also passed on code HEAD b144f4b282f76efcced165815d713747138bc831. Its outputs are recorded in the tester report; there is no need to repeat either synthetic acceptance run unless the relevant code changes.
 
-```powershell
-.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe"
-```
+This is still a synthetic one-ResponseUnit mapping run. It does not constitute full multi-batch workflow acceptance, visual acceptance of the final Clean DOCX/PDF, or acceptance of a real review round.
 
-Open `artifacts\\word-compatibility-check\\word_compatibility_revised.docx` in Microsoft Word. Set Review > Tracking > All Markup. Inspect both body edits, the formula, table cell, header and footer. Confirm each edit is a native deletion/insertion and the formula uses true subscript/superscript formatting. Save the same file, close Word, then reopen it without accepting or rejecting revisions.
+## Next acceptance boundary
 
-After that save/reopen, run:
-
-```powershell
-.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe" -OutputDirectory "C:\\Users\\Administrator\\AppData\\Local\\Temp\\Co_Reviewer_Word_Acceptance_f2f2913" -VerifyAfterWord
-```
-
-The user has executed this post-Word step successfully: **5/5 targets verified, 0 failures, 0 untracked-text violations**.
-
-Then install the optional Word/PDF dependencies if needed and run the new synthetic COM/PDF mapping acceptance:
-
-```powershell
-& "D:\\Software\\Anacoda\\python.exe" -m pip install -e ".[word-pdf]"
-.\\scripts\\run_word_pdf_mapping_acceptance.ps1 -FixtureDirectory "C:\\Users\\Administrator\\AppData\\Local\\Temp\\Co_Reviewer_Word_Acceptance_f2f2913" -PythonExe "D:\\Software\\Anacoda\\python.exe"
-```
-
-This runner constructs a test-only RevisionLedger from the five-target fixture, creates its Working Clean View, runs the real Microsoft Word COM exporter and PDF corroboration, renders the mapped Response Letter Markdown/DOCX, and checks the hash-bound location and quality reports. It does not mark the synthetic ResponseUnit completed or create a journal-ready release. This mapping runner is newly added and still requires independent script/unit regression plus execution on a machine with Word COM and PyMuPDF.
-PR #3 remains Draft until the Word/COM and final user acceptance gates have valid evidence.
+Run one complete synthetic review round through the actual CLI/PowerShell entry points, including Reviewer comment inventory, Decision Plan approval, immutable batch creation, preflight/approval, native Track Changes Apply, verification, Workflow synchronization, batch publication, final Working Clean, Word COM/PDF mapping, ResponseUnit completion and final Release Package/Manifest. Keep all generated test files isolated under a new Temp directory. After that, the user must visually inspect the final Word/PDF output and the workflow must be exercised with user-approved real review files.
 
 ## Mainline audit and deviation report
 
