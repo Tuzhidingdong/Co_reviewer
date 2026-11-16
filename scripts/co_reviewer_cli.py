@@ -1908,6 +1908,7 @@ def cmd_recover_workflow_sync(args):
     return 0
 
 def cmd_sync_workflow_ledger(args):
+    from co_reviewer.batch_store import _json_payload_sha256
     from co_reviewer.workflow_engine import (
         invalidate_affected_tasks,
         transition_task,
@@ -2517,7 +2518,6 @@ def cmd_prepare_workflow_execution(args):
             "workflow_preparation_report": str(report_path),
             "workflow_preparation_report_sha256": report_sha,
         })
-        from co_reviewer.batch_store import write_json_atomic
         write_json_atomic(root_manifest_path, round_manifest)
         print(f"[ROUND MANIFEST] Current Workflow Ledger registered: {root_manifest_path}")
     print(f"[PREPARED] {len(report['prepared_task_ids'])} task(s): {', '.join(report['prepared_task_ids'])}")

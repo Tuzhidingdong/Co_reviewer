@@ -214,3 +214,16 @@ The regression coverage is authored but **not run**. It remains part of the sing
 ## Final source-audit hardening after the P1 development freeze
 
 A final read-only review of the batch reservation path found that `assert_no_uncommitted_role_batches` ignored a non-empty `batch-*` directory when its immutable `batch_intent.json` was missing and no known transaction receipt existed. The round reconciler already blocked this state, but callers using the lower-level batch builder could bypass that protection. The role-lock validator now rejects every such orphaned payload. It permits only the exact empty `documents/` shell that `create_batch_intent` may leave if interrupted between directory creation and writing the intent. A regression case covers both states. This source change is untested and remains part of the single unified acceptance cycle.
+
+
+## Unified GitHub Actions findings and focused corrections
+
+The first real unified CI run after the runner-account issue was resolved used commit `c2e987e2ae6434e0d0cf0e3035bb6c0f2724941d` (Run [43846338542](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/43846338542)). Runner allocation, dependency installation, Python compilation on both versions and the Windows PowerShell parser stage succeeded. The run then exposed the following genuine issues:
+
+- Workflow/RevisionLedger synchronization called `_json_payload_sha256` without importing the existing canonical helper from `batch_store`; this broke both the full-workflow integration path and the incremental-batch synchronization path.
+- Workflow execution preparation attempted to import `write_json_atomic` from `batch_store`, although the function is defined in `co_reviewer_cli.py` itself.
+- PDF page-text verification tests import PyMuPDF, but the `test` extra did not install that test dependency.
+- Two regression tests had expectations inconsistent with eager model validation / the current fail-closed active-pointer error: the no-change/Patch role conflict is rejected during `RevisionLedger` construction, and a changed active file is rejected by the active-pointer hash guard before the helper emits its former message.
+- The Windows quality-check step passed a PowerShell command result object to a string parameter. It now resolves the exact active interpreter using `python -c "import sys; print(sys.executable)"` and passes an explicit string path.
+
+The focused corrections import the canonical sync hash helper, use the existing local atomic JSON writer, install PyMuPDF through the test extra, align the two regression expectations with the actual guards, and make the Windows PowerShell 5.1 workflow invocation explicit. These corrections are not yet accepted: the follow-up unified run must confirm them. No production workflow or approval gates have been relaxed.

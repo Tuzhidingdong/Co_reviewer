@@ -209,13 +209,12 @@ class RevisionModelsTests(unittest.TestCase):
                 source_sha256=source_sha,
             )],
         )
-        ledger_with_patch = RevisionLedger(
-            "round-nochange-patch-conflict",
-            patches=[patch],
-            documents=[document],
-        )
         with self.assertRaisesRegex(RevisionModelError, "role also has PatchOperations"):
-            ledger_with_patch.validate_or_raise()
+            RevisionLedger(
+                "round-nochange-patch-conflict",
+                patches=[patch],
+                documents=[document],
+            )
 
         ledger = RevisionLedger("round-nochange-hash", documents=[document])
         active_docx.write_bytes(b"changed active source DOCX")

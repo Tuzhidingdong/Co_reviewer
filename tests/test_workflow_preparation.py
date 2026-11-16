@@ -406,7 +406,7 @@ class WorkflowPreparationTests(unittest.TestCase):
             cli._validate_active_workflow_audit_sources(wrong_args, self.workflow_path)
 
         self.manuscript.write_bytes(b"changed after publication")
-        with self.assertRaisesRegex(ValueError, "hash for Manuscript does not match"):
+        with self.assertRaisesRegex(ValueError, "Active document for Manuscript changed outside the Workflow Ledger pointer"):
             cli._validate_active_workflow_audit_sources(args, self.workflow_path)
 
     def _prepare_rechecked_no_change_task(self, anchor_evidence_id: str):

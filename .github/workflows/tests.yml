@@ -70,5 +70,9 @@ jobs:
       - name: Run PowerShell 5.1 quality-check script
         shell: powershell
         run: |
-          $python = (Get-Command python -CommandType Application).Source
-          ./scripts/run_quality_checks.ps1 -PythonExe $python
+          $python = (& python -c "import sys; print(sys.executable)" | Select-Object -First 1)
+          $python = ([string]$python).Trim()
+          if ([string]::IsNullOrWhiteSpace($python) -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+            throw "Could not resolve the active setup-python interpreter path."
+          }
+          ./scripts/run_quality_checks.ps1 -PythonExe ([string]$python)
