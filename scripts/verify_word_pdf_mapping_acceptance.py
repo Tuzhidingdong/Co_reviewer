@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -72,8 +71,10 @@ def verify_word_pdf_mapping_acceptance(
     ):
         raise ValueError("Final Clean DOCX/PDF quality report is missing, stale or failing.")
 
+    pdf_page_count = 0
     with fitz.open(str(output_pdf)) as pdf:
-        if pdf.page_count != word_page_count:
+        pdf_page_count = pdf.page_count
+        if pdf_page_count != word_page_count:
             raise ValueError(
                 f"PDF page count {pdf.page_count} differs from Word COM page count {word_page_count}."
             )
@@ -98,7 +99,7 @@ def verify_word_pdf_mapping_acceptance(
                 and mapped_location[field] >= 1
                 for field in ("page", "line_start", "line_end")
             )
-            or mapped_location.get("page") > pdf.page_count
+            or mapped_location.get("page") > pdf_page_count
         ):
             raise ValueError("Word COM returned an invalid or out-of-range page/line locator.")
         page_text = _normalise_pdf_text(pdf.load_page(mapped_location["page"] - 1).get_text("text"))
@@ -149,7 +150,7 @@ def verify_word_pdf_mapping_acceptance(
         "final_clean_docx": str(output_docx),
         "final_pdf": str(output_pdf),
         "word_page_count": word_page_count,
-        "pdf_page_count": pdf.page_count,
+        "pdf_page_count": pdf_page_count,
         "mapped_response_unit": expected_unit_id,
         "page": mapped_location["page"],
         "line_start": mapped_location["line_start"],
