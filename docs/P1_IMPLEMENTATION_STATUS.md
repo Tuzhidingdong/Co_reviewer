@@ -94,14 +94,14 @@ Use the manual-location command for table/non-body cases explicitly marked `manu
 
 ## Validation status and remaining boundary
 
-**Automated validation is now complete for code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`.**
+**Baseline automated validation passed at code HEAD `e7f818f7915d097e09ce0a74975fe2344d68e7fa`.** New synthetic Word COM/PDF acceptance support has since been added at the current P1 HEAD and is awaiting its own regression run.
 
 - The two recovery/release targeted tests passed on the exact HEAD above.
 - The Windows local quality-check run completed with exit code 0: compileall passed; **258 unit tests passed** (0 failures, 0 errors, 0 skips); required package checks and core CLI smoke checks passed; the script reported `All automated Co_Reviewer checks passed.`
 - The local tester report records the persistent log path. The report did not identify the PowerShell edition/version, so this result must not be described as proof of Windows PowerShell 5.1 specifically.
 - GitHub Actions Run #1148 for `e7f818f` is marked failed. Its four matrix jobs report failure but expose zero steps; therefore this run provides no executed Python/PowerShell test result. It does not override the successful local run, and it must not be described as a code-test failure without an executed step/log.
 - The synthetic suite includes the second-batch immutable directory, staged plan, preflight/approval/apply, Track Changes verification, Workflow synchronization and publication path. These tests passed as part of the 258-test run. The first-batch publication and second-batch sequence are covered across the integration and dedicated batch tests rather than one single all-real-Word end-to-end process.
-- **Not yet accepted:** Microsoft Word GUI display/save/reopen of native Track Changes; Word COM pagination and PDF export; PDF-backed page/line-map corroboration; visual inspection of the final Word/PDF pair; an end-to-end run using actual user-supplied review files. These are separate acceptance gates, not covered by the 258 unit tests.
+- The user ran the five-target fixture through Microsoft Word save/close/reopen and the post-Word verifier passed **5/5 targets, 0 failures, 0 untracked-text violations**. A separate explicit visual checklist result was not included in the report. **Still not accepted:** Word COM pagination/PDF export, PDF-backed page/line-map corroboration, visual inspection of the final Word/PDF pair, and an end-to-end run using actual user-supplied review files.
 - The synthetic Word compatibility runner is separate from the quality suite. It prepares a DOCX with five edit targets (body, formula formatting, table cell, header and footer), which must be inspected and round-tripped through the user's installed Microsoft Word. It does not by itself prove Word COM page/line mapping.
 
 ## Immediate local Word acceptance path
@@ -135,7 +135,7 @@ PR #3 remains Draft until the Word/COM and final user acceptance gates have vali
 ## Mainline audit and deviation report
 
 - See [docs/P1_MAINLINE_DEVIATION_REPORT.md](P1_MAINLINE_DEVIATION_REPORT.md) for the cross-scope audit against the original P1 PR contract, including the Word/PDF mapper adaptation, current test boundaries, Actions runner blocker and remaining acceptance conditions.
-- The second-incremental-batch integration test now seeds the previously published first-batch document pointer, builds a new immutable batch directory for the dependent task, and exercises plan export, preflight, approval, Track Changes Apply, verification, Workflow synchronization and publish-batch. This test is present but has not executed because Actions still fails before runner allocation.
+- The second-incremental-batch integration test seeds a previously published first-batch document pointer, creates a new immutable batch for the dependent task, and exercises plan export, preflight, approval, Track Changes Apply, verification, Workflow synchronization and publication. This test passed as part of the 258-test local suite at `e7f818f`; that integration coverage does not exercise Microsoft Word COM.
 - The P0 Word/PDF mapper's independent PDF page-text corroboration has been restored. It only checks that the Word-reported PDF page contains the target phrase; Word COM remains the sole source of page/line coordinates. Reused role mappings now undergo the same page-level corroboration before reuse.
 
 
