@@ -111,7 +111,41 @@ python scripts/co_reviewer_cli.py export-revision-plan --ledger $revisionLedger 
 
 The exported plan is only an adapter for the existing Word-native Track Changes writer; the Workflow Ledger and RevisionLedger remain the round's sources of truth. Later batches reuse the same two Ledger paths and the same `runs/` root, while each receives a new immutable batch directory and new plan snapshots.
 
-### Stage 3 — Preflight and approve the exact immutable Patch batch
+### Recommended Windows execution path
+
+For an ordinary review round, use the round orchestrators below rather than manually chaining every CLI stage. The underlying CLI commands documented later remain the advanced/manual recovery path.
+
+**Publish one document-changing batch** after the user has approved the Decision Plan and exact execution scope:
+
+```powershell
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "plan\workflow_ledger.json" -ExecutionScope "plan\workflow_execution_scope.json" -Inventory "reports\workspace_inventory.json" -TaskIds T1 -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+The script creates a new prepared Workflow Ledger, Reviewer Map and preparation report; authorizes the selected task; builds one immutable batch; exports/preflights the plan; requests exact Patch approval; applies Word-native Track Changes; verifies the output and untracked-text audit; asks for semantic review; synchronizes the Workflow Ledger; and requests explicit publication approval. It reports the actual generated paths and never retries or overwrites a failed batch.
+
+For another batch, pass the latest prepared Workflow Ledger and Reviewer Map reported by the previous invocation, while keeping the same RevisionLedger and `runs/` root:
+The batch runner records the current prepared Ledger/map, RevisionLedger, runs directory and immutable publication history in `round_manifest.json`. The refresh and finalization entry points also record refresh inventories, final Word/PDF outputs and Release Package paths. All round inputs and outputs must remain inside the round workspace.
+
+
+```powershell
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "<current prepared Workflow Ledger>" -ReviewerMap "<current Reviewer Map>" -TaskIds T2 -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+If a dependency is marked `recheck_required`, first run `Refresh-CoReviewerRound.ps1` against the latest published active document pointers. Author a new execution scope using that refresh inventory and the current prepared Workflow Ledger SHA-256, then call `Invoke-CoReviewerBatch.ps1` with the new `-ExecutionScope` and `-Inventory`. The script prepares new output Ledger/map/report files. Do not reuse old paragraph coordinates or approvals. Document-changing and resolution-only tasks are separate invocations.
+
+Resolution-only tasks are supported: the batch entry point records their ResponseUnits in the shared RevisionLedger without manufacturing an immutable document batch. Explicit `no_change` anchors bind to their current active Manuscript/SI document; `reply_only` units do not require fake document edits or final locations.
+
+**Finalize once all document-changing batches have been published:**
+
+```powershell
+.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+The finalizer reuses only a complete hash-current Working Clean set; otherwise it creates the projections once. It displays final Marked/Clean paths and hashes, asks for complete semantic review, performs Word COM pagination/PDF export and location mapping, records manual table/non-body locators when required, completes ResponseUnits, synchronizes Workflow task states and creates a new Release Package.
+
+For manual table/non-body locations, the script pauses and reports the exact ResponseUnit/locator IDs. Provide an author-confirmed JSON conforming to `schemas/manual-response-locations.schema.json`; `examples/manual_response_locations.example.json` is structural only, and its sample page numbers must not be reused. Resume with the same `-WordPdfOutputDirectory` and `-ManualLocationsJson`. The generated package is not submitted to a journal. Final Word GUI/PDF visual inspection remains a separate author acceptance step.
+
+### Stage 3 — Low-level CLI alternative: preflight and approve the exact immutable Patch batch
 
 Use the `$batchDir` captured in Stage 2.6. Each stage creates a new immutable plan snapshot in that directory:
 
@@ -127,7 +161,7 @@ python scripts/co_reviewer_cli.py approve-plan --plan (Join-Path $batchDir "revi
 
 Replace `P-T1` with the IDs printed in the batch plan. Both task-scope authorization and exact Patch approval are required. Neither command edits a DOCX. If the source file or operands change, rebuild and re-authorize the affected task scope; do not reuse stale approval.
 
-### Stage 4 — Apply approved changes using native Word Track Changes
+### Stage 4 — Low-level CLI alternative: apply approved changes using native Word Track Changes
 
 Apply only the approved snapshot:
 
@@ -139,7 +173,7 @@ The CLI writes a separate Marked DOCX for each affected document role under the 
 
 Never use python-docx, raw XML text replacement, another writer, or Word with Track Changes disabled to edit a Marked deliverable. Unsupported targets must be refused and reported.
 
-### Stage 5 — Verify, synchronize the DAG and publish the batch
+### Stage 5 — Low-level CLI alternative: verify, synchronize the DAG and publish the batch
 
 Verify the actual applied snapshot:
 

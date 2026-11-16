@@ -14,6 +14,16 @@ P1's local synthetic validation passed at code HEAD `b144f4b282f76efcced165815d7
 
 The clearest scope deviation is the size of the P1 adaptation to word_pdf_mapper.py. The module was extended from Patch-level mapping to ResponseUnit/locator-level mapping and document-role reuse. The underlying Word COM pagination path remains, but the module is not byte-for-byte unchanged from P0. An audit also found that the P0 PDF page-text corroboration had been removed and that the changed exporter call omitted its new PDF-path parameter. Both issues were corrected in commit 4a5a364; a subsequent audit added the same PDF corroboration to reused mappings.
 
+## Subsequent development increment — P1-6 round orchestration
+
+After the historical `b144f4b` validation baseline, the P1 branch received further development at the current code line. This increment is **not validated yet**; the prior 261-test and single-document Word COM/PDF results do not cover it.
+
+The new `Invoke-CoReviewerBatch.ps1` and `Complete-CoReviewerRound.ps1` entry points connect the normal Windows lifecycle across preparation, author authorization, immutable batch creation, preflight, approval, Track Changes Apply, verification, semantic review, Workflow synchronization, publication, Working Clean, Word COM/PDF mapping, manual locator handling, ResponseUnit completion and Release Package creation. The batch runner records the current Workflow Ledger, Reviewer Map, RevisionLedger, `runs/` root and publication receipts into `round_manifest.json`; the refresh and finalization entry points also record refresh and release state so a restarted session can find the latest artifacts.
+
+The same increment adds strict round-workspace path containment, a manual response-location input schema/example, and a narrowly scoped unchanged-source RevisionDocument form for no-change anchors. The unchanged-source form requires a matching source SHA-256 and cannot be used by a role containing PatchOperations. Resolution-only `reply_only`/`no_change` tasks are separated from document-changing batches; pure reply-only rounds do not receive fictitious document edits or final page/line locations. The finalizer synchronizes the Workflow Ledger after ResponseUnit completion so response-only task states reach the Release Manifest gate.
+
+Development is still in progress. No parser check, unit test, quality-check run, synthetic multi-batch workflow, or Word COM/PDF run has been performed against this increment. The next validation activity remains a single coordinated acceptance phase after the complete code path is frozen; do not treat the existence of these entry points as proof they work end to end.
+
 ## Audit against the PR's declared P1 scope
 
 | PR requirement | Finding | Status |
@@ -59,10 +69,11 @@ GitHub Actions Run #1148 for `e7f818f` remains marked failed, but all four matri
 
 The local report did not identify the PowerShell edition/version. Therefore the result proves that the Windows PowerShell quality-check script ran successfully, but it does not independently establish that the host was Windows PowerShell 5.1.
 
-The remaining acceptance gates are:
-1. Complete one continuous synthetic end-to-end review round through the actual CLI/PowerShell entry points: Reviewer comment inventory, Decision Plan approval, one or more immutable Patch batches, preflight/approval/Apply/verification, Workflow synchronization and publication, final Working Clean, Word COM/PDF mapping, ResponseUnit completion and Release Package/Manifest.
-2. Visually inspect the final Clean DOCX/PDF in Microsoft Word and confirm final page/line presentation; automated COM/PDF corroboration does not establish visual or scientific correctness.
-3. Run the complete workflow on user-approved real Reviewers, Manuscript and SI files. Keep PR #3 Draft/Open/Unmerged until these acceptance gates pass.
+The remaining acceptance gates, to be executed together after the development freeze, are:
+1. Complete one continuous synthetic end-to-end review round through the new PowerShell orchestration: Reviewer comment inventory, Decision Plan and execution-scope preparation, at least two sequential immutable batches based on successive published active pointers, a dependent-task refresh/re-prepare cycle, resolution-only reply_only/no_change cases, final Working Clean, Word COM/PDF mapping, automatic and manual location evidence, ResponseUnit completion, Workflow synchronization and Release Package/Manifest.
+2. Run the complete project quality/test suite once after the continuous workflow path is complete; do not interleave partial test rounds with the remaining implementation.
+3. Visually inspect the final Clean DOCX/PDF in Microsoft Word and confirm final page/line presentation; automated COM/PDF corroboration does not establish visual or scientific correctness.
+4. Run the complete workflow on user-approved real Reviewers, Manuscript and SI files. Keep PR #3 Draft/Open/Unmerged until these acceptance gates pass.
 
 ## Closure checklist
 

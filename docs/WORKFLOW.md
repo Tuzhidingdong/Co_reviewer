@@ -189,6 +189,47 @@ python scripts/co_reviewer_cli.py rollback-batch --workflow-ledger $preparedWork
 
 Rollback restores parent pointers and marks affected tasks/dependents `recheck_required`; the new scope must be refreshed and reapproved. After all document-changing batches for the round are published, perform final Working Clean and Word/PDF mapping once for the whole round. Later batches can change pagination, so do not map final page/line locations between batches.
 
+## Recommended Windows orchestration
+
+The individual CLI commands above define the lifecycle and remain available for advanced recovery. For normal Windows operation, use the two PowerShell entry points so the prepared Ledger/map paths, immutable batch IDs and stage transitions are carried forward explicitly.
+
+### Run one document-changing batch
+
+```powershell
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "plan\workflow_ledger.json" -ExecutionScope "plan\workflow_execution_scope.json" -Inventory "reports\workspace_inventory.json" -TaskIds T1 -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+This entry point runs preparation (when `-ExecutionScope` and `-Inventory` are supplied), explicit task authorization, RevisionLedger construction, immutable batch export, preflight, exact Patch approval, Apply, Verify, untracked-text audit, author semantic confirmation, Workflow synchronization and batch publication. The author must enter exact confirmation phrases at the authorization, approval, semantic-review and publication gates. A failed batch is preserved; the runner never retries it in place.
+The batch runner also updates `round_manifest.json` with the current prepared Ledger/Reviewer Map, RevisionLedger, runs directory and immutable publication history. The refresher records each active-version inventory and its manifest; the finalizer records final Word/PDF and Release Package paths. Round inputs and outputs are confined to the round workspace.
+
+After publication, retain the actual `[WORKFLOW LEDGER]`, `[REVIEWER MAP]`, `[REVISION LEDGER]`, `[BATCH DIRECTORY]` and `[PUBLICATION RECEIPT]` paths printed by the script. For the next ready task, pass the latest prepared Workflow Ledger and Reviewer Map and reuse the same RevisionLedger and `runs/` root:
+
+```powershell
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -ReviewerMap "<latest Reviewer Map>" -TaskIds T2 -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+When publication marks downstream work `recheck_required`, refresh before creating the next scope:
+
+```powershell
+.\scripts\Refresh-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -BatchLabel "<published batch id>" -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+Use the new inventory under `reports/after-batch-<id>/`, calculate the SHA-256 of the current prepared Workflow Ledger, and author a new execution scope against that current version. Invoke the batch runner with the new `-ExecutionScope` and `-Inventory`; it creates a new prepared Ledger, Reviewer Map and report. Old coordinates and previous approvals are not reusable.
+
+Do not mix document-changing tasks and resolution-only tasks in one invocation. The runner can build ResponseUnits for explicit `reply_only`/`no_change` tasks without creating a fictitious immutable document batch. `no_change` requires a confirmed current active Manuscript/SI anchor; `reply_only` uses `location_requirement=not_required` and never receives a fabricated page/line.
+
+### Complete the round once, after all document-changing batches are published
+
+```powershell
+.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "D:\Software\Anacoda\python.exe"
+```
+
+The finalizer creates/reuses only a complete hash-current Working Clean set, shows final Marked/Clean locations and hashes for author review, requests semantic confirmation, performs final Word COM/PDF pagination/mapping, records manual locators when required, completes ResponseUnits, synchronizes Workflow task states and invokes Release Package creation.
+
+If a table/non-body locator is required, the script pauses with the exact ResponseUnit and locator IDs. Prepare a manual locator input conforming to `schemas/manual-response-locations.schema.json`, using `examples/manual_response_locations.example.json` only as a structure. Replace every illustrative value with the true final Word/PDF locator; do not reuse its sample page numbers. Resume using the **same** `-WordPdfOutputDirectory` and pass `-ManualLocationsJson`.
+
+The finalizer is resumable only where the existing Working Clean and Word/PDF outputs are complete and hash-current. Partial/stale artifacts are preserved and are never overwritten. Choose a new release output directory after a previous failed release attempt. A generated Release Package is not journal submission and does not replace the author's final Word GUI/PDF visual acceptance.
+
 ## Clean views, final Word/PDF locations and Response Letter
 
 After **all** document-changing batches have been published, use the round's canonical paths:

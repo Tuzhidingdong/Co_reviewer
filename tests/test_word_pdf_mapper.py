@@ -453,6 +453,28 @@ class WordPdfMapperContractTests(unittest.TestCase):
         )
         self.assertTrue(output_path.is_file())
 
+        # Manual input must not attach arbitrary or already-automatically-mapped
+        # ResponseUnits merely because their IDs exist in the same RevisionLedger.
+        extra_input = self.root / "manual_locations_with_extra.json"
+        extra_output = self.root / "manual_location_map_with_extra.json"
+        cli.write_json_atomic(extra_input, {
+            "response_units": [
+                {
+                    "response_unit_id": "RU-AUTO-C3",
+                    "operation_id": "OP-1",
+                    "locator_text": "This unit is already handled by Word COM.",
+                }
+            ]
+        })
+        with self.assertRaisesRegex(ValueError, "not awaiting manual_required location evidence"):
+            cli.cmd_record_manual_response_locations(SimpleNamespace(
+                ledger=str(ledger_path),
+                word_map=str(word_map_path),
+                input=str(extra_input),
+                out=str(extra_output),
+                actor="Synthetic Author",
+            ))
+
     def test_unconfirmed_response_unit_is_excluded_not_guessed(self):
         jobs = build_mapping_jobs(self._ledger(unit_status="draft"))
         self.assertEqual(jobs, {})

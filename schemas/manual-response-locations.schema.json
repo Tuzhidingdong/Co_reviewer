@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/manual-response-locations.schema.json",
+  "title": "Co_Reviewer Manual Response Locations",
+  "description": "Author-entered final locators for verified ResponseUnits whose targets cannot be mapped reliably from Word body text.",
+  "type": "object",
+  "required": ["response_units"],
+  "properties": {
+    "response_units": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["response_unit_id", "locator_text"],
+        "properties": {
+          "response_unit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locator_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locator_text": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_end": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "oneOf": [
+          {"required": ["locator_id"]},
+          {"required": ["operation_id"]}
+        ],
+        "allOf": [
+          {
+            "if": {
+              "anyOf": [
+                {"required": ["line_start"]},
+                {"required": ["line_end"]}
+              ]
+            },
+            "then": {
+              "required": ["page", "line_start", "line_end"]
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

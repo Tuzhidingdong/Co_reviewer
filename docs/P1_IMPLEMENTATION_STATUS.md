@@ -83,6 +83,20 @@ python scripts/co_reviewer_cli.py create-release-package --workflow-ledger workf
 
 The map-response-locations command writes its generated map and location evidence back to the RevisionLedger. Do not call record-response-locations again for that same output. The standalone command is only for attaching a separately generated, still-unrecorded map that matches the exact current Ledger. Use record-manual-response-locations for author-confirmed table/non-body cases explicitly marked manual_required; never infer page/line values.
 
+## P1-6 — User-facing round orchestration and resolution-only continuity
+
+Added two Windows PowerShell entry points that connect the existing round lifecycle without replacing its underlying CLI state machine:
+
+- `scripts/Invoke-CoReviewerBatch.ps1`: prepares a new Workflow Ledger/Reviewer Map from an execution scope when supplied; authorizes selected ready tasks; builds the current immutable batch; resolves the actual batch directory; exports and preflights the plan; displays the exact PatchOperations; requires explicit Patch approval; applies Word-native Track Changes; verifies exact edits and the untracked-text audit; displays the Marked DOCX paths/hashes; requires semantic review; synchronizes Workflow state; requires publication confirmation; and validates the publication receipt against the new active-document pointers and hashes.
+- `scripts/Complete-CoReviewerRound.ps1`: requires all active Patches to be verified; creates or reuses only a complete hash-current Working Clean projection set; requests final semantic review; performs Word COM/PDF mapping; pauses for explicit table/non-body locators; records author-confirmed manual locators; completes ResponseUnits; synchronizes Workflow task completion; and creates a new Release Package. It refuses to overwrite partial/stale Working Clean, mapping or release artifacts.
+- `schemas/manual-response-locations.schema.json` and `examples/manual_response_locations.example.json`: define the author-supplied locator structure for manual table/non-body location evidence. Example page/line values are illustrative only.
+
+Resolution-only continuity is also connected to the RevisionLedger. The build-revision-ledger CLI now supplies current active-document paths/hashes for no-change anchors. A no-change-only task can therefore create ResponseUnits without a fictitious document-changing batch. RevisionDocument permits input=output only as a strictly hash-checked unchanged-source passthrough for roles with no PatchOperations. When later batches merge another no-change anchor against the same active role, the merge preserves the existing document lineage and validates either its published output hash or, before a Working Clean projection exists, its unchanged-source hash. Roles with PatchOperations cannot use this passthrough exception.
+
+Pure reply_only rounds can proceed without invented document versions or final page/line locations. The round finalizer synchronizes Workflow completion after ResponseUnits have been semantically confirmed and completed, so response-only tasks do not remain ready at the Release Manifest gate.
+
+**Development boundary:** these P1-6 files and core-model/CLI changes are development work added after the historical `b144f4b` acceptance baseline. They have deliberately **not** been tested during implementation. Do not treat PowerShell syntax, command compatibility, no-change merge continuity or full release integration as accepted until the deferred unified acceptance stage.
+
 ## Synthetic test coverage added
 - The workflow execution-scope contract is now represented by `schemas/workflow-execution-scope.schema.json`; the new `prepare-workflow-execution` CLI creates a separate pending Workflow Ledger, reviewer map and preparation report from an exact author-reviewed scope. `tests/test_workflow_preparation.py` has been added for source-hash binding, same-target evidence matching, author-approval preservation and input immutability. These newly authored tests are **not yet run**; they are part of the deferred unified acceptance stage.
 - `build-revision-ledger` now validates candidate Patch/ResponseUnit construction and existing-ledger merge before creating a batch intent. The regression test for this lifecycle ordering remains part of the unified test stage.
@@ -121,13 +135,15 @@ This is still a synthetic one-ResponseUnit mapping run. It does not constitute f
 
 ## Remaining product implementation and unified acceptance boundary
 
-The immediate development priority is to finish the normal user workflow, not to expand isolated audit checks:
+The main user-facing orchestration and resolution-only continuity have now been implemented in P1-6. The remaining product-development work is to finish any outstanding lifecycle integration gaps found by static source review, keep the starter/refresh/orchestrator paths and documentation consistent, and bring the code to a coherent development freeze. Do not run isolated tests while this implementation phase remains open.
 
-- Start a review round in a dedicated workspace with copied, hash-tracked inputs and all Audit outputs contained inside that workspace.
-- Prepare exact PatchOperations, proposed responses, ResponseUnit dispositions and reviewer attribution through the structured execution-scope input and `prepare-workflow-execution` CLI. The validated initial Workflow Ledger remains immutable; the prepared Ledger is a separate output and all approval gates remain pending.
-- Ensure candidate Patch/ResponseUnit construction and existing-ledger merge complete before a new immutable batch intent is created, preventing invalid execution input from leaving avoidable orphan batches.
-- Continue multiple published batches from the latest active document pointers, then create final Working Clean, run final Word COM/PDF mapping, complete ResponseUnits and generate the Release Package/Manifest.
-- Keep all round artifacts under the round workspace and make the primary SKILL/README/workflow instructions consistent with the same CLI sequence.
+The deferred unified acceptance phase must then exercise, as one coordinated run:
+- A fresh isolated round with copied/hash-tracked inputs and audit outputs inside the workspace.
+- Decision Plan validation, structured execution-scope preparation, and the separate prepared Workflow Ledger/Reviewer Map.
+- One or more immutable batches starting from the current active pointers, including a dependent-task refresh/re-prepare/re-authorize cycle.
+- Resolution-only reply_only and no_change cases, including current-active-document anchor binding and no fake document batch for reply_only.
+- Final Working Clean, final Word COM/PDF mapping for every location-required document role, automatic and manual locator evidence, ResponseUnit completion, Workflow synchronization, Response Letter and Release Manifest.
+- A single complete quality/test suite after the continuous user workflow succeeds, followed by the user's separate Word GUI/PDF visual acceptance and a user-approved real review round.
 
 After these implementation items are complete, run one unified automated test/quality suite and one continuous synthetic end-to-end round. Then perform the user's separate visual Word/PDF acceptance and a user-approved real review round. Until then, do not report P1 as fully implemented or accepted.
 

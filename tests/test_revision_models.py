@@ -149,6 +149,105 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(plan["revision_items"][0]["targets"][0]["find"], "old phrase")
         self.assertNotIn("approval_fingerprint", plan["revision_items"][0])
 
+    def test_no_change_anchor_can_bind_to_current_active_document_without_patch(self):
+        active_docx = self.root / "Manuscript_active.docx"
+        active_docx.write_bytes(b"synthetic active source DOCX")
+        source_sha = hashlib.sha256(active_docx.read_bytes()).hexdigest()
+        document = RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id="rev-active",
+            role="Manuscript",
+            input_file=str(active_docx),
+            output_file=str(active_docx),
+            source_sha256=source_sha,
+        )
+        unit = ResponseUnit(
+            response_unit_id="RU-NOCHANGE-01",
+            reviewer="Reviewer 1",
+            comment_id="C1",
+            comment_text="Please clarify the existing explanation.",
+            response_text="The existing explanation already addresses this point.",
+            disposition="no_change",
+            location_requirement="existing_anchor_required",
+            resolution_reason="The current Manuscript already contains the requested explanation.",
+            anchor_evidence_id="E-ANCHOR-01",
+            anchor_document="Manuscript",
+            anchor_part="word/document.xml",
+            anchor_p_idx=0,
+            anchor_source_excerpt="The existing explanation is already present.",
+        )
+        ledger = RevisionLedger(
+            "round-nochange-anchor",
+            documents=[document],
+            response_units=[unit],
+        )
+        ledger.validate_or_raise()
+        self.assertEqual(ledger.documents[0].input_file, ledger.documents[0].output_file)
+        self.assertEqual(ledger.documents[0].source_sha256, source_sha)
+
+    def test_no_change_passthrough_rejects_patch_roles_and_changed_source_hash(self):
+        active_docx = self.root / "Manuscript_nochange.docx"
+        active_docx.write_bytes(b"synthetic active source DOCX")
+        source_sha = hashlib.sha256(active_docx.read_bytes()).hexdigest()
+        document = RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id="rev-active",
+            role="Manuscript",
+            input_file=str(active_docx),
+            output_file=str(active_docx),
+            source_sha256=source_sha,
+        )
+        patch = Patch(
+            patch_id="P-NOCHANGE-CONFLICT",
+            task_id="T1",
+            reviewer="Reviewer 1",
+            comment="Revise this text.",
+            proposed_response="We revised the text.",
+            operations=[_operation(
+                input_file=str(active_docx),
+                output_file=str(self.root / "Manuscript_marked_conflict.docx"),
+                source_sha256=source_sha,
+            )],
+        )
+        ledger_with_patch = RevisionLedger(
+            "round-nochange-patch-conflict",
+            patches=[patch],
+            documents=[document],
+        )
+        with self.assertRaisesRegex(RevisionModelError, "role also has PatchOperations"):
+            ledger_with_patch.validate_or_raise()
+
+        ledger = RevisionLedger("round-nochange-hash", documents=[document])
+        active_docx.write_bytes(b"changed active source DOCX")
+        with self.assertRaisesRegex(RevisionModelError, "no longer matches its registered source SHA-256"):
+            ledger.validate_or_raise()
+
+    def test_incremental_merge_accepts_repeated_no_change_anchor_on_unchanged_source(self):
+        active_docx = self.root / "Manuscript_repeated_anchor.docx"
+        active_docx.write_bytes(b"synthetic active source DOCX")
+        source_sha = hashlib.sha256(active_docx.read_bytes()).hexdigest()
+        original = RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id="rev-active",
+            role="Manuscript",
+            input_file=str(active_docx),
+            output_file=str(active_docx),
+            source_sha256=source_sha,
+        )
+        repeated = RevisionDocument(
+            document_id="doc-manuscript",
+            revision_id="rev-active",
+            role="Manuscript",
+            input_file=str(active_docx),
+            output_file=str(active_docx),
+            source_sha256=source_sha,
+        )
+        ledger = RevisionLedger("round-nochange-repeated", documents=[original])
+        ledger.merge_batch(RevisionLedger("round-nochange-repeated", documents=[repeated]))
+        ledger.validate_or_raise()
+        self.assertEqual(len(ledger.documents), 1)
+        self.assertEqual(ledger.documents[0].source_sha256, source_sha)
+
     def test_response_only_task_does_not_generate_fake_patch(self):
         workflow = {
             "schema_version": "0.5.1",

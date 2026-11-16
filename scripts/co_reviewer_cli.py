@@ -2177,6 +2177,19 @@ def cmd_build_revision_ledger(args):
         )
 
     effective_document_paths = dict(document_paths)
+    # Explicit no-change ResponseUnits still need a hash-bound RevisionDocument
+    # so their existing text can be mapped in the final Word/PDF. When a role
+    # has no PatchOperation in this batch, bind its passthrough record to the
+    # currently active source path. RevisionLedger validation permits this
+    # unchanged-source form only for roles without PatchOperations.
+    from co_reviewer.batch_store import load_active_document_pointers
+    active_pointers_for_anchors = load_active_document_pointers(workflow)
+    for role, pointer in active_pointers_for_anchors.items():
+        effective_document_paths.setdefault(role, {
+            "input_file": pointer["file"],
+            "output_file": pointer["file"],
+            "source_sha256": pointer["sha256"],
+        })
     effective_document_paths.update(batch_document_paths)
     ledger = build_revision_ledger(
         workflow,
@@ -2882,6 +2895,17 @@ def cmd_record_manual_response_locations(args):
         if locator_key in submitted_by_unit.setdefault(unit_id, {}):
             raise ValueError(f"Duplicate manual locator for {unit_id}/{locator_key}.")
         submitted_by_unit[unit_id][locator_key] = row
+
+    for unit_id, locator_rows in submitted_by_unit.items():
+        unit = units_by_id[unit_id]
+        if unit.location_requirement != "manual_required":
+            raise ValueError(
+                f"Manual location input includes {unit_id}, which is not awaiting manual_required location evidence."
+            )
+        if unit.status != "verified" or not unit.semantic_review_confirmed:
+            raise ValueError(
+                f"Manual location input includes {unit_id}, which is not semantically verified and ready for final location."
+            )
 
     location_map_id = "manual-locator-" + uuid.uuid4().hex
     response_rows: list[dict[str, Any]] = []

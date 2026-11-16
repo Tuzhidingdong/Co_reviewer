@@ -318,8 +318,9 @@ class RevisionDocument:
             _text(getattr(self, name), name)
         _safe_docx_path(self.input_file, "input_file")
         _safe_docx_path(self.output_file, "output_file")
-        if Path(self.input_file).expanduser().resolve() == Path(self.output_file).expanduser().resolve():
-            raise RevisionModelError("RevisionDocument input and output must be different.")
+        # Equal input/output paths are permitted only for an unchanged source
+        # document used as a no-change ResponseUnit anchor. RevisionLedger.validate
+        # rejects this passthrough form whenever the role has any PatchOperation.
         _sha256(self.source_sha256, "source_sha256", optional=True)
         _sha256(self.output_sha256, "output_sha256", optional=True)
         _sha256(self.working_clean_sha256, "working_clean_sha256", optional=True)
@@ -998,6 +999,46 @@ class RevisionLedger:
             for operation in patch.operations
         }
         documents_by_role = {document.role: document for document in self.documents}
+        roles_with_patch_operations = {
+            operation.document
+            for patch in self.patches
+            for operation in patch.operations
+        }
+        for document in self.documents:
+            input_path = Path(document.input_file).expanduser().resolve()
+            output_path = Path(document.output_file).expanduser().resolve()
+            if input_path == output_path:
+                if document.role in roles_with_patch_operations:
+                    errors.append(
+                        f"RevisionDocument {document.role} uses an unchanged-source passthrough "
+                        "path but the role also has PatchOperations."
+                    )
+                    continue
+                if not document.source_sha256:
+                    errors.append(
+                        f"Unchanged-source RevisionDocument {document.role} requires source_sha256."
+                    )
+                    continue
+                if not output_path.is_file():
+                    errors.append(
+                        f"Unchanged-source RevisionDocument {document.role} is missing: {output_path}."
+                    )
+                    continue
+                try:
+                    actual_source_hash = sha256_file(output_path)
+                    if actual_source_hash != document.source_sha256:
+                        errors.append(
+                            f"Unchanged-source RevisionDocument {document.role} no longer matches "
+                            "its registered source SHA-256."
+                        )
+                    if document.output_sha256 and actual_source_hash != document.output_sha256:
+                        errors.append(
+                            f"Unchanged-source RevisionDocument {document.role} has a stale output SHA-256."
+                        )
+                except OSError as exc:
+                    errors.append(
+                        f"Cannot hash unchanged-source RevisionDocument {document.role}: {exc}"
+                    )
         role_location_versions: dict[str, set[tuple[str, str, str, str]]] = {}
         for unit in self.response_units:
             for operation_id in unit.linked_operation_ids:
@@ -2186,9 +2227,52 @@ class RevisionLedger:
             current_input = _canonical_path(current.input_file)
             incoming_input = _canonical_path(incoming.input_file)
             current_output = _canonical_path(current.output_file)
+            incoming_output = _canonical_path(incoming.output_file)
+            incoming_has_patch_operations = any(
+                operation.document == incoming.role
+                for patch in addition.patches
+                for operation in patch.operations
+            )
+            # A newly selected no-change ResponseUnit may anchor the document
+            # version already published by an earlier batch. In that case the
+            # incoming record deliberately uses the current active file as both
+            # input and output. Preserve the established RevisionDocument chain
+            # rather than rebasing a previously edited role onto itself.
+            if (
+                not incoming_has_patch_operations
+                and incoming_input == incoming_output == current_output
+            ):
+                expected_active_hash = current.output_sha256
+                if (
+                    expected_active_hash is None
+                    and current_input == current_output
+                ):
+                    # Before the first Working Clean projection, an unchanged
+                    # source/active document has a source hash but no derived
+                    # output hash yet. That source hash is sufficient to bind
+                    # another no-change ResponseUnit to the same active file.
+                    expected_active_hash = current.source_sha256
+                if not expected_active_hash:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} cannot attach a no-change anchor "
+                        "to an active version without a verified output or unchanged-source hash."
+                    )
+                if incoming.source_sha256 and incoming.source_sha256 != expected_active_hash:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} no-change anchor source hash "
+                        "does not match the current active document."
+                    )
+                active_path = Path(incoming.output_file).expanduser().resolve()
+                if not active_path.is_file() or sha256_file(active_path) != expected_active_hash:
+                    raise RevisionModelError(
+                        f"Document {incoming.document_id} no-change anchor is not bound to "
+                        "the current active document hash."
+                    )
+                continue
+
             revision_changed = current.revision_id != incoming.revision_id
             input_changed = current_input != incoming_input
-            output_changed = _canonical_path(current.output_file) != _canonical_path(incoming.output_file)
+            output_changed = current_output != incoming_output
 
             advanced_source_hash: str | None = None
             if revision_changed or input_changed:
