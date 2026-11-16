@@ -117,11 +117,19 @@ Open `artifacts\\word-compatibility-check\\word_compatibility_revised.docx` in M
 After that save/reopen, run:
 
 ```powershell
-.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe" -VerifyAfterWord
+.\\scripts\\run_word_compatibility_check.ps1 -PythonExe "D:\\Software\\Anacoda\\python.exe" -OutputDirectory "C:\\Users\\Administrator\\AppData\\Local\\Temp\\Co_Reviewer_Word_Acceptance_f2f2913" -VerifyAfterWord
 ```
 
-The post-Word report must confirm all five planned target edits still pass mechanical verification. Then perform the separate Word COM/PDF location-mapping acceptance on a completed synthetic/approved RevisionLedger. Do not infer pagination from XML or use this five-edit fixture as evidence that page/line mapping has passed.
+The user has executed this post-Word step successfully: **5/5 targets verified, 0 failures, 0 untracked-text violations**.
 
+Then install the optional Word/PDF dependencies if needed and run the new synthetic COM/PDF mapping acceptance:
+
+```powershell
+& "D:\\Software\\Anacoda\\python.exe" -m pip install -e ".[word-pdf]"
+.\\scripts\\run_word_pdf_mapping_acceptance.ps1 -FixtureDirectory "C:\\Users\\Administrator\\AppData\\Local\\Temp\\Co_Reviewer_Word_Acceptance_f2f2913" -PythonExe "D:\\Software\\Anacoda\\python.exe"
+```
+
+This runner constructs a test-only RevisionLedger from the five-target fixture, creates its Working Clean View, runs the real Microsoft Word COM exporter and PDF corroboration, renders the mapped Response Letter Markdown/DOCX, and checks the hash-bound location and quality reports. It does not mark the synthetic ResponseUnit completed or create a journal-ready release. This mapping runner is newly added and still requires independent script/unit regression plus execution on a machine with Word COM and PyMuPDF.
 PR #3 remains Draft until the Word/COM and final user acceptance gates have valid evidence.
 
 ## Mainline audit and deviation report
