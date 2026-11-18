@@ -6049,6 +6049,352 @@ def cmd_renumber_package_graph(args):
     print(f"[REFERENCE UPDATES] definitions={len(updated['definition_updates'])}; mentions={len(updated['mention_updates'])}")
     return 0
 
+def _read_json_object(path_value: str | Path, label: str) -> dict[str, Any]:
+    path = Path(path_value).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"{label} does not exist: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read {label} {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must contain a JSON object.")
+    return payload
+
+
+def cmd_begin_qa_remediation(args):
+    """Bind one human-approved remediation Patch to a failed QA result and active Marked parent."""
+    from co_reviewer.batch_store import (
+        read_batch_intent, validate_batch_creation_receipt, write_json_new,
+    )
+
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    qa_path = Path(args.qa_report).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
+    output_state = Path(args.out).expanduser().resolve()
+    if output_state.exists():
+        raise FileExistsError(f"Remediation state is append-only; choose a new output path: {output_state}")
+
+    qa = _read_json_object(qa_path, "pre-remediation QA report")
+    if qa.get("status") != "FAIL":
+        raise ValueError("Bounded remediation may start only from a QA report with status FAIL.")
+    qa_docx = qa.get("docx")
+    if not isinstance(qa_docx, dict):
+        raise ValueError("QA report must bind its failing DOCX path and SHA-256.")
+    failing_clean = Path(str(qa_docx.get("docx_file", ""))).expanduser().resolve()
+    failing_clean_sha = qa_docx.get("docx_sha256")
+    if (
+        not failing_clean.is_file()
+        or not isinstance(failing_clean_sha, str)
+        or sha256_file(failing_clean) != failing_clean_sha
+    ):
+        raise ValueError("QA report's failing Clean DOCX is missing or no longer matches its recorded SHA-256.")
+    failed_checks = [
+        row for row in qa.get("checks", [])
+        if isinstance(row, dict) and row.get("status") == "FAIL"
+    ]
+    if not failed_checks:
+        raise ValueError("QA report has FAIL status but no explicit failing check evidence.")
+
+    ledger = _load_revision_ledger(revision_path)
+    ledger.validate_or_raise()
+    if any(event.event_type == "qa_remediation_started" for event in ledger.events):
+        raise ValueError(
+            "This RevisionLedger already records its one permitted QA remediation. "
+            "Resume the recorded state; do not start a second remediation."
+        )
+    documents = [
+        item for item in ledger.documents
+        if item.working_clean_file
+        and Path(item.working_clean_file).expanduser().resolve() == failing_clean
+        and item.working_clean_sha256 == failing_clean_sha
+    ]
+    if len(documents) != 1:
+        raise ValueError(
+            "The failing QA Clean DOCX must match exactly one current RevisionLedger Working Clean path and hash."
+        )
+    document = documents[0]
+    marked_path = Path(document.output_file).expanduser().resolve()
+    if not marked_path.is_file():
+        raise FileNotFoundError(f"Current Marked DOCX does not exist: {marked_path}")
+    marked_sha = sha256_file(marked_path)
+    if document.output_sha256 != marked_sha:
+        raise ValueError("Current Marked DOCX differs from the exact RevisionLedger output hash.")
+
+    intent = read_batch_intent(batch_dir)
+    scope_path = batch_dir / "batch_scope.json"
+    if not scope_path.is_file():
+        raise ValueError("Remediation requires an immutable formal Patch batch with batch_scope.json.")
+    scope = _read_json_object(scope_path, "remediation batch scope")
+    intent_path = batch_dir / "batch_intent.json"
+    if (
+        scope.get("batch_id") != intent.get("batch_id")
+        or scope.get("batch_intent_sha256") != sha256_file(intent_path)
+        or Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path
+    ):
+        raise ValueError("Remediation batch scope does not bind its current intent and RevisionLedger.")
+    if intent.get("revision_round_id") != ledger.revision_round_id:
+        raise ValueError("Remediation batch belongs to another review round.")
+    if intent.get("batch_creation_protocol_version") == "1.0":
+        receipt_path = batch_dir / "batch_creation_receipt.json"
+        if not receipt_path.is_file():
+            raise ValueError("Remediation batch creation is not formally committed.")
+        receipt = validate_batch_creation_receipt(batch_dir, intent)
+        if receipt.get("status") != "committed":
+            raise ValueError("An abandoned batch cannot carry a QA remediation.")
+    role_record = intent.get("documents", {}).get(document.role)
+    scope_role = scope.get("documents", {}).get(document.role)
+    if not isinstance(role_record, dict) or not isinstance(scope_role, dict):
+        raise ValueError("Remediation batch must contain the current Marked document role.")
+    if (
+        Path(role_record.get("parent_file", "")).expanduser().resolve() != marked_path
+        or role_record.get("parent_sha256") != marked_sha
+        or Path(scope_role.get("input_file", "")).expanduser().resolve() != marked_path
+        or scope_role.get("input_sha256") != marked_sha
+    ):
+        raise ValueError("Remediation batch is not based on the exact current Marked DOCX bytes.")
+    if (
+        Path(scope_role.get("output_file", "")).expanduser().resolve()
+        != Path(role_record.get("output_file", "")).expanduser().resolve()
+    ):
+        raise ValueError("Remediation batch output path differs between scope and immutable intent.")
+
+    patch = next((item for item in ledger.patches if item.patch_id == args.patch_id), None)
+    if patch is None or patch.status != "approved":
+        raise ValueError("QA remediation requires exactly one existing human-approved RevisionLedger Patch.")
+    if patch.patch_id not in scope.get("patch_ids", []):
+        raise ValueError("The approved remediation Patch is not included in the immutable batch scope.")
+    if len(patch.operations) != 1:
+        raise ValueError("A bounded QA remediation must be one atomic PatchOperation; split unrelated fixes.")
+    operation = patch.operations[0]
+    if (
+        operation.document != document.role
+        or Path(operation.input_file).expanduser().resolve() != marked_path
+        or Path(operation.output_file).expanduser().resolve()
+        != Path(role_record["output_file"]).expanduser().resolve()
+        or (operation.source_sha256 and operation.source_sha256 != marked_sha)
+    ):
+        raise ValueError(
+            "Remediation Patch must target the current Marked source and the new immutable batch output path."
+        )
+
+    reason = args.reason.strip()
+    if not reason:
+        raise ValueError("A specific mechanical QA-remediation reason is required.")
+    transition = remediation_transition(
+        {"phase": "QA", "remediation_round": 0},
+        {
+            "target_artifact": "Marked",
+            "operation_id": operation.operation_id,
+            "find": operation.find,
+            "replace": operation.replace,
+            "reason": reason,
+        },
+    )
+    event_id = str(uuid.uuid4())
+    event = RevisionEvent(
+        event_id=event_id,
+        subject_id=patch.patch_id,
+        subject_type="patch",
+        event_type="qa_remediation_started",
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        actor=args.actor,
+        details={
+            "remediation_round": 1,
+            "phase": transition["phase"],
+            "reason": reason,
+            "qa_report_file": str(qa_path),
+            "qa_report_sha256": sha256_file(qa_path),
+            "failing_clean_file": str(failing_clean),
+            "failing_clean_sha256": failing_clean_sha,
+            "failed_check_ids": [row.get("id") for row in failed_checks],
+            "marked_input_file": str(marked_path),
+            "marked_input_sha256": marked_sha,
+            "batch_id": intent["batch_id"],
+            "batch_dir": str(batch_dir),
+            "batch_intent_sha256": sha256_file(intent_path),
+            "batch_scope_sha256": sha256_file(scope_path),
+            "operation_id": operation.operation_id,
+        },
+    )
+    ledger.events.append(event)
+    state = {
+        "schema_version": "1.0",
+        "state_id": str(uuid.uuid4()),
+        "revision_round_id": ledger.revision_round_id,
+        "phase": "PATCH_COMMIT_PENDING",
+        "remediation_round": 1,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "actor": args.actor,
+        "reason": reason,
+        "event_id": event_id,
+        "revision_ledger_file": str(revision_path),
+        "patch_id": patch.patch_id,
+        "operation_id": operation.operation_id,
+        "document_role": document.role,
+        "marked_input_file": str(marked_path),
+        "marked_input_sha256": marked_sha,
+        "marked_output_file": operation.output_file,
+        "batch_id": intent["batch_id"],
+        "batch_dir": str(batch_dir),
+        "batch_intent_sha256": sha256_file(intent_path),
+        "batch_scope_sha256": sha256_file(scope_path),
+        "pre_remediation_qa_report_file": str(qa_path),
+        "pre_remediation_qa_report_sha256": sha256_file(qa_path),
+        "pre_remediation_clean_file": str(failing_clean),
+        "pre_remediation_clean_sha256": failing_clean_sha,
+        "clean_must_be_recompiled_from_marked": True,
+        "second_qa_failure_action": "BLOCKED",
+    }
+    # Persist the immutable state first, then commit its matching append-only
+    # RevisionLedger event. If the Ledger write fails, remove only our new state.
+    write_json_new(output_state, state)
+    try:
+        write_json_atomic(revision_path, ledger.to_dict())
+    except Exception:
+        output_state.unlink(missing_ok=True)
+        raise
+    print(f"[QA REMEDIATION STARTED] Patch {patch.patch_id}; one permitted remediation round.")
+    print(f"[MARKED INPUT] {marked_path} | {marked_sha}")
+    print(f"[MARKED OUTPUT] {operation.output_file}")
+    print(f"[BATCH] {intent['batch_id']} | {batch_dir}")
+    print(f"[STATE] {output_state}")
+    print("[NEXT] Run the normal approved Apply → Verify → Confirm → Publish batch lifecycle; never edit Clean.")
+    return 0
+
+
+def cmd_complete_qa_remediation(args):
+    """After formal publication, recompile Clean from exact Marked bytes and enforce the second QA gate."""
+    from co_reviewer.batch_store import load_active_document_pointers, read_batch_intent
+
+    state_path = Path(args.state).expanduser().resolve()
+    state = _read_json_object(state_path, "QA remediation state")
+    if state.get("phase") != "PATCH_COMMIT_PENDING" or state.get("remediation_round") != 1:
+        raise ValueError("QA remediation state is not awaiting the one authorized Patch/Compile/QA cycle.")
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    batch_dir = _resolve_batch_dir_argument(args.batch_dir)
+    ledger = _load_revision_ledger(revision_path)
+    workflow = _read_json_object(workflow_path, "Workflow Ledger")
+    if ledger.revision_round_id != state.get("revision_round_id"):
+        raise ValueError("Remediation state and RevisionLedger review-round IDs differ.")
+    if Path(str(state.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
+        raise ValueError("Remediation state is bound to a different RevisionLedger path.")
+    if Path(str(state.get("batch_dir", ""))).expanduser().resolve() != batch_dir:
+        raise ValueError("Remediation state is bound to a different immutable batch directory.")
+    intent = read_batch_intent(batch_dir)
+    scope_path = batch_dir / "batch_scope.json"
+    intent_path = batch_dir / "batch_intent.json"
+    if (
+        intent.get("batch_id") != state.get("batch_id")
+        or sha256_file(intent_path) != state.get("batch_intent_sha256")
+        or sha256_file(scope_path) != state.get("batch_scope_sha256")
+        or not (batch_dir / "batch_published.json").is_file()
+    ):
+        raise ValueError("Remediation batch has not been formally published or its immutable evidence changed.")
+    patch = next((item for item in ledger.patches if item.patch_id == state.get("patch_id")), None)
+    if patch is None or patch.status != "verified" or not patch.verification_report_id:
+        raise ValueError("Remediation Patch must be mechanically verified and semantically confirmed before Clean compilation.")
+    if not patch.apply_report_ids or not patch.verified_output_hashes:
+        raise ValueError("Verified remediation Patch lacks formal Apply/Verify output evidence.")
+    if len(patch.operations) != 1 or patch.operations[0].operation_id != state.get("operation_id"):
+        raise ValueError("Remediation Patch operation identity differs from the immutable state record.")
+    operation = patch.operations[0]
+    marked_path = Path(str(state.get("marked_output_file", ""))).expanduser().resolve()
+    if not marked_path.is_file() or marked_path != Path(operation.output_file).expanduser().resolve():
+        raise ValueError("Published remediation Marked DOCX is missing or differs from the approved Patch output.")
+    marked_bytes = marked_path.read_bytes()
+    marked_sha = hashlib.sha256(marked_bytes).hexdigest()
+    pointers = load_active_document_pointers(workflow)
+    pointer = pointers.get(state.get("document_role"))
+    if (
+        not isinstance(pointer, dict)
+        or Path(pointer.get("file", "")).expanduser().resolve() != marked_path
+        or pointer.get("sha256") != marked_sha
+    ):
+        raise ValueError("Workflow active-document pointer does not identify the exact published remediation Marked bytes.")
+    if workflow.get("revision_round_id") != state.get("revision_round_id"):
+        raise ValueError("Workflow Ledger and remediation state belong to different review rounds.")
+
+    clean_path = Path(args.clean_out).expanduser().resolve()
+    qa_out = Path(args.qa_report_out).expanduser().resolve()
+    state_out = Path(args.out).expanduser().resolve()
+    protected = {marked_path, state_path, revision_path, workflow_path}
+    if clean_path in protected or qa_out in protected or state_out in protected:
+        raise ValueError("Clean, QA report and completion state outputs must be new paths distinct from all inputs.")
+    if clean_path.exists() or qa_out.exists() or state_out.exists():
+        raise FileExistsError("Remediation Clean, QA report and completed state outputs are append-only new artifacts.")
+    records = [
+        record for row in ledger.patches for record in row.applied_revision_ids
+    ]
+    lineage = collect_revision_ids_from_lineage(records, marked_path, marked_sha)
+    compiled = compile_clean_from_marked(
+        marked_bytes, expected_revision_ids=lineage["revision_ids"]
+    )
+    clean_path.parent.mkdir(parents=True, exist_ok=True)
+    with clean_path.open("xb") as stream:
+        stream.write(compiled["clean_bytes"])
+    clean_sha = sha256_file(clean_path)
+    if clean_sha != compiled["clean_sha256"] or compiled["marked_sha256"] != marked_sha:
+        raise ValueError("Deterministic Marked-to-Clean compilation failed exact hash binding.")
+    quality = audit_docx_quality(clean_path, profile=args.profile)
+    write_json_new(qa_out, quality)
+
+    transition = remediation_transition({
+        "phase": "QA",
+        "remediation_round": 1,
+        "qa_status": quality["status"],
+    })
+    completed_event = RevisionEvent(
+        event_id=str(uuid.uuid4()),
+        subject_id=patch.patch_id,
+        subject_type="patch",
+        event_type="qa_remediation_completed",
+        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        actor=args.actor,
+        details={
+            "remediation_round": 1,
+            "phase": transition["phase"],
+            "qa_status": quality["status"],
+            "qa_report_file": str(qa_out),
+            "qa_report_sha256": sha256_file(qa_out),
+            "clean_file": str(clean_path),
+            "clean_sha256": clean_sha,
+            "marked_file": str(marked_path),
+            "marked_sha256": marked_sha,
+            "compiled_revision_ids": lineage["revision_ids"],
+        },
+    )
+    ledger.events.append(completed_event)
+    write_json_atomic(revision_path, ledger.to_dict())
+    final_state = {
+        **state,
+        "phase": transition["phase"],
+        "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "completion_event_id": completed_event.event_id,
+        "qa_status": quality["status"],
+        "qa_report_file": str(qa_out),
+        "qa_report_sha256": sha256_file(qa_out),
+        "clean_file": str(clean_path),
+        "clean_sha256": clean_sha,
+        "marked_file": str(marked_path),
+        "marked_sha256": marked_sha,
+        "compiled_revision_ids": lineage["revision_ids"],
+        "block_reason": transition.get("reason") if transition["phase"] == "BLOCKED" else None,
+    }
+    write_json_new(state_out, final_state)
+    print(f"[QA REMEDIATION {transition['phase']}] round=1; no second remediation is permitted.")
+    print(f"[MARKED] {marked_path} | {marked_sha}")
+    print(f"[CLEAN] {clean_path} | {clean_sha}")
+    print(f"[QA] {quality['status']} | {qa_out}")
+    print(f"[STATE] {state_out}")
+    if transition["phase"] == "BLOCKED":
+        print("[BLOCKED] Second QA failure. Release must not proceed.")
+        return 2
+    print("[COMPLETE] The bounded remediation passed QA; continue with the normal final release gates.")
+    return 0
+
+
 def cmd_compile_clean_from_marked(args):
     marked = Path(args.marked).expanduser().resolve()
     output = Path(args.out).expanduser().resolve()
