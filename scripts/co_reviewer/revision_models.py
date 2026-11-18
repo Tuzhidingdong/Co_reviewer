@@ -98,6 +98,9 @@ class PatchOperation:
     target_ref: Mapping[str, Any] | None = None
     authorized_change: Mapping[str, Any] | None = None
     protected_spans: tuple[Mapping[str, Any], ...] = ()
+    replacement_format_map: tuple[Mapping[str, Any], ...] = ()
+    format_authorization: Mapping[str, Any] | None = None
+    format_operations: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.operation_id, "operation_id")
@@ -144,6 +147,40 @@ class PatchOperation:
                 raise RevisionModelError("explicitly_authorized_spans must be an array of objects.")
         if any(not isinstance(span, Mapping) for span in self.protected_spans):
             raise RevisionModelError("protected_spans must contain objects.")
+        if any(not isinstance(segment, Mapping) for segment in self.replacement_format_map):
+            raise RevisionModelError("replacement_format_map must contain objects.")
+        for index, segment in enumerate(self.replacement_format_map):
+            if set(segment) != {"replacement_start", "replacement_end", "source_offset"}:
+                raise RevisionModelError(
+                    f"replacement_format_map[{index}] requires only replacement_start, "
+                    "replacement_end and source_offset."
+                )
+            values = [segment.get(key) for key in ("replacement_start", "replacement_end", "source_offset")]
+            if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+                raise RevisionModelError(f"replacement_format_map[{index}] offsets must be integers.")
+            if values[0] < 0 or values[1] <= values[0] or values[2] < 0:
+                raise RevisionModelError(f"replacement_format_map[{index}] offsets are invalid.")
+        if any(not isinstance(operation, Mapping) for operation in self.format_operations):
+            raise RevisionModelError("format_operations must contain objects.")
+        if self.format_operations:
+            if (
+                not isinstance(self.format_authorization, Mapping)
+                or not isinstance(self.format_authorization.get("intent"), str)
+                or not self.format_authorization.get("intent", "").strip()
+                or set(self.format_authorization) != {"intent"}
+            ):
+                raise RevisionModelError(
+                    "FormatChange requires a separately authorized format_authorization.intent."
+                )
+            for index, operation in enumerate(self.format_operations):
+                if not isinstance(operation.get("find"), str) or not operation.get("find", "").strip():
+                    raise RevisionModelError(f"format_operations[{index}].find must be non-empty.")
+                if not isinstance(operation.get("properties"), Mapping) or not operation.get("properties"):
+                    raise RevisionModelError(f"format_operations[{index}].properties must be a non-empty object.")
+                if set(operation) != {"find", "properties"}:
+                    raise RevisionModelError(f"format_operations[{index}] contains unsupported fields.")
+        elif self.format_authorization is not None:
+            raise RevisionModelError("format_authorization is valid only when format_operations are present.")
         if self.target_ref is not None:
             if not isinstance(self.target_ref, Mapping):
                 raise RevisionModelError("target_ref must be an object or null.")
@@ -185,6 +222,9 @@ class PatchOperation:
             target_ref=data.get("target_ref"),
             authorized_change=data.get("authorized_change"),
             protected_spans=tuple(data.get("protected_spans", [])),
+            replacement_format_map=tuple(data.get("replacement_format_map", [])),
+            format_authorization=data.get("format_authorization"),
+            format_operations=tuple(data.get("format_operations", [])),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,6 +245,9 @@ class PatchOperation:
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
+            "replacement_format_map": [dict(x) for x in self.replacement_format_map],
+            "format_authorization": dict(self.format_authorization) if self.format_authorization is not None else None,
+            "format_operations": [dict(x) for x in self.format_operations],
         }
 
     def to_legacy_target(self) -> dict[str, Any]:
@@ -222,6 +265,9 @@ class PatchOperation:
             "location_phrase": self.location_phrase,
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
+            "replacement_format_map": [dict(x) for x in self.replacement_format_map],
+            "format_authorization": dict(self.format_authorization) if self.format_authorization is not None else None,
+            "format_operations": [dict(x) for x in self.format_operations],
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
@@ -1537,6 +1583,7 @@ class RevisionLedger:
                 "document", "input_file", "output_file", "part", "p_idx", "find",
                 "replace", "location", "operation_id", "source_comment_ids",
                 "location_phrase", "authorized_change", "protected_spans",
+                "replacement_format_map", "format_authorization", "format_operations",
             )
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
                 if not isinstance(actual_target, Mapping) or any(
