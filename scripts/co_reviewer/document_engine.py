@@ -154,6 +154,255 @@ def _run_format_signature(run: ET.Element) -> bytes:
     return ET.tostring(current, method="c14n")
 
 
+def _format_run_properties(run: ET.Element) -> ET.Element | None:
+    """Copy direct run properties without the historical property snapshot."""
+    properties = run.find("w:rPr", NS)
+    if properties is None:
+        return None
+    result = copy.deepcopy(properties)
+    for historical in list(result.findall("w:rPrChange", NS)):
+        result.remove(historical)
+    return result
+
+
+def _build_mapped_insert_runs(
+    spans: list[tuple[int, int, ET.Element, str]],
+    *,
+    match_start: int,
+    source_length: int,
+    replacement: str,
+    format_map: list[dict[str, Any]],
+) -> list[ET.Element]:
+    """Build replacement Runs from an explicit full-coverage source-format map."""
+    if not isinstance(format_map, list) or not format_map:
+        raise ValueError("replacement_format_map must be a non-empty array for mixed-format replacements.")
+    cursor = 0
+    inserted: list[ET.Element] = []
+    for index, segment in enumerate(format_map):
+        if not isinstance(segment, dict):
+            raise ValueError(f"replacement_format_map[{index}] must be an object.")
+        start = segment.get("replacement_start")
+        end = segment.get("replacement_end")
+        source_offset = segment.get("source_offset")
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in (start, end, source_offset)):
+            raise ValueError(f"replacement_format_map[{index}] offsets must be integers.")
+        if start != cursor or end <= start or end > len(replacement):
+            raise ValueError(
+                "replacement_format_map must cover replacement text contiguously, in order, "
+                "without gaps or overlaps."
+            )
+        if source_offset < 0 or source_offset >= source_length:
+            raise ValueError(f"replacement_format_map[{index}].source_offset is outside the deleted source anchor.")
+        absolute_source_offset = match_start + source_offset
+        source_run = next(
+            (
+                run for run_start, run_end, run, _ in spans
+                if run_start <= absolute_source_offset < run_end
+            ),
+            None,
+        )
+        if source_run is None:
+            raise ValueError(
+                f"replacement_format_map[{index}] does not resolve to an ordinary source Run."
+            )
+        inserted.extend(make_insert_runs(source_run, replacement[start:end]))
+        cursor = end
+    if cursor != len(replacement):
+        raise ValueError(
+            "replacement_format_map must cover every replacement character exactly once."
+        )
+    return inserted
+
+
+def _set_run_fonts(run: ET.Element, fonts: dict[str, str]) -> None:
+    allowed = {"ascii", "hAnsi", "eastAsia", "cs"}
+    if not isinstance(fonts, dict) or not fonts or set(fonts) - allowed:
+        raise ValueError("rFonts format operation requires one or more of ascii/hAnsi/eastAsia/cs.")
+    if any(not isinstance(value, str) or not value.strip() for value in fonts.values()):
+        raise ValueError("Every requested font face must be a non-empty string.")
+    rpr = run.find("w:rPr", NS)
+    if rpr is None:
+        rpr = ET.Element(qn("rPr"))
+        run.insert(0, rpr)
+    rfonts = rpr.find("w:rFonts", NS)
+    if rfonts is None:
+        rfonts = ET.Element(qn("rFonts"))
+        try:
+            wanted = _RUN_PROPERTY_ORDER.index("rFonts")
+        except ValueError:
+            rpr.insert(0, rfonts)
+        else:
+            pos = len(rpr)
+            for idx, child in enumerate(list(rpr)):
+                try:
+                    rank = _RUN_PROPERTY_ORDER.index(ET.QName(child).localname)
+                except ValueError:
+                    continue
+                if rank > wanted:
+                    pos = idx
+                    break
+            rpr.insert(pos, rfonts)
+    for slot, face in fonts.items():
+        rfonts.set(qn(slot), face)
+        theme_slot = {"ascii": "asciiTheme", "hAnsi": "hAnsiTheme",
+                      "eastAsia": "eastAsiaTheme", "cs": "cstheme"}[slot]
+        rfonts.attrib.pop(qn(theme_slot), None)
+
+
+def _apply_format_properties(run: ET.Element, properties: dict[str, Any]) -> None:
+    boolean_names = {
+        "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+        "outline", "shadow", "emboss", "imprint",
+    }
+    value_names = {
+        "vertAlign": {"baseline", "superscript", "subscript"},
+        "u": {"single", "double", "dotted", "dash", "wave", "none"},
+        "highlight": {
+            "black", "blue", "cyan", "green", "magenta", "red", "yellow",
+            "white", "darkBlue", "darkCyan", "darkGreen", "darkMagenta",
+            "darkRed", "darkYellow", "darkGray", "lightGray", "none",
+        },
+    }
+    allowed = boolean_names | set(value_names) | {"sz", "szCs", "color", "position", "spacing", "rFonts"}
+    if not isinstance(properties, dict) or not properties or set(properties) - allowed:
+        raise ValueError("FormatChange contains an unsupported or empty property set.")
+    for name, value in properties.items():
+        if name == "rFonts":
+            _set_run_fonts(run, value)
+        elif name in boolean_names:
+            if not isinstance(value, bool):
+                raise ValueError(f"FormatChange {name} requires a boolean value.")
+            _set_run_property(run, name, "1" if value else "0")
+        elif name in {"sz", "szCs", "position", "spacing"}:
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"FormatChange {name} requires a positive integer OOXML value.")
+            _set_run_property(run, name, str(value))
+        elif name == "color":
+            if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9A-Fa-f]{6}|auto)", value):
+                raise ValueError("FormatChange color requires six hex digits or 'auto'.")
+            _set_run_property(run, name, value)
+        elif name in value_names:
+            if not isinstance(value, str) or value not in value_names[name]:
+                raise ValueError(f"FormatChange {name} has an unsupported value.")
+            _set_run_property(run, name, value)
+
+
+def apply_format_operation(
+    paragraph: ET.Element,
+    find_text: str,
+    properties: dict[str, Any],
+    *,
+    document_xml: bytes,
+    styles_xml: bytes | None,
+    theme_xml: bytes | None,
+    author: str,
+    date: str,
+    next_revision_id: int,
+) -> tuple[bool, int, list[dict[str, Any]], str]:
+    """Apply one explicitly authorized FormatChange to existing ordinary text Runs."""
+    if not isinstance(find_text, str) or not find_text:
+        return False, next_revision_id, [], "FormatChange find text must be non-empty."
+    if any(character in find_text for character in "\\t\\r\\n"):
+        return False, next_revision_id, [], "FormatChange cannot cross tabs or paragraph breaks."
+    if any(ancestor.tag == qn("tbl") for ancestor in paragraph.iterancestors()):
+        return False, next_revision_id, [], "FORMAT_CHANGE_TABLE_STYLE_RESOLUTION_REQUIRED"
+    ppr = paragraph.find("w:pPr", NS)
+    if ppr is not None and ppr.find("w:numPr", NS) is not None:
+        return False, next_revision_id, [], "FORMAT_CHANGE_NUMBERING_STYLE_RESOLUTION_REQUIRED"
+    paragraph_style = ppr.find("w:pStyle", NS) if ppr is not None else None
+    paragraph_style_id = paragraph_style.get(qn("val")) if paragraph_style is not None else None
+    paragraph_rpr = ppr.find("w:rPr", NS) if ppr is not None else None
+
+    children = list(paragraph)
+    blocks = []
+    index = 0
+    while index < len(children):
+        if children[index].tag != qn("r"):
+            index += 1
+            continue
+        start, runs, texts = index, [], []
+        while index < len(children) and children[index].tag == qn("r"):
+            value = run_plain_text(children[index])
+            if value is None:
+                break
+            runs.append(children[index])
+            texts.append(value)
+            index += 1
+        if runs:
+            blocks.append((start, start + len(runs), runs, "".join(texts)))
+        else:
+            index += 1
+
+    matches = []
+    for start, end, runs, text in blocks:
+        position = text.find(find_text)
+        while position >= 0:
+            matches.append((start, end, runs, text, position))
+            position = text.find(find_text, position + 1)
+    if not matches:
+        return False, next_revision_id, [], "FormatChange target not found in an ordinary Run sequence."
+    if len(matches) != 1:
+        return False, next_revision_id, [], "FormatChange target is ambiguous."
+    start, end, runs, joined, match_start = matches[0]
+    match_end = match_start + len(find_text)
+    spans, cursor = [], 0
+    for run in runs:
+        value = run_plain_text(run) or ""
+        spans.append((cursor, cursor + len(value), run, value))
+        cursor += len(value)
+
+    replacements: list[ET.Element] = []
+    changes: list[dict[str, Any]] = []
+    for run_start, run_end, source_run, value in spans:
+        overlap_start = max(match_start, run_start)
+        overlap_end = min(match_end, run_end)
+        if overlap_start >= overlap_end:
+            replacements.append(copy.deepcopy(source_run))
+            continue
+        prefix = value[:overlap_start - run_start]
+        selected = value[overlap_start - run_start:overlap_end - run_start]
+        suffix = value[overlap_end - run_start:]
+        prefix_run = make_run(source_run, prefix)
+        if prefix_run is not None:
+            replacements.append(prefix_run)
+        selected_run = make_run(source_run, selected)
+        if selected_run is None:
+            return False, next_revision_id, [], "FormatChange selected Run could not be cloned."
+        if selected_run.find("w:rPr/w:rPrChange", NS) is not None:
+            return False, next_revision_id, [], "FORMAT_CHANGE_EXISTING_HISTORY_REQUIRES_RESOLUTION"
+        run_rpr = source_run.find("w:rPr", NS)
+        run_style = run_rpr.find("w:rStyle", NS) if run_rpr is not None else None
+        run_style_id = run_style.get(qn("val")) if run_style is not None else None
+        effective_before = effective_run_properties(
+            document_xml, styles_xml, paragraph_style_id, run_style_id,
+            run_rpr, paragraph_rpr=paragraph_rpr, theme_xml=theme_xml,
+        )
+        revision_id = next_revision_id
+        attach_format_change(
+            selected_run, effective_before, list(properties),
+            revision_id, author, date,
+        )
+        _apply_format_properties(selected_run, properties)
+        replacements.append(selected_run)
+        changes.append({
+            "find": selected,
+            "revision_id": revision_id,
+            "properties": copy.deepcopy(properties),
+            "old_effective_properties": copy.deepcopy(effective_before["properties"]),
+        })
+        next_revision_id += 1
+        suffix_run = make_run(source_run, suffix)
+        if suffix_run is not None:
+            replacements.append(suffix_run)
+
+    for node in children[start:end]:
+        paragraph.remove(node)
+    insertion = min(start, len(list(paragraph)))
+    for offset, node in enumerate(replacements):
+        paragraph.insert(insertion + offset, node)
+    return True, next_revision_id, changes, "applied"
+
+
 def _script_character(character: str) -> tuple[str, str] | None:
     """Return native Word vertical alignment plus its ordinary base character."""
     decomposition = unicodedata.decomposition(character).split()
@@ -212,7 +461,10 @@ def revision_wrapper(kind: str, rid: int, author: str, date: str, runs: list[ET.
         wrapper.append(run)
     return wrapper
 
-def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date: str, next_id: int):
+def replace_in_paragraph(
+    para: ET.Element, old: str, new: str, author: str, date: str, next_id: int,
+    replacement_format_map: list[dict[str, Any]] | None = None,
+):
     children = list(para)
     blocks = []
     i = 0
@@ -245,7 +497,8 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         ]
         if len(hyperlink_matches) == 1:
             return replace_in_paragraph(
-                hyperlink_matches[0], old, new, author, date, next_id
+                hyperlink_matches[0], old, new, author, date, next_id,
+                replacement_format_map=replacement_format_map,
             )
         if len(hyperlink_matches) > 1:
             return False, next_id, "target is ambiguous across hyperlink containers"
@@ -286,16 +539,25 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         if frag is not None: suffixes.append(frag)
     if first_matched is None:
         return False, next_id, "target could not be mapped to runs"
-    if len(set(matched_format_signatures)) > 1:
+    if replacement_format_map is not None:
+        try:
+            insert_runs = _build_mapped_insert_runs(
+                spans, match_start=match_start, source_length=len(old),
+                replacement=new, format_map=replacement_format_map,
+            )
+        except ValueError as exc:
+            return False, next_id, str(exc)
+    elif len(set(matched_format_signatures)) > 1:
         return (
             False,
             next_id,
             "MIXED_RUN_FORMAT_REPLACEMENT_REQUIRES_EXPLICIT_SEGMENT_PLAN: "
             "the target spans source runs with different direct formatting; "
-            "split the edit into format-homogeneous segments or provide a future "
-            "explicit formatting map. No insertion was written.",
+            "supply a complete replacement_format_map tied to source offsets. "
+            "No insertion was written.",
         )
-    insert_runs = make_insert_runs(first_matched, new)
+    else:
+        insert_runs = make_insert_runs(first_matched, new)
     replacements = list(prefixes)
     if deletions:
         replacements.append(revision_wrapper("del", next_id, author, date, deletions)); next_id += 1
@@ -442,12 +704,76 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             assert_edit_target_supported(
                 structure_inventory, part=part, paragraph_index=idx
             )
+            format_operations = edit.get("format_operations", [])
+            format_authorization = edit.get("format_authorization")
+            if format_operations:
+                if (
+                    not isinstance(format_authorization, dict)
+                    or not isinstance(format_authorization.get("intent"), str)
+                    or not format_authorization.get("intent", "").strip()
+                ):
+                    raise ValueError(
+                        "FORMAT_CHANGE_AUTHORIZATION_REQUIRED: format_operations require "
+                        "a separately authorized format_authorization.intent."
+                    )
+                if not isinstance(format_operations, list):
+                    raise ValueError("format_operations must be an array.")
+            format_change_results = []
+            for format_index, format_operation in enumerate(format_operations):
+                if not isinstance(format_operation, dict):
+                    raise ValueError(f"format_operations[{format_index}] must be an object.")
+                format_find = format_operation.get("find")
+                format_properties = format_operation.get("properties")
+                if not isinstance(format_find, str) or not format_find:
+                    raise ValueError(f"format_operations[{format_index}].find must be non-empty.")
+                if not isinstance(format_properties, dict) or not format_properties:
+                    raise ValueError(f"format_operations[{format_index}].properties must be a non-empty object.")
+                if old in format_find or format_find in old:
+                    raise ValueError(
+                        "FORMAT_CHANGE_OVERLAPS_TEXT_REPLACEMENT: format the retained source text "
+                        "or map replacement formatting, but do not format characters being deleted."
+                    )
+                if visible_text(para).count(format_find) != 1:
+                    raise ValueError(
+                        f"FormatChange target {format_find[:80]!r} is not unique in paragraph P[{idx}]."
+                    )
+                format_gate = targeted_revision_gate(
+                    revision_inventory, [{"part": part, "p_idx": idx}]
+                )
+                if format_gate["status"] != "PASS":
+                    raise ValueError(
+                        "HISTORICAL_REVISION_OVERLAP_USER_DECISION_REQUIRED: FormatChange target "
+                        "intersects existing revision history."
+                    )
+                ok_format, rid, change_records, format_reason = apply_format_operation(
+                    para, format_find, format_properties,
+                    document_xml=data,
+                    styles_xml=original.get("word/styles.xml"),
+                    theme_xml=next(
+                        (payload for member, payload in original.items()
+                         if member.startswith("word/theme/") and member.endswith(".xml")),
+                        None,
+                    ),
+                    author=author,
+                    date=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    next_revision_id=rid,
+                )
+                if not ok_format:
+                    raise ValueError(
+                        f"FormatChange refused at {part} P[{idx}]: {format_reason}"
+                    )
+                format_change_results.extend(change_records)
             if visible_text(para).count(old) != 1:
                 raise ValueError(f"Target {old[:80]!r} is ambiguous within paragraph P[{idx}]; no output was written.")
             delete_revision_id = rid
             insert_revision_id = rid + 1 if new else None
+            replacement_format_map = edit.get("replacement_format_map")
+            if replacement_format_map is not None and not isinstance(replacement_format_map, list):
+                raise ValueError("replacement_format_map must be an array.")
             ok, rid, reason = replace_in_paragraph(
-                para, old, new, author, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), rid
+                para, old, new, author,
+                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), rid,
+                replacement_format_map=replacement_format_map,
             )
             if not ok:
                 raise ValueError(
@@ -481,6 +807,10 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "insert_revision_id": insert_revision_id,
                 "inserted_text": normalize_script_characters(new),
                 "inserted_run_formats": inserted_run_formats,
+                "replacement_format_map": copy.deepcopy(replacement_format_map),
+                "format_changes": format_change_results,
+                "format_authorization": copy.deepcopy(format_authorization),
+                "format_operations": copy.deepcopy(format_operations),
                 "authorization_validation": {
                     "status": contract["status"],
                     "diff_algorithm": contract["diff_algorithm"],
@@ -542,6 +872,7 @@ class RevisionDocumentEngine:
     parse_xml = staticmethod(parse_xml)
     visible_text = staticmethod(visible_text)
     replace_in_paragraph = staticmethod(replace_in_paragraph)
+    apply_format_operation = staticmethod(apply_format_operation)
     prepare_document = staticmethod(prepare_document)
     write_prepared_document = staticmethod(write_prepared_document)
     apply_document = staticmethod(apply_document)
