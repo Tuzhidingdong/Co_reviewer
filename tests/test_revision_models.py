@@ -100,6 +100,52 @@ class RevisionModelsTests(unittest.TestCase):
             for condition in response["allOf"]
         ))
 
+    def test_patch_operation_round_trips_explicit_formatting_metadata(self):
+        operation = _operation(
+            find="Journal Name",
+            replace="Journal Name",
+            replacement_format_map=[
+                {"replacement_start": 0, "replacement_end": 12, "source_offset": 0},
+            ],
+            format_authorization={"intent": "Restore reference typography"},
+            format_operations=[
+                {"find": "Journal", "properties": {"i": True}},
+            ],
+        )
+        restored = PatchOperation.from_mapping(operation.to_dict())
+        self.assertEqual(list(restored.replacement_format_map), [{
+            "replacement_start": 0, "replacement_end": 12, "source_offset": 0,
+        }])
+        self.assertEqual(restored.format_authorization["intent"], "Restore reference typography")
+        self.assertEqual(list(restored.format_operations), [
+            {"find": "Journal", "properties": {"i": True}},
+        ])
+        patch = Patch(
+            patch_id="T-FORMAT", task_id="T-FORMAT", reviewer="Reviewer 1",
+            comment="Restore journal typography.", proposed_response="Formatting restored.",
+            operations=[restored],
+        )
+        target = patch.to_legacy_revision_item()["targets"][0]
+        self.assertEqual(target["format_operations"][0]["properties"], {"i": True})
+        self.assertEqual(target["replacement_format_map"][0]["source_offset"], 0)
+
+    def test_patch_operation_rejects_format_changes_without_separate_authorization(self):
+        with self.assertRaisesRegex(RevisionModelError, "separately authorized"):
+            _operation(
+                find="Journal Name", replace="Journal Name",
+                format_operations=[{"find": "Journal", "properties": {"i": True}}],
+            )
+
+    def test_patch_operation_requires_complete_non_overlapping_format_map(self):
+        with self.assertRaisesRegex(RevisionModelError, "non-contiguous"):
+            _operation(
+                find="Journal Name", replace="New Journal",
+                replacement_format_map=[
+                    {"replacement_start": 0, "replacement_end": 3, "source_offset": 0},
+                    {"replacement_start": 4, "replacement_end": 11, "source_offset": 4},
+                ],
+            )
+
     def test_patch_requires_explicit_exact_text_operation(self):
         patch = Patch(
             patch_id="T1",
