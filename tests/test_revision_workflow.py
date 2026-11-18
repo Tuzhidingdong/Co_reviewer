@@ -501,8 +501,9 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertTrue(self.report_path.is_file())
 
     def test_incremental_iterations_preserve_docx_changes_and_apply_report_history(self):
-        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        make_docx(self.input, [[("old phrase", False)], [("outdated terminology", False)]])
         plan = self._plan()
+        plan["revision_items"][1]["targets"][0]["p_idx"] = 1
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
 
         first_args = Namespace(
