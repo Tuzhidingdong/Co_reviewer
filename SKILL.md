@@ -434,3 +434,16 @@ The command creates a new unique `runs/release-{id}/` directory containing:
 - `final_release_manifest.json`
 
 The Release Gate reopens and rehashes current files, checks active pointers against Marked DOCX files, verifies Patch and ResponseUnit links, rechecks every final Word Clean DOCX/PDF pair, Word page counts, Figure/Table sequence audits and DOCX quality reports, and confirms the Response Letter contains the exact verified PatchOperation excerpts. The manifest is written only if every gate passes. A failed package directory is retained for diagnosis; create a fresh release directory after fixing the cause.
+
+
+### Stage 1.6 — Deterministic OMML preview (formula editing still gated)
+
+A limited, deterministic LaTeX-to-OMML converter is available for a synthetic Word preview. It supports simple symbols/Greek letters, fractions, square roots, subscript/superscript, selected accents and plain/bold/italic text runs. Unsupported commands fail closed.
+
+Create a preview outside the round's source folders:
+
+\`\`\`powershell
+python scripts/co_reviewer_cli.py preview-omml-docx --expression "E=mc^{2}" --out "$roundRoot\reports\equation_preview.docx"
+\`\`\`
+
+Open the preview in Microsoft Word and inspect formula rendering, save/close/reopen it, and preserve the preview as a separate test artifact. This is not an edit of Manuscript/SI, contains no Track Changes, and does not enable formula replacement in production. The OMML structure classifier must continue to block edits to existing formulas until a separate whole-formula revision wrapper passes the supported Word-version acceptance.

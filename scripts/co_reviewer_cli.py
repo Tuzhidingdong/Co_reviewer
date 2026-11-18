@@ -67,6 +67,7 @@ from co_reviewer.v232_contract import (
     collect_revision_ids_from_lineage,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
+from co_reviewer.omml_converter import create_omml_preview_docx
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -5422,6 +5423,16 @@ def cmd_resolve_historical_revisions(args):
     print(f"[RESOLUTION REPORT] {report_path}")
     return 0
 
+def cmd_preview_omml_docx(args):
+    output = Path(args.out).expanduser().resolve()
+    if output.exists():
+        raise ValueError("OMML preview refuses to overwrite an existing DOCX.")
+    result = create_omml_preview_docx(args.expression, output, title=args.title)
+    print(f"[OMML PREVIEW DOCX] {result['output_path']}")
+    print(f"[SHA256] {result['output_sha256']}")
+    print("[BOUNDARY] Synthetic preview only; no manuscript was edited and formula Track Changes remain disabled.")
+    return 0
+
 def cmd_build_package_reference_graph(args):
     documents = {}
     for item in args.document:
@@ -5568,6 +5579,11 @@ def build_parser():
     rhr.add_argument("--out", required=True, help="New DOCX output path; source overwrite is forbidden.")
     rhr.add_argument("--report", help="Optional new JSON resolution report path.")
     rhr.set_defaults(func=cmd_resolve_historical_revisions)
+    omml = sub.add_parser("preview-omml-docx", help="Create a synthetic DOCX to inspect deterministic LaTeX-to-OMML rendering in Word.")
+    omml.add_argument("--expression", required=True, help="Expression from the supported deterministic LaTeX subset.")
+    omml.add_argument("--out", required=True, help="New preview DOCX path; existing files are never overwritten.")
+    omml.add_argument("--title", default="Co_Reviewer OMML preview")
+    omml.set_defaults(func=cmd_preview_omml_docx)
     vc = sub.add_parser("validate-edit-contract", help="Validate Authorized Change, protected spans and deterministic immutable token locks.")
     vc.add_argument("--original", required=True)
     vc.add_argument("--proposed", required=True)

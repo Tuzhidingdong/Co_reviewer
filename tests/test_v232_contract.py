@@ -19,6 +19,9 @@ from co_reviewer.v232_contract import (
     collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
+from co_reviewer.omml_converter import (
+    OmmlConversionError, convert_latex_to_omml, create_omml_preview_docx,
+)
 
 class V232ContractTests(unittest.TestCase):
     def test_immutable_tokens_block_numeric_and_citation_drift(self):
@@ -560,6 +563,46 @@ class V232ContractTests(unittest.TestCase):
                     payload, inventory, targets, policy="SELECTIVE_ACCEPT_CONFLICTS",
                     selectively_resolved_ids=["wrong-id"],
                 )
+
+    def test_omml_converter_creates_fraction_scripts_radical_and_greek(self):
+        xml = convert_latex_to_omml(r"x_{i}^{2} = \frac{\alpha + 1}{\sqrt{b}} \pm \mathrm{mAh}")
+        root = ET.fromstring(xml)
+        self.assertEqual(ET.QName(root).localname, "oMath")
+        self.assertTrue(root.findall(".//m:sSubSup", {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}))
+        self.assertTrue(root.findall(".//m:f", {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}))
+        self.assertTrue(root.findall(".//m:rad", {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}))
+        texts = "".join(node.text or "" for node in root.findall(".//m:t", {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}))
+        self.assertIn("α", texts)
+        self.assertIn("±", texts)
+        self.assertIn("mAh", texts)
+
+    def test_omml_converter_rejects_unsupported_commands_and_malformed_groups(self):
+        with self.assertRaisesRegex(OmmlConversionError, "Unsupported LaTeX command"):
+            convert_latex_to_omml(r"\begin{matrix}a&b\end{matrix}")
+        with self.assertRaisesRegex(OmmlConversionError, "Missing closing"):
+            convert_latex_to_omml(r"\frac{a}{b")
+
+    def test_omml_preview_docx_is_synthetic_and_contains_equation(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "equation_preview.docx"
+            result = create_omml_preview_docx(r"E=mc^{2}", output)
+            self.assertTrue(output.is_file())
+            self.assertEqual(result["equation_count"], "1")
+            with zipfile.ZipFile(output) as archive:
+                root = ET.fromstring(archive.read("word/document.xml"))
+                self.assertTrue(root.findall(".//m:oMath", {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}))
+                self.assertFalse(root.findall(".//w:ins", {"w": W}))
+                self.assertFalse(root.findall(".//w:del", {"w": W}))
+
+    def test_omml_preview_never_overwrites_existing_docx(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "existing.docx"
+            output.write_bytes(b"keep")
+            with self.assertRaisesRegex(OmmlConversionError, "refuses to overwrite"):
+                create_omml_preview_docx("x^2", output)
+            self.assertEqual(output.read_bytes(), b"keep")
+
 
 
 if __name__ == "__main__":
