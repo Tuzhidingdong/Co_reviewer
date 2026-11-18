@@ -58,6 +58,10 @@ from co_reviewer.usage_audit import (
 from co_reviewer.docx_quality import audit_docx_quality
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.structure_classifier import classify_docx_structure
+from co_reviewer.v232_contract import (
+    ContractError, narrow_revision, build_package_reference_graph,
+    commit_document_package, compile_clean_from_marked,
+)
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -5271,6 +5275,70 @@ def cmd_response_docx(args):
     print(f"[SUMMARY] {len(plan['revision_items'])} item(s); {verified} marked verified. Draft labels are retained for all unfinished items.")
     return 0
 
+def cmd_validate_edit_contract(args):
+    original = Path(args.original).read_text(encoding="utf-8")
+    proposed = Path(args.proposed).read_text(encoding="utf-8")
+    authorization = json.loads(Path(args.authorization).read_text(encoding="utf-8"))
+    report = narrow_revision(original, proposed, authorized_change=authorization)
+    if args.out:
+        write_json_atomic(Path(args.out), report)
+        print(f"[CONTRACT REPORT] {Path(args.out).resolve()}")
+    print(json.dumps({k: v for k, v in report.items() if k != "edits"}, ensure_ascii=False, indent=2))
+    print(f"[MINIMAL DIFF] {len(report['edits'])} edit block(s); status={report['status']}")
+    return 0 if report["status"] == "PASS" else 2
+
+def cmd_build_package_reference_graph(args):
+    documents = {}
+    for item in args.document:
+        if "=" not in item:
+            raise ValueError("--document must use ROLE=PATH")
+        role, filename = item.split("=", 1)
+        if not role or role in documents:
+            raise ValueError("Document roles must be non-empty and unique")
+        documents[role] = Path(filename).read_text(encoding="utf-8")
+    report = build_package_reference_graph(documents)
+    if args.out:
+        write_json_atomic(Path(args.out), report)
+        print(f"[REFERENCE GRAPH] {Path(args.out).resolve()}")
+    print(f"[REFERENCE GRAPH] {len(report['definitions'])} definition(s), "
+          f"{len(report['mentions'])} mention(s), {report['unresolved_count']} unresolved/ambiguous")
+    return 0
+
+def cmd_compile_clean_from_marked(args):
+    marked = Path(args.marked).expanduser().resolve()
+    output = Path(args.out).expanduser().resolve()
+    if not marked.is_file():
+        raise ValueError(f"Marked DOCX does not exist: {marked}")
+    if marked == output or output.exists():
+        raise ValueError("Clean output must be a new path distinct from Marked.")
+    result = compile_clean_from_marked(marked.read_bytes())
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("xb") as stream:
+        stream.write(result.pop("clean_bytes"))
+    report_path = Path(args.report).expanduser().resolve() if args.report else output.with_suffix(".compile.json")
+    write_json_atomic(report_path, result)
+    print(f"[CLEAN COMPILED] {output}")
+    print(f"[MARKED SHA256] {result['marked_sha256']}")
+    print(f"[CLEAN SHA256] {result['clean_sha256']}")
+    print(f"[COMPILE REPORT] {report_path}")
+    return 0
+
+def cmd_commit_document_package(args):
+    outputs = {}
+    for item in args.document:
+        if "=" not in item:
+            raise ValueError("--document must use PACKAGE_PATH=DOCX_PATH")
+        name, filename = item.split("=", 1)
+        if name in outputs:
+            raise ValueError("Duplicate package output path: " + name)
+        outputs[name] = Path(filename).read_bytes()
+    result = commit_document_package(outputs, args.release_root,
+                                     metadata={"source": "Co_Reviewer CLI"})
+    print(f"[PACKAGE COMMITTED] {result['package_id']}")
+    print(f"[PACKAGE DIRECTORY] {result['directory']}")
+    print(f"[COMMIT MARKER] {result['commit_marker']}")
+    return 0
+
 def build_parser():
     p = argparse.ArgumentParser(description="Co_Reviewer safe Word revision toolkit.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -5288,6 +5356,25 @@ def build_parser():
     si.add_argument("--docx", required=True)
     si.add_argument("--out", help="Optional JSON report path. Omit to print the report to stdout.")
     si.set_defaults(func=cmd_inspect_docx_structure)
+    vc = sub.add_parser("validate-edit-contract", help="Validate Authorized Change, protected spans and deterministic immutable token locks.")
+    vc.add_argument("--original", required=True)
+    vc.add_argument("--proposed", required=True)
+    vc.add_argument("--authorization", required=True, help="JSON file containing intent and explicitly authorized tokens.")
+    vc.add_argument("--out")
+    vc.set_defaults(func=cmd_validate_edit_contract)
+    rg = sub.add_parser("build-package-reference-graph", help="Build a directed cross-document definition/mention graph from extracted text.")
+    rg.add_argument("--document", nargs="+", required=True, help="ROLE=TXT_PATH entries for every managed DOCX text extraction.")
+    rg.add_argument("--out")
+    rg.set_defaults(func=cmd_build_package_reference_graph)
+    cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")
+    cc.add_argument("--marked", required=True)
+    cc.add_argument("--out", required=True)
+    cc.add_argument("--report")
+    cc.set_defaults(func=cmd_compile_clean_from_marked)
+    cp = sub.add_parser("commit-document-package", help="Validate and publish a multi-DOCX immutable package candidate.")
+    cp.add_argument("--release-root", required=True)
+    cp.add_argument("--document", nargs="+", required=True, help="PACKAGE_PATH=DOCX_PATH entries.")
+    cp.set_defaults(func=cmd_commit_document_package)
     au = sub.add_parser("audit", help="Inspect once, reuse hash-bound caches, match comments and audit figure/table references.")
     au.add_argument("--rev"); au.add_argument("--man"); au.add_argument("--si")
     au.add_argument("--comment-author", default=None)
