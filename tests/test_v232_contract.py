@@ -187,6 +187,27 @@ class V232ContractTests(unittest.TestCase):
         reordered = validate_immutable_token_lock("The values were 10 and 20 mg.", "The values were 20 and 10 mg.")
         self.assertFalse(reordered["allowed"])
 
+    def test_token_lock_allows_only_individually_authorized_multi_token_insertions(self):
+        original = "The values were recorded."
+        proposed = "The values were 1.2 and 3.4."
+        approvals = [
+            {"kind": "number", "text": "1.2"},
+            {"kind": "number", "text": "3.4"},
+        ]
+        accepted = validate_immutable_token_lock(original, proposed, {
+            "explicitly_authorized_insertions": approvals
+        })
+        self.assertTrue(accepted["allowed"], msg=str(accepted["conflicts"]))
+
+        partial = validate_immutable_token_lock(original, proposed, {
+            "explicitly_authorized_insertions": approvals[:1]
+        })
+        self.assertFalse(partial["allowed"])
+        self.assertIn(
+            "INSERTED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+            {item["reason"] for item in partial["conflicts"]},
+        )
+
     def test_token_lock_requires_exact_old_to_new_authorization(self):
         original = "The value was 125.0 mg."
         proposed = "The value was 125 mg."
