@@ -191,10 +191,17 @@
               "description": "Exact individual protected-token values approved for insertion; every inserted token must match one entry.",
               "items": {
                 "type": "object",
-                "required": ["text"],
+                "required": [
+                  "text"
+                ],
                 "properties": {
-                  "kind": {"type": "string"},
-                  "text": {"type": "string", "minLength": 1}
+                  "kind": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "additionalProperties": false
               }
@@ -204,10 +211,17 @@
               "description": "Exact individual protected-token values approved for deletion; every deleted token must match one entry.",
               "items": {
                 "type": "object",
-                "required": ["text"],
+                "required": [
+                  "text"
+                ],
                 "properties": {
-                  "kind": {"type": "string"},
-                  "text": {"type": "string", "minLength": 1}
+                  "kind": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "additionalProperties": false
               }
@@ -255,6 +269,170 @@
               },
               "label": {
                 "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "replacement_format_map": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Complete character-range map for carrying formatting from exact source Run offsets into the replacement text.",
+          "items": {
+            "type": "object",
+            "required": [
+              "replacement_start",
+              "replacement_end",
+              "source_offset"
+            ],
+            "properties": {
+              "replacement_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "replacement_end": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "source_offset": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "format_authorization": {
+          "type": "object",
+          "required": [
+            "intent"
+          ],
+          "properties": {
+            "intent": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "format_operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "find",
+              "properties"
+            ],
+            "properties": {
+              "find": {
+                "type": "string",
+                "minLength": 1
+              },
+              "properties": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "b": {
+                    "type": "boolean"
+                  },
+                  "bCs": {
+                    "type": "boolean"
+                  },
+                  "i": {
+                    "type": "boolean"
+                  },
+                  "iCs": {
+                    "type": "boolean"
+                  },
+                  "caps": {
+                    "type": "boolean"
+                  },
+                  "smallCaps": {
+                    "type": "boolean"
+                  },
+                  "strike": {
+                    "type": "boolean"
+                  },
+                  "dstrike": {
+                    "type": "boolean"
+                  },
+                  "outline": {
+                    "type": "boolean"
+                  },
+                  "shadow": {
+                    "type": "boolean"
+                  },
+                  "emboss": {
+                    "type": "boolean"
+                  },
+                  "imprint": {
+                    "type": "boolean"
+                  },
+                  "sz": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "szCs": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "position": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "spacing": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "color": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9A-Fa-f]{6}|auto)$"
+                  },
+                  "vertAlign": {
+                    "enum": [
+                      "baseline",
+                      "superscript",
+                      "subscript"
+                    ]
+                  },
+                  "u": {
+                    "enum": [
+                      "single",
+                      "double",
+                      "dotted",
+                      "dash",
+                      "wave",
+                      "none"
+                    ]
+                  },
+                  "highlight": {
+                    "type": "string"
+                  },
+                  "rFonts": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "properties": {
+                      "ascii": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "hAnsi": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "eastAsia": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "cs": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false
