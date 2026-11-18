@@ -221,6 +221,28 @@ class V232ContractTests(unittest.TestCase):
         )
         self.assertTrue(repeated_value_approved["allowed"])
 
+        deleted_values = validate_immutable_token_lock(
+            "The measurements were 1.2 and 3.4.",
+            "The measurements were recorded.",
+            {"explicitly_authorized_deletions": [
+                {"kind": "number", "text": "1.2"},
+                {"kind": "number", "text": "3.4"},
+            ]},
+        )
+        self.assertTrue(deleted_values["allowed"])
+        partially_deleted = validate_immutable_token_lock(
+            "The measurements were 1.2 and 3.4.",
+            "The measurements were recorded.",
+            {"explicitly_authorized_deletions": [
+                {"kind": "number", "text": "1.2"},
+            ]},
+        )
+        self.assertFalse(partially_deleted["allowed"])
+        self.assertIn(
+            "DELETED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+            {item["reason"] for item in partially_deleted["conflicts"]},
+        )
+
     def test_token_lock_requires_exact_old_to_new_authorization(self):
         original = "The value was 125.0 mg."
         proposed = "The value was 125 mg."
