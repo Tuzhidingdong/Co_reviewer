@@ -445,6 +445,35 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 approved_spans = authorization.get("explicitly_authorized_spans", [])
                 if not isinstance(approved_spans, list) or any(not isinstance(span, dict) for span in approved_spans):
                     errors.append(f"{tp}.authorized_change.explicitly_authorized_spans must be an array of objects.")
+            if isinstance(authorization, dict):
+                for auth_field in (
+                    "explicitly_authorized_insertions",
+                    "explicitly_authorized_deletions",
+                ):
+                    entries = authorization.get(auth_field, [])
+                    if not isinstance(entries, list):
+                        errors.append(f"{tp}.authorized_change.{auth_field} must be an array.")
+                        continue
+                    for token_index, token in enumerate(entries):
+                        valid_token = (
+                            isinstance(token, dict)
+                            and isinstance(token.get("text"), str)
+                            and bool(token.get("text", "").strip())
+                            and (
+                                "kind" not in token
+                                or (
+                                    isinstance(token.get("kind"), str)
+                                    and bool(token.get("kind", "").strip())
+                                )
+                            )
+                            and not (set(token) - {"kind", "text"})
+                        )
+                        if not valid_token:
+                            errors.append(
+                                f"{tp}.authorized_change.{auth_field}[{token_index}] "
+                                "requires a non-empty exact text and optional non-empty kind; "
+                                "only kind/text fields are allowed."
+                            )
             protected_spans = t.get("protected_spans", [])
             if not isinstance(protected_spans, list) or any(not isinstance(span, dict) for span in protected_spans):
                 errors.append(f"{tp}.protected_spans must be an array of objects.")
@@ -998,6 +1027,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     raise ValueError("Paragraph index from apply report is outside the source document.")
                 expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[p_idx])
                 for batch_edit in document_report.get("results", []):
+                    if batch_edit.get("status") != "applied":
+                        continue
                     if (
                         batch_edit.get("part", "word/document.xml") != part
                         or batch_edit.get("p_idx") != p_idx
