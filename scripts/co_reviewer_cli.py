@@ -425,7 +425,9 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
             if not isinstance(t.get("replace"), str):
                 errors.append(f"{tp}.replace must be a string; use an empty string to delete text.")
             authorization = t.get("authorized_change")
-            if not isinstance(authorization, dict) or not isinstance(authorization.get("intent"), str) or not authorization.get("intent", "").strip():
+            if authorization is None and not require_authorized_change:
+                pass
+            elif not isinstance(authorization, dict) or not isinstance(authorization.get("intent"), str) or not authorization.get("intent", "").strip():
                 errors.append(f"{tp}.authorized_change.intent is required; human approval seals this exact scope.")
             elif not isinstance(authorization.get("explicitly_authorized_tokens", []), list):
                 errors.append(f"{tp}.authorized_change.explicitly_authorized_tokens must be an array.")
@@ -502,7 +504,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
 
 def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") -> dict[str, Any]:
     """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
-    errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    errors = validate_plan(plan, require_approval=False, check_approval_integrity=False, require_authorized_change=True)
     if errors:
         raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
 
@@ -683,7 +685,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
 
 
 def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
-    errors = validate_plan(plan, True)
+    errors = validate_plan(plan, True, require_authorized_change=True)
     if errors: raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
     approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
     if not approved_items:
