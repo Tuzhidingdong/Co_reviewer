@@ -178,6 +178,9 @@ class V232ContractTests(unittest.TestCase):
         exact_pair = validate_immutable_token_lock(original, proposed, {
             "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "125"}]
         })
+        self.assertTrue(validate_immutable_token_lock("value 10 mg", "value 12 mg", {
+            "explicitly_authorized_tokens": [{"kind": "number", "text": "10", "replacement": "12"}]
+        })["allowed"])
         self.assertTrue(exact_pair["allowed"])
 
     def test_engine_requires_explicit_authorized_change(self):

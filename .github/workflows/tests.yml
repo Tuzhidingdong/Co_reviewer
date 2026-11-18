@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "upgrade/v0.5.1-p1-*"
   pull_request:
     branches:
       - main
