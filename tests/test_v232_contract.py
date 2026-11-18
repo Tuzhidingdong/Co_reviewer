@@ -298,7 +298,6 @@ class V232ContractTests(unittest.TestCase):
         effective = effective_run_properties(
             b'<w:document xmlns:w="' + W.encode() + b'"/>',
             styles, None, None, direct,
-            paragraph_style_id=None if False else None,
             paragraph_rpr=paragraph_direct,
             table_style_rpr=ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:sz w:val="22"/></w:rPr>'),
             numbering_rpr=ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:color w:val="111111"/></w:rPr>'),

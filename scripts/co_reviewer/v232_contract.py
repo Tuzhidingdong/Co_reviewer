@@ -27,7 +27,7 @@ W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
 CT = "http://schemas.openxmlformats.org/package/2006/content-types"
-NS = {"w": W, "r": R, "pr": PKG, "ct": CT}
+NS = {"w": W, "r": R, "pr": PKG, "ct": CT, "a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
 def qn(local: str) -> str:
     return "{%s}%s" % (W, local)
 def _sha(data: bytes) -> str:
