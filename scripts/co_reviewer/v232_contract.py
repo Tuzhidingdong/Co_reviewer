@@ -127,7 +127,7 @@ def _authorized_token_items(
 ) -> dict[tuple[str, str], int]:
     """Return exact typed token values approved for insertion or deletion."""
     if authorized is None:
-        return set()
+        return {}
     raw = authorized.get(field, [])
     if not isinstance(raw, list):
         raise ContractError(f"{field} must be an array")
