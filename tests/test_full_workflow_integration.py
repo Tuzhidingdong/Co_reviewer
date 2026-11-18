@@ -481,12 +481,18 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
             json.loads(revision_ledger_path.read_text(encoding="utf-8"))
         )
         for document in verified_before_clean.documents:
-            matching_records = [
+            all_records = [
                 record
                 for patch in verified_before_clean.patches
                 for record in patch.applied_revision_ids
+            ]
+            path_candidates = [
+                record for record in all_records
                 if Path(record["output_file"]).resolve() == Path(document.output_file).resolve()
-                and record["output_sha256"] == sha256_file(document.output_file)
+            ]
+            matching_records = [
+                record for record in path_candidates
+                if record["output_sha256"] == sha256_file(document.output_file)
             ]
             with zipfile.ZipFile(document.output_file, "r") as marked_archive:
                 observed_ids = {
@@ -509,7 +515,8 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
             self.assertTrue(
                 matching_records,
                 f"No exact applied-revision lineage record for {document.role}: "
-                f"path={document.output_file}, sha256={sha256_file(document.output_file)}",
+                f"path={document.output_file}, sha256={sha256_file(document.output_file)}, "
+                f"all_records={all_records}, path_candidates={path_candidates}",
             )
             self.assertLessEqual(
                 observed_ids, registered_ids,
