@@ -122,11 +122,40 @@ def _authorized_token_pairs(authorized: Mapping[str, Any] | None) -> set[tuple[s
     return result
 
 
+def _authorized_token_items(
+    authorized: Mapping[str, Any] | None, field: str
+) -> set[tuple[str, str]]:
+    """Return exact typed token values approved for insertion or deletion."""
+    if authorized is None:
+        return set()
+    raw = authorized.get(field, [])
+    if not isinstance(raw, list):
+        raise ContractError(f"{field} must be an array")
+    result: set[tuple[str, str]] = set()
+    for item in raw:
+        if (
+            not isinstance(item, Mapping)
+            or not isinstance(item.get("text"), str)
+            or not item["text"]
+        ):
+            raise ContractError(f"Each {field} entry requires a non-empty exact token text")
+        kind = str(item.get("kind", "*"))
+        normalized = re.sub(r"\s+", "", item["text"]).replace("−", "-")
+        result.add((kind, normalized))
+    return result
+
+
 def validate_immutable_token_lock(original: str, proposed: str,
                                   authorized: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Enforce ordered, exact old->new authorization for every protected-token change."""
+    """Enforce ordered, exact authorization for every changed protected token."""
     before, after = extract_immutable_tokens(original), extract_immutable_tokens(proposed)
     allowed = _authorized_token_pairs(authorized)
+    allowed_insertions = _authorized_token_items(
+        authorized, "explicitly_authorized_insertions"
+    )
+    allowed_deletions = _authorized_token_items(
+        authorized, "explicitly_authorized_deletions"
+    )
     before_keys = [(x["kind"], x["normalized"]) for x in before]
     after_keys = [(x["kind"], x["normalized"]) for x in after]
     matcher = difflib.SequenceMatcher(a=before_keys, b=after_keys, autojunk=False)
@@ -135,19 +164,65 @@ def validate_immutable_token_lock(original: str, proposed: str,
         if tag == "equal":
             continue
         old_group, new_group = before[i1:i2], after[j1:j2]
-        if len(old_group) != 1 or len(new_group) != 1:
-            conflicts.append({"old_tokens": old_group, "new_tokens": new_group, "reason": "NON_ATOMIC_TOKEN_CHANGE"})
+
+        # A single prose edit may insert multiple values/units. Each exact token
+        # must have its own typed approval; no approval authorizes its neighbours.
+        if not old_group and new_group:
+            for token in new_group:
+                exact = (token["kind"], token["normalized"])
+                wildcard = ("*", token["normalized"])
+                if exact not in allowed_insertions and wildcard not in allowed_insertions:
+                    conflicts.append({
+                        "old_tokens": [],
+                        "new_tokens": [token],
+                        "reason": "INSERTED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+                    })
             continue
-        old_token, new_token = old_group[0], new_group[0]
-        pair = (old_token["kind"], old_token["normalized"], new_token["normalized"])
-        wildcard_pair = ("*", old_token["normalized"], new_token["normalized"])
-        if pair not in allowed and wildcard_pair not in allowed:
-            conflicts.append({"old_tokens": old_group, "new_tokens": new_group, "reason": "PAIR_NOT_AUTHORIZED"})
+
+        if old_group and not new_group:
+            for token in old_group:
+                exact = (token["kind"], token["normalized"])
+                wildcard = ("*", token["normalized"])
+                if exact not in allowed_deletions and wildcard not in allowed_deletions:
+                    conflicts.append({
+                        "old_tokens": [token],
+                        "new_tokens": [],
+                        "reason": "DELETED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+                    })
+            continue
+
+        # Replacements remain ordered and one-to-one. Unequal groups are blocked.
+        if len(old_group) != len(new_group):
+            conflicts.append({
+                "old_tokens": old_group,
+                "new_tokens": new_group,
+                "reason": "NON_ATOMIC_TOKEN_CHANGE",
+            })
+            continue
+        for old_token, new_token in zip(old_group, new_group):
+            pair = (old_token["kind"], old_token["normalized"], new_token["normalized"])
+            wildcard_pair = ("*", old_token["normalized"], new_token["normalized"])
+            if pair not in allowed and wildcard_pair not in allowed:
+                conflicts.append({
+                    "old_tokens": [old_token],
+                    "new_tokens": [new_token],
+                    "reason": "PAIR_NOT_AUTHORIZED",
+                })
     if conflicts:
-        return {"status": "UNPROTECTED_TOKEN_TOUCHED", "allowed": False,
-                "conflicts": conflicts, "missing_tokens": [x for c in conflicts for x in c["old_tokens"]],
-                "added_tokens": [x for c in conflicts for x in c["new_tokens"]]}
-    return {"status": "PASS", "allowed": True, "conflicts": [], "missing_tokens": [], "added_tokens": []}
+        return {
+            "status": "UNPROTECTED_TOKEN_TOUCHED",
+            "allowed": False,
+            "conflicts": conflicts,
+            "missing_tokens": [x for c in conflicts for x in c["old_tokens"]],
+            "added_tokens": [x for c in conflicts for x in c["new_tokens"]],
+        }
+    return {
+        "status": "PASS",
+        "allowed": True,
+        "conflicts": [],
+        "missing_tokens": [],
+        "added_tokens": [],
+    }
 
 
 def _word_tokens(text: str) -> list[str]:
