@@ -862,7 +862,12 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
         (overlaps if hit else unrelated).append(revision)
     unresolved = []
     for item in overlaps:
-        rid = str(item.get("id", item.get("element_path", "")))
+        if item.get("structure_id"):
+            rid = str(item["structure_id"])
+        elif item.get("part") and item.get("element_path"):
+            rid = str(item["part"]) + "::" + str(item["element_path"])
+        else:
+            rid = str(item.get("id") or "")
         if resolution_policy == "SELECTIVE_ACCEPT_CONFLICTS" and rid in selected:
             continue
         if resolution_policy in {"ACCEPT_EXISTING", "REJECT_EXISTING"}:
@@ -872,10 +877,10 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
         status = "PASS"
     elif unresolved:
         status = "USER_DECISION_REQUIRED"
+    elif resolution_policy:
+        status = "RESOLUTION_READY"
     else:
-        # A selected policy is not an applied policy. Until a deterministic
-        # Accept/Reject adapter exists, callers must resolve in Word and re-import.
-        status = "RESOLUTION_ADAPTER_REQUIRED"
+        status = "USER_DECISION_REQUIRED"
     return {
         "status": status,
         "resolution_policy": resolution_policy,

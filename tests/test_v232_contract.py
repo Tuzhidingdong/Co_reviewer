@@ -140,7 +140,7 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(blocked["status"], "USER_DECISION_REQUIRED")
         selected = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}],
                                            resolution_policy="ACCEPT_EXISTING")
-        self.assertEqual(selected["status"], "RESOLUTION_ADAPTER_REQUIRED")
+        self.assertEqual(selected["status"], "RESOLUTION_READY")
         self.assertTrue(selected["must_resolve_before_discovery_or_write"])
         self.assertFalse(selected["resolution_applied"])
         self.assertEqual(len(selected["unrelated_revisions_preserved"]), 1)
@@ -376,9 +376,6 @@ class V232ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "unknown effective old value"):
             build_rpr_change_snapshot({"properties": {}}, ["color"])
 
-if __name__ == "__main__":
-    unittest.main()
-
 
     def _revision_docx(self, directory: Path) -> Path:
         path = directory / "historical.docx"
@@ -487,3 +484,7 @@ if __name__ == "__main__":
                     payload, inventory, targets, policy="SELECTIVE_ACCEPT_CONFLICTS",
                     selectively_resolved_ids=["wrong-id"],
                 )
+
+
+if __name__ == "__main__":
+    unittest.main()
