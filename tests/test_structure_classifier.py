@@ -293,5 +293,36 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertIsNotNone(preserved.find("w:rPr/w:rPrChange", {"w": W}))
 
 
+    def test_settings_proofing_marker_does_not_block_unrelated_body_edit(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        settings = (
+            f'<w:settings xmlns:w="{W}">'
+            '<w:proofErr w:type="spellStart"/>'
+            '</w:settings>'
+        ).encode("utf-8")
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            '</Types>'
+        ).encode("utf-8")
+        _write_docx(
+            self.docx, _document(body),
+            extra={"word/settings.xml": settings, "[Content_Types].xml": content_types},
+        )
+        report = classify_docx_structure(self.docx)
+        marker = next(
+            item for item in report["structures"]
+            if item["part"] == "word/settings.xml" and item["element"] == "proofErr"
+        )
+        self.assertEqual(marker["status"], GUARDED)
+        assert_edit_target_supported(
+            report, part="word/document.xml", paragraph_index=0
+        )
+
 if __name__ == "__main__":
     unittest.main()
