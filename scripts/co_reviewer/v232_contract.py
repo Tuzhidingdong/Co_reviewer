@@ -388,6 +388,16 @@ def build_package_reference_graph(documents: Mapping[str, str]) -> dict[str, Any
                              "document": doc_id, "kind": m.group(1).casefold(),
                              "number": m.group(2), "text": m.group(), "offset": m.start(),
                              "target_definition_ids": []})
+    # Caption labels are definitions, not self-referential mentions. Keep
+    # references appearing later in caption prose.
+    mentions = [
+        mention for mention in mentions
+        if not any(
+            definition["document"] == mention["document"]
+            and definition["offset"] <= mention["offset"] < definition["offset"] + len(definition["text"])
+            for definition in definitions
+        )
+    ]
     for mention in mentions:
         candidates = [d for d in definitions if d["kind"].startswith(mention["kind"][:3])
                       and d["number"].casefold() == mention["number"].casefold()]
@@ -432,6 +442,10 @@ def renumber_reference_graph(graph: Mapping[str, Any],
     unknown_mentions = set(confirmed) - set(mentions_by_id)
     if unknown_mentions:
         raise ContractError("Ambiguous mapping references unknown mention IDs: " + ", ".join(sorted(unknown_mentions)))
+    for mention_id, definition_id in confirmed.items():
+        mention = mentions_by_id[mention_id]
+        if mention.get("resolution") != "ambiguous" or definition_id not in mention.get("candidate_definition_ids", []):
+            raise ContractError("Confirmed mapping must select one candidate for an ambiguous mention: " + mention_id)
     for mention in updated.get("mentions", []):
         candidates = mention.get("target_definition_ids", [])
         if mention.get("resolution") == "ambiguous" and changed_definition_ids.intersection(candidates):
