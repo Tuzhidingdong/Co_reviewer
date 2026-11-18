@@ -1286,6 +1286,20 @@ def _validate_qa_remediation_events(
             "QA remediation events do not bind the exact PatchOperation and Marked input/output chain: "
             + ", ".join(event_mismatches)
         )
+    verified_output_records = [
+        entry for entry in patch.verified_output_hashes
+        if isinstance(entry, Mapping)
+        and same_resolved_path(entry.get("path"), marked_output)
+    ]
+    if (
+        len(verified_output_records) != 1
+        or verified_output_records[0].get("sha256") != completion_details.get("marked_sha256")
+        or not marked_output.is_file()
+        or sha256_file(marked_output) != completion_details.get("marked_sha256")
+    ):
+        raise ReleaseGateError(
+            "Patch verification output hash, published Marked hash and actual Marked DOCX must match exactly."
+        )
     if (
         not marked_input.is_file()
         or sha256_file(marked_input) != start_details.get("marked_input_sha256")

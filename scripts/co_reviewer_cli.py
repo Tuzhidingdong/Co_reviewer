@@ -6345,6 +6345,20 @@ def cmd_complete_qa_remediation(args):
         or not isinstance(published_role.get("sha256"), str)
     ):
         raise ValueError("Committed batch publication does not attest the remediation Marked output.")
+    verified_output_records = [
+        entry for entry in patch.verified_output_hashes
+        if isinstance(entry, Mapping)
+        and Path(str(entry.get("path", ""))).expanduser().resolve()
+            == Path(operation.output_file).expanduser().resolve()
+    ]
+    if (
+        len(verified_output_records) != 1
+        or verified_output_records[0].get("sha256") != published_role["sha256"]
+        or sha256_file(operation.output_file) != published_role["sha256"]
+    ):
+        raise ValueError(
+            "Patch Verify output hash, published batch Marked hash and actual Marked DOCX must match exactly."
+        )
     if (
         operation.operation_id != matching_start_events[0].details.get("operation_id")
         or Path(operation.input_file).expanduser().resolve()

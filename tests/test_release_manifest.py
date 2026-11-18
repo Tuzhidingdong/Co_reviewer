@@ -1327,7 +1327,7 @@ class BoundedQARemediationEvidenceTests(unittest.TestCase):
             operations=[operation],
             apply_report_ids=["APPLY-1"],
             verification_report_id="VERIFY-1",
-            verified_output_hashes=[{"file": str(marked_after), "sha256": digest(marked_after)}],
+            verified_output_hashes=[{"path": str(marked_after), "sha256": digest(marked_after)}],
         )
         start_details = {
             "remediation_round": 1, "phase": "PATCH_COMMIT",
@@ -1400,6 +1400,13 @@ class BoundedQARemediationEvidenceTests(unittest.TestCase):
         ledger, batch, _, _ = self._fixture()
         batch["patch_ids"] = []
         with self.assertRaisesRegex(ReleaseGateError, "exact published immutable batch lineage"):
+            _validate_qa_remediation_events(ledger, batch_records=[batch])
+
+
+    def test_release_gate_rejects_patch_verified_hash_not_matching_published_marked(self):
+        ledger, batch, _, _ = self._fixture()
+        ledger.patches[0].verified_output_hashes[0]["sha256"] = "e" * 64
+        with self.assertRaisesRegex(ReleaseGateError, "Patch verification output hash"):
             _validate_qa_remediation_events(ledger, batch_records=[batch])
 
     def test_release_gate_rejects_patch_output_that_differs_from_published_marked(self):
