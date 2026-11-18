@@ -1273,11 +1273,23 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         for node in insert_nodes
                         for text_node in node.findall(".//w:t", NS)
                     )
-                old_ok = len(delete_nodes) == 1 and deleted == target["find"]
+                pure_format_change = (
+                    target["find"] == target["replace"]
+                    and bool(edit.get("format_changes"))
+                    and delete_id is None and insert_id is None
+                )
+                old_ok = (
+                    not delete_nodes
+                    and target["find"] in actual_paragraph_text
+                    if pure_format_change else len(delete_nodes) == 1 and deleted == target["find"]
+                )
                 new_text = edit.get("inserted_text", target["replace"])
                 new_ok = (
-                    len(insert_nodes) == 1 and inserted == new_text
-                    if new_text else insert_id is None and not inserted
+                    not insert_nodes and new_text == target["find"]
+                    if pure_format_change else (
+                        len(insert_nodes) == 1 and inserted == new_text
+                        if new_text else insert_id is None and not inserted
+                    )
                 )
                 inserted_runs = [
                     run for node in insert_nodes
@@ -1291,38 +1303,61 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                             node.text or "" for node in run.findall("w:t", NS)
                         )
                         vertical = run.find("w:rPr/w:vertAlign", NS)
+                        rpr = run.find("w:rPr", NS)
+                        bold = rpr.find("w:b", NS) if rpr is not None else None
+                        italic = rpr.find("w:i", NS) if rpr is not None else None
+                        size = rpr.find("w:sz", NS) if rpr is not None else None
+                        fonts = rpr.find("w:rFonts", NS) if rpr is not None else None
                         actual_run_formats.append({
                             "text": run_text,
-                            "vertical_alignment": (
-                                vertical.get(qn("val")) if vertical is not None else None
-                            )
+                            "vertical_alignment": vertical.get(qn("val")) if vertical is not None else None,
+                            "bold": bold is not None and bold.get(qn("val"), "1") not in {"0", "false", "off"},
+                            "italic": italic is not None and italic.get(qn("val"), "1") not in {"0", "false", "off"},
+                            "font_size_half_points": size.get(qn("val")) if size is not None else None,
+                            "fonts": dict(fonts.attrib) if fonts is not None else {},
+                            "direct_rpr_sha256": _direct_run_format_sha256(run),
                         })
-                    expected_script_signature = [
-                        (character, entry.get("vertical_alignment"))
-                        for entry in expected_run_formats
-                        for character in entry.get("text", "")
-                    ]
-                    actual_script_signature = [
-                        (character, entry.get("vertical_alignment"))
-                        for entry in actual_run_formats
-                        for character in entry.get("text", "")
-                    ]
-                    # Word may split/merge adjacent runs when saving. Compare
-                    # per-character formatting, not incidental run boundaries.
+                    def per_character_format(rows):
+                        return [
+                            (
+                                character,
+                                entry.get("vertical_alignment"),
+                                entry.get("bold"),
+                                entry.get("italic"),
+                                entry.get("font_size_half_points"),
+                                json.dumps(entry.get("fonts", {}), sort_keys=True),
+                                entry.get("direct_rpr_sha256"),
+                            )
+                            for entry in rows
+                            for character in entry.get("text", "")
+                        ]
+                    # Compare every inserted character's direct Run formatting;
+                    # run boundaries may differ after a Word save operation.
                     native_script_format_preserved = (
-                        actual_script_signature == expected_script_signature
+                        per_character_format(actual_run_formats)
+                        == per_character_format(expected_run_formats)
                     )
                 else:
                     native_script_format_preserved = True
+                format_changes_preserved, format_change_details = _verify_format_changes(
+                    paragraph,
+                    edit.get("format_changes", []),
+                    edit.get("format_operations", []),
+                )
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
                     "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
                     "exact_target_position": exact_target_position,
-                    "native_script_format_preserved": native_script_format_preserved
+                    "inserted_run_format_preserved": native_script_format_preserved,
+                    "format_change_preserved": format_changes_preserved,
+                    "format_change_details": format_change_details,
                 }
                 result["p_idx"] = p_idx
-                if old_ok and new_ok and native_script_format_preserved and exact_target_position:
+                if (
+                    old_ok and new_ok and native_script_format_preserved
+                    and format_changes_preserved and exact_target_position
+                ):
                     result["status"] = "verified"
                 elif not exact_target_position:
                     result["reason"] = (
@@ -1330,7 +1365,9 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         "the edit is misplaced or an unrelated paragraph change occurred."
                     )
                 elif not native_script_format_preserved:
-                    result["reason"] = "Native subscript/superscript run formatting changed after the apply/save operation."
+                    result["reason"] = "Inserted Run formatting (font, size, bold, italic, script or direct properties) changed after Apply."
+                elif not format_changes_preserved:
+                    result["reason"] = "A FormatChange revision or its old effective-property snapshot does not match the approved operation."
                 else:
                     result["reason"] = "Expected deleted or inserted text was not found in the target paragraph."
             except (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
