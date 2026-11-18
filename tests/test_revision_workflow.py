@@ -55,7 +55,7 @@ class RevisionWorkflowTests(unittest.TestCase):
                     "status": "planned",
                     "targets": [{
                         "document": "SI", "input_file": str(self.input),
-                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 1,
+                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 0,
                         "location": "Section S1", "find": "outdated terminology",
                         "replace": "updated terminology"
                     }]
@@ -251,6 +251,7 @@ class RevisionWorkflowTests(unittest.TestCase):
     def test_apply_refuses_report_path_that_would_overwrite_docx_output(self):
         make_docx(self.input, [[("old phrase", False)]])
         plan = self._plan()
+        plan["revision_items"][1]["targets"][0]["p_idx"] = 1
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
         args = Namespace(
             plan=str(self.plan_path), report=str(self.output), author="Test Author"
