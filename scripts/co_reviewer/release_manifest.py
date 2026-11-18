@@ -1242,24 +1242,50 @@ def _validate_qa_remediation_events(
     marked_input = Path(str(start_details.get("marked_input_file", ""))).expanduser().resolve()
     marked_output = Path(str(start_details.get("marked_output_file", ""))).expanduser().resolve()
     role = start_details.get("document_role")
-    if (
-        not isinstance(role, str) or not role.strip()
-        or operation.operation_id != start_details.get("operation_id")
-        or operation.document != role
-        or Path(operation.input_file).expanduser().resolve() != marked_input
-        or Path(operation.output_file).expanduser().resolve() != marked_output
-        or marked_output != Path(str(completion_details.get("marked_file", ""))).expanduser().resolve()
-        or operation.source_sha256 != start_details.get("marked_input_sha256")
-        or completion_details.get("operation_id") != operation.operation_id
-        or completion_details.get("document_role") != role
-        or completion_details.get("marked_input_file") != str(marked_input)
-        or completion_details.get("marked_input_sha256") != start_details.get("marked_input_sha256")
-        or completion_details.get("batch_id") != start_details.get("batch_id")
-        or completion_details.get("batch_dir") != start_details.get("batch_dir")
-        or completion_details.get("batch_intent_sha256") != start_details.get("batch_intent_sha256")
-        or completion_details.get("batch_scope_sha256") != start_details.get("batch_scope_sha256")
-    ):
-        raise ReleaseGateError("QA remediation events do not bind the exact PatchOperation and Marked input/output chain.")
+    def same_resolved_path(actual: Any, expected: Path) -> bool:
+        return (
+            isinstance(actual, str)
+            and bool(actual.strip())
+            and Path(actual).expanduser().resolve() == expected
+        )
+
+    event_mismatches = []
+    if not isinstance(role, str) or not role.strip():
+        event_mismatches.append("document_role")
+    if operation.operation_id != start_details.get("operation_id"):
+        event_mismatches.append("start.operation_id")
+    if operation.document != role:
+        event_mismatches.append("patch.document_role")
+    if not same_resolved_path(operation.input_file, marked_input):
+        event_mismatches.append("patch.input_file")
+    if not same_resolved_path(operation.output_file, marked_output):
+        event_mismatches.append("patch.output_file")
+    if not same_resolved_path(completion_details.get("marked_file"), marked_output):
+        event_mismatches.append("completion.marked_file")
+    if operation.source_sha256 != start_details.get("marked_input_sha256"):
+        event_mismatches.append("patch.source_sha256")
+    if completion_details.get("operation_id") != operation.operation_id:
+        event_mismatches.append("completion.operation_id")
+    if completion_details.get("document_role") != role:
+        event_mismatches.append("completion.document_role")
+    if not same_resolved_path(completion_details.get("marked_input_file"), marked_input):
+        event_mismatches.append("completion.marked_input_file")
+    if completion_details.get("marked_input_sha256") != start_details.get("marked_input_sha256"):
+        event_mismatches.append("completion.marked_input_sha256")
+    if completion_details.get("batch_id") != start_details.get("batch_id"):
+        event_mismatches.append("completion.batch_id")
+    expected_batch_dir = Path(str(start_details.get("batch_dir", ""))).expanduser().resolve()
+    if not same_resolved_path(completion_details.get("batch_dir"), expected_batch_dir):
+        event_mismatches.append("completion.batch_dir")
+    if completion_details.get("batch_intent_sha256") != start_details.get("batch_intent_sha256"):
+        event_mismatches.append("completion.batch_intent_sha256")
+    if completion_details.get("batch_scope_sha256") != start_details.get("batch_scope_sha256"):
+        event_mismatches.append("completion.batch_scope_sha256")
+    if event_mismatches:
+        raise ReleaseGateError(
+            "QA remediation events do not bind the exact PatchOperation and Marked input/output chain: "
+            + ", ".join(event_mismatches)
+        )
     if (
         not marked_input.is_file()
         or sha256_file(marked_input) != start_details.get("marked_input_sha256")
