@@ -5,10 +5,13 @@ on:
     branches:
       - main
       - "upgrade/v0.5.1-p1-*"
+      - "fix/v232-*"
   pull_request:
     branches:
       - main
       - "upgrade/v0.5.1-p0-*"
+      - "upgrade/v0.5.1-p1-*"
+      - "fix/v232-*"
   workflow_dispatch:
 
 concurrency:
