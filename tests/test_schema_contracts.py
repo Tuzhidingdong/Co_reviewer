@@ -123,6 +123,8 @@ class JsonSchemaContractTests(unittest.TestCase):
                 "proposed_response": "Formatting restored",
                 "operations": [operation],
                 "status": "planned",
+                "apply_report_ids": [],
+                "verified_output_hashes": [],
             }],
             "response_units": [],
             "events": [],
