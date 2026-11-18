@@ -172,6 +172,10 @@ class PatchOperation:
         if any(not isinstance(operation, Mapping) for operation in self.format_operations):
             raise RevisionModelError("format_operations must contain objects.")
         if self.format_operations:
+            if self.find != self.replace:
+                raise RevisionModelError(
+                    "FormatChange must be a pure format operation; text replacement requires a separate PatchOperation."
+                )
             if (
                 not isinstance(self.format_authorization, Mapping)
                 or not isinstance(self.format_authorization.get("intent"), str)
