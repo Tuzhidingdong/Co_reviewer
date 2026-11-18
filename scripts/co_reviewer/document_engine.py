@@ -711,6 +711,11 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             format_authorization = edit.get("format_authorization")
             if not isinstance(format_operations, list):
                 raise ValueError("format_operations must be an array.")
+            if format_operations and old != new:
+                raise ValueError(
+                    "FORMAT_CHANGE_MUST_BE_A_PURE_FORMAT_OPERATION: split text replacement "
+                    "and FormatChange into separately approved Patch operations."
+                )
             if format_operations:
                 if (
                     not isinstance(format_authorization, dict)
