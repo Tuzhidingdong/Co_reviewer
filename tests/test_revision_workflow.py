@@ -55,7 +55,7 @@ class RevisionWorkflowTests(unittest.TestCase):
                     "status": "planned",
                     "targets": [{
                         "document": "SI", "input_file": str(self.input),
-                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 0,
+                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 1,
                         "location": "Section S1", "find": "outdated terminology",
                         "replace": "updated terminology"
                     }]
@@ -97,7 +97,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertTrue(any("verified_output_hashes" in error for error in errors))
 
     def test_confirm_verified_refuses_incomplete_apply_report(self):
-        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        make_docx(self.input, [[("old phrase", False)], [("outdated terminology", False)]])
         self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
         apply_args = Namespace(
             plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
