@@ -519,6 +519,11 @@ class RevisionWorkflowTests(unittest.TestCase):
         second_item["status"] = "approved"
         second_item["targets"][0]["input_file"] = str(self.output)
         second_item["targets"][0]["output_file"] = str(second_output)
+        second_item["targets"][0]["authorized_change"] = {
+            "intent": "Human-approved exact text correction",
+            "explicitly_authorized_tokens": [],
+            "explicitly_authorized_spans": [],
+        }
         second_item["approval_fingerprint"] = cli.revision_item_fingerprint(second_item)
         self.plan_path.write_text(json.dumps(after_first), encoding="utf-8")
 

@@ -166,8 +166,9 @@ class RevisionEngineTests(unittest.TestCase):
         old_insertion = ET.Element(q("ins"), {q("id"): "42"})
         new_run = ET.SubElement(old_insertion, q("r"))
         ET.SubElement(new_run, q("t")).text = "some other earlier insertion"
-        paragraph.insert(0, old_deletion)
-        paragraph.insert(1, old_insertion)
+        history_paragraph = ET.SubElement(root.find(".//w:body", cli.NS), q("p"))
+        history_paragraph.insert(0, old_deletion)
+        history_paragraph.insert(1, old_insertion)
         members["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
         with zipfile.ZipFile(self.input, "w", zipfile.ZIP_DEFLATED) as archive:
             for name, data in members.items():
@@ -617,7 +618,11 @@ class RevisionEngineTests(unittest.TestCase):
                         "p_idx": 0,
                         "find": "0.5 M",
                         "replace": "1.0 M",
-                        "location": "Main text"
+                        "location": "Main text",
+                        "authorized_change": {
+                            "intent": "Human-approved concentration correction",
+                            "explicitly_authorized_tokens": [{"kind": "quantity", "text": "0.5 M", "replacement": "1.0 M"}],
+                        }
                     },
                     {
                         "document": "Manuscript",
@@ -627,7 +632,11 @@ class RevisionEngineTests(unittest.TestCase):
                         "p_idx": 0,
                         "find": "ABC-01",
                         "replace": "ABC-02",
-                        "location": "Header"
+                        "location": "Header",
+                        "authorized_change": {
+                            "intent": "Human-approved identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
                     },
                     {
                         "document": "Manuscript",
@@ -637,7 +646,11 @@ class RevisionEngineTests(unittest.TestCase):
                         "p_idx": 0,
                         "find": "Internal review copy 01",
                         "replace": "Internal review copy 02",
-                        "location": "Footer"
+                        "location": "Footer",
+                        "authorized_change": {
+                            "intent": "Human-approved footer identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
                     }
                 ]
             }]

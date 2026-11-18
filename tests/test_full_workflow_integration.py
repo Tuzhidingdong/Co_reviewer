@@ -284,6 +284,10 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "find": "ZB-01",
                 "replace": "ZB-02",
                 "location": "Manuscript body paragraph 1",
+                "authorized_change": {
+                    "intent": "Human-approved sample identifier correction",
+                    "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                },
                 "evidence_ids": ["E-MANUSCRIPT-1"],
                 "source_comment_ids": list(task["source_comment_ids"]),
             },
@@ -297,6 +301,10 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "find": "ZB-01",
                 "replace": "ZB-02",
                 "location": "SI body paragraph 1",
+                "authorized_change": {
+                    "intent": "Human-approved sample identifier correction",
+                    "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                },
                 "evidence_ids": ["E-SI-1"],
                 "source_comment_ids": list(task["source_comment_ids"]),
             },
