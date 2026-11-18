@@ -828,7 +828,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                             "font_size_half_points": size.get(qn("val")) if size is not None else None,
                             "fonts": dict(fonts.attrib) if fonts is not None else {},
                             "direct_rpr_sha256": hashlib.sha256(
-                                ET.tostring(_format_run_properties(inserted_run), encoding="c14n")
+                                ET.tostring(_format_run_properties(inserted_run), method="c14n")
                                 if _format_run_properties(inserted_run) is not None else b""
                             ).hexdigest(),
                         })
