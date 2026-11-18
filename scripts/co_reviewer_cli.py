@@ -688,11 +688,14 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
 
 
 def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
-    errors = validate_plan(plan, True, require_authorized_change=True)
+    errors = validate_plan(plan, True)
     if errors: raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
     approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
     if not approved_items:
         raise ValueError("No revision items are currently approved for application.")
+    authorization_errors = validate_plan(plan, True, require_authorized_change=True)
+    if authorization_errors:
+        raise ValueError("Revision plan authorization validation failed:\n- " + "\n- ".join(authorization_errors))
     grouped = defaultdict(list)
     for item in approved_items:
         for target in item["targets"]:

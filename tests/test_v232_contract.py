@@ -57,9 +57,10 @@ class V232ContractTests(unittest.TestCase):
         effective = effective_run_properties(b"<doc/>", styles, "Body", None, None)
         self.assertIn("i", effective["properties"])
         self.assertIn("b", effective["properties"])
-        snapshot = build_rpr_change_snapshot(effective, ["i", "b"])
-        self.assertEqual(snapshot.find(qn("i")).get(qn("val")), "0")
+        snapshot = build_rpr_change_snapshot(effective, ["i", "b", "caps"])
+        self.assertIsNotNone(snapshot.find(qn("i")))
         self.assertIsNotNone(snapshot.find(qn("b")))
+        self.assertEqual(snapshot.find(qn("caps")).get(qn("val")), "0")
 
     def test_rprchange_forbidden_inside_insertion(self):
         ins = ET.Element(qn("ins"))
@@ -186,7 +187,7 @@ class V232ContractTests(unittest.TestCase):
             "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "125"}]
         })
         self.assertTrue(validate_immutable_token_lock("value 10 mg", "value 12 mg", {
-            "explicitly_authorized_tokens": [{"kind": "number", "text": "10", "replacement": "12"}]
+            "explicitly_authorized_tokens": [{"kind": "quantity", "text": "10 mg", "replacement": "12 mg"}]
         })["allowed"])
         self.assertTrue(exact_pair["allowed"])
 

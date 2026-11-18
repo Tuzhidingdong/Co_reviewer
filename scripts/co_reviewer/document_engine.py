@@ -364,9 +364,12 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         for edit in part_edits:
             old, new = str(edit.get("find", "")), str(edit.get("replace", ""))
             if not old.strip(): raise ValueError("Each find value must be non-empty.")
-            authorization = edit.get("authorized_change")
-            if not isinstance(authorization, dict) or not authorization.get("intent"):
-                raise ValueError("EXPLICIT_AUTHORIZED_CHANGE_REQUIRED: legacy operations without an approved Authorized Change are blocked.")
+            # Direct engine callers receive no token-change permission by default.
+            # The high-level plan approval gate separately requires an explicit
+            # Authorized Change and seals it into the approval fingerprint.
+            authorization = edit.get("authorized_change") or {
+                "intent": "No protected-token changes are authorized by this operation"
+            }
             contract = narrow_revision(
                 old, new, authorized_change=authorization,
                 protected_spans=edit.get("protected_spans", ()),
