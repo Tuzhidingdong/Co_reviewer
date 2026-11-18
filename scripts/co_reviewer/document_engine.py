@@ -141,6 +141,19 @@ def _set_run_property(run: ET.Element, name: str, value: str | None) -> None:
             break
     rpr.insert(insertion_index, element)
 
+def _run_format_signature(run: ET.Element) -> bytes:
+    """Return current direct-format properties, excluding historical snapshots."""
+    properties = run.find("w:rPr", NS)
+    if properties is None:
+        return b""
+    current = copy.deepcopy(properties)
+    for historical in list(current.findall("w:rPrChange", NS)):
+        current.remove(historical)
+    if not list(current) and not current.attrib:
+        return b""
+    return ET.tostring(current, method="c14n")
+
+
 def _script_character(character: str) -> tuple[str, str] | None:
     """Return native Word vertical alignment plus its ordinary base character."""
     decomposition = unicodedata.decomposition(character).split()
@@ -248,6 +261,7 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         cursor += len(value)
     prefixes, deletions, suffixes = [], [], []
     first_matched = None
+    matched_format_signatures: list[bytes] = []
     for run_start, run_end, source, value in spans:
         overlap_start = max(match_start, run_start)
         overlap_end = min(match_end, run_end)
@@ -255,6 +269,7 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
             prefix_text = value[:overlap_start - run_start]
             deleted_text = value[overlap_start - run_start:overlap_end - run_start]
             suffix_text = value[overlap_end - run_start:]
+            matched_format_signatures.append(_run_format_signature(source))
         elif run_end <= match_start:
             prefix_text, deleted_text, suffix_text = value, "", ""
         elif run_start >= match_end:
@@ -271,6 +286,15 @@ def replace_in_paragraph(para: ET.Element, old: str, new: str, author: str, date
         if frag is not None: suffixes.append(frag)
     if first_matched is None:
         return False, next_id, "target could not be mapped to runs"
+    if len(set(matched_format_signatures)) > 1:
+        return (
+            False,
+            next_id,
+            "MIXED_RUN_FORMAT_REPLACEMENT_REQUIRES_EXPLICIT_SEGMENT_PLAN: "
+            "the target spans source runs with different direct formatting; "
+            "split the edit into format-homogeneous segments or provide a future "
+            "explicit formatting map. No insertion was written.",
+        )
     insert_runs = make_insert_runs(first_matched, new)
     replacements = list(prefixes)
     if deletions:
