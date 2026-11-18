@@ -124,7 +124,7 @@ def _authorized_token_pairs(authorized: Mapping[str, Any] | None) -> set[tuple[s
 
 def _authorized_token_items(
     authorized: Mapping[str, Any] | None, field: str
-) -> set[tuple[str, str]]:
+) -> dict[tuple[str, str], int]:
     """Return exact typed token values approved for insertion or deletion."""
     if authorized is None:
         return set()
