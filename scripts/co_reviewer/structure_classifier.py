@@ -97,6 +97,7 @@ trackRevisions revisionView
 language themeFontLang docGrid
 abstractNum num numPr ilvl numId lvl lvlOverride startOverride
 abstractNumId lvlText lvlJc numFmt lvlRestart suff isLgl
+nsid multiLevelType tmpl start
 style styles basedOn next link qFormat uiPriority semiHidden unhideWhenUsed
 latentStyles lsdException tblStylePr tblStyleRowBandSize tblStyleColBandSize
 name basedOn next link pPr rPr tblPr trPr tcPr
@@ -741,7 +742,7 @@ def _classify_members(
         "INVALID_CONTENT_TYPES_ROOT", "UNSAFE_PACKAGE_MEMBER_PATH", "MALFORMED_XML_PART",
         "INVALID_RELATIONSHIPS_ROOT", "UNKNOWN_RELATIONSHIP_ELEMENT",
         "INVALID_OR_DUPLICATE_RELATIONSHIP_ID", "UNSAFE_RELATIONSHIP_TARGET",
-        "MISSING_RELATIONSHIP_TARGET",
+        "MISSING_RELATIONSHIP_TARGET", "MISSING_RELATIONSHIP_ID",
     }
     fatal_package_issues = [item for item in issues if item["code"] in blocked_package_codes]
     summary = {
@@ -845,6 +846,12 @@ def assert_edit_target_supported(
     for item in inventory.get("structures", []):
         item_part = item.get("part")
         if item.get("status") not in _BLOCKING_STATUSES:
+            continue
+        # Existing text revision wrappers are inventoried as guarded history.
+        # The P0 text writer edits only contiguous ordinary w:r sequences; it
+        # cannot match or cross a w:ins/w:del wrapper, so unrelated ordinary text
+        # in the same paragraph remains editable without rewriting that history.
+        if item.get("kind") == "text_revision_wrapper":
             continue
         span = item.get("paragraph_indices") or []
         target_match = (

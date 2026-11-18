@@ -114,7 +114,11 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertEqual(report["package_status"], "READY")
         self.assertEqual(report["classification_status"], "COMPLETE")
         self.assertIn("word/document.xml", {part["name"] for part in report["parts"]})
-        self.assertEqual(len(report["relationships"]), 2)
+        document_relationships = [
+            item for item in report["relationships"]
+            if item["source_part"] == "word/document.xml"
+        ]
+        self.assertEqual(len(document_relationships), 2)
         self.assertIn("EXTERNAL", {item["status"] for item in report["relationships"]})
         kinds = {item["kind"] for item in report["structures"]}
         self.assertIn("complex_field", kinds)
@@ -274,7 +278,7 @@ class StructureClassifierTests(unittest.TestCase):
     def test_new_insert_runs_do_not_inherit_historical_rpr_change(self):
         source = parse_xml(
             f'<w:r xmlns:w="{W}"><w:rPr><w:rFonts w:ascii="Arial"/>'
-            '<w:b/><w:rPrChange w:id="8"><w:rPr><w:i/></w:rPr></w:rPrChange>'
+            '<w:b/><w:rPrChange w:id="8"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr>'
             '<w:t>old</w:t></w:r>'.encode("utf-8")
         )
         inserted = make_insert_runs(source, "new")[0]

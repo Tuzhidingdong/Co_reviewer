@@ -367,6 +367,18 @@ class RevisionEngineTests(unittest.TestCase):
         link_run = ET.SubElement(hyperlink, q("r"))
         ET.SubElement(link_run, q("t")).text = "target"
         with zipfile.ZipFile(self.input, "w") as archive:
+            archive.writestr(
+                "[Content_Types].xml",
+                b'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+            )
+            archive.writestr(
+                "_rels/.rels",
+                b'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+            )
+            archive.writestr(
+                "word/_rels/document.xml.rels",
+                b'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>',
+            )
             archive.writestr("word/document.xml", ET.tostring(root, encoding="utf-8", xml_declaration=True))
         with self.assertRaisesRegex(ValueError, "not found|refused"):
             cli.apply_document(str(self.input), str(self.output), [{
