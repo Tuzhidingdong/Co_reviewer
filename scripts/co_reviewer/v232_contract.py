@@ -410,10 +410,40 @@ def build_package_reference_graph(documents: Mapping[str, str]) -> dict[str, Any
 
 def renumber_reference_graph(graph: Mapping[str, Any],
                              number_map: Mapping[str, str],
-                             *, explicit_authorization: bool) -> dict[str, Any]:
+                             *, explicit_authorization: bool,
+                             confirmed_ambiguous_mappings: Mapping[str, str] | None = None) -> dict[str, Any]:
     if explicit_authorization is not True:
         raise ContractError("Cross-file renumbering requires explicit package-wide authorization")
+    if not isinstance(number_map, Mapping) or any(
+        not isinstance(k, str) or "::" not in k or not isinstance(v, str) or not v.strip()
+        for k, v in number_map.items()
+    ):
+        raise ContractError("number_map must map DOCUMENT::OLD_NUMBER keys to non-empty new numbers")
+    confirmed = dict(confirmed_ambiguous_mappings or {})
+    if any(not isinstance(k, str) or not isinstance(v, str) for k, v in confirmed.items()):
+        raise ContractError("Confirmed ambiguous mappings must map mention IDs to definition IDs")
     updated = copy.deepcopy(dict(graph))
+    by_id = {d["id"]: d for d in updated.get("definitions", [])}
+    changed_definition_ids = {
+        d["id"] for d in updated.get("definitions", [])
+        if d["document"] + "::" + d["number"] in number_map
+    }
+    mentions_by_id = {m["id"]: m for m in updated.get("mentions", [])}
+    unknown_mentions = set(confirmed) - set(mentions_by_id)
+    if unknown_mentions:
+        raise ContractError("Ambiguous mapping references unknown mention IDs: " + ", ".join(sorted(unknown_mentions)))
+    for mention in updated.get("mentions", []):
+        candidates = mention.get("target_definition_ids", [])
+        if mention.get("resolution") == "ambiguous" and changed_definition_ids.intersection(candidates):
+            chosen = confirmed.get(mention["id"])
+            if chosen is None:
+                raise ContractError(
+                    "AMBIGUOUS_REFERENCE_MAPPING_REQUIRES_CONFIRMATION: " + mention["id"]
+                )
+            if chosen not in candidates:
+                raise ContractError("Confirmed definition is not a candidate for mention " + mention["id"])
+            mention["target_definition_ids"] = [chosen]
+            mention["resolution"] = "confirmed_by_user"
     by_id = {d["id"]: d for d in updated.get("definitions", [])}
     definition_updates = []
     for definition in updated.get("definitions", []):
@@ -425,7 +455,6 @@ def renumber_reference_graph(graph: Mapping[str, Any],
             definition_updates.append({"document": definition["document"], "definition_id": definition["id"],
                                       "offset": definition["offset"], "old_number": old_number,
                                       "new_number": definition["number"]})
-    # Mentions follow their resolved definition edge, not string-wide guesses.
     mention_updates = []
     for mention in updated.get("mentions", []):
         targets = mention.get("target_definition_ids", [])
@@ -442,6 +471,7 @@ def renumber_reference_graph(graph: Mapping[str, Any],
     updated["definition_updates"] = definition_updates
     updated["mention_updates"] = mention_updates
     updated["numbering_mutation_authorized"] = True
+    updated["confirmed_ambiguous_mappings"] = confirmed
     return updated
 
 # Structural topology guards. The P0 text adapter must not split/merge across

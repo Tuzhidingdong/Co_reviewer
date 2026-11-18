@@ -5375,7 +5375,13 @@ def cmd_renumber_package_graph(args):
     mapping = json.loads(Path(args.number_map).read_text(encoding="utf-8"))
     if not isinstance(mapping, dict):
         raise ValueError("Number map must be a JSON object keyed as DOCUMENT::OLD_NUMBER")
-    updated = renumber_reference_graph(graph, mapping, explicit_authorization=args.authorized)
+    confirmed = json.loads(Path(args.confirm_ambiguous_map).read_text(encoding="utf-8")) if args.confirm_ambiguous_map else {}
+    if not isinstance(confirmed, dict):
+        raise ValueError("Confirmed ambiguous map must be a JSON object mapping mention IDs to definition IDs")
+    updated = renumber_reference_graph(
+        graph, mapping, explicit_authorization=args.authorized,
+        confirmed_ambiguous_mappings=confirmed,
+    )
     if args.out:
         write_json_atomic(Path(args.out), updated)
         print(f"[REFERENCE GRAPH UPDATED] {Path(args.out).resolve()}")
@@ -5459,6 +5465,7 @@ def build_parser():
     rn.add_argument("--graph", required=True)
     rn.add_argument("--number-map", required=True)
     rn.add_argument("--authorized", action="store_true", help="Explicit package-wide authorization supplied by the user.")
+    rn.add_argument("--confirm-ambiguous-map", help="JSON mapping of ambiguous mention IDs to user-confirmed definition IDs.")
     rn.add_argument("--out", required=True)
     rn.set_defaults(func=cmd_renumber_package_graph)
     cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")

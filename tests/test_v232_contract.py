@@ -252,5 +252,23 @@ class V232ContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "Duplicate or case-colliding"):
                 commit_document_package({"A.docx": valid_docx, "a.DOCX": valid_docx}, tmp)
 
+
+    def test_reference_renumber_requires_confirmed_ambiguous_mapping(self):
+        graph = build_package_reference_graph({
+            "Manuscript": "Figure 1. Main result. Figure 2. Other result.",
+            "SI": "Figure 1. Supplementary result. See Figure 1 for details.",
+        })
+        mention = next(m for m in graph["mentions"] if m["document"] == "SI" and m["resolution"] == "ambiguous")
+        with self.assertRaisesRegex(ContractError, "AMBIGUOUS_REFERENCE_MAPPING_REQUIRES_CONFIRMATION"):
+            renumber_reference_graph(graph, {"Manuscript::1": "3"}, explicit_authorization=True)
+        manuscript_definition = next(d for d in graph["definitions"] if d["document"] == "Manuscript" and d["number"] == "1")
+        updated = renumber_reference_graph(
+            graph, {"Manuscript::1": "3"}, explicit_authorization=True,
+            confirmed_ambiguous_mappings={mention["id"]: manuscript_definition["id"]},
+        )
+        resolved = next(m for m in updated["mentions"] if m["id"] == mention["id"])
+        self.assertEqual(resolved["resolution"], "confirmed_by_user")
+        self.assertEqual(resolved["number"], "3")
+
 if __name__ == "__main__":
     unittest.main()
