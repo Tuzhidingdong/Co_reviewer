@@ -113,7 +113,7 @@ doNotUseHTMLParagraphAutoSpacing doNotUseIndentAsNumberingTabStop
 mirrorIndents contextualSpacing autoSpaceDE autoSpaceDN adjustRightInd
 suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct leftLinePunct
 rightLinePunct noCompress doNotCompress doNotUseEastAsianBreakRules
-header footer footnotes endnotes
+header footer hdr ftr footnotes endnotes
 fontTable fonts font altName panose family pitch sig charset panose1
 embedRegular embedBold embedItalic embedBoldItalic embed embedDataId embeddedFont
 subsetted notTrueType
