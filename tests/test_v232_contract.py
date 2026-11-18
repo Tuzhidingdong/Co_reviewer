@@ -287,7 +287,7 @@ class V232ContractTests(unittest.TestCase):
 
     def test_effective_run_properties_resolves_default_style_theme_and_overlay_precedence(self):
         styles = f'''<w:styles xmlns:w="{W}">
-          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/><w:i/></w:rPr></w:rPrDefault></w:docDefaults>
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:i/></w:rPr></w:rPrDefault></w:docDefaults>
           <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:rPr><w:b/></w:rPr></w:style>
           <w:style w:type="paragraph" w:styleId="Body"><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="222222"/></w:rPr></w:style>
           <w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i w:val="0"/></w:rPr></w:style>
