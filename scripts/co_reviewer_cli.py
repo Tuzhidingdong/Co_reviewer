@@ -975,7 +975,14 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
                 })
                 continue
-            paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
+            pure_format_change = (
+                find_text == edit.get("replace")
+                and bool(edit.get("format_changes"))
+                and edit.get("delete_revision_id") is None
+                and edit.get("insert_revision_id") is None
+            )
+            if not pure_format_change:
+                paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
 
         for part in sorted(set(expected_parts) | set(output_parts)):
             expected = expected_parts.get(part)
@@ -1016,6 +1023,124 @@ def _accepted_paragraph_text(paragraph: ET.Element) -> str:
 
     visit(paragraph)
     return "".join(pieces)
+
+
+def _direct_run_format_sha256(run: ET.Element) -> str:
+    rpr = run.find("w:rPr", NS)
+    if rpr is None:
+        return hashlib.sha256(b"").hexdigest()
+    cloned = copy.deepcopy(rpr)
+    for change in list(cloned.findall("w:rPrChange", NS)):
+        cloned.remove(change)
+    return hashlib.sha256(ET.tostring(cloned, encoding="c14n")).hexdigest()
+
+
+def _format_change_property_matches(run: ET.Element, name: str, expected: Any) -> bool:
+    rpr = run.find("w:rPr", NS)
+    node = rpr.find(f"w:{name}", NS) if rpr is not None else None
+    boolean_names = {
+        "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike",
+        "dstrike", "outline", "shadow", "emboss", "imprint",
+    }
+    if name in boolean_names:
+        actual = node is not None and node.get(qn("val"), "1") not in {"0", "false", "off"}
+        return actual is expected
+    if name == "rFonts":
+        fonts = rpr.find("w:rFonts", NS) if rpr is not None else None
+        return fonts is not None and all(fonts.get(qn(slot)) == face for slot, face in expected.items())
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        return node is not None and node.get(qn("val")) == str(expected)
+    return node is not None and node.get(qn("val")) == expected
+
+
+def _format_change_snapshot_matches(
+    run: ET.Element, name: str, old_effective_properties: Mapping[str, Any]
+) -> bool:
+    rpr = run.find("w:rPr", NS)
+    change = rpr.find("w:rPrChange", NS) if rpr is not None else None
+    snapshot = change.find("w:rPr", NS) if change is not None else None
+    if snapshot is None:
+        return False
+    old = old_effective_properties.get(name)
+    previous = snapshot.find(f"w:{name}", NS)
+    boolean_names = {
+        "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+    }
+    if old is None and name in boolean_names:
+        return previous is not None and previous.get(qn("val")) == "0"
+    expected_attributes = dict(old) if isinstance(old, Mapping) else None
+    if expected_attributes is None:
+        return False
+    observed_attributes = dict(previous.attrib) if previous is not None else {}
+    expected_attributes = {
+        (key if key.startswith("{") else qn(key)): value
+        for key, value in expected_attributes.items() if value is not None
+    }
+    return observed_attributes == expected_attributes
+
+
+def _verify_format_changes(
+    paragraph: ET.Element,
+    format_changes: list[dict[str, Any]],
+    format_operations: list[dict[str, Any]],
+) -> tuple[bool, list[dict[str, Any]]]:
+    details: list[dict[str, Any]] = []
+    all_ok = True
+    for operation_index, operation in enumerate(format_operations):
+        records = [
+            record for record in format_changes
+            if record.get("operation_index") == operation_index
+        ]
+        mapped_text = "".join(str(record.get("find", "")) for record in records)
+        operation_ok = bool(records) and mapped_text == operation.get("find")
+        record_results = []
+        for record in records:
+            revision_id = record.get("revision_id")
+            matching_runs = [
+                run for run in paragraph.findall(".//w:r", NS)
+                if (
+                    (run.find("w:rPr/w:rPrChange", NS) is not None)
+                    and run.find("w:rPr/w:rPrChange", NS).get(qn("id")) == str(revision_id)
+                )
+            ]
+            run = matching_runs[0] if len(matching_runs) == 1 else None
+            properties_ok = bool(run) and all(
+                _format_change_property_matches(run, name, value)
+                for name, value in operation.get("properties", {}).items()
+            )
+            snapshot_ok = bool(run) and all(
+                _format_change_snapshot_matches(
+                    run, name, record.get("old_effective_properties", {})
+                )
+                for name in operation.get("properties", {})
+            )
+            record_ok = (
+                len(matching_runs) == 1
+                and properties_ok and snapshot_ok
+                and record.get("requested_properties") == operation.get("properties")
+            )
+            all_ok = all_ok and record_ok
+            record_results.append({
+                "revision_id": revision_id,
+                "run_count": len(matching_runs),
+                "properties_match": properties_ok,
+                "old_snapshot_matches": snapshot_ok,
+                "passed": record_ok,
+            })
+        operation_ok = operation_ok and all(item["passed"] for item in record_results)
+        all_ok = all_ok and operation_ok
+        details.append({
+            "operation_index": operation_index,
+            "target": operation.get("find"),
+            "records": record_results,
+            "passed": operation_ok,
+        })
+    if len(format_changes) != sum(
+        len([item for item in format_changes if item.get("operation_index") == index])
+        for index in range(len(format_operations))
+    ):
+        all_ok = False
+    return all_ok, details
 
 
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
