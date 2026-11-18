@@ -1037,7 +1037,7 @@ class RevisionEngineTests(unittest.TestCase):
             }]
         }
         verification = cli.verify_apply_report(plan, [report])
-        self.assertTrue(verification["passed"])
+        self.assertTrue(verification["passed"], msg=str(verification["results"]))
         self.assertEqual(verification["targets_verified"], 1)
         self.assertTrue(
             verification["results"][0]["checks"]["native_script_format_preserved"]
