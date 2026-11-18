@@ -5386,6 +5386,9 @@ def cmd_resolve_historical_revisions(args):
         raise ValueError(f"Historical source DOCX does not exist: {source}")
     if source == output or output.exists():
         raise ValueError("Resolved historical DOCX must use a new output path; source overwrite is forbidden.")
+    report_path = Path(args.report).expanduser().resolve() if args.report else output.with_suffix(".resolution.json")
+    if report_path in {source, output} or report_path.exists():
+        raise ValueError("Resolution report must use a new path distinct from source/output.")
     inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
     target_data = json.loads(Path(args.targets).read_text(encoding="utf-8"))
     targets = target_data.get("targets") if isinstance(target_data, dict) else target_data
@@ -5401,13 +5404,17 @@ def cmd_resolve_historical_revisions(args):
     if result["status"] == "NO_OP":
         raise ValueError("No historical revision overlaps the supplied targets; no output was created.")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(result["docx_bytes"])
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {key: value for key, value in result.items() if key != "docx_bytes"}
     report.update({"source_path": str(source), "output_path": str(output)})
-    report_path = Path(args.report).expanduser().resolve() if args.report else output.with_suffix(".resolution.json")
-    if report_path in {source, output} or report_path.exists():
-        raise ValueError("Resolution report must use a new path distinct from source/output.")
-    write_json_atomic(report_path, report)
+    # Validate every destination before publishing any artifact. A report-path
+    # collision must never leave an apparently successful DOCX without evidence.
+    output.write_bytes(result["docx_bytes"])
+    try:
+        write_json_atomic(report_path, report)
+    except Exception:
+        output.unlink(missing_ok=True)
+        raise
     print(f"[HISTORICAL REVISIONS RESOLVED] {len(result['resolved'])}")
     print(f"[SOURCE SHA256] {result['source_sha256']}")
     print(f"[OUTPUT SHA256] {result['output_sha256']}")

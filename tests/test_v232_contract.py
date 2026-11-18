@@ -399,6 +399,81 @@ class V232ContractTests(unittest.TestCase):
                 archive.writestr(name, value)
         return path
 
+    def test_cli_historical_resolver_publishes_docx_and_hash_report(self):
+        import hashlib
+        import json
+        import co_reviewer_cli as cli
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self._revision_docx(root)
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"]
+                        if (x.get("details") or {}).get("revision_id") == "1")
+            inventory_path = root / "baseline.json"
+            targets_path = root / "targets.json"
+            output = root / "resolved.docx"
+            report = root / "resolved.json"
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            targets_path.write_text(json.dumps({"targets": [{
+                "part": item["part"], "p_idx": item["paragraph_index"]
+            }]}), encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                code = cli.main([
+                    "resolve-historical-revisions",
+                    "--marked", str(source),
+                    "--inventory", str(inventory_path),
+                    "--targets", str(targets_path),
+                    "--policy", "ACCEPT_EXISTING",
+                    "--out", str(output),
+                    "--report", str(report),
+                ])
+            self.assertEqual(code, 0)
+            self.assertEqual(source.read_bytes(), payload)
+            self.assertTrue(output.is_file())
+            result = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(result["source_sha256"], hashlib.sha256(payload).hexdigest())
+            self.assertEqual(result["output_sha256"], hashlib.sha256(output.read_bytes()).hexdigest())
+
+    def test_cli_report_path_collision_does_not_publish_partial_docx(self):
+        import json
+        import co_reviewer_cli as cli
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self._revision_docx(root)
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"]
+                        if (x.get("details") or {}).get("revision_id") == "1")
+            inventory_path = root / "baseline.json"
+            targets_path = root / "targets.json"
+            output = root / "resolved.docx"
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+            targets_path.write_text(json.dumps({"targets": [{
+                "part": item["part"], "p_idx": item["paragraph_index"]
+            }]}), encoding="utf-8")
+            stderr = StringIO()
+            with redirect_stdout(StringIO()), redirect_stderr(stderr):
+                code = cli.main([
+                    "resolve-historical-revisions",
+                    "--marked", str(source),
+                    "--inventory", str(inventory_path),
+                    "--targets", str(targets_path),
+                    "--policy", "ACCEPT_EXISTING",
+                    "--out", str(output),
+                    "--report", str(source),
+                ])
+            self.assertEqual(code, 2)
+            self.assertFalse(output.exists())
+            self.assertEqual(source.read_bytes(), payload)
+            self.assertIn("Resolution report must use a new path", stderr.getvalue())
+
     def test_accept_historical_text_revision_only_in_target_and_preserve_unrelated(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = self._revision_docx(Path(tmp))
