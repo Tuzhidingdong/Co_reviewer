@@ -85,7 +85,7 @@ def _authorized_token_pairs(authorized: Mapping[str, Any] | None) -> set[tuple[s
         if not isinstance(item, Mapping) or not isinstance(item.get("text"), str) or not isinstance(item.get("replacement"), str):
             raise ContractError("Each authorized token requires exact text and replacement strings")
         kind = str(item.get("kind", "*"))
-        normalize = lambda value: re.sub(r"\\s+", "", value).replace("−", "-")
+        normalize = lambda value: re.sub(r"\s+", "", value).replace("−", "-")
         result.add((kind, normalize(item["text"]), normalize(item["replacement"])))
     return result
 
