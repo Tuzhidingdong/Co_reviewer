@@ -451,8 +451,26 @@ Open the preview in Microsoft Word and inspect formula rendering, save/close/reo
 
 - All Manuscript/SI Marked edits MUST use the repository's approved revision-plan/Patch lifecycle and the official CLI Apply/Verify path. Do not create or invoke task-local apply_adapter.py, robust_replace, direct OOXML mutation, format_pass.py, verify_normalized.py, or any other substitute writer/verifier for a production deliverable.
 - A failed official preflight, approval, Apply, or verification is a hard stop. Preserve the failed plan and evidence, report the exact blocker, and request an engineering change to the repository implementation. Never bypass a fail-closed gate to finish a task.
-- Do not replace an entire reference entry or another mixed-format passage as one operation unless the source-format mapping is explicitly supported and verified. Preserve source font, size, bold, italic, superscript/subscript, language, and paragraph/run boundaries for unchanged text. When a replacement spans source Runs with different direct formatting, the production engine must refuse rather than inherit the first Run's format.
-- Formatting changes require an explicit, separately authorized operation with typed on/off values. None in the internal OOXML property setter means remove the property; it is not an alias for enabling bold or italic. Never infer formatting success from an adapter report that merely says applied.
-- Pure additions/removals of protected numbers, units, formulae, or citations require one exact authorization entry per token in explicitly_authorized_insertions / explicitly_authorized_deletions (kind + text). One approval intent or one entry must not authorize a bundle of unrelated tokens.
-- The official verifier must establish the complete accepted-text sequence at the exact source paragraph location, exact revision IDs and text, and any recorded script/format invariants. A paragraph-level substring-presence check is insufficient.
+- A mixed-format replacement may use the official `replacement_format_map` only when every replacement character is explicitly mapped to a source character offset. Each segment has exactly `replacement_start`, `replacement_end`, and `source_offset`; segments must be ordered, contiguous, non-overlapping, and cover the complete replacement. `source_offset` is an offset into the exact `find` text and selects the source Run whose direct formatting will be inherited by that replacement segment. If an author cannot justify the map character-by-character, the operation must fail closed rather than copy the first Run's formatting.
+- A `FormatChange` is a separate pure PatchOperation: `find` and `replace` must be identical, `format_authorization.intent` must be explicit, and each `format_operations` entry must identify existing text and typed property values. Never combine text deletion/insertion and FormatChange in the same operation. The engine stores the old effective property snapshot in native `w:rPrChange`; the verifier checks the revision ID, new properties, and previous-value snapshot.
+- The verifier compares the complete target paragraph in accepted-text order and checks direct Run formatting per character: unchanged source characters retain their original formatting, mapped insertions inherit their declared source Run, and approved FormatChange spans are validated against their historical snapshots. It also checks the exact inserted revision IDs, text, and script alignment. A passing substring-presence check is not sufficient.
+
+### One-round QA remediation (Phase 7)
+
+- Remediation is allowed only after a hash-bound QA report has status `FAIL` for the current Working Clean DOCX recorded in RevisionLedger. First prepare one new, human-approved, single-operation Patch in an immutable batch based on the exact current Marked path and SHA-256. The Patch output must be the batch-assigned new Marked path.
+- Start the bounded cycle with:
+
+```powershell
+python scripts/co_reviewer_cli.py begin-qa-remediation --qa-report "runs/qa-before.quality.json" --revision-ledger revision_ledger.json --batch-dir "runs/batch-<id>" --patch-id "<patch-id>" --reason "Describe the specific local mechanical correction supported by the failed QA evidence." --out "runs/qa-remediation-started.json"
+```
+
+- The command binds the failed QA report, source Clean, current Marked hash, approved Patch, batch intent/scope and approval event into RevisionLedger. It refuses a second start for the same RevisionLedger. Then use only the normal `apply`, `verify`, `confirm-verified`, `sync-workflow-ledger`, and `publish-batch` lifecycle. Do not directly modify Clean.
+- After the batch is published, compile and QA the new Clean from Marked with:
+
+```powershell
+python scripts/co_reviewer_cli.py complete-qa-remediation --state "runs/qa-remediation-started.json" --workflow-ledger workflow_ledger.json --revision-ledger revision_ledger.json --batch-dir "runs/batch-<id>" --clean-out "runs/remediation-final.clean.docx" --qa-report-out "runs/remediation-final.quality.json" --profile word-final-clean --out "runs/qa-remediation-completed.json"
+```
+
+- This command regenerates the accepted-changes projection from the exact published Marked bytes, verifies it against the deterministic compiler, updates the RevisionLedger Clean pointer/hash/fingerprint, and performs the second QA pass. A PASS or PASS_WITH_WARNINGS completes remediation. A second QA FAIL records `BLOCKED`; there is no third attempt. The final Release Gate rejects missing, duplicate, incomplete, failed, or hash-mismatched remediation history.
+
 - At task start, confirm the actual project root (git rev-parse --show-toplevel), HEAD, working-tree status, and the resolved Skill/workflow paths. Do not assume a hard-coded repository path. If the globally loaded @Co_Reviewer Skill points to a different repository snapshot than the active project, stop and report the mismatch; do not silently use either snapshot.
