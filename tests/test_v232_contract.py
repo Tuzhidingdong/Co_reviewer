@@ -128,6 +128,18 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(first["next_phase"], "COMPILE_CLEAN")
         second = remediation_transition({"phase": "QA", "remediation_round": 1}, patch)
         self.assertEqual(second["phase"], "BLOCKED")
+        passed = remediation_transition({
+            "phase": "QA", "remediation_round": 1, "qa_status": "PASS"
+        })
+        self.assertEqual(passed["phase"], "COMPLETE")
+        warned = remediation_transition({
+            "phase": "QA", "remediation_round": 1, "qa_status": "PASS_WITH_WARNINGS"
+        })
+        self.assertEqual(warned["phase"], "COMPLETE")
+        failed = remediation_transition({
+            "phase": "QA", "remediation_round": 1, "qa_status": "FAIL"
+        })
+        self.assertEqual(failed["phase"], "BLOCKED")
         deletion = remediation_transition({"phase": "QA", "remediation_round": 0}, {
             "target_artifact": "Marked", "operation_id": "op-delete",
             "find": "obsolete phrase", "replace": "", "reason": "Remove duplicated text",
