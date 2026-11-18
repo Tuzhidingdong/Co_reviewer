@@ -208,6 +208,19 @@ class V232ContractTests(unittest.TestCase):
             {item["reason"] for item in partial["conflicts"]},
         )
 
+        repeated_value = validate_immutable_token_lock(
+            "The measurements were recorded.",
+            "The measurements were 1.2 and 1.2.",
+            {"explicitly_authorized_insertions": approvals[:1]},
+        )
+        self.assertFalse(repeated_value["allowed"])
+        repeated_value_approved = validate_immutable_token_lock(
+            "The measurements were recorded.",
+            "The measurements were 1.2 and 1.2.",
+            {"explicitly_authorized_insertions": approvals[:1] * 2},
+        )
+        self.assertTrue(repeated_value_approved["allowed"])
+
     def test_token_lock_requires_exact_old_to_new_authorization(self):
         original = "The value was 125.0 mg."
         proposed = "The value was 125 mg."
