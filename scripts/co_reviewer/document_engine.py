@@ -836,7 +836,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "part": part, "p_idx": idx, "find": old, "replace": new,
                 "status": "applied", "delete_revision_id": delete_revision_id,
                 "insert_revision_id": insert_revision_id,
-                "inserted_text": normalize_script_characters(new),
+                "inserted_text": old if old == new and format_operations else normalize_script_characters(new),
                 "inserted_run_formats": inserted_run_formats,
                 "replacement_format_map": copy.deepcopy(replacement_format_map),
                 "format_changes": format_change_results,
