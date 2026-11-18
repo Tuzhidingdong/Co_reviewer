@@ -7,13 +7,14 @@ The CLI remains a compatibility facade while the engine boundary becomes testabl
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import os
 import re
 import tempfile
 import unicodedata
 import zipfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,7 +70,13 @@ def run_plain_text(run: ET.Element) -> str | None:
     nodes = run.findall("w:t", NS)
     return "".join(x.text or "" for x in nodes) if nodes else None
 
-def make_run(source: ET.Element, text: str, deleted: bool = False) -> ET.Element | None:
+def make_run(
+    source: ET.Element,
+    text: str,
+    deleted: bool = False,
+    *,
+    preserve_rpr_change: bool = True,
+) -> ET.Element | None:
     if not text:
         return None
     run = ET.Element(qn("r"))
@@ -77,7 +84,13 @@ def make_run(source: ET.Element, text: str, deleted: bool = False) -> ET.Element
         run.set(key, value)
     props = source.find("w:rPr", NS)
     if props is not None:
-        run.append(copy.deepcopy(props))
+        cloned_props = copy.deepcopy(props)
+        if not preserve_rpr_change:
+            # A new insertion has no historical formatting state of its own.
+            # Do not carry the source run's prior rPrChange snapshot into w:ins.
+            for historical_change in list(cloned_props.findall("w:rPrChange", NS)):
+                cloned_props.remove(historical_change)
+        run.append(cloned_props)
     node = ET.SubElement(run, qn("delText") if deleted else qn("t"))
     node.text = text
     if text[:1].isspace() or text[-1:].isspace():
@@ -168,7 +181,7 @@ def make_insert_runs(source: ET.Element, text: str) -> list[ET.Element]:
 
     runs = []
     for alignment, segment_text in segments:
-        run = make_run(source, segment_text)
+        run = make_run(source, segment_text, preserve_rpr_change=False)
         if run is None:
             continue
         # When the replacement explicitly contains script characters, ordinary
@@ -302,8 +315,37 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
     if target.exists(): raise ValueError(f"Output already exists; choose a new output path: {target}")
     if not edits: raise ValueError("No edits provided.")
     with zipfile.ZipFile(source) as archive:
-        original = {name: archive.read(name) for name in archive.namelist()}
+        bad_member = archive.testzip()
+        if bad_member:
+            raise ValueError(f"Input DOCX ZIP CRC validation failed in {bad_member}.")
+        member_names = archive.namelist()
+        if len(member_names) != len(set(member_names)):
+            duplicates = sorted(
+                name for name, count in Counter(member_names).items()
+                if count > 1
+            )
+            raise ValueError("Input DOCX contains duplicate ZIP member names: " + ", ".join(duplicates[:10]))
+        original = {name: archive.read(name) for name in member_names}
     if "word/document.xml" not in original: raise ValueError("Missing word/document.xml.")
+    from .structure_classifier import (
+        StructureClassificationError,
+        assert_edit_target_supported,
+        classify_docx_package_members,
+    )
+    structure_inventory = classify_docx_package_members(
+        original,
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        source_name=str(source),
+    )
+    if structure_inventory["package_status"] != "READY":
+        blocking = [
+            f"{item['code']}: {item['message']}"
+            for item in structure_inventory["issues"]
+            if item.get("severity") == "BLOCKED"
+        ]
+        raise StructureClassificationError(
+            "DOCX package structure preflight is blocked: " + "; ".join(blocking[:12])
+        )
     groups = defaultdict(list)
     for edit in edits: groups[safe_part(edit.get("part", "word/document.xml"))].append(edit)
     changed, edit_results = {}, []
@@ -334,6 +376,9 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 why = "not found" if not found else "ambiguous across paragraphs"
                 raise ValueError(f"Target {old[:80]!r} {why} in {part}; no output was written.")
             idx, para = found[0]
+            assert_edit_target_supported(
+                structure_inventory, part=part, paragraph_index=idx
+            )
             if visible_text(para).count(old) != 1:
                 raise ValueError(f"Target {old[:80]!r} is ambiguous within paragraph P[{idx}]; no output was written.")
             delete_revision_id = rid

@@ -57,6 +57,7 @@ from co_reviewer.usage_audit import (
 )
 from co_reviewer.docx_quality import audit_docx_quality
 from co_reviewer.response_renderer import render_response_letter
+from co_reviewer.structure_classifier import classify_docx_structure
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -1147,6 +1148,27 @@ def cmd_inspect(args):
     print(f"[CACHE] {cache['hits']} hit(s), {cache['misses']} parse(s); directory: {getattr(args, 'cache_dir', '.co-reviewer-cache')}")
     print(f"[SUMMARY] {len(reports)} document(s); {sum(x['paragraph_count'] for x in reports)} paragraphs; {sum(len(x['comments']) for x in reports)} comments; {count_errors} error(s)")
     return 1 if count_errors else 0
+
+
+def cmd_inspect_docx_structure(args):
+    source_path = Path(args.docx).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve() if args.out else None
+    if output_path is not None and output_path == source_path:
+        raise ValueError("Structure inventory output must not overwrite the source DOCX.")
+    report = classify_docx_structure(source_path)
+    if output_path is not None:
+        write_json_atomic(output_path, report)
+        print(f"[OK] Structure inventory: {output_path}")
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    summary = report["summary"]
+    print(
+        f"[STRUCTURE] {summary['package_parts']} package part(s); "
+        f"{summary['xml_parts']} XML part(s); {summary['structures']} structure(s); "
+        f"{len(report['issues'])} issue(s); package={report['package_status']}"
+    )
+    print(f"[STRUCTURE STATUS] {summary['structures_by_status']}")
+    return 0 if report["package_status"] == "READY" else 2
 
 
 def cmd_audit(args):
@@ -5262,6 +5284,10 @@ def build_parser():
     i.add_argument("--usage-ledger", help="Optional JSONL metadata ledger for DOCX parse/cache observations; no document text is stored.")
     i.add_argument("--refresh-cache", action="store_true", help="Rebuild inventories even when source hashes match.")
     i.set_defaults(func=cmd_inspect)
+    si = sub.add_parser("inspect-docx-structure", help="Read-only inventory of OPC parts, relationships and OOXML structures.")
+    si.add_argument("--docx", required=True)
+    si.add_argument("--out", help="Optional JSON report path. Omit to print the report to stdout.")
+    si.set_defaults(func=cmd_inspect_docx_structure)
     au = sub.add_parser("audit", help="Inspect once, reuse hash-bound caches, match comments and audit figure/table references.")
     au.add_argument("--rev"); au.add_argument("--man"); au.add_argument("--si")
     au.add_argument("--comment-author", default=None)
