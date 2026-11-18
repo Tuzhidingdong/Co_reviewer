@@ -158,8 +158,17 @@ class PatchOperation:
             values = [segment.get(key) for key in ("replacement_start", "replacement_end", "source_offset")]
             if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
                 raise RevisionModelError(f"replacement_format_map[{index}] offsets must be integers.")
-            if values[0] < 0 or values[1] <= values[0] or values[2] < 0:
-                raise RevisionModelError(f"replacement_format_map[{index}] offsets are invalid.")
+            expected_start = (
+                self.replacement_format_map[index - 1]["replacement_end"] if index else 0
+            )
+            if (
+                values[0] != expected_start or values[1] <= values[0]
+                or values[2] < 0 or values[1] > len(self.replace)
+                or values[2] >= len(self.find)
+            ):
+                raise RevisionModelError(f"replacement_format_map[{index}] offsets are invalid or non-contiguous.")
+        if self.replacement_format_map and self.replacement_format_map[-1]["replacement_end"] != len(self.replace):
+            raise RevisionModelError("replacement_format_map must cover every replacement character.")
         if any(not isinstance(operation, Mapping) for operation in self.format_operations):
             raise RevisionModelError("format_operations must contain objects.")
         if self.format_operations:
