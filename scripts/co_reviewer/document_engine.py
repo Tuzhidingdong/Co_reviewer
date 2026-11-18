@@ -485,6 +485,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             if name.endswith((".xml", ".rels")): parse_xml(z.read(name))
     report = {
         "input_file": str(source), "output_file": str(target),
+        "input_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "output_sha256": hashlib.sha256(payload).hexdigest(),
         "edits_requested": len(edits), "edits_applied": len(edit_results),
         "modified_parts": sorted(changed), "results": edit_results,
         "validation": {"zip_crc": "passed", "xml_well_formed": "passed",

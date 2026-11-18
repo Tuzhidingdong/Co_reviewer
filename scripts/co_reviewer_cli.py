@@ -5395,7 +5395,34 @@ def cmd_compile_clean_from_marked(args):
         raise ValueError(f"Marked DOCX does not exist: {marked}")
     if marked == output or output.exists():
         raise ValueError("Clean output must be a new path distinct from Marked.")
-    result = compile_clean_from_marked(marked.read_bytes())
+    marked_bytes = marked.read_bytes()
+    expected_revision_ids = []
+    if args.apply_report:
+        raw_reports = json.loads(Path(args.apply_report).read_text(encoding="utf-8"))
+        reports = raw_reports if isinstance(raw_reports, list) else [raw_reports]
+        matched = [
+            report for report in reports
+            if isinstance(report, dict)
+            and report.get("output_file")
+            and Path(report["output_file"]).expanduser().resolve() == marked
+        ]
+        if len(matched) != 1:
+            raise ValueError("--apply-report must contain exactly one report for this Marked DOCX.")
+        report = matched[0]
+        actual_sha = hashlib.sha256(marked_bytes).hexdigest()
+        if report.get("output_sha256") != actual_sha:
+            raise ValueError("Apply report output_sha256 does not match the supplied Marked DOCX.")
+        for edit in report.get("results", []):
+            for key in ("delete_revision_id", "insert_revision_id"):
+                value = edit.get(key)
+                if value is not None:
+                    expected_revision_ids.append(str(value))
+    elif args.revision_ids:
+        ids = json.loads(Path(args.revision_ids).read_text(encoding="utf-8"))
+        if not isinstance(ids, list) or any(not isinstance(value, (str, int)) for value in ids):
+            raise ValueError("--revision-ids must be a JSON array of revision IDs.")
+        expected_revision_ids = [str(value) for value in ids]
+    result = compile_clean_from_marked(marked_bytes, expected_revision_ids=expected_revision_ids)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("xb") as stream:
         stream.write(result.pop("clean_bytes"))
@@ -5472,6 +5499,9 @@ def build_parser():
     cc.add_argument("--marked", required=True)
     cc.add_argument("--out", required=True)
     cc.add_argument("--report")
+    cc_group = cc.add_mutually_exclusive_group()
+    cc_group.add_argument("--apply-report", help="Apply report JSON whose output_sha256 must match this Marked DOCX.")
+    cc_group.add_argument("--revision-ids", help="JSON array of exact current revision IDs; use only when independently verified.")
     cc.set_defaults(func=cmd_compile_clean_from_marked)
     cp = sub.add_parser("commit-document-package", help="Validate and publish a multi-DOCX immutable package candidate.")
     cp.add_argument("--release-root", required=True)
