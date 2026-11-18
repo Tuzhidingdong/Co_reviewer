@@ -260,55 +260,202 @@ def narrow_revision(original: str, proposed: str, *,
 # OOXML style resolution. Values are represented as raw OOXML attributes; this is
 # an effective-property snapshot, not a claim to reproduce every Word theme rule.
 def _style_map(styles_root: ET._Element) -> dict[str, ET._Element]:
-    return {x.get(qn("styleId")): x for x in styles_root.findall("w:style", NS) if x.get(qn("styleId"))}
+    return {
+        x.get(qn("styleId")): x
+        for x in styles_root.findall("w:style", NS)
+        if x.get(qn("styleId"))
+    }
+
+
 def _property_map(node: ET._Element | None) -> dict[str, dict[str, str | None]]:
-    result = {}
-    if node is None: return result
+    result: dict[str, dict[str, str | None]] = {}
+    if node is None:
+        return result
     for child in node:
-        result[ET.QName(child).localname] = dict(child.attrib)
+        local_name = ET.QName(child).localname
+        if local_name in {"rStyle", "pStyle"}:
+            continue
+        result[local_name] = dict(child.attrib)
     return result
-def effective_run_properties(document_xml: bytes, styles_xml: bytes | None,
-                             paragraph_style_id: str | None,
-                             run_style_id: str | None,
-                             direct_rpr: ET._Element | None) -> dict[str, Any]:
-    """Resolve docDefaults -> paragraph style chain -> character style -> direct rPr."""
+
+
+def _style_chain(
+    styles: Mapping[str, ET._Element],
+    style_id: str | None,
+    *,
+    expected_type: str,
+    label: str,
+) -> list[ET._Element]:
+    if not style_id:
+        return []
+    chain: list[ET._Element] = []
+    seen: set[str] = set()
+    current: str | None = style_id
+    while current:
+        if current in seen:
+            raise ContractError(f"Cyclic {label} basedOn style chain at {current!r}")
+        seen.add(current)
+        style = styles.get(current)
+        if style is None:
+            raise ContractError(f"Missing {label} style referenced by {current!r}")
+        style_type = style.get(qn("type"))
+        if style_type and style_type != expected_type:
+            raise ContractError(
+                f"{label} style {current!r} has type {style_type!r}, expected {expected_type!r}"
+            )
+        chain.append(style)
+        based = style.find("w:basedOn", NS)
+        current = based.get(qn("val")) if based is not None else None
+    return list(reversed(chain))
+
+
+def _theme_font_map(theme_xml: bytes | None) -> dict[str, dict[str, str]]:
+    """Resolve the Word theme's major/minor font faces by script slot."""
+    if not theme_xml:
+        return {}
+    root = _xml(theme_xml)
+    scheme = root.find(".//a:themeElements/a:fontScheme", NS)
+    if scheme is None:
+        raise ContractError("Theme XML has no a:fontScheme")
+    result: dict[str, dict[str, str]] = {}
+    for theme_name, slot_name in (("major", "majorFont"), ("minor", "minorFont")):
+        slot = scheme.find(f"a:{slot_name}", NS)
+        if slot is None:
+            continue
+        latin = slot.find("a:latin", NS)
+        east_asia = slot.find("a:ea", NS)
+        complex_script = slot.find("a:cs", NS)
+        latin_face = latin.get("typeface", "") if latin is not None else ""
+        east_face = east_asia.get("typeface", "") if east_asia is not None else ""
+        complex_face = complex_script.get("typeface", "") if complex_script is not None else ""
+        result[theme_name] = {
+            "ascii": latin_face,
+            "hAnsi": latin_face,
+            "eastAsia": east_face or latin_face,
+            "cs": complex_face or latin_face,
+        }
+    return result
+
+
+def _resolve_theme_rfonts(
+    properties: dict[str, dict[str, str | None]],
+    theme_fonts: Mapping[str, Mapping[str, str]],
+) -> tuple[dict[str, dict[str, str | None]], dict[str, str]]:
+    resolved = copy.deepcopy(properties)
+    provenance: dict[str, str] = {}
+    fonts = resolved.get("rFonts")
+    if fonts is None:
+        return resolved, provenance
+    slots = {
+        "asciiTheme": "ascii",
+        "hAnsiTheme": "hAnsi",
+        "eastAsiaTheme": "eastAsia",
+        "cstheme": "cs",
+        "csTheme": "cs",
+    }
+    for theme_attribute, face_slot in slots.items():
+        theme_key = qn(theme_attribute)
+        token = fonts.get(theme_key)
+        if not token:
+            continue
+        normalized = token.casefold()
+        match = None
+        for theme_name in ("major", "minor"):
+            if normalized.startswith(theme_name):
+                match = theme_name
+                break
+        if match is None:
+            raise ContractError(f"Unknown theme font token {token!r}")
+        face = theme_fonts.get(match, {}).get(face_slot, "")
+        if not face:
+            raise ContractError(
+                f"Theme font token {token!r} has no resolved {face_slot} typeface"
+            )
+        fonts[qn(face_slot)] = face
+        provenance[face_slot] = "theme:" + match
+    return resolved, provenance
+
+
+def effective_run_properties(
+    document_xml: bytes,
+    styles_xml: bytes | None,
+    paragraph_style_id: str | None,
+    run_style_id: str | None,
+    direct_rpr: ET._Element | None,
+    *,
+    paragraph_rpr: ET._Element | None = None,
+    table_style_rpr: ET._Element | None = None,
+    numbering_rpr: ET._Element | None = None,
+    theme_xml: bytes | None = None,
+) -> dict[str, Any]:
+    """Resolve Word run-format precedence, style inheritance and theme font slots.
+
+    Table-style and numbering-level rPr nodes are supplied by their structural
+    adapters after the applicable conditional table/numbering level is resolved.
+    """
     layers: list[tuple[str, dict[str, dict[str, str | None]]]] = []
+    styles: dict[str, ET._Element] = {}
     if styles_xml:
         root = _xml(styles_xml)
         defaults = root.find("w:docDefaults/w:rPrDefault/w:rPr", NS)
         layers.append(("docDefaults", _property_map(defaults)))
         styles = _style_map(root)
-        chain, seen = [], set()
-        current = paragraph_style_id
-        while current and current not in seen and current in styles:
-            seen.add(current); style = styles[current]
-            chain.append(style)
-            based = style.find("w:basedOn", NS)
-            current = based.get(qn("val")) if based is not None else None
-        for style in reversed(chain):
-            layers.append(("paragraphStyle:" + str(style.get(qn("styleId"))),
-                           _property_map(style.find("w:rPr", NS))))
-        if run_style_id and run_style_id in styles:
-            char_chain, char_seen = [], set()
-            current_char = run_style_id
-            while current_char and current_char not in char_seen and current_char in styles:
-                char_seen.add(current_char)
-                char_style = styles[current_char]
-                char_chain.append(char_style)
-                based = char_style.find("w:basedOn", NS)
-                current_char = based.get(qn("val")) if based is not None else None
-            for char_style in reversed(char_chain):
-                layers.append(("characterStyle:" + str(char_style.get(qn("styleId"))),
-                               _property_map(char_style.find("w:rPr", NS))))
+        if paragraph_style_id is None:
+            for style in root.findall("w:style", NS):
+                if (
+                    style.get(qn("type")) == "paragraph"
+                    and style.get(qn("default")) in {"1", "true", "on"}
+                ):
+                    paragraph_style_id = style.get(qn("styleId"))
+                    break
+        paragraph_chain = _style_chain(
+            styles, paragraph_style_id, expected_type="paragraph", label="paragraph"
+        )
+        for style in paragraph_chain:
+            layers.append((
+                "paragraphStyle:" + str(style.get(qn("styleId"))),
+                _property_map(style.find("w:rPr", NS)),
+            ))
+    if table_style_rpr is not None:
+        layers.append(("tableStyle", _property_map(table_style_rpr)))
+    if numbering_rpr is not None:
+        layers.append(("numberingLevel", _property_map(numbering_rpr)))
+    if paragraph_rpr is not None:
+        layers.append(("paragraphDirect", _property_map(paragraph_rpr)))
+    if run_style_id is None and direct_rpr is not None:
+        style_ref = direct_rpr.find("w:rStyle", NS)
+        run_style_id = style_ref.get(qn("val")) if style_ref is not None else None
+    if run_style_id:
+        character_chain = _style_chain(
+            styles, run_style_id, expected_type="character", label="character"
+        )
+        for style in character_chain:
+            layers.append((
+                "characterStyle:" + str(style.get(qn("styleId"))),
+                _property_map(style.find("w:rPr", NS)),
+            ))
     layers.append(("directRun", _property_map(direct_rpr)))
     effective: dict[str, Any] = {}
     provenance: dict[str, str] = {}
     for label, values in layers:
         for key, value in values.items():
-            effective[key] = value
+            if key == "rFonts":
+                merged = dict(effective.get(key, {}))
+                merged.update(value)
+                effective[key] = merged
+            else:
+                effective[key] = value
             provenance[key] = label
-    return {"properties": effective, "provenance": provenance,
-            "layers": [{"name": n, "properties": v} for n, v in layers]}
+    theme_fonts = _theme_font_map(theme_xml)
+    effective, theme_provenance = _resolve_theme_rfonts(effective, theme_fonts)
+    for slot, label in theme_provenance.items():
+        provenance["rFonts." + slot] = label
+    return {
+        "properties": effective,
+        "provenance": provenance,
+        "layers": [{"name": name, "properties": values} for name, values in layers],
+        "theme_font_map": theme_fonts,
+    }
 
 def build_rpr_change_snapshot(effective_before: Mapping[str, Any],
                               changed_dimensions: Sequence[str]) -> ET._Element:
@@ -325,8 +472,13 @@ def build_rpr_change_snapshot(effective_before: Mapping[str, Any],
         if value is None:
             # Explicit false is essential for inherited boolean properties.
             if name in {"b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike"}:
-                child = ET.SubElement(old, qn(name)); child.set(qn("val"), "0")
-            continue
+                child = ET.SubElement(old, qn(name))
+                child.set(qn("val"), "0")
+                continue
+            raise ContractError(
+                "Cannot snapshot an unknown effective old value for format dimension "
+                + name
+            )
         child = ET.SubElement(old, qn(name))
         for key, item in value.items():
             child.set(key, item)
@@ -342,6 +494,11 @@ def attach_format_change(run: ET._Element, effective_before: Mapping[str, Any],
         if ancestor.tag == qn("ins"):
             raise ContractError("FORMAT_CHANGE_INS_NESTING_FORBIDDEN")
         ancestor = ancestor.getparent()
+    if not changed_dimensions:
+        raise ContractError("FormatChange requires at least one changed dimension")
+    for node in run.iterancestors():
+        if node.tag in {qn("del"), qn("moveFrom"), qn("moveTo")}:
+            raise ContractError("FORMAT_CHANGE_REVISION_WRAPPER_NESTING_FORBIDDEN")
     rpr = run.find("w:rPr", NS)
     if rpr is None:
         rpr = ET.Element(qn("rPr")); run.insert(0, rpr)

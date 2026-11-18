@@ -284,5 +284,37 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(result["revision_ids"], ["1", "2", "3", "4"])
         self.assertEqual(len(result["lineage"]), 2)
 
+
+    def test_effective_run_properties_resolves_default_style_theme_and_overlay_precedence(self):
+        styles = f'''<w:styles xmlns:w="{W}">
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/><w:i/></w:rPr></w:rPrDefault></w:docDefaults>
+          <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:rPr><w:b/></w:rPr></w:style>
+          <w:style w:type="paragraph" w:styleId="Body"><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="222222"/></w:rPr></w:style>
+          <w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i w:val="0"/></w:rPr></w:style>
+        </w:styles>'''.encode()
+        theme = b'''<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:fontScheme><a:majorFont><a:latin typeface="MajorFace"/><a:ea typeface="MajorEA"/><a:cs typeface="MajorCS"/></a:majorFont><a:minorFont><a:latin typeface="MinorFace"/><a:ea typeface="MinorEA"/><a:cs typeface="MinorCS"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>'''
+        paragraph_direct = ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:color w:val="333333"/></w:rPr>')
+        direct = ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:rStyle w:val="Emphasis"/><w:rFonts w:ascii="DirectFace"/></w:rPr>')
+        effective = effective_run_properties(
+            b'<w:document xmlns:w="' + W.encode() + b'"/>',
+            styles, None, None, direct,
+            paragraph_style_id=None if False else None,
+            paragraph_rpr=paragraph_direct,
+            table_style_rpr=ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:sz w:val="22"/></w:rPr>'),
+            numbering_rpr=ET.fromstring(f'<w:rPr xmlns:w="{W}"><w:color w:val="111111"/></w:rPr>'),
+            theme_xml=theme,
+        )
+        props = effective["properties"]
+        self.assertEqual(props["rFonts"][qn("ascii")], "DirectFace")
+        self.assertEqual(props["rFonts"][qn("hAnsi")], "MinorFace")
+        self.assertIsNotNone(props["b"])
+        self.assertEqual(props["i"][qn("val")], "0")
+        self.assertEqual(props["color"][qn("val")], "333333")
+        self.assertEqual(props["sz"][qn("val")], "22")
+
+    def test_format_snapshot_blocks_unknown_non_boolean_old_dimensions(self):
+        with self.assertRaisesRegex(ContractError, "unknown effective old value"):
+            build_rpr_change_snapshot({"properties": {}}, ["color"])
+
 if __name__ == "__main__":
     unittest.main()
