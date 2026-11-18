@@ -64,6 +64,12 @@ class RevisionWorkflowTests(unittest.TestCase):
         }
         for item in plan["revision_items"]:
             if item.get("status") == "approved":
+                for target in item.get("targets", []):
+                    target.setdefault("authorized_change", {
+                        "intent": "Human-approved exact text correction",
+                        "explicitly_authorized_tokens": [],
+                        "explicitly_authorized_spans": [],
+                    })
                 item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
         return plan
 

@@ -43,6 +43,12 @@ def make_docx(path, chunks):
 def seal_approved_items(plan):
     for item in plan["revision_items"]:
         if item.get("status") == "approved":
+            for target in item.get("targets", []):
+                target.setdefault("authorized_change", {
+                    "intent": "Human-approved exact text correction",
+                    "explicitly_authorized_tokens": [],
+                    "explicitly_authorized_spans": [],
+                })
             item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
     return plan
 
@@ -518,7 +524,11 @@ class RevisionEngineTests(unittest.TestCase):
         report = cli.apply_document(str(self.input), str(self.output), [{
             "p_idx": 1,
             "find": "0.5 M",
-            "replace": "1.0 M"
+            "replace": "1.0 M",
+            "authorized_change": {
+                "intent": "Correct the reported concentration",
+                "explicitly_authorized_tokens": [{"kind": "quantity", "text": "0.5 M", "replacement": "1.0 M"}],
+            },
         }], "Test Author")
 
         reopened = Document(self.output)
@@ -697,7 +707,11 @@ class RevisionEngineTests(unittest.TestCase):
             "p_idx": 0,
             "location": "Body paragraph 1",
             "find": "SO4",
-            "replace": "SO₄²⁻"
+            "replace": "SO₄²⁻",
+            "authorized_change": {
+                "intent": "Apply requested chemical formula typography",
+                "explicitly_authorized_tokens": [{"kind": "formula", "text": "SO4", "replacement": "SO₄²⁻"}],
+            },
         }
         report = cli.apply_document(
             str(self.input), str(self.output),

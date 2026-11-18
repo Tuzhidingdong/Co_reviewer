@@ -27,7 +27,7 @@ class V232ContractTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["status"], "UNPROTECTED_TOKEN_TOUCHED")
         allowed = validate_immutable_token_lock(original, changed, {
-            "explicitly_authorized_tokens": [{"kind": "quantity", "text": "125.0 mg", "replacement": "125 mg"}]
+            "explicitly_authorized_tokens": [{"kind": "quantity", "text": "125.0 mAh", "replacement": "125 mAh"}]
         })
         self.assertTrue(allowed["allowed"])
 
@@ -184,7 +184,7 @@ class V232ContractTests(unittest.TestCase):
         })
         self.assertFalse(wrong_pair["allowed"])
         exact_pair = validate_immutable_token_lock(original, proposed, {
-            "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "125"}]
+            "explicitly_authorized_tokens": [{"kind": "quantity", "text": "125.0 mg", "replacement": "125 mg"}]
         })
         self.assertTrue(validate_immutable_token_lock("value 10 mg", "value 12 mg", {
             "explicitly_authorized_tokens": [{"kind": "quantity", "text": "10 mg", "replacement": "12 mg"}]

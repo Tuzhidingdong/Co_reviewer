@@ -45,9 +45,36 @@ _TOKEN_RE = re.compile(
     r"|(?P<figure>\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*(?:S\s*)?\(?\d+(?:\.\d+)*[a-z]?\)?(?:\s*[-–]\s*\d+)?\b)"
     r"|(?P<stat>\b(?:p|P|R|r|n|N|t|F|D|Q|CI|OR|HR)\s*[=<]\s*[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)"
     r"|(?P<number>(?<![A-Za-z])[-−+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?(?:\s*±\s*\d+(?:[.,]\d+)?(?:\s*%)?)?(?:\s*%)?)"
-    r"|(?P<unit>\b(?:mL|µL|μL|nL|L|mg|µg|μg|ng|g|kg|mol|mmol|µmol|μmol|nmol|M|mM|µM|μM|nM|Pa|kPa|MPa|bar|atm|J|kJ|eV|meV|W|mW|kW|V|mV|A|mA|S|mS|Hz|kHz|MHz|GHz|s|ms|min|h|day|d|K|°C|°F|nm|µm|μm|mm|cm|m|Å|angstrom|cm⁻¹|m²|cm²|m³|cm³)\b)"
-    r"|(?P<formula>\b(?=[A-Z0-9(])(?:[A-Z][a-z]?\d*){2,}(?:[·.](?:H2O|[A-Z][a-z]?\d*)+)?\b)"
+    r"|(?P<unit>\b(?:mAh|Ah|mL|µL|μL|nL|L|mg|µg|μg|ng|kg|g[-−]1|mg[-−]1|kg[-−]1|mL[-−]1|L[-−]1|mol[-−]1|mmol[-−]1|cm[-−]1|mol|mmol|µmol|μmol|nmol|mM|µM|μM|nM|M|Pa|kPa|MPa|bar|atm|J|kJ|eV|meV|W|mW|kW|V|mV|mA|A|mS|S|Hz|kHz|MHz|GHz|ms|min|h|day|d|K|°C|°F|nm|µm|μm|mm|cm|m|Å|angstrom|cm⁻¹|m²|cm²|m³|cm³)\b)"
+    r"|(?P<formula>(?<![A-Za-z])(?:[A-Z][a-z]?[0-9₀-₉⁰-⁹]*)+(?:[·.](?:H2O|[A-Z][a-z]?[0-9₀-₉⁰-⁹]*)+)?(?:[⁰¹²³⁴⁵⁶⁷⁸⁹]+[⁺⁻]?|[⁺⁻])?(?=$|[^A-Za-z0-9]))"
 )
+_ELEMENT_SYMBOLS = frozenset("""
+H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn
+Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba
+La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb
+Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs
+Mt Ds Rg Cn Nh Fl Mc Lv Ts Og
+""".split())
+
+
+def _is_chemical_formula(value: str) -> bool:
+    normalized = value.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹", "01234567890123456789"))
+    normalized = normalized.replace("⁺", "+").replace("⁻", "-")
+    normalized = re.sub(r"[+-]+$", "", normalized).replace("·", ".")
+    pieces = normalized.split(".")
+    symbol_count, has_count = 0, False
+    for piece in pieces:
+        tokens = re.findall(r"([A-Z][a-z]?)(\d*)", piece)
+        if not tokens or "".join(symbol + count for symbol, count in tokens) != piece:
+            return False
+        for symbol, count in tokens:
+            if symbol not in _ELEMENT_SYMBOLS:
+                return False
+            symbol_count += 1
+            has_count = has_count or bool(count)
+    return symbol_count >= 2 or has_count
+
+
 def extract_immutable_tokens(text: str) -> list[dict[str, Any]]:
     if not isinstance(text, str):
         raise TypeError("text must be a string")
@@ -57,6 +84,11 @@ def extract_immutable_tokens(text: str) -> list[dict[str, Any]]:
         value = match.group()
         if kind == "number" and not re.search(r"\d", value):
             continue
+        if kind == "formula" and not _is_chemical_formula(value):
+            continue
+        if kind == "unit" and value in {"A", "S", "M", "m", "s", "d", "h", "K", "V"}:
+            if not re.search(r"\d\s*$", text[:match.start()]):
+                continue
         found.append({"kind": kind, "text": value, "start": match.start(), "end": match.end(),
                       "normalized": re.sub(r"\s+", "", value).replace("−", "-")})
     # Merge adjacent number + unit into a single protected semantic bundle.
