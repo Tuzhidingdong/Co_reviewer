@@ -305,6 +305,7 @@ class V232ContractTests(unittest.TestCase):
         )
         props = effective["properties"]
         self.assertEqual(props["rFonts"][qn("ascii")], "DirectFace")
+        self.assertNotIn(qn("asciiTheme"), props["rFonts"])
         self.assertEqual(props["rFonts"][qn("hAnsi")], "MinorFace")
         self.assertIsNotNone(props["b"])
         self.assertEqual(props["i"][qn("val")], "0")

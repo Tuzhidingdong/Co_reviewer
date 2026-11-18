@@ -358,6 +358,12 @@ def _resolve_theme_rfonts(
         token = fonts.get(theme_key)
         if not token:
             continue
+        explicit_face = fonts.get(qn(face_slot))
+        if explicit_face:
+            # A lower-precedence theme selector inherited from a style must
+            # never overwrite a directly specified face for the same script.
+            fonts.pop(theme_key, None)
+            continue
         normalized = token.casefold()
         match = None
         for theme_name in ("major", "minor"):
