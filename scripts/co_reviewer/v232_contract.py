@@ -131,7 +131,7 @@ def _authorized_token_items(
     raw = authorized.get(field, [])
     if not isinstance(raw, list):
         raise ContractError(f"{field} must be an array")
-    result: set[tuple[str, str]] = set()
+    result: dict[tuple[str, str], int] = {}
     for item in raw:
         if (
             not isinstance(item, Mapping)
@@ -141,8 +141,20 @@ def _authorized_token_items(
             raise ContractError(f"Each {field} entry requires a non-empty exact token text")
         kind = str(item.get("kind", "*"))
         normalized = re.sub(r"\s+", "", item["text"]).replace("−", "-")
-        result.add((kind, normalized))
+        key = (kind, normalized)
+        result[key] = result.get(key, 0) + 1
     return result
+
+
+def _consume_exact_token_authorization(
+    remaining: dict[tuple[str, str], int], kind: str, normalized_text: str
+) -> bool:
+    """Consume exactly one matching authorization for one protected-token occurrence."""
+    for key in ((kind, normalized_text), ("*", normalized_text)):
+        if remaining.get(key, 0) > 0:
+            remaining[key] -= 1
+            return True
+    return False
 
 
 def validate_immutable_token_lock(original: str, proposed: str,
@@ -169,9 +181,9 @@ def validate_immutable_token_lock(original: str, proposed: str,
         # must have its own typed approval; no approval authorizes its neighbours.
         if not old_group and new_group:
             for token in new_group:
-                exact = (token["kind"], token["normalized"])
-                wildcard = ("*", token["normalized"])
-                if exact not in allowed_insertions and wildcard not in allowed_insertions:
+                if not _consume_exact_token_authorization(
+                    allowed_insertions, token["kind"], token["normalized"]
+                ):
                     conflicts.append({
                         "old_tokens": [],
                         "new_tokens": [token],
@@ -181,9 +193,9 @@ def validate_immutable_token_lock(original: str, proposed: str,
 
         if old_group and not new_group:
             for token in old_group:
-                exact = (token["kind"], token["normalized"])
-                wildcard = ("*", token["normalized"])
-                if exact not in allowed_deletions and wildcard not in allowed_deletions:
+                if not _consume_exact_token_authorization(
+                    allowed_deletions, token["kind"], token["normalized"]
+                ):
                     conflicts.append({
                         "old_tokens": [token],
                         "new_tokens": [],
