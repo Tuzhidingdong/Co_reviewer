@@ -62,7 +62,7 @@ from co_reviewer.v232_contract import (
     ContractError, narrow_revision, build_package_reference_graph,
     commit_document_package, compile_clean_from_marked,
     build_revision_baseline_inventory, targeted_revision_gate,
-    extract_docx_text_for_reference_graph,
+    extract_docx_text_for_reference_graph, renumber_reference_graph,
 )
 
 ET.register_namespace("w", W)
@@ -5331,6 +5331,18 @@ def cmd_build_package_reference_graph(args):
           f"{len(report['mentions'])} mention(s), {report['unresolved_count']} unresolved/ambiguous")
     return 0
 
+def cmd_renumber_package_graph(args):
+    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
+    mapping = json.loads(Path(args.number_map).read_text(encoding="utf-8"))
+    if not isinstance(mapping, dict):
+        raise ValueError("Number map must be a JSON object keyed as DOCUMENT::OLD_NUMBER")
+    updated = renumber_reference_graph(graph, mapping, explicit_authorization=args.authorized)
+    if args.out:
+        write_json_atomic(Path(args.out), updated)
+        print(f"[REFERENCE GRAPH UPDATED] {Path(args.out).resolve()}")
+    print(f"[REFERENCE UPDATES] definitions={len(updated['definition_updates'])}; mentions={len(updated['mention_updates'])}")
+    return 0
+
 def cmd_compile_clean_from_marked(args):
     marked = Path(args.marked).expanduser().resolve()
     output = Path(args.out).expanduser().resolve()
@@ -5404,6 +5416,12 @@ def build_parser():
     rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
     rg.set_defaults(func=cmd_build_package_reference_graph)
+    rn = sub.add_parser("renumber-package-graph", help="Generate authorized, resolved definition/mention renumbering updates.")
+    rn.add_argument("--graph", required=True)
+    rn.add_argument("--number-map", required=True)
+    rn.add_argument("--authorized", action="store_true", help="Explicit package-wide authorization supplied by the user.")
+    rn.add_argument("--out", required=True)
+    rn.set_defaults(func=cmd_renumber_package_graph)
     cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")
     cc.add_argument("--marked", required=True)
     cc.add_argument("--out", required=True)

@@ -223,8 +223,17 @@ def effective_run_properties(document_xml: bytes, styles_xml: bytes | None,
             layers.append(("paragraphStyle:" + str(style.get(qn("styleId"))),
                            _property_map(style.find("w:rPr", NS))))
         if run_style_id and run_style_id in styles:
-            layers.append(("characterStyle:" + run_style_id,
-                           _property_map(styles[run_style_id].find("w:rPr", NS))))
+            char_chain, char_seen = [], set()
+            current_char = run_style_id
+            while current_char and current_char not in char_seen and current_char in styles:
+                char_seen.add(current_char)
+                char_style = styles[current_char]
+                char_chain.append(char_style)
+                based = char_style.find("w:basedOn", NS)
+                current_char = based.get(qn("val")) if based is not None else None
+            for char_style in reversed(char_chain):
+                layers.append(("characterStyle:" + str(char_style.get(qn("styleId"))),
+                               _property_map(char_style.find("w:rPr", NS))))
     layers.append(("directRun", _property_map(direct_rpr)))
     effective: dict[str, Any] = {}
     provenance: dict[str, str] = {}
@@ -262,8 +271,11 @@ def attach_format_change(run: ET._Element, effective_before: Mapping[str, Any],
                          author: str, date: str) -> None:
     """Attach rPrChange only to an existing ordinary run, never to a w:ins run."""
     parent = run.getparent()
-    if parent is not None and parent.tag == qn("ins"):
-        raise ContractError("FORMAT_CHANGE_INS_NESTING_FORBIDDEN")
+    ancestor = parent
+    while ancestor is not None:
+        if ancestor.tag == qn("ins"):
+            raise ContractError("FORMAT_CHANGE_INS_NESTING_FORBIDDEN")
+        ancestor = ancestor.getparent()
     rpr = run.find("w:rPr", NS)
     if rpr is None:
         rpr = ET.Element(qn("rPr")); run.insert(0, rpr)
@@ -292,8 +304,8 @@ def apply_micro_typography(text: str, decisions: Sequence[Mapping[str, Any]]) ->
 
 # Package-wide directed graph: each DOCX is a node; definitions and mentions
 # are separate records. Ambiguous matches remain unresolved, never guessed.
-_CAPTION = re.compile(r"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme)\s+(S?\d+(?:\.\d+)*)\b")
-_MENTION = re.compile(r"\b(Fig(?:ure)?\.?|Table|Eq(?:uation)?\.?|Scheme)\s*(S?\d+(?:\.\d+)*)\b", re.I)
+_CAPTION = re.compile(r"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)\s*\(?\s*(S?\d+(?:\.\d+)*)\)?\b")
+_MENTION = re.compile(r"\b(Fig(?:ure)?\.?|Table|Eq(?:uation)?\.?|Scheme|Section)\s*\(?\s*(S?\d+(?:\.\d+)*)\)?\b", re.I)
 def build_package_reference_graph(documents: Mapping[str, str]) -> dict[str, Any]:
     if not isinstance(documents, Mapping) or not documents:
         raise ContractError("Package graph requires at least one named document")
@@ -337,15 +349,32 @@ def renumber_reference_graph(graph: Mapping[str, Any],
         raise ContractError("Cross-file renumbering requires explicit package-wide authorization")
     updated = copy.deepcopy(dict(graph))
     by_id = {d["id"]: d for d in updated.get("definitions", [])}
+    definition_updates = []
     for definition in updated.get("definitions", []):
-        key = definition["document"] + "::" + definition["number"]
-        if key in number_map: definition["number"] = number_map[key]
+        old_number = definition["number"]
+        key = definition["document"] + "::" + old_number
+        if key in number_map:
+            definition["number"] = number_map[key]
+            definition["text"] = definition["text"].replace(old_number, definition["number"], 1)
+            definition_updates.append({"document": definition["document"], "definition_id": definition["id"],
+                                      "offset": definition["offset"], "old_number": old_number,
+                                      "new_number": definition["number"]})
     # Mentions follow their resolved definition edge, not string-wide guesses.
+    mention_updates = []
     for mention in updated.get("mentions", []):
         targets = mention.get("target_definition_ids", [])
         if len(targets) == 1 and targets[0] in by_id:
             definition = by_id[targets[0]]
-            mention["number"] = definition["number"]
+            old_number = mention["number"]
+            if old_number != definition["number"]:
+                old_text = mention["text"]
+                mention["number"] = definition["number"]
+                mention["text"] = old_text.replace(old_number, mention["number"], 1)
+                mention_updates.append({"document": mention["document"], "mention_id": mention["id"],
+                                        "offset": mention["offset"], "old_text": old_text,
+                                        "new_text": mention["text"]})
+    updated["definition_updates"] = definition_updates
+    updated["mention_updates"] = mention_updates
     updated["numbering_mutation_authorized"] = True
     return updated
 
@@ -514,10 +543,40 @@ def remediation_transition(state: Mapping[str, Any], patch: Mapping[str, Any] | 
             "remediation_round": 1, "patch": dict(patch),
             "clean_must_be_recompiled": True}
 
-def compile_clean_from_marked(marked_bytes: bytes) -> dict[str, Any]:
-    """Deterministically compile accepted changes; never accept historical input implicitly."""
+def compile_clean_from_marked(marked_bytes: bytes, *,
+                              expected_revision_ids: Sequence[str] | None = None) -> dict[str, Any]:
+    """Deterministically compile only revision IDs authorized for this Marked build.
+
+    Historical markup cannot be silently accepted: every revision wrapper must
+    carry an ID declared by the current revision ledger. A prior baseline gate
+    must have resolved all historical revisions before the current Marked build.
+    """
+    if not isinstance(marked_bytes, bytes) or not marked_bytes:
+        raise ContractError("Marked source must be non-empty DOCX bytes")
+    allowed = set(str(x) for x in (expected_revision_ids or ()))
+    revision_tags = {qn("ins"), qn("del"), qn("moveTo"), qn("moveFrom"),
+                     qn("rPrChange"), qn("pPrChange"), qn("tblPrChange"),
+                     qn("tblGridChange"), qn("trPrChange"), qn("tcPrChange"),
+                     qn("numberingChange"), qn("sectPrChange")}
+    observed = set()
+    with zipfile.ZipFile(__import__("io").BytesIO(marked_bytes)) as archive:
+        bad = archive.testzip()
+        if bad: raise ContractError("Marked DOCX ZIP CRC failure: " + bad)
+        for name in archive.namelist():
+            if name.startswith("word/") and name.endswith(".xml"):
+                root = _xml(archive.read(name))
+                for node in root.iter():
+                    if node.tag in revision_tags:
+                        rid = node.get(qn("id"))
+                        if rid is None:
+                            raise ContractError("Historical/current revision element without w:id: " + name)
+                        observed.add(str(rid))
+    unexpected = sorted(observed - allowed)
+    if unexpected:
+        raise ContractError("HISTORICAL_REVISION_POLICY_BLOCKED: unregistered revision ID(s): " + ", ".join(unexpected))
     from .working_view import accepted_view_docx_bytes
     clean = accepted_view_docx_bytes(marked_bytes)
     return {"marked_sha256": _sha(marked_bytes), "clean_sha256": _sha(clean),
-            "clean_bytes": clean, "policy": "accept_current_insertions_reject_current_deletions",
-            "historical_revision_policy": "BLOCKED_UNLESS_BASELINE_EXPLICITLY_RESOLVED"}
+            "clean_bytes": clean, "policy": "accept_registered_insertions_reject_registered_deletions",
+            "expected_revision_ids": sorted(allowed), "observed_revision_ids": sorted(observed),
+            "historical_revision_policy": "PASS_NO_UNREGISTERED_REVISION_IDS"}

@@ -151,3 +151,24 @@ Microsoft Word GUI opening, native Track Changes rendering, Word save-round-trip
 A schema-valid Ledger, a passing unit suite or a successful DOCX XML write does not establish scientific correctness or real Word rendering. The evidence chain, cross-document scientific consistency and semantic acceptability remain separate review gates. All scientific content must remain grounded in user-supplied results.
 
 Approval flags/fingerprints provide integrity and audit linkage, not cryptographic proof of a person's identity. Production approval must originate from a direct user confirmation action and be retained in the event history.
+
+## V2.3.2 frozen-contract implementation update — 2026-11-18
+
+The normative architecture and state-machine contract is recorded in docs/V2.3.2_ENGINEERING_CONTRACT.md. The implementation is being added as executable primitives rather than prompt-only requirements.
+
+Implemented in this update:
+- scripts/co_reviewer/v232_contract.py: deterministic immutable token extraction/locking; Myers word-token minimal diff; authorization/protected-span checks; Effective Style cascade; non-empty rPrChange snapshots with explicit false inherited booleans; prohibition on formatting revision nesting inside w:ins; typed local micro-typography decisions; package-wide directed definition/mention graph; explicitly authorized graph renumber planning; paragraph split/merge topology guards; immutable package staging/version directory/commit marker; bounded remediation transition; Marked-to-Clean compilation bound to explicitly registered revision IDs.
+- document_engine.prepare_document() now applies the immutable token lock to every exact-text operation. A numeric/scientific/reference token change is rejected unless the operation supplies an explicit authorized token.
+- PatchOperation carries optional authorized_change and protected_spans metadata into the deterministic writer. The revision-plan schema describes both fields.
+- CLI commands expose revision baseline inventory, target-overlap gate, edit-contract validation, package-wide DOCX reference graph, authorized renumber planning, Marked-to-Clean compilation and package commit.
+- New synthetic contract tests cover token drift, Myers reconstruction, style snapshots, w:ins formatting restriction, cross-document graph updates, structural guards, package commit, one-round remediation, Clean compilation and writer integration.
+
+Important boundaries:
+- revision-baseline is a zero-model-call inventory. targeted-revision-gate identifies overlaps and records the selected policy; actual acceptance/rejection of legacy revisions must still use a supported revision-resolution adapter. It does not silently rewrite the source.
+- The package commit marker is the release visibility gate. A version directory without a valid root marker is an uncommitted candidate.
+- The reference graph emits only uniquely resolved edges. Ambiguous/unresolved mentions are not renumbered.
+- OMML writing remains blocked. No model-authored OMML is accepted; a deterministic converter plus Word round-trip is still required.
+- Effective Style resolution currently covers docDefaults, paragraph basedOn chain, character basedOn chain and direct Run properties. Theme-font resolution and complete Word style semantics require additional adapter coverage.
+- No real Microsoft Word GUI/COM accept/reject, formula editing or cross-version rendering claim is made by these code changes.
+
+The GitHub Actions result for each commit must be checked independently. The user’s unified local Windows test and final Word GUI acceptance have not yet occurred.

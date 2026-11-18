@@ -16,6 +16,7 @@ from co_reviewer.v232_contract import (
     assert_safe_paragraph_split, assert_safe_paragraph_merge, commit_document_package,
     remediation_transition, compile_clean_from_marked, qn, W,
     build_revision_baseline_inventory, targeted_revision_gate,
+    renumber_reference_graph, extract_docx_text_for_reference_graph,
 )
 
 class V232ContractTests(unittest.TestCase):
@@ -75,6 +76,17 @@ class V232ContractTests(unittest.TestCase):
         self.assertTrue(any(e["source_document"] == "SI" and e["target_document"] == "manuscript" for e in graph["edges"]))
         with self.assertRaisesRegex(ContractError, "explicit"):
             renumber_reference_graph(graph, {"SI::S2": "S3"}, explicit_authorization=False)
+
+    def test_package_graph_updates_resolved_mentions_only_and_includes_sections(self):
+        graph = build_package_reference_graph({
+            "manuscript": "Figure 1. Main result.\nSection 2.1. Methods.",
+            "SI": "Figure S2. Detail.\nSee Eq. (3) and Section 2.1."
+        })
+        updated = renumber_reference_graph(graph, {"manuscript::1": "2", "manuscript::2.1": "2.2"},
+                                           explicit_authorization=True)
+        self.assertTrue(updated["numbering_mutation_authorized"])
+        self.assertTrue(any(x["new_text"].endswith("2") for x in updated["mention_updates"]))
+        self.assertTrue(any(x["new_number"] == "2.2" for x in updated["definition_updates"]))
 
     def test_paragraph_split_and_merge_guards(self):
         p = ET.fromstring(f'<w:p xmlns:w="{W}"><w:r><w:t>plain</w:t></w:r></w:p>')
@@ -142,10 +154,12 @@ class V232ContractTests(unittest.TestCase):
             z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
             z.writestr("word/document.xml", f'<w:document xmlns:w="{W}"><w:body><w:p><w:ins w:id="1" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p></w:body></w:document>')
             z.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
-        result = compile_clean_from_marked(payload.getvalue())
+        result = compile_clean_from_marked(payload.getvalue(), expected_revision_ids=["1"])
         self.assertEqual(len(result["marked_sha256"]), 64)
         self.assertEqual(len(result["clean_sha256"]), 64)
-        self.assertEqual(result["historical_revision_policy"], "BLOCKED_UNLESS_BASELINE_EXPLICITLY_RESOLVED")
+        self.assertEqual(result["historical_revision_policy"], "PASS_NO_UNREGISTERED_REVISION_IDS")
+        with self.assertRaisesRegex(ContractError, "HISTORICAL_REVISION_POLICY_BLOCKED"):
+            compile_clean_from_marked(payload.getvalue(), expected_revision_ids=[])
 
 if __name__ == "__main__":
     unittest.main()
