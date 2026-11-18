@@ -276,6 +276,16 @@ Co_Reviewer manages peer-review revision orchestration and document consistency.
 - Cross-document semantic consistency is reviewed by the Supervisor/author; the CLI verifies exact Word revision IDs and their text, but does not judge scientific meaning.
 - Microsoft Word COM pagination/PDF mapping is available on Windows with Microsoft Word installed and the optional Word/PDF dependencies; it is not a cross-platform substitute for local Word acceptance.
 
+## Deterministic OMML preview (no manuscript editing)
+
+The isolated `preview-omml-docx` command converts a limited LaTeX subset into a synthetic Word document so formula rendering can be inspected:
+
+```powershell
+python scripts/co_reviewer_cli.py preview-omml-docx --expression "E=mc^{2}" --out "artifacts/omml-preview/equation_preview.docx"
+```
+
+The converter supports simple symbols/Greek letters, fractions, square roots, subscript/superscript, selected accents and basic text styles. Unsupported commands fail closed. The preview contains no Track Changes and never edits a Manuscript/SI. It is not proof that whole-formula revision wrappers work. Existing OMML remains blocked for production edits until the formula adapter passes the relevant Microsoft Word save/reopen acceptance.
+
 ## Microsoft Word compatibility acceptance
 
 The automated tests verify the generated WordprocessingML, but they cannot prove how Microsoft Word displays and re-saves Track Changes. A separate synthetic acceptance fixture is provided for that purpose. It uses no manuscript or SI files.

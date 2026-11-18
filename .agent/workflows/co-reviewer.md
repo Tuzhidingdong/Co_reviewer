@@ -25,6 +25,8 @@ description: Run the Co_Reviewer multi-document peer-review revision workflow
 17. Support incremental revisions by reusing unchanged inventories and preserving prior apply-report history. Re-inspect only changed source documents or targets whose paragraph structure was affected.
 18. Return revised outputs (when applied), response draft, verification evidence, task states and unresolved issues. Never report success without actual output/test evidence.
 
+Formula rule: models may propose LaTeX/UnicodeMath, never hand-authored OMML XML. The deterministic `preview-omml-docx` command may be used to create a separate synthetic Word preview. Do not modify an existing OMML formula in a Manuscript/SI or claim equation Track Changes support; the production equation revision adapter remains blocked until the user accepts the preview in Word after save/close/reopen and the whole-formula revision wrapper has independent validation.
+
 Native Word comment rule: selected text comes only from matching comment range markers. A reference-only comment or containing paragraph is not a substitute for selected text. Exact unique matching is a narrow anchor signal, not the only basis for a global task. Page/line numbers must come from rendered Word layout, never XML paragraph indices.
 
 Delegation and token rule: deterministic parsing, inventory, schema checks and mechanical revision are handled by CLI scripts. Keep the Supervisor context to bounded summaries and cited excerpts. Use cached hashes and avoid repeat parsing. A Worker is optional, not automatic; obey explicit model inspection and user authorization before every worker start.

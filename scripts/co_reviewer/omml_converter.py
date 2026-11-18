@@ -104,7 +104,7 @@ class _Parser:
             raise OmmlConversionError(f"Unexpected trailing input at character {self.position}")
         if not children:
             raise OmmlConversionError("Expression contains no mathematical content")
-        return ET.Element(_tag("oMath"), nsmap={"m": M}) if False else self._root(children)
+        return self._root(children)
 
     def _root(self, children: list[ET._Element]) -> ET._Element:
         root = ET.Element(_tag("oMath"), nsmap={"m": M})

@@ -187,3 +187,8 @@ Five focused resolver regressions cover Accept, Reject, property restoration, se
 ### Round-start historical baseline integration
 
 `Start-CoReviewerRound.ps1` now creates SHA-256-bound, zero-model-call `revision-baseline` inventories for Reviewers, Manuscript and optional SI and records their paths/hashes/counts in `round_manifest.json`. The Skill and Agent workflow require a target-scoped gate before expensive discovery or writes, explicit author selection of Accept/Reject policy, a new output DOCX for supported resolution, and a fresh round after a source baseline has changed. This path does not authorize automatic acceptance of comment anchors or unsupported table/numbering structures.
+
+
+### Deterministic OMML preview implementation
+
+Added `scripts/co_reviewer/omml_converter.py` and the `preview-omml-docx` CLI command. It converts a deliberately limited LaTeX subset to a synthetic DOCX with OMML and checks the package/XML after creation. Unit tests cover fractions, radicals, Greek letters, scripts, unsupported-command rejection, package presence and no-overwrite behavior. This is a formula-rendering preview only; no existing Manuscript/SI is changed and no Track Changes are written around OMML. The existing structure classifier remains fail-closed for formula edits until the whole-formula revision wrapper and supported Word-version save/reopen acceptance are completed.
