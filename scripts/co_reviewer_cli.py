@@ -6082,6 +6082,8 @@ def cmd_begin_qa_remediation(args):
     qa_docx = qa.get("docx")
     if not isinstance(qa_docx, dict):
         raise ValueError("QA report must bind its failing DOCX path and SHA-256.")
+    if qa_docx.get("profile") != "word-final-clean":
+        raise ValueError("Bounded QA remediation accepts only the word-final-clean quality profile.")
     failing_clean = Path(str(qa_docx.get("docx_file", ""))).expanduser().resolve()
     failing_clean_sha = qa_docx.get("docx_sha256")
     if (
@@ -6168,6 +6170,13 @@ def cmd_begin_qa_remediation(args):
     if len(patch.operations) != 1:
         raise ValueError("A bounded QA remediation must be one atomic PatchOperation; split unrelated fixes.")
     operation = patch.operations[0]
+    from co_reviewer.v232_contract import ContractError, validate_qa_remediation_eligibility
+    try:
+        qa_eligibility = validate_qa_remediation_eligibility(
+            qa, {"find": operation.find, "replace": operation.replace}
+        )
+    except ContractError as exc:
+        raise ValueError(f"QA failure is not eligible for bounded local remediation: {exc}") from exc
     if (
         operation.document != document.role
         or Path(operation.input_file).expanduser().resolve() != marked_path
@@ -6208,10 +6217,12 @@ def cmd_begin_qa_remediation(args):
             "qa_report_sha256": sha256_file(qa_path),
             "failing_clean_file": str(failing_clean),
             "failing_clean_sha256": failing_clean_sha,
-            "failed_check_ids": [row.get("id") for row in failed_checks],
+            "failed_check_ids": list(qa_eligibility["failed_check_ids"]),
+            "placeholder_tokens": list(qa_eligibility["placeholder_tokens"]),
             "document_role": document.role,
             "marked_input_file": str(marked_path),
             "marked_input_sha256": marked_sha,
+            "marked_output_file": operation.output_file,
             "batch_id": intent["batch_id"],
             "batch_dir": str(batch_dir),
             "batch_intent_sha256": sha256_file(intent_path),
@@ -6404,6 +6415,14 @@ def cmd_complete_qa_remediation(args):
             "marked_file": str(marked_path),
             "marked_sha256": marked_sha,
             "compiled_revision_ids": lineage["revision_ids"],
+            "document_role": state["document_role"],
+            "operation_id": operation.operation_id,
+            "marked_input_file": state["marked_input_file"],
+            "marked_input_sha256": state["marked_input_sha256"],
+            "batch_id": state["batch_id"],
+            "batch_dir": state["batch_dir"],
+            "batch_intent_sha256": state["batch_intent_sha256"],
+            "batch_scope_sha256": state["batch_scope_sha256"],
         },
     )
     ledger.events.append(completed_event)

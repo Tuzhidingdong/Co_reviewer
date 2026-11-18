@@ -30,6 +30,7 @@ from co_reviewer.release_manifest import (
     _collect_release_batch_history,
     _collect_recovered_batch_history,
     audit_patch_operation_deltas,
+    _validate_qa_remediation_events,
     build_final_docx_consistency_audit,
     build_final_release_manifest,
 )
@@ -46,6 +47,7 @@ from co_reviewer.revision_models import (
     response_units_to_legacy_plan,
 )
 from co_reviewer.workflow_engine import build_workflow_ledger, transition_task
+from co_reviewer.v232_contract import ContractError, validate_qa_remediation_eligibility
 from response_letter_docx import render_response_docx
 
 
@@ -1266,6 +1268,161 @@ class ReleaseManifestGateTests(unittest.TestCase):
     def test_release_is_blocked_when_a_workflow_comment_has_no_matching_response_unit(self):
         with self.assertRaisesRegex(ReleaseGateError, "comment C1 must map to exactly one completed ResponseUnit"):
             self._call(None)
+
+
+
+
+class BoundedQARemediationEvidenceTests(unittest.TestCase):
+    def _fixture(self):
+        root = Path(tempfile.mkdtemp(prefix="qa-remediation-release-"))
+        qa_before = root / "qa-before.json"
+        qa_after = root / "qa-after.json"
+        clean_before = root / "working-before.docx"
+        clean_after = root / "working-after.docx"
+        marked_before = root / "marked-before.docx"
+        marked_after = root / "marked-after.docx"
+        for path, payload in (
+            (clean_before, b"clean-before"),
+            (clean_after, b"clean-after"),
+            (marked_before, b"marked-before"),
+            (marked_after, b"marked-after"),
+        ):
+            path.write_bytes(payload)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        before_payload = {
+            "status": "FAIL",
+            "docx": {
+                "docx_file": str(clean_before),
+                "docx_sha256": digest(clean_before),
+                "profile": "word-final-clean",
+            },
+            "checks": [{
+                "id": "placeholders", "status": "FAIL", "severity": "error",
+                "evidence": ["TODO"],
+            }],
+        }
+        after_payload = {
+            "status": "PASS",
+            "docx": {
+                "docx_file": str(clean_after),
+                "docx_sha256": digest(clean_after),
+                "profile": "word-final-clean",
+            },
+            "checks": [],
+        }
+        qa_before.write_text(json.dumps(before_payload), encoding="utf-8")
+        qa_after.write_text(json.dumps(after_payload), encoding="utf-8")
+        operation = SimpleNamespace(
+            operation_id="OP-REMEDIATION",
+            document="Manuscript",
+            input_file=str(marked_before),
+            output_file=str(marked_after),
+            source_sha256=digest(marked_before),
+            find="Replace this TODO placeholder.",
+            replace="Replace this draft placeholder.",
+        )
+        patch = SimpleNamespace(
+            patch_id="PATCH-REMEDIATION",
+            status="verified",
+            operations=[operation],
+            apply_report_ids=["APPLY-1"],
+            verification_report_id="VERIFY-1",
+            verified_output_hashes=[{"file": str(marked_after), "sha256": digest(marked_after)}],
+        )
+        start_details = {
+            "remediation_round": 1, "phase": "PATCH_COMMIT",
+            "qa_report_file": str(qa_before), "qa_report_sha256": digest(qa_before),
+            "failing_clean_file": str(clean_before), "failing_clean_sha256": digest(clean_before),
+            "failed_check_ids": ["placeholders"], "placeholder_tokens": ["TODO"],
+            "document_role": "Manuscript",
+            "marked_input_file": str(marked_before), "marked_input_sha256": digest(marked_before),
+            "marked_output_file": str(marked_after),
+            "batch_id": "BATCH-1", "batch_dir": str(root / "batch-1"),
+            "batch_intent_sha256": "a" * 64, "batch_scope_sha256": "b" * 64,
+            "operation_id": operation.operation_id,
+        }
+        completion_details = {
+            "remediation_round": 1, "phase": "COMPLETE", "qa_status": "PASS",
+            "qa_report_file": str(qa_after), "qa_report_sha256": digest(qa_after),
+            "clean_file": str(clean_after), "clean_sha256": digest(clean_after),
+            "marked_file": str(marked_after), "marked_sha256": digest(marked_after),
+            "document_role": "Manuscript", "operation_id": operation.operation_id,
+            "marked_input_file": str(marked_before), "marked_input_sha256": digest(marked_before),
+            "batch_id": "BATCH-1", "batch_dir": str(root / "batch-1"),
+            "batch_intent_sha256": "a" * 64, "batch_scope_sha256": "b" * 64,
+            "compiled_revision_ids": ["101", "102"],
+        }
+        from co_reviewer.revision_models import RevisionEvent
+        ledger = SimpleNamespace(
+            events=[
+                RevisionEvent(
+                    event_id="START", subject_id=patch.patch_id, subject_type="patch",
+                    event_type="qa_remediation_started", timestamp_utc=STAMP,
+                    actor="test", details=start_details,
+                ),
+                RevisionEvent(
+                    event_id="COMPLETE", subject_id=patch.patch_id, subject_type="patch",
+                    event_type="qa_remediation_completed", timestamp_utc=STAMP,
+                    actor="test", details=completion_details,
+                ),
+            ],
+            patches=[patch],
+            documents=[SimpleNamespace(
+                role="Manuscript",
+                output_file=str(marked_after),
+                output_sha256=digest(marked_after),
+                working_clean_file=str(clean_after),
+                working_clean_sha256=digest(clean_after),
+            )],
+        )
+        batch_record = {
+            "batch_id": "BATCH-1", "directory": str(root / "batch-1"),
+            "intent": {"sha256": "a" * 64},
+            "scope": {"sha256": "b" * 64},
+            "publication_status": "published",
+            "patch_ids": [patch.patch_id],
+            "parent_documents": {"Manuscript": {
+                "file": str(marked_before), "sha256": digest(marked_before),
+            }},
+            "documents": {"Manuscript": {
+                "file": str(marked_after), "sha256": digest(marked_after),
+            }},
+        }
+        return ledger, batch_record, start_details, operation
+
+    def test_release_gate_accepts_only_complete_hash_bound_patch_and_batch_lineage(self):
+        ledger, batch, _, _ = self._fixture()
+        result = _validate_qa_remediation_events(ledger, batch_records=[batch])
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["batch_id"], "BATCH-1")
+
+    def test_release_gate_rejects_wrong_published_batch_patch_scope(self):
+        ledger, batch, _, _ = self._fixture()
+        batch["patch_ids"] = []
+        with self.assertRaisesRegex(ReleaseGateError, "exact published immutable batch lineage"):
+            _validate_qa_remediation_events(ledger, batch_records=[batch])
+
+    def test_release_gate_rejects_patch_output_that_differs_from_published_marked(self):
+        ledger, batch, _, operation = self._fixture()
+        operation.output_file = str(Path(batch["directory"]) / "other.docx")
+        with self.assertRaisesRegex(ReleaseGateError, "exact PatchOperation and Marked input/output chain"):
+            _validate_qa_remediation_events(ledger, batch_records=[batch])
+
+    def test_remediation_eligibility_rejects_structural_or_unmapped_qa_failures(self):
+        ledger, _, _, operation = self._fixture()
+        before = json.loads(Path(ledger.events[0].details["qa_report_file"]).read_text(encoding="utf-8"))
+        wrong = json.loads(json.dumps(before))
+        wrong["checks"][0]["id"] = "comments"
+        with self.assertRaisesRegex(ContractError, "Only a proven local placeholder"):
+            validate_qa_remediation_eligibility(wrong, {"find": operation.find, "replace": operation.replace})
+        wrong = json.loads(json.dumps(before))
+        wrong["checks"][0]["evidence"] = ["TBD"]
+        with self.assertRaisesRegex(ContractError, "does not anchor"):
+            validate_qa_remediation_eligibility(wrong, {"find": operation.find, "replace": operation.replace})
+        wrong = json.loads(json.dumps(before))
+        wrong["checks"][0]["evidence"] = ["TODO", "TBD"]
+        with self.assertRaisesRegex(ContractError, "does not anchor"):
+            validate_qa_remediation_eligibility(wrong, {"find": operation.find, "replace": operation.replace})
 
 
 if __name__ == "__main__":

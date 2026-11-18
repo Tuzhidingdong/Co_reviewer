@@ -888,6 +888,7 @@
       "required": [
         "all_published_batch_history_valid",
         "all_recovered_batch_history_valid",
+        "bounded_qa_remediation_valid",
         "all_protocol_v1_batch_creation_receipts_valid",
         "all_active_patches_verified",
         "all_response_units_completed",
@@ -902,6 +903,9 @@
           "const": true
         },
         "all_recovered_batch_history_valid": {
+          "const": true
+        },
+        "bounded_qa_remediation_valid": {
           "const": true
         },
         "all_protocol_v1_batch_creation_receipts_valid": {

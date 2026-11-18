@@ -1071,6 +1071,63 @@ def commit_document_package(outputs: Mapping[str, bytes], release_root: str | Pa
             shutil.rmtree(staging, ignore_errors=True)
         raise
 
+
+def validate_qa_remediation_eligibility(
+    qa_report: Mapping[str, Any],
+    operation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Permit only a single atomic replacement that removes every reported final-clean placeholder."""
+    if not isinstance(qa_report, Mapping) or qa_report.get("status") != "FAIL":
+        raise ContractError("QA remediation requires a failed quality report.")
+    docx = qa_report.get("docx")
+    if not isinstance(docx, Mapping) or docx.get("profile") != "word-final-clean":
+        raise ContractError("Only word-final-clean QA failures may enter bounded remediation.")
+    checks = qa_report.get("checks")
+    if not isinstance(checks, list):
+        raise ContractError("QA report checks must be an array.")
+    failed = [row for row in checks if isinstance(row, Mapping) and row.get("status") == "FAIL"]
+    if not failed:
+        raise ContractError("QA report has FAIL status but no explicit failed checks.")
+    if any(row.get("id") != "placeholders" or row.get("severity") != "error" for row in failed):
+        raise ContractError(
+            "Only a proven local placeholder finding is eligible for bounded QA remediation; "
+            "structural, tracked-revision, comment, package and other QA failures remain blocked."
+        )
+    tokens: set[str] = set()
+    for row in failed:
+        evidence = row.get("evidence")
+        if (not isinstance(evidence, list)
+                or not evidence
+                or any(not isinstance(value, str) or not value.strip() for value in evidence)):
+            raise ContractError("Placeholder remediation requires exact non-empty QA evidence tokens.")
+        tokens.update(value for value in evidence if value.strip())
+    find = operation.get("find")
+    replace = operation.get("replace")
+    if not isinstance(find, str) or not find.strip() or not isinstance(replace, str):
+        raise ContractError("Remediation Patch must provide a non-empty find and a string replacement.")
+    missing_from_anchor = sorted(
+        token for token in tokens if re.search(re.escape(token), find, flags=re.IGNORECASE) is None
+    )
+    retained_in_replacement = sorted(
+        token for token in tokens if re.search(re.escape(token), replace, flags=re.IGNORECASE) is not None
+    )
+    if missing_from_anchor:
+        raise ContractError(
+            "Remediation Patch does not anchor every exact QA placeholder finding: "
+            + ", ".join(missing_from_anchor)
+        )
+    if retained_in_replacement:
+        raise ContractError(
+            "Remediation Patch replacement retains QA placeholder finding(s): "
+            + ", ".join(retained_in_replacement)
+        )
+    return {
+        "eligible": True,
+        "failed_check_ids": ["placeholders"],
+        "placeholder_tokens": sorted(tokens),
+        "policy": "single_atomic_replacement_removes_all_reported_placeholders",
+    }
+
 # Bounded remediation is a formal state transition; patches must be applied to
 # Marked and Clean is recompiled from Marked before the second QA pass.
 def remediation_transition(state: Mapping[str, Any], patch: Mapping[str, Any] | None = None) -> dict[str, Any]:

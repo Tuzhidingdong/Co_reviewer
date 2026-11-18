@@ -1162,7 +1162,11 @@ def _collect_recovered_batch_history(
     return records
 
 
-def _validate_qa_remediation_events(revision_ledger: RevisionLedger) -> dict[str, Any]:
+def _validate_qa_remediation_events(
+    revision_ledger: RevisionLedger,
+    *,
+    batch_records: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     """Require a single bounded remediation cycle to finish with current, hash-bound passing QA."""
     starts = [
         event for event in revision_ledger.events
@@ -1212,8 +1216,92 @@ def _validate_qa_remediation_events(revision_ledger: RevisionLedger) -> dict[str
         before_report = json.loads(start_qa.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseGateError(f"Cannot read pre-remediation QA evidence: {exc}") from exc
-    if before_report.get("status") != "FAIL":
-        raise ReleaseGateError("Remediation start event is not bound to a failed QA report.")
+    before_docx = before_report.get("docx")
+    if (
+        before_report.get("status") != "FAIL"
+        or not isinstance(before_docx, Mapping)
+        or before_docx.get("profile") != "word-final-clean"
+        or before_docx.get("docx_sha256") != start_details.get("failing_clean_sha256")
+        or not isinstance(before_docx.get("docx_file"), str)
+        or Path(before_docx["docx_file"]).expanduser().resolve() != start_clean
+    ):
+        raise ReleaseGateError("Remediation start event is not bound to the exact failing word-final-clean QA DOCX.")
+    patch_matches = [patch for patch in revision_ledger.patches if patch.patch_id == start.subject_id]
+    if len(patch_matches) != 1:
+        raise ReleaseGateError("QA remediation must identify exactly one RevisionLedger Patch.")
+    patch = patch_matches[0]
+    if (
+        patch.status != "verified"
+        or not patch.verification_report_id
+        or not patch.apply_report_ids
+        or not patch.verified_output_hashes
+        or len(patch.operations) != 1
+    ):
+        raise ReleaseGateError("QA remediation Patch must be one atomic, formally verified PatchOperation.")
+    operation = patch.operations[0]
+    marked_input = Path(str(start_details.get("marked_input_file", ""))).expanduser().resolve()
+    marked_output = Path(str(start_details.get("marked_output_file", ""))).expanduser().resolve()
+    role = start_details.get("document_role")
+    if (
+        not isinstance(role, str) or not role.strip()
+        or operation.operation_id != start_details.get("operation_id")
+        or operation.document != role
+        or Path(operation.input_file).expanduser().resolve() != marked_input
+        or Path(operation.output_file).expanduser().resolve() != marked_output
+        or marked_output != Path(str(completion_details.get("marked_file", ""))).expanduser().resolve()
+        or operation.source_sha256 != start_details.get("marked_input_sha256")
+        or completion_details.get("operation_id") != operation.operation_id
+        or completion_details.get("document_role") != role
+        or completion_details.get("marked_input_file") != str(marked_input)
+        or completion_details.get("marked_input_sha256") != start_details.get("marked_input_sha256")
+        or completion_details.get("batch_id") != start_details.get("batch_id")
+        or completion_details.get("batch_dir") != start_details.get("batch_dir")
+        or completion_details.get("batch_intent_sha256") != start_details.get("batch_intent_sha256")
+        or completion_details.get("batch_scope_sha256") != start_details.get("batch_scope_sha256")
+    ):
+        raise ReleaseGateError("QA remediation events do not bind the exact PatchOperation and Marked input/output chain.")
+    if (
+        not marked_input.is_file()
+        or sha256_file(marked_input) != start_details.get("marked_input_sha256")
+    ):
+        raise ReleaseGateError("QA remediation Patch source Marked DOCX is missing or hash-stale.")
+    try:
+        from .v232_contract import ContractError, validate_qa_remediation_eligibility
+        eligibility = validate_qa_remediation_eligibility(
+            before_report, {"find": operation.find, "replace": operation.replace}
+        )
+    except ContractError as exc:
+        raise ReleaseGateError(f"Pre-remediation QA evidence is not eligible for local remediation: {exc}") from exc
+    if (
+        sorted(start_details.get("failed_check_ids", [])) != sorted(eligibility["failed_check_ids"])
+        or sorted(start_details.get("placeholder_tokens", [])) != sorted(eligibility["placeholder_tokens"])
+    ):
+        raise ReleaseGateError("Remediation start event does not preserve the exact eligible QA failure evidence.")
+    batch_id = start_details.get("batch_id")
+    matching_batches = [
+        record for record in batch_records
+        if isinstance(record, Mapping) and record.get("batch_id") == batch_id
+    ]
+    if len(matching_batches) != 1:
+        raise ReleaseGateError("QA remediation must bind exactly one formally published batch in release history.")
+    batch = matching_batches[0]
+    parent = batch.get("parent_documents", {}).get(role)
+    published = batch.get("documents", {}).get(role)
+    if (
+        batch.get("publication_status") != "published"
+        or Path(str(batch.get("directory", ""))).expanduser().resolve()
+           != Path(str(start_details.get("batch_dir", ""))).expanduser().resolve()
+        or batch.get("intent", {}).get("sha256") != start_details.get("batch_intent_sha256")
+        or batch.get("scope", {}).get("sha256") != start_details.get("batch_scope_sha256")
+        or start.subject_id not in batch.get("patch_ids", [])
+        or not isinstance(parent, Mapping)
+        or Path(str(parent.get("file", ""))).expanduser().resolve() != marked_input
+        or parent.get("sha256") != start_details.get("marked_input_sha256")
+        or not isinstance(published, Mapping)
+        or Path(str(published.get("file", ""))).expanduser().resolve() != marked_output
+        or published.get("sha256") != completion_details.get("marked_sha256")
+    ):
+        raise ReleaseGateError("QA remediation Patch is not backed by the exact published immutable batch lineage.")
     for field, hash_field in (
         ("qa_report_file", "qa_report_sha256"),
         ("clean_file", "clean_sha256"),
@@ -1234,6 +1322,7 @@ def _validate_qa_remediation_events(revision_ledger: RevisionLedger) -> dict[str
         after_report.get("status") not in {"PASS", "PASS_WITH_WARNINGS"}
         or after_report.get("status") != completion_details.get("qa_status")
         or not isinstance(after_report.get("docx"), Mapping)
+        or after_report["docx"].get("profile") != "word-final-clean"
         or after_report["docx"].get("docx_sha256") != completion_details.get("clean_sha256")
         or Path(str(after_report["docx"].get("docx_file", ""))).expanduser().resolve()
         != Path(completion_details["clean_file"]).expanduser().resolve()
@@ -1267,6 +1356,7 @@ def _validate_qa_remediation_events(revision_ledger: RevisionLedger) -> dict[str
         "status": "PASS",
         "remediation_round": 1,
         "patch_id": start.subject_id,
+        "batch_id": batch_id,
         "pre_remediation_qa_report": {
             "file": str(start_qa), "sha256": start_details["qa_report_sha256"],
         },
@@ -1320,7 +1410,6 @@ def build_final_release_manifest(
             "In-memory Workflow Ledger does not match its current on-disk version; reload before release."
         )
     revision_ledger.validate_or_raise()
-    qa_remediation_record = _validate_qa_remediation_events(revision_ledger)
     workflow_errors = validate_workflow_ledger(workflow_ledger)
     if workflow_errors:
         raise ReleaseGateError("Workflow Ledger is invalid:\n- " + "\n- ".join(workflow_errors))
@@ -1349,6 +1438,9 @@ def build_final_release_manifest(
             for row in workflow_ledger.get("tasks", [])
             if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
         },
+    )
+    qa_remediation_record = _validate_qa_remediation_events(
+        revision_ledger, batch_records=batch_records
     )
     workflow_tasks = {
         row.get("task_id"): row
