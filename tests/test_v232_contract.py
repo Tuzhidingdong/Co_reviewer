@@ -18,6 +18,7 @@ from co_reviewer.v232_contract import (
     build_revision_baseline_inventory, targeted_revision_gate,
     collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
 )
+from co_reviewer.historical_revisions import resolve_historical_revisions
 
 class V232ContractTests(unittest.TestCase):
     def test_immutable_tokens_block_numeric_and_citation_drift(self):
