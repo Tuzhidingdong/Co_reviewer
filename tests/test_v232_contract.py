@@ -138,10 +138,12 @@ class V232ContractTests(unittest.TestCase):
         ]}
         blocked = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}])
         self.assertEqual(blocked["status"], "USER_DECISION_REQUIRED")
-        passed = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}],
-                                         resolution_policy="ACCEPT_EXISTING")
-        self.assertEqual(passed["status"], "PASS")
-        self.assertEqual(len(passed["unrelated_revisions_preserved"]), 1)
+        selected = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}],
+                                           resolution_policy="ACCEPT_EXISTING")
+        self.assertEqual(selected["status"], "RESOLUTION_ADAPTER_REQUIRED")
+        self.assertTrue(selected["must_resolve_before_discovery_or_write"])
+        self.assertFalse(selected["resolution_applied"])
+        self.assertEqual(len(selected["unrelated_revisions_preserved"]), 1)
 
     def test_engine_blocks_unapproved_numeric_token_changes(self):
         from co_reviewer.document_engine import prepare_document

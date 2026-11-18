@@ -5349,6 +5349,8 @@ def cmd_targeted_revision_gate(args):
         print(f"[REVISION GATE] {Path(args.out).resolve()}")
     print(f"[REVISION GATE] {report['status']}; overlaps={len(report['overlapping_revisions'])}; "
           f"unresolved={len(report['unresolved_conflicts'])}")
+    if report["status"] == "RESOLUTION_ADAPTER_REQUIRED":
+        print("[BLOCKED] Policy recorded, but no deterministic revision-resolution adapter is enabled; resolve the conflict in Word and re-import.")
     return 0 if report["status"] == "PASS" else 2
 
 def cmd_build_package_reference_graph(args):

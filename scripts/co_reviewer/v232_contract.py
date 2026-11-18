@@ -505,7 +505,7 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
                            targets: Sequence[Mapping[str, Any]],
                            *, resolution_policy: str | None = None,
                            selectively_resolved_ids: Sequence[str] = ()) -> dict[str, Any]:
-    """Resolve only historical revisions intersecting approved edit targets."""
+    """Classify history conflicts; this gate never accepts or rejects Word revisions."""
     if resolution_policy not in {None, "ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"}:
         raise ContractError("Unknown historical revision resolution policy")
     overlaps, unrelated = [], []
@@ -520,17 +520,28 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
     unresolved = []
     for item in overlaps:
         rid = str(item.get("id", item.get("element_path", "")))
-        if resolution_policy == "ACCEPT_EXISTING":
-            continue
-        if resolution_policy == "REJECT_EXISTING":
-            continue
         if resolution_policy == "SELECTIVE_ACCEPT_CONFLICTS" and rid in selected:
             continue
+        if resolution_policy in {"ACCEPT_EXISTING", "REJECT_EXISTING"}:
+            continue
         unresolved.append(item)
-    return {"status": "PASS" if not unresolved else "USER_DECISION_REQUIRED",
-            "resolution_policy": resolution_policy, "overlapping_revisions": overlaps,
-            "unrelated_revisions_preserved": unrelated, "unresolved_conflicts": unresolved,
-            "must_resolve_before_discovery_or_write": bool(unresolved)}
+    if not overlaps:
+        status = "PASS"
+    elif unresolved:
+        status = "USER_DECISION_REQUIRED"
+    else:
+        # A selected policy is not an applied policy. Until a deterministic
+        # Accept/Reject adapter exists, callers must resolve in Word and re-import.
+        status = "RESOLUTION_ADAPTER_REQUIRED"
+    return {
+        "status": status,
+        "resolution_policy": resolution_policy,
+        "overlapping_revisions": overlaps,
+        "unrelated_revisions_preserved": unrelated,
+        "unresolved_conflicts": unresolved,
+        "must_resolve_before_discovery_or_write": bool(overlaps),
+        "resolution_applied": False,
+    }
 
 def extract_docx_text_for_reference_graph(path: str | Path) -> str:
     """Extract paragraph text from managed Word content parts without model calls."""
