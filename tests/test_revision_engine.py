@@ -63,8 +63,23 @@ class RevisionEngineTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_replacement_preserves_run_format_and_package_members(self):
-        original = make_docx(self.input, [[("The ", False), ("old ", True), ("phrase", False), (" remains.", False)]])
+    def test_replacement_refuses_to_flatten_mixed_run_formatting(self):
+        make_docx(self.input, [[
+            ("The ", False), ("old ", True), ("phrase", False), (" remains.", False)
+        ]])
+        with self.assertRaisesRegex(
+            ValueError,
+            "MIXED_RUN_FORMAT_REPLACEMENT_REQUIRES_EXPLICIT_SEGMENT_PLAN",
+        ):
+            cli.apply_document(str(self.input), str(self.output), [{
+                "p_idx": 0, "find": "old phrase", "replace": "new wording"
+            }], "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_replacement_across_runs_with_identical_format_preserves_package_members(self):
+        original = make_docx(self.input, [[
+            ("The ", False), ("old ", False), ("phrase", False), (" remains.", False)
+        ]])
         report = cli.apply_document(str(self.input), str(self.output), [{
             "p_idx": 0, "find": "old phrase", "replace": "new wording"
         }], "Test Author")
@@ -73,15 +88,11 @@ class RevisionEngineTests(unittest.TestCase):
             paragraph = root.find(".//w:p", cli.NS)
             self.assertEqual(cli.visible_text(paragraph), "The new wording remains.")
             deleted = "".join(x.text or "" for x in paragraph.findall(".//w:delText", cli.NS))
-            inserted = "".join(x.text or "" for x in paragraph.findall(".//w:ins/w:r/w:t", cli.NS))
+            inserted = "".join(x.text or "" for x in paragraph.findall(".//w:ins//w:t", cli.NS))
             self.assertEqual(deleted, "old phrase")
             self.assertEqual(inserted, "new wording")
-            self.assertIsNotNone(paragraph.find(".//w:del/w:r/w:rPr/w:b", cli.NS))
-            self.assertIsNotNone(paragraph.find(".//w:ins/w:r/w:rPr/w:b", cli.NS))
             self.assertEqual(archive.read("word/media/image1.png"), original["word/media/image1.png"])
             self.assertEqual(set(archive.namelist()), set(original))
-            # The prefix and suffix still exist as ordinary text outside revisions.
-            self.assertEqual("".join(x.text or "" for x in paragraph.findall("./w:r/w:t", cli.NS)), "The  remains.")
         self.assertEqual(report["validation"]["untouched_parts"], "byte-identical")
 
     def test_trailing_runs_are_preserved_when_target_ends_mid_run(self):
@@ -151,6 +162,52 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertIn("**Response**", final_draft)
         self.assertNotIn("not yet verified", final_draft)
 
+
+    def test_verifier_detects_revision_misplaced_within_the_target_paragraph(self):
+        make_docx(self.input, [[
+            ("Prefix ", False), ("old wording", False), (" suffix", False)
+        ]])
+        output_report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0, "find": "old wording", "replace": "new wording",
+            "revision_item_id": "R-POS", "document": "Manuscript",
+        }], "Test Author")
+        paragraph_plan = {
+            "revision_items": [{
+                "id": "R-POS", "status": "applied",
+                "targets": [{
+                    "document": "Manuscript", "input_file": str(self.input),
+                    "output_file": str(self.output), "p_idx": 0,
+                    "find": "old wording", "replace": "new wording",
+                }],
+            }]
+        }
+
+        # Keep exact revision IDs/text, but move both wrappers to the start.
+        with zipfile.ZipFile(self.output, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(members["word/document.xml"])
+        paragraph = root.find(".//w:body//w:p", cli.NS)
+        deletion = paragraph.find("./w:del", cli.NS)
+        insertion = paragraph.find("./w:ins", cli.NS)
+        self.assertIsNotNone(deletion)
+        self.assertIsNotNone(insertion)
+        paragraph.remove(deletion)
+        paragraph.remove(insertion)
+        paragraph.insert(0, deletion)
+        paragraph.insert(1, insertion)
+        members["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+
+        verification = cli.verify_apply_report(paragraph_plan, [output_report])
+        self.assertFalse(verification["passed"])
+        self.assertEqual(verification["results"][0]["status"], "failed")
+        self.assertTrue(verification["results"][0]["checks"]["exact_deletion_match"])
+        self.assertTrue(verification["results"][0]["checks"]["exact_insertion_match"])
+        self.assertFalse(verification["results"][0]["checks"]["exact_target_position"])
 
     def test_verifier_requires_the_exact_revision_id(self):
         make_docx(self.input, [[("old wording", False)]])
