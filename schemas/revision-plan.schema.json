@@ -182,7 +182,33 @@
                         "additionalProperties": false
                       }
                     },
-                    "explicitly_authorized_spans": {
+                                        "explicitly_authorized_insertions": {
+                      "type": "array",
+                      "description": "Exact individual protected-token values approved for insertion; every inserted token must match one entry.",
+                      "items": {
+                        "type": "object",
+                        "required": ["text"],
+                        "properties": {
+                          "kind": {"type": "string"},
+                          "text": {"type": "string", "minLength": 1}
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "explicitly_authorized_deletions": {
+                      "type": "array",
+                      "description": "Exact individual protected-token values approved for deletion; every deleted token must match one entry.",
+                      "items": {
+                        "type": "object",
+                        "required": ["text"],
+                        "properties": {
+                          "kind": {"type": "string"},
+                          "text": {"type": "string", "minLength": 1}
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+"explicitly_authorized_spans": {
                       "type": "array",
                       "items": {
                         "type": "object",
