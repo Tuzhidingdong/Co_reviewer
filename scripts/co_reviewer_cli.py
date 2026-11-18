@@ -532,6 +532,8 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "document": target["document"], "location": target.get("location", ""),
                 "operation_id": target.get("operation_id"),
                 "source_comment_ids": list(target.get("source_comment_ids", [])),
+                "authorized_change": target.get("authorized_change"),
+                "protected_spans": list(target.get("protected_spans", [])),
             }
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
