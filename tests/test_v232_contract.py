@@ -199,5 +199,17 @@ class V232ContractTests(unittest.TestCase):
                 prepare_document(str(source), str(output), [{"p_idx": 0, "find": "plain", "replace": "clear"}], "Tester")
             self.assertFalse(output.exists())
 
+
+    def test_protected_spans_require_separate_exact_authorization(self):
+        blocked = narrow_revision("alpha beta", "gamma beta",
+                                  authorized_change={"intent": "Revise wording"},
+                                  protected_spans=[{"start": 0, "end": 5}])
+        self.assertEqual(blocked["status"], "BLOCKED")
+        approved = narrow_revision("alpha beta", "gamma beta",
+                                   authorized_change={"intent": "Revise wording",
+                                       "explicitly_authorized_spans": [{"start": 0, "end": 5}]},
+                                   protected_spans=[{"start": 0, "end": 5}])
+        self.assertEqual(approved["status"], "PASS")
+
 if __name__ == "__main__":
     unittest.main()

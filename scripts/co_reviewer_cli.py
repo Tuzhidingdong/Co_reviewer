@@ -435,6 +435,9 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 for token_index, token in enumerate(authorization.get("explicitly_authorized_tokens", [])):
                     if not isinstance(token, dict) or not isinstance(token.get("text"), str) or not isinstance(token.get("replacement"), str):
                         errors.append(f"{tp}.authorized_change.explicitly_authorized_tokens[{token_index}] requires exact text and replacement strings.")
+                approved_spans = authorization.get("explicitly_authorized_spans", [])
+                if not isinstance(approved_spans, list) or any(not isinstance(span, dict) for span in approved_spans):
+                    errors.append(f"{tp}.authorized_change.explicitly_authorized_spans must be an array of objects.")
             protected_spans = t.get("protected_spans", [])
             if not isinstance(protected_spans, list) or any(not isinstance(span, dict) for span in protected_spans):
                 errors.append(f"{tp}.protected_spans must be an array of objects.")

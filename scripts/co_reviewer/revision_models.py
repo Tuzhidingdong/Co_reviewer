@@ -136,6 +136,12 @@ class PatchOperation:
             tokens = self.authorized_change.get("explicitly_authorized_tokens", [])
             if not isinstance(tokens, list):
                 raise RevisionModelError("authorized_change.explicitly_authorized_tokens must be an array.")
+            for token in tokens:
+                if not isinstance(token, Mapping) or not isinstance(token.get("text"), str) or not isinstance(token.get("replacement"), str):
+                    raise RevisionModelError("Each authorized token requires exact text and replacement strings.")
+            spans = self.authorized_change.get("explicitly_authorized_spans", [])
+            if not isinstance(spans, list) or any(not isinstance(span, Mapping) for span in spans):
+                raise RevisionModelError("explicitly_authorized_spans must be an array of objects.")
         if any(not isinstance(span, Mapping) for span in self.protected_spans):
             raise RevisionModelError("protected_spans must contain objects.")
         if self.target_ref is not None:

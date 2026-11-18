@@ -178,18 +178,40 @@ def narrow_revision(original: str, proposed: str, *,
         else: new_buf.append(token)
     flush()
     lock = validate_immutable_token_lock(original, proposed, authorized_change)
-    # Protected spans are source-coordinate ranges. Any edit intersecting one is
-    # blocked unless that exact span is explicitly listed as an authorized anchor.
+    # Protected spans are source-coordinate ranges. Authorization must be an
+    # exact, separately recorded span approval; a boolean supplied on the span
+    # itself is not an authorization signal.
+    authorized_spans = set()
+    raw_authorized_spans = authorized_change.get("explicitly_authorized_spans", [])
+    if not isinstance(raw_authorized_spans, list):
+        raise ContractError("explicitly_authorized_spans must be an array")
+    for approved_span in raw_authorized_spans:
+        if not isinstance(approved_span, Mapping):
+            raise ContractError("Authorized span entries must be objects")
+        a_start, a_end = approved_span.get("start"), approved_span.get("end")
+        if (not isinstance(a_start, int) or isinstance(a_start, bool)
+                or not isinstance(a_end, int) or isinstance(a_end, bool)
+                or a_start < 0 or a_end <= a_start):
+            raise ContractError("Invalid explicitly authorized span")
+        authorized_spans.add((a_start, a_end))
     protected_hits = []
-    for span in protected_spans:
-        start, end = span.get("start"), span.get("end")
-        if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end < start:
-            raise ContractError("Invalid protected span")
-        for edit in edits:
-            pos = original.find(edit["find"]) if edit["find"] else -1
-            if pos >= 0 and pos < end and pos + len(edit["find"]) > start:
-                if not span.get("authorized", False):
-                    protected_hits.append({"span": dict(span), "edit": edit})
+    edit_cursor = 0
+    for edit in edits:
+        find_text = edit["find"]
+        pos = original.find(find_text, edit_cursor) if find_text else edit_cursor
+        if pos < 0:
+            protected_hits.append({"edit": edit, "reason": "DIFF_SOURCE_COORDINATE_UNRESOLVED"})
+            continue
+        edit_start, edit_end = pos, pos + len(find_text)
+        edit_cursor = edit_end
+        for span in protected_spans:
+            start, end = span.get("start"), span.get("end")
+            if (not isinstance(start, int) or isinstance(start, bool)
+                    or not isinstance(end, int) or isinstance(end, bool)
+                    or start < 0 or end <= start or end > len(original)):
+                raise ContractError("Invalid protected span")
+            if edit_start < end and edit_end > start and (start, end) not in authorized_spans:
+                protected_hits.append({"span": dict(span), "edit": edit, "reason": "PROTECTED_SPAN_NOT_AUTHORIZED"})
     return {"status": "PASS" if lock["allowed"] and not protected_hits else "BLOCKED",
             "edits": edits, "token_lock": lock, "protected_span_conflicts": protected_hits,
             "diff_algorithm": "Myers word-token SES with whitespace/punctuation tokens",
