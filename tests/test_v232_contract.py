@@ -16,7 +16,7 @@ from co_reviewer.v232_contract import (
     assert_safe_paragraph_split, assert_safe_paragraph_merge, commit_document_package,
     remediation_transition, compile_clean_from_marked, qn, W,
     build_revision_baseline_inventory, targeted_revision_gate,
-    renumber_reference_graph, extract_docx_text_for_reference_graph,
+    collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
 )
 
 class V232ContractTests(unittest.TestCase):
