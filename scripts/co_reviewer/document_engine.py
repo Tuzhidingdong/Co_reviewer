@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from lxml import etree as ET
-from .v232_contract import narrow_revision, targeted_revision_gate
+from .v232_contract import (
+    attach_format_change, effective_run_properties, narrow_revision,
+    targeted_revision_gate,
+)
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 XML = "http://www.w3.org/XML/1998/namespace"
@@ -706,6 +709,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             )
             format_operations = edit.get("format_operations", [])
             format_authorization = edit.get("format_authorization")
+            if not isinstance(format_operations, list):
+                raise ValueError("format_operations must be an array.")
             if format_operations:
                 if (
                     not isinstance(format_authorization, dict)
@@ -716,8 +721,6 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         "FORMAT_CHANGE_AUTHORIZATION_REQUIRED: format_operations require "
                         "a separately authorized format_authorization.intent."
                     )
-                if not isinstance(format_operations, list):
-                    raise ValueError("format_operations must be an array.")
             format_change_results = []
             for format_index, format_operation in enumerate(format_operations):
                 if not isinstance(format_operation, dict):
@@ -765,21 +768,32 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 format_change_results.extend(change_records)
             if visible_text(para).count(old) != 1:
                 raise ValueError(f"Target {old[:80]!r} is ambiguous within paragraph P[{idx}]; no output was written.")
-            delete_revision_id = rid
-            insert_revision_id = rid + 1 if new else None
             replacement_format_map = edit.get("replacement_format_map")
             if replacement_format_map is not None and not isinstance(replacement_format_map, list):
                 raise ValueError("replacement_format_map must be an array.")
-            ok, rid, reason = replace_in_paragraph(
-                para, old, new, author,
-                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), rid,
-                replacement_format_map=replacement_format_map,
-            )
-            if not ok:
-                raise ValueError(
-                    f"Safe edit refused at {part} P[{idx}]: {reason}. "
-                    "Target may cross a hyperlink boundary or involve a field, drawing, bookmark, content control or other unsupported complex node."
+            if old == new and format_operations:
+                # Explicit no-text-diff mode: the Patch is a pure FormatChange.
+                # Do not generate a redundant delete/insert pair for unchanged text.
+                delete_revision_id = None
+                insert_revision_id = None
+                reason = "format-only"
+            else:
+                if old == new:
+                    raise ValueError(
+                        "NO_OP_TEXT_PATCH: identical find/replace requires at least one authorized FormatChange."
+                    )
+                delete_revision_id = rid
+                insert_revision_id = rid + 1 if new else None
+                ok, rid, reason = replace_in_paragraph(
+                    para, old, new, author,
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), rid,
+                    replacement_format_map=replacement_format_map,
                 )
+                if not ok:
+                    raise ValueError(
+                        f"Safe edit refused at {part} P[{idx}]: {reason}. "
+                        "Target may cross a hyperlink boundary or involve a field, drawing, bookmark, content control or other unsupported complex node."
+                    )
             inserted_run_formats = []
             if insert_revision_id is not None:
                 insertion = next(
@@ -795,11 +809,24 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                             node.text or "" for node in inserted_run.findall("w:t", NS)
                         )
                         vertical = inserted_run.find("w:rPr/w:vertAlign", NS)
+                        rpr = inserted_run.find("w:rPr", NS)
+                        bold = rpr.find("w:b", NS) if rpr is not None else None
+                        italic = rpr.find("w:i", NS) if rpr is not None else None
+                        size = rpr.find("w:sz", NS) if rpr is not None else None
+                        fonts = rpr.find("w:rFonts", NS) if rpr is not None else None
                         inserted_run_formats.append({
                             "text": run_text,
                             "vertical_alignment": (
                                 vertical.get(qn("val")) if vertical is not None else None
-                            )
+                            ),
+                            "bold": bold is not None and bold.get(qn("val"), "1") not in {"0", "false", "off"},
+                            "italic": italic is not None and italic.get(qn("val"), "1") not in {"0", "false", "off"},
+                            "font_size_half_points": size.get(qn("val")) if size is not None else None,
+                            "fonts": dict(fonts.attrib) if fonts is not None else {},
+                            "direct_rpr_sha256": hashlib.sha256(
+                                ET.tostring(_format_run_properties(inserted_run), encoding="c14n")
+                                if _format_run_properties(inserted_run) is not None else b""
+                            ).hexdigest(),
                         })
             edit_result = {
                 "part": part, "p_idx": idx, "find": old, "replace": new,
