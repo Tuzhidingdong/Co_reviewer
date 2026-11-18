@@ -1270,8 +1270,10 @@ def _verify_paragraph_format_integrity(
                     replacement_start: int, replacement_end: int, source_index: int
                 ) -> None:
                     segment_text = replacement[replacement_start:replacement_end]
-                    has_explicit_script = any(_script_character(character) for character in segment_text)
-                    for character in segment_text:
+                    authored_replacement = edit.get("replace", replacement)
+                    authored_segment = authored_replacement[replacement_start:replacement_end]
+                    has_explicit_script = any(_script_character(character) for character in authored_segment)
+                    for character in authored_segment:
                         script = _script_character(character)
                         alignment = script[0] if script else None
                         expected_hashes.append(
