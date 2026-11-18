@@ -96,6 +96,8 @@ class PatchOperation:
     source_comment_ids: tuple[str, ...] = ()
     location_phrase: str | None = None
     target_ref: Mapping[str, Any] | None = None
+    authorized_change: Mapping[str, Any] | None = None
+    protected_spans: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.operation_id, "operation_id")
@@ -128,6 +130,14 @@ class PatchOperation:
             _text(self.location_phrase, "location_phrase")
             if len(self.location_phrase) > 255 or any(ch in self.location_phrase for ch in "\r\n\t"):
                 raise RevisionModelError("location_phrase must be a single-line Word Find phrase of at most 255 characters.")
+        if self.authorized_change is not None:
+            if not isinstance(self.authorized_change, Mapping) or not isinstance(self.authorized_change.get("intent"), str) or not self.authorized_change.get("intent", "").strip():
+                raise RevisionModelError("authorized_change must contain a non-empty intent.")
+            tokens = self.authorized_change.get("explicitly_authorized_tokens", [])
+            if not isinstance(tokens, list):
+                raise RevisionModelError("authorized_change.explicitly_authorized_tokens must be an array.")
+        if any(not isinstance(span, Mapping) for span in self.protected_spans):
+            raise RevisionModelError("protected_spans must contain objects.")
         if self.target_ref is not None:
             if not isinstance(self.target_ref, Mapping):
                 raise RevisionModelError("target_ref must be an object or null.")
@@ -167,6 +177,8 @@ class PatchOperation:
             source_comment_ids=tuple(raw_source_comment_ids),
             location_phrase=data.get("location_phrase"),
             target_ref=data.get("target_ref"),
+            authorized_change=data.get("authorized_change"),
+            protected_spans=tuple(data.get("protected_spans", [])),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +197,8 @@ class PatchOperation:
             "source_comment_ids": list(self.source_comment_ids),
             "location_phrase": self.location_phrase,
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
+            "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
+            "protected_spans": [dict(x) for x in self.protected_spans],
         }
 
     def to_legacy_target(self) -> dict[str, Any]:
@@ -200,6 +214,8 @@ class PatchOperation:
             "operation_id": self.operation_id,
             "source_comment_ids": list(self.source_comment_ids),
             "location_phrase": self.location_phrase,
+            "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
+            "protected_spans": [dict(x) for x in self.protected_spans],
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx

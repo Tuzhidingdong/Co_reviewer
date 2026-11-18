@@ -15,6 +15,7 @@ from co_reviewer.v232_contract import (
     attach_format_change, build_package_reference_graph, renumber_reference_graph,
     assert_safe_paragraph_split, assert_safe_paragraph_merge, commit_document_package,
     remediation_transition, compile_clean_from_marked, qn, W,
+    build_revision_baseline_inventory, targeted_revision_gate,
 )
 
 class V232ContractTests(unittest.TestCase):
@@ -103,6 +104,35 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(first["next_phase"], "COMPILE_CLEAN")
         second = remediation_transition({"phase": "QA", "remediation_round": 1}, patch)
         self.assertEqual(second["phase"], "BLOCKED")
+
+
+    def test_targeted_revision_gate_blocks_only_overlapping_history(self):
+        inventory = {"revisions": [
+            {"id": "r1", "part": "word/document.xml", "paragraph_index": 2, "kind": "text_revision_wrapper"},
+            {"id": "r2", "part": "word/document.xml", "paragraph_index": 8, "kind": "text_revision_wrapper"},
+        ]}
+        blocked = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}])
+        self.assertEqual(blocked["status"], "USER_DECISION_REQUIRED")
+        passed = targeted_revision_gate(inventory, [{"part": "word/document.xml", "p_idx": 2}],
+                                         resolution_policy="ACCEPT_EXISTING")
+        self.assertEqual(passed["status"], "PASS")
+        self.assertEqual(len(passed["unrelated_revisions_preserved"]), 1)
+
+    def test_engine_blocks_unapproved_numeric_token_changes(self):
+        from co_reviewer.document_engine import prepare_document
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.docx"
+            output = Path(tmp) / "output.docx"
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as z:
+                z.writestr("[Content_Types].xml", f'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+                z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+                z.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+                z.writestr("word/document.xml", f'<w:document xmlns:w="{W}"><w:body><w:p><w:r><w:t>The value is 10 mg.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>')
+            source.write_bytes(payload.getvalue())
+            with self.assertRaisesRegex(ValueError, "UNPROTECTED_TOKEN_TOUCHED"):
+                prepare_document(str(source), str(output), [{"p_idx": 0, "find": "10 mg", "replace": "12 mg"}], "Tester")
+            self.assertFalse(output.exists())
 
     def test_clean_compilation_is_bound_to_marked_bytes(self):
         # A minimal OPC package with a tracked insertion.

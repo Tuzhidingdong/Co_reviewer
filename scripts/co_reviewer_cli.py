@@ -61,6 +61,8 @@ from co_reviewer.structure_classifier import classify_docx_structure
 from co_reviewer.v232_contract import (
     ContractError, narrow_revision, build_package_reference_graph,
     commit_document_package, compile_clean_from_marked,
+    build_revision_baseline_inventory, targeted_revision_gate,
+    extract_docx_text_for_reference_graph,
 )
 
 ET.register_namespace("w", W)
@@ -5287,6 +5289,31 @@ def cmd_validate_edit_contract(args):
     print(f"[MINIMAL DIFF] {len(report['edits'])} edit block(s); status={report['status']}")
     return 0 if report["status"] == "PASS" else 2
 
+def cmd_revision_baseline(args):
+    report = build_revision_baseline_inventory(args.docx)
+    if args.out:
+        write_json_atomic(Path(args.out), report)
+        print(f"[REVISION BASELINE] {Path(args.out).resolve()}")
+    print(f"[REVISION BASELINE] {report['existing_revision_count']} historical revision/comment structure(s)")
+    print(f"[PACKAGE STATUS] {report['package_status']}")
+    return 0 if report["package_status"] == "READY" else 2
+
+def cmd_targeted_revision_gate(args):
+    inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
+    target_data = json.loads(Path(args.targets).read_text(encoding="utf-8"))
+    targets = target_data.get("targets") if isinstance(target_data, dict) else target_data
+    if not isinstance(targets, list):
+        raise ValueError("Target file must be an array or an object with a targets array")
+    selected = json.loads(Path(args.selective_ids).read_text(encoding="utf-8")) if args.selective_ids else []
+    report = targeted_revision_gate(inventory, targets, resolution_policy=args.policy,
+                                    selectively_resolved_ids=selected)
+    if args.out:
+        write_json_atomic(Path(args.out), report)
+        print(f"[REVISION GATE] {Path(args.out).resolve()}")
+    print(f"[REVISION GATE] {report['status']}; overlaps={len(report['overlapping_revisions'])}; "
+          f"unresolved={len(report['unresolved_conflicts'])}")
+    return 0 if report["status"] == "PASS" else 2
+
 def cmd_build_package_reference_graph(args):
     documents = {}
     for item in args.document:
@@ -5295,7 +5322,7 @@ def cmd_build_package_reference_graph(args):
         role, filename = item.split("=", 1)
         if not role or role in documents:
             raise ValueError("Document roles must be non-empty and unique")
-        documents[role] = Path(filename).read_text(encoding="utf-8")
+        documents[role] = extract_docx_text_for_reference_graph(filename)
     report = build_package_reference_graph(documents)
     if args.out:
         write_json_atomic(Path(args.out), report)
@@ -5356,6 +5383,17 @@ def build_parser():
     si.add_argument("--docx", required=True)
     si.add_argument("--out", help="Optional JSON report path. Omit to print the report to stdout.")
     si.set_defaults(func=cmd_inspect_docx_structure)
+    rb = sub.add_parser("revision-baseline", help="Zero-model-call inventory of historical revisions and comment structures.")
+    rb.add_argument("--docx", required=True)
+    rb.add_argument("--out")
+    rb.set_defaults(func=cmd_revision_baseline)
+    rgate = sub.add_parser("targeted-revision-gate", help="Check whether historical revisions overlap proposed edit targets.")
+    rgate.add_argument("--inventory", required=True)
+    rgate.add_argument("--targets", required=True)
+    rgate.add_argument("--policy", choices=["ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"])
+    rgate.add_argument("--selective-ids")
+    rgate.add_argument("--out")
+    rgate.set_defaults(func=cmd_targeted_revision_gate)
     vc = sub.add_parser("validate-edit-contract", help="Validate Authorized Change, protected spans and deterministic immutable token locks.")
     vc.add_argument("--original", required=True)
     vc.add_argument("--proposed", required=True)
@@ -5363,7 +5401,7 @@ def build_parser():
     vc.add_argument("--out")
     vc.set_defaults(func=cmd_validate_edit_contract)
     rg = sub.add_parser("build-package-reference-graph", help="Build a directed cross-document definition/mention graph from extracted text.")
-    rg.add_argument("--document", nargs="+", required=True, help="ROLE=TXT_PATH entries for every managed DOCX text extraction.")
+    rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
     rg.set_defaults(func=cmd_build_package_reference_graph)
     cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")

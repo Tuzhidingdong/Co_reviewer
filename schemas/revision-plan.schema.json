@@ -69,6 +69,45 @@
                   "pattern": "^[a-f0-9]{64}$",
                   "description": "SHA-256 of the exact input DOCX bytes recorded by preflight-plan and bound into user approval."
                 }
+,                "authorized_change": {
+                  "type": "object",
+                  "required": ["intent"],
+                  "properties": {
+                    "intent": { "type": "string", "minLength": 1 },
+                    "explicitly_authorized_tokens": {
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          { "type": "string", "minLength": 1 },
+                          {
+                            "type": "object",
+                            "required": ["text"],
+                            "properties": {
+                              "kind": { "type": "string" },
+                              "text": { "type": "string", "minLength": 1 }
+                            },
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "protected_spans": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["start", "end"],
+                    "properties": {
+                      "start": { "type": "integer", "minimum": 0 },
+                      "end": { "type": "integer", "minimum": 0 },
+                      "label": { "type": "string" },
+                      "authorized": { "type": "boolean", "default": false }
+                    },
+                    "additionalProperties": false
+                  }
+                }
               },
               "additionalProperties": false
             }

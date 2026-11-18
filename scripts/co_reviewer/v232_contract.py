@@ -385,6 +385,69 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
         raise ContractError("PARAGRAPH_MERGE_LIST_SEMANTICS_MISMATCH")
     return {"pPr_source": "left", "numPr": left_num, "right_pPr_discarded": True}
 
+def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, Any]:
+    """Zero-model-call inventory of pre-existing native revisions and comments."""
+    from .structure_classifier import classify_docx_structure
+    report = classify_docx_structure(source)
+    revision_kinds = {"text_revision_wrapper", "format_revision", "paragraph_revision",
+                      "table_revision", "move_revision", "comment_anchor", "comment_definition"}
+    records = [dict(item) for item in report.get("structures", [])
+               if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))]
+    return {"schema_version": "1.0", "source_sha256": report.get("source_sha256"),
+            "package_status": report.get("package_status"), "existing_revision_count": len(records),
+            "revisions": records, "inventory": report}
+
+def targeted_revision_gate(inventory: Mapping[str, Any],
+                           targets: Sequence[Mapping[str, Any]],
+                           *, resolution_policy: str | None = None,
+                           selectively_resolved_ids: Sequence[str] = ()) -> dict[str, Any]:
+    """Resolve only historical revisions intersecting approved edit targets."""
+    if resolution_policy not in {None, "ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"}:
+        raise ContractError("Unknown historical revision resolution policy")
+    overlaps, unrelated = [], []
+    target_keys = {(str(t.get("part", "word/document.xml")), t.get("paragraph_index", t.get("p_idx")))
+                   for t in targets}
+    selected = set(selectively_resolved_ids)
+    for revision in inventory.get("revisions", []):
+        key = (str(revision.get("part")), revision.get("paragraph_index"))
+        span = revision.get("paragraph_indices") or []
+        hit = key in target_keys or any((str(revision.get("part")), idx) in target_keys for idx in span)
+        (overlaps if hit else unrelated).append(revision)
+    unresolved = []
+    for item in overlaps:
+        rid = str(item.get("id", item.get("element_path", "")))
+        if resolution_policy == "ACCEPT_EXISTING":
+            continue
+        if resolution_policy == "REJECT_EXISTING":
+            continue
+        if resolution_policy == "SELECTIVE_ACCEPT_CONFLICTS" and rid in selected:
+            continue
+        unresolved.append(item)
+    return {"status": "PASS" if not unresolved else "USER_DECISION_REQUIRED",
+            "resolution_policy": resolution_policy, "overlapping_revisions": overlaps,
+            "unrelated_revisions_preserved": unrelated, "unresolved_conflicts": unresolved,
+            "must_resolve_before_discovery_or_write": bool(unresolved)}
+
+def extract_docx_text_for_reference_graph(path: str | Path) -> str:
+    """Extract paragraph text from managed Word content parts without model calls."""
+    import zipfile
+    from pathlib import PurePosixPath
+    source = Path(path)
+    if not source.is_file() or source.suffix.casefold() != ".docx":
+        raise ContractError("Reference graph input must be an existing DOCX")
+    rows = []
+    allowed = re.compile(r"^word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$")
+    with zipfile.ZipFile(source, "r") as archive:
+        for name in sorted(archive.namelist()):
+            if not allowed.match(name):
+                continue
+            root = _xml(archive.read(name))
+            for paragraph in root.findall(".//w:p", NS):
+                value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
+                if value.strip():
+                    rows.append(value)
+    return "\n".join(rows)
+
 # Two-phase package transaction. Files are prepared in a private staging folder,
 # validated, then published as an immutable version directory. The manifest is
 # the commit marker; readers must ignore directories without it.

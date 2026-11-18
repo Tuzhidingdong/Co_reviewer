@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from lxml import etree as ET
+from .v232_contract import narrow_revision
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 XML = "http://www.w3.org/XML/1998/namespace"
@@ -363,6 +364,16 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         for edit in part_edits:
             old, new = str(edit.get("find", "")), str(edit.get("replace", ""))
             if not old.strip(): raise ValueError("Each find value must be non-empty.")
+            authorization = edit.get("authorized_change") or {"intent": "Legacy exact-text operation; protected entities remain immutable"}
+            contract = narrow_revision(
+                old, new, authorized_change=authorization,
+                protected_spans=edit.get("protected_spans", ()),
+            )
+            if contract["status"] != "PASS":
+                raise ValueError(
+                    "UNPROTECTED_TOKEN_TOUCHED: edit changes protected scientific/numeric/reference content "
+                    "without explicit authorization; no output was written."
+                )
             if any(ch in old for ch in "\t\r\n") or any(ch in new for ch in "\t\r\n"):
                 raise ValueError("Tabs/newlines are not supported in safe find/replace text.")
             p_idx = edit.get("p_idx")
@@ -417,7 +428,13 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "status": "applied", "delete_revision_id": delete_revision_id,
                 "insert_revision_id": insert_revision_id,
                 "inserted_text": normalize_script_characters(new),
-                "inserted_run_formats": inserted_run_formats
+                "inserted_run_formats": inserted_run_formats,
+                "authorization_validation": {
+                    "status": contract["status"],
+                    "diff_algorithm": contract["diff_algorithm"],
+                    "authorization_intent": contract["authorization_intent"],
+                    "token_lock": contract["token_lock"],
+                }
             }
             for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "location_phrase"):
                 if metadata_key in edit:
