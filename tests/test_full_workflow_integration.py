@@ -477,6 +477,46 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(workflow_after_sync["tasks"][0]["status"], "verified")
 
+        verified_before_clean = revision_ledger_from_mapping(
+            json.loads(revision_ledger_path.read_text(encoding="utf-8"))
+        )
+        for document in verified_before_clean.documents:
+            matching_records = [
+                record
+                for patch in verified_before_clean.patches
+                for record in patch.applied_revision_ids
+                if Path(record["output_file"]).resolve() == Path(document.output_file).resolve()
+                and record["output_sha256"] == sha256_file(document.output_file)
+            ]
+            with zipfile.ZipFile(document.output_file, "r") as marked_archive:
+                observed_ids = {
+                    str(node.get(cli.qn("id")))
+                    for member in marked_archive.namelist()
+                    if member.startswith("word/") and member.endswith(".xml")
+                    for node in cli.ET.fromstring(marked_archive.read(member)).iter()
+                    if node.tag in {
+                        cli.qn("ins"), cli.qn("del"), cli.qn("moveTo"), cli.qn("moveFrom"),
+                        cli.qn("rPrChange"), cli.qn("pPrChange"), cli.qn("tblPrChange"),
+                        cli.qn("tblGridChange"), cli.qn("trPrChange"), cli.qn("tcPrChange"),
+                        cli.qn("numberingChange"), cli.qn("sectPrChange"),
+                    }
+                }
+            registered_ids = {
+                revision_id
+                for record in matching_records
+                for revision_id in record["revision_ids"]
+            }
+            self.assertTrue(
+                matching_records,
+                f"No exact applied-revision lineage record for {document.role}: "
+                f"path={document.output_file}, sha256={sha256_file(document.output_file)}",
+            )
+            self.assertLessEqual(
+                observed_ids, registered_ids,
+                f"Unregistered revision IDs for {document.role}: "
+                f"observed={sorted(observed_ids)}, registered={sorted(registered_ids)}",
+            )
+
         working_clean_dir = self.root / "working_clean"
         self.assertEqual(
             self.call_silently(

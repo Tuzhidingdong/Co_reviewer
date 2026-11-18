@@ -412,7 +412,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
 
     def test_working_clean_view_cli_persists_immutable_projection_in_ledger(self):
         ledger = self._ledger()
-        cli.apply_document(
+        apply_report = cli.apply_document(
             str(self.input),
             str(self.output),
             [{
@@ -423,6 +423,21 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             }],
             "Working View CLI Test",
         )
+        patch = ledger.patches[0]
+        revision_ids = sorted({
+            str(result[key])
+            for result in apply_report.get("results", [])
+            for key in ("delete_revision_id", "insert_revision_id")
+            if result.get(key) is not None
+        })
+        self.assertTrue(revision_ids)
+        patch.applied_revision_ids = [{
+            "input_file": apply_report["input_file"],
+            "input_sha256": apply_report["input_sha256"],
+            "output_file": apply_report["output_file"],
+            "output_sha256": apply_report["output_sha256"],
+            "revision_ids": revision_ids,
+        }]
         marked_bytes = self.output.read_bytes()
         ledger.documents = [RevisionDocument(
             document_id="doc-manuscript",
