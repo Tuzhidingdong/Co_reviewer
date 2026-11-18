@@ -6209,6 +6209,7 @@ def cmd_begin_qa_remediation(args):
             "failing_clean_file": str(failing_clean),
             "failing_clean_sha256": failing_clean_sha,
             "failed_check_ids": [row.get("id") for row in failed_checks],
+            "document_role": document.role,
             "marked_input_file": str(marked_path),
             "marked_input_sha256": marked_sha,
             "batch_id": intent["batch_id"],
@@ -6277,6 +6278,20 @@ def cmd_complete_qa_remediation(args):
     batch_dir = _resolve_batch_dir_argument(args.batch_dir)
     ledger = _load_revision_ledger(revision_path)
     workflow = _read_json_object(workflow_path, "Workflow Ledger")
+    matching_start_events = [
+        event for event in ledger.events
+        if event.event_type == "qa_remediation_started"
+        and event.event_id == state.get("event_id")
+        and event.subject_id == state.get("patch_id")
+    ]
+    if len(matching_start_events) != 1:
+        raise ValueError("The exact QA remediation start event is missing, duplicated or does not match this state.")
+    if any(
+        event.event_type == "qa_remediation_completed"
+        and event.subject_id == state.get("patch_id")
+        for event in ledger.events
+    ):
+        raise ValueError("The one permitted QA remediation has already been completed; do not rerun it.")
     if ledger.revision_round_id != state.get("revision_round_id"):
         raise ValueError("Remediation state and RevisionLedger review-round IDs differ.")
     if Path(str(state.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
@@ -6301,6 +6316,13 @@ def cmd_complete_qa_remediation(args):
     if len(patch.operations) != 1 or patch.operations[0].operation_id != state.get("operation_id"):
         raise ValueError("Remediation Patch operation identity differs from the immutable state record.")
     operation = patch.operations[0]
+    if (
+        operation.operation_id != matching_start_events[0].details.get("operation_id")
+        or matching_start_events[0].details.get("marked_input_sha256") != state.get("marked_input_sha256")
+        or matching_start_events[0].details.get("batch_id") != state.get("batch_id")
+        or matching_start_events[0].details.get("document_role") != state.get("document_role")
+    ):
+        raise ValueError("Approved remediation Patch or Marked parent differs from the immutable start event.")
     marked_path = Path(str(state.get("marked_output_file", ""))).expanduser().resolve()
     if not marked_path.is_file() or marked_path != Path(operation.output_file).expanduser().resolve():
         raise ValueError("Published remediation Marked DOCX is missing or differs from the approved Patch output.")
