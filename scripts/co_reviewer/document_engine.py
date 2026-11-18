@@ -765,6 +765,10 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     raise ValueError(
                         f"FormatChange refused at {part} P[{idx}]: {format_reason}"
                     )
+                for record in change_records:
+                    record["operation_index"] = format_index
+                    record["operation_find"] = format_find
+                    record["requested_properties"] = copy.deepcopy(format_properties)
                 format_change_results.extend(change_records)
             if visible_text(para).count(old) != 1:
                 raise ValueError(f"Target {old[:80]!r} is ambiguous within paragraph P[{idx}]; no output was written.")
