@@ -182,7 +182,7 @@
                         "additionalProperties": false
                       }
                     },
-                                        "explicitly_authorized_insertions": {
+                    "explicitly_authorized_insertions": {
                       "type": "array",
                       "description": "Exact individual protected-token values approved for insertion; every inserted token must match one entry.",
                       "items": {
@@ -208,7 +208,7 @@
                         "additionalProperties": false
                       }
                     },
-"explicitly_authorized_spans": {
+                    "explicitly_authorized_spans": {
                       "type": "array",
                       "items": {
                         "type": "object",
