@@ -53,6 +53,7 @@ _PREFIXES = {
     "http://schemas.openxmlformats.org/officeDocument/2006/math": "m",
     "http://schemas.microsoft.com/office/word/2010/wordml": "w14",
     "http://www.w3.org/XML/1998/namespace": "xml",
+    "urn:schemas-microsoft-com:office:office": "o",
     "urn:schemas-microsoft-com:vml": "v",
 }
 _KNOWN_NAMESPACES = frozenset(_PREFIXES)
@@ -77,6 +78,7 @@ keepNext keepLines pageBreakBefore widowControl numPr tabs spacing ind jc
 textDirection textAlignment outlineLvl divId cnfStyle
 tbl tblPr tblPrEx tblStyle tblW jc tblInd tblBorders shd tblLayout
 tblCellMar tblLook tblCaption tblDescription tblOverlap tblpPr tblGrid gridCol
+pBdr pBdrBetween pBdrBar pBdrTop pBdrBottom pBdrLeft pBdrRight
 tr trPr trHeight cantSplit tblHeader tblCellSpacing tblWAfter gridBefore
 gridAfter wAfter wBefore tc tcPr tcW gridSpan hMerge vMerge tcBorders
 noWrap tcMar textDirection fitText headers cellIns cellDel cellMerge
@@ -105,6 +107,7 @@ name basedOn next link pPr rPr tblPr trPr tcPr
 default docDefaults rPrDefault pPrDefault
 settings compat doNotTrackMoves doNotTrackFormatting
 zoom proofState defaultTabStop characterSpacingControl savePreviewPicture
+clrSchemeMapping doNotAutoCompressPictures shapeDefaults decimalSymbol listSeparator
 useFELayout compatSetting rsids rsid rsidRoot rsidR rsidRPr rsidP rsidSect
 doNotUseHTMLParagraphAutoSpacing doNotUseIndentAsNumberingTabStop
 mirrorIndents contextualSpacing autoSpaceDE autoSpaceDN adjustRightInd
@@ -114,6 +117,7 @@ header footer footnotes endnotes
 fontTable fonts font altName panose family pitch sig charset panose1
 embedRegular embedBold embedItalic embedBoldItalic embed embedDataId embeddedFont
 subsetted notTrueType
+shapedefaults shapelayout idmap top bottom left right start end insideH insideV between bar
 updateFields mirrorMargins evenAndOddHeaders
 fldData
 """.split())
