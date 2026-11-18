@@ -1082,8 +1082,18 @@ def remediation_transition(state: Mapping[str, Any], patch: Mapping[str, Any] | 
     if phase != "QA":
         raise ContractError("Remediation transition is legal only from QA")
     if round_no >= 1:
-        return {"phase": "BLOCKED", "remediation_round": 1,
-                "reason": "SECOND_QA_FAILURE_NO_FURTHER_REMEDIATION"}
+        qa_status = state.get("qa_status")
+        if qa_status in {"PASS", "PASS_WITH_WARNINGS"}:
+            return {
+                "phase": "COMPLETE",
+                "remediation_round": 1,
+                "reason": "BOUNDED_REMEDIATION_QA_PASSED",
+            }
+        return {
+            "phase": "BLOCKED",
+            "remediation_round": 1,
+            "reason": "SECOND_QA_FAILURE_NO_FURTHER_REMEDIATION",
+        }
     if not isinstance(patch, Mapping) or patch.get("target_artifact") != "Marked":
         raise ContractError("Remediation patch must target Marked as a formal revision")
     for field in ("operation_id", "find", "reason"):
