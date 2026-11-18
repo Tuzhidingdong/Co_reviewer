@@ -667,7 +667,11 @@ class RevisionWorkflowTests(unittest.TestCase):
                         "p_idx": 0,
                         "location": "Manuscript body paragraph 1",
                         "find": "Sample ZB-01",
-                        "replace": "Sample ZB-02"
+                        "replace": "Sample ZB-02",
+                        "authorized_change": {
+                            "intent": "Human-approved sample identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
                     },
                     {
                         "document": "SI",
@@ -676,7 +680,11 @@ class RevisionWorkflowTests(unittest.TestCase):
                         "p_idx": 0,
                         "location": "SI body paragraph 1",
                         "find": "Sample ZB-01",
-                        "replace": "Sample ZB-02"
+                        "replace": "Sample ZB-02",
+                        "authorized_change": {
+                            "intent": "Human-approved sample identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
                     }
                 ]
             }]

@@ -242,8 +242,13 @@ class V232ContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ContractError, "Unsafe package output path"):
                 commit_document_package({"..\\escape.docx": b"not-a-docx"}, tmp)
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as archive:
+                archive.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+                archive.writestr("word/document.xml", f'<w:document xmlns:w="{W}"><w:body><w:p/></w:body></w:document>')
+            valid_docx = payload.getvalue()
             with self.assertRaisesRegex(ContractError, "Duplicate or case-colliding"):
-                commit_document_package({"A.docx": b"x", "a.DOCX": b"y"}, tmp)
+                commit_document_package({"A.docx": valid_docx, "a.DOCX": valid_docx}, tmp)
 
 if __name__ == "__main__":
     unittest.main()
