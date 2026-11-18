@@ -1032,7 +1032,7 @@ def _direct_run_format_sha256(run: ET.Element) -> str:
     cloned = copy.deepcopy(rpr)
     for change in list(cloned.findall("w:rPrChange", NS)):
         cloned.remove(change)
-    return hashlib.sha256(ET.tostring(cloned, encoding="c14n")).hexdigest()
+    return hashlib.sha256(ET.tostring(cloned, method="c14n")).hexdigest()
 
 
 def _format_change_property_matches(run: ET.Element, name: str, expected: Any) -> bool:
