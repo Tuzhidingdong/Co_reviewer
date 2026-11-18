@@ -799,6 +799,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         "Target may cross a hyperlink boundary or involve a field, drawing, bookmark, content control or other unsupported complex node."
                     )
             inserted_run_formats = []
+            inserted_run_format_signatures = []
             if insert_revision_id is not None:
                 insertion = next(
                     (
@@ -818,11 +819,14 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         italic = rpr.find("w:i", NS) if rpr is not None else None
                         size = rpr.find("w:sz", NS) if rpr is not None else None
                         fonts = rpr.find("w:rFonts", NS) if rpr is not None else None
+                        vertical_value = vertical.get(qn("val")) if vertical is not None else None
                         inserted_run_formats.append({
                             "text": run_text,
-                            "vertical_alignment": (
-                                vertical.get(qn("val")) if vertical is not None else None
-                            ),
+                            "vertical_alignment": vertical_value,
+                        })
+                        inserted_run_format_signatures.append({
+                            "text": run_text,
+                            "vertical_alignment": vertical_value,
                             "bold": bold is not None and bold.get(qn("val"), "1") not in {"0", "false", "off"},
                             "italic": italic is not None and italic.get(qn("val"), "1") not in {"0", "false", "off"},
                             "font_size_half_points": size.get(qn("val")) if size is not None else None,
@@ -838,6 +842,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "insert_revision_id": insert_revision_id,
                 "inserted_text": old if old == new and format_operations else normalize_script_characters(new),
                 "inserted_run_formats": inserted_run_formats,
+                "inserted_run_format_signatures": inserted_run_format_signatures,
                 "replacement_format_map": copy.deepcopy(replacement_format_map),
                 "format_changes": format_change_results,
                 "format_authorization": copy.deepcopy(format_authorization),
