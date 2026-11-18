@@ -19,7 +19,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Sequence
 from lxml import etree as ET
 
@@ -568,25 +568,50 @@ def commit_document_package(outputs: Mapping[str, bytes], release_root: str | Pa
     manifest = {"schema_version": "1.0", "package_id": package_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "documents": [], "metadata": dict(metadata or {})}
+    seen_paths: set[str] = set()
     try:
         for name, payload in outputs.items():
-            safe = Path(name)
-            if safe.is_absolute() or ".." in safe.parts or safe.suffix.casefold() != ".docx":
+            safe = PurePosixPath(name)
+            windows_safe = PureWindowsPath(name)
+            if (not name or safe.is_absolute() or windows_safe.is_absolute()
+                    or windows_safe.drive or "\\" in name or ".." in safe.parts
+                    or safe.suffix.casefold() != ".docx" or not safe.parts):
                 raise ContractError("Unsafe package output path: " + name)
+            normalized_name = safe.as_posix()
+            collision_key = normalized_name.casefold()
+            if collision_key in seen_paths:
+                raise ContractError("Duplicate or case-colliding package output path: " + name)
+            seen_paths.add(collision_key)
             with zipfile.ZipFile(__import__("io").BytesIO(payload)) as z:
+                member_names = z.namelist()
+                if len(member_names) != len(set(member_names)):
+                    raise ContractError("DOCX package contains duplicate ZIP member names: " + name)
                 bad = z.testzip()
-                if bad: raise ContractError("Invalid DOCX ZIP member: " + bad)
-                for member in z.namelist():
+                if bad:
+                    raise ContractError("Invalid DOCX ZIP member: " + bad)
+                for member in member_names:
+                    if member.endswith("/"):
+                        continue
+                    member_path = PurePosixPath(member)
+                    if member_path.is_absolute() or ".." in member_path.parts or "\\" in member:
+                        raise ContractError("Unsafe DOCX package member path: " + member)
                     if member.endswith((".xml", ".rels")):
                         _xml(z.read(member))
+                if "[Content_Types].xml" not in member_names or "word/document.xml" not in member_names:
+                    raise ContractError("DOCX package is missing required OPC parts: " + name)
+                members = {member: z.read(member) for member in member_names if not member.endswith("/")}
+            from .structure_classifier import classify_docx_package_members
+            package_report = classify_docx_package_members(members, source_name=name)
+            if package_report.get("package_status") != "READY":
+                raise ContractError("DOCX package structure validation failed: " + name)
             target = staging / safe
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
-            manifest["documents"].append({"path": safe.as_posix(), "sha256": _sha(payload), "size": len(payload)})
+            manifest["documents"].append({"path": normalized_name, "sha256": _sha(payload), "size": len(payload)})
         manifest_path = staging / "package_manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        # Directory rename publishes the immutable candidate; manifest is the
-        # final marker written after rename, so incomplete candidates are ignored.
+        # Directory rename publishes the immutable candidate; the external
+        # commit marker is written last and is the only release visibility signal.
         os.replace(staging, version)
         marker_tmp = root / (".commit-" + package_id + ".tmp")
         marker = root / ("COMMITTED-" + package_id + ".json")
@@ -596,24 +621,30 @@ def commit_document_package(outputs: Mapping[str, bytes], release_root: str | Pa
                 "directory": str(version), "commit_marker": str(marker),
                 "manifest": manifest}
     except Exception:
-        if staging.exists(): shutil.rmtree(staging, ignore_errors=True)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
         raise
 
 # Bounded remediation is a formal state transition; patches must be applied to
 # Marked and Clean is recompiled from Marked before the second QA pass.
 def remediation_transition(state: Mapping[str, Any], patch: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    round_no = int(state.get("remediation_round", 0))
+    raw_round = state.get("remediation_round", 0)
+    if not isinstance(raw_round, int) or isinstance(raw_round, bool) or raw_round < 0:
+        raise ContractError("remediation_round must be a non-negative integer")
+    round_no = raw_round
     phase = state.get("phase", "QA")
     if phase != "QA":
         raise ContractError("Remediation transition is legal only from QA")
     if round_no >= 1:
         return {"phase": "BLOCKED", "remediation_round": 1,
                 "reason": "SECOND_QA_FAILURE_NO_FURTHER_REMEDIATION"}
-    if not patch or patch.get("target_artifact") != "Marked":
+    if not isinstance(patch, Mapping) or patch.get("target_artifact") != "Marked":
         raise ContractError("Remediation patch must target Marked as a formal revision")
-    required = {"operation_id", "find", "replace", "reason"}
-    if not required.issubset(patch) or not all(patch[k] for k in required):
-        raise ContractError("Remediation patch is missing its formal revision contract")
+    for field in ("operation_id", "find", "reason"):
+        if not isinstance(patch.get(field), str) or not patch.get(field, "").strip():
+            raise ContractError(f"Remediation patch {field} must be a non-empty string")
+    if not isinstance(patch.get("replace"), str):
+        raise ContractError("Remediation patch replace must be a string; empty string is valid for deletion")
     return {"phase": "PATCH_COMMIT", "next_phase": "COMPILE_CLEAN",
             "remediation_round": 1, "patch": dict(patch),
             "clean_must_be_recompiled": True}

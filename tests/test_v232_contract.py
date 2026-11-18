@@ -124,6 +124,11 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(first["next_phase"], "COMPILE_CLEAN")
         second = remediation_transition({"phase": "QA", "remediation_round": 1}, patch)
         self.assertEqual(second["phase"], "BLOCKED")
+        deletion = remediation_transition({"phase": "QA", "remediation_round": 0}, {
+            "target_artifact": "Marked", "operation_id": "op-delete",
+            "find": "obsolete phrase", "replace": "", "reason": "Remove duplicated text",
+        })
+        self.assertEqual(deletion["next_phase"], "COMPILE_CLEAN")
 
 
     def test_targeted_revision_gate_blocks_only_overlapping_history(self):
@@ -231,6 +236,14 @@ class V232ContractTests(unittest.TestCase):
                 "authorized_change": {"intent": "Revise unrelated wording"}
             }], "Tester")
             self.assertTrue(unrelated["payload"])
+
+
+    def test_package_commit_rejects_windows_traversal_and_case_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ContractError, "Unsafe package output path"):
+                commit_document_package({"..\\escape.docx": b"not-a-docx"}, tmp)
+            with self.assertRaisesRegex(ContractError, "Duplicate or case-colliding"):
+                commit_document_package({"A.docx": b"x", "a.DOCX": b"y"}, tmp)
 
 if __name__ == "__main__":
     unittest.main()
