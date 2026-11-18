@@ -85,6 +85,49 @@ class JsonSchemaContractTests(unittest.TestCase):
         receipt_validator.validate(committed)
         receipt_validator.validate(abandoned)
 
+    def test_revision_plan_and_ledger_schema_include_strict_formatting_contracts(self):
+        plan_schema = json.loads((SCHEMA_DIR / "revision-plan.schema.json").read_text(encoding="utf-8"))
+        ledger_schema = json.loads((SCHEMA_DIR / "revision-ledger.schema.json").read_text(encoding="utf-8"))
+        plan_target = plan_schema["properties"]["revision_items"]["items"]["properties"]["targets"]["items"]
+        ledger_operation = ledger_schema["$defs"]["patchOperation"]
+        for schema in (plan_target, ledger_operation):
+            self.assertIn("replacement_format_map", schema["properties"])
+            self.assertIn("format_authorization", schema["properties"])
+            self.assertIn("format_operations", schema["properties"])
+            self.assertFalse(schema["additionalProperties"])
+        operation = {
+            "operation_id": "OP-FORMAT",
+            "document": "Manuscript",
+            "input_file": "source.docx",
+            "output_file": "marked.docx",
+            "part": "word/document.xml",
+            "find": "Journal Name",
+            "replace": "Journal Name",
+            "evidence_ids": ["E1"],
+            "source_comment_ids": ["C1"],
+            "format_authorization": {"intent": "Restore journal typography"},
+            "format_operations": [{"find": "Journal", "properties": {"i": True}}],
+            "replacement_format_map": [
+                {"replacement_start": 0, "replacement_end": 12, "source_offset": 0}
+            ],
+        }
+        validator_for(ledger_schema)(ledger_schema).validate({
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-schema-format",
+            "documents": [],
+            "patches": [{
+                "patch_id": "T-FORMAT",
+                "task_id": "T-FORMAT",
+                "reviewer": "Reviewer 1",
+                "comment": "Restore typography",
+                "proposed_response": "Formatting restored",
+                "operations": [operation],
+                "status": "planned",
+            }],
+            "response_units": [],
+            "events": [],
+        })
+
     def test_every_repository_schema_passes_its_declared_meta_schema(self):
         schema_paths = sorted(SCHEMA_DIR.glob("*.schema.json"))
         self.assertTrue(schema_paths, "No JSON Schema files were found.")
