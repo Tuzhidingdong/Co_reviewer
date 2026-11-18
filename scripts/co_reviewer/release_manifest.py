@@ -1162,6 +1162,130 @@ def _collect_recovered_batch_history(
     return records
 
 
+def _validate_qa_remediation_events(revision_ledger: RevisionLedger) -> dict[str, Any]:
+    """Require a single bounded remediation cycle to finish with current, hash-bound passing QA."""
+    starts = [
+        event for event in revision_ledger.events
+        if event.event_type == "qa_remediation_started"
+    ]
+    completions = [
+        event for event in revision_ledger.events
+        if event.event_type == "qa_remediation_completed"
+    ]
+    if not starts and not completions:
+        return {"status": "NOT_USED", "remediation_round": 0}
+    if len(starts) != 1 or len(completions) != 1:
+        raise ReleaseGateError(
+            "QA remediation history must contain exactly one start and one completion event; "
+            "incomplete, duplicate or repeated remediation is blocked."
+        )
+    start, completion = starts[0], completions[0]
+    if (
+        start.subject_type != "patch"
+        or completion.subject_type != "patch"
+        or start.subject_id != completion.subject_id
+    ):
+        raise ReleaseGateError("QA remediation start/completion events must bind the same formal Patch.")
+    start_details = start.details
+    completion_details = completion.details
+    if (
+        start_details.get("remediation_round") != 1
+        or completion_details.get("remediation_round") != 1
+        or start_details.get("phase") != "PATCH_COMMIT"
+        or completion_details.get("phase") != "COMPLETE"
+        or completion_details.get("qa_status") not in {"PASS", "PASS_WITH_WARNINGS"}
+    ):
+        raise ReleaseGateError(
+            "The single QA remediation did not complete its second QA pass; no second remediation is allowed."
+        )
+    for field in ("qa_report_file", "failing_clean_file"):
+        value = start_details.get(field)
+        if not isinstance(value, str) or not Path(value).expanduser().is_file():
+            raise ReleaseGateError(f"Pre-remediation QA evidence is missing: {field}.")
+    start_qa = Path(start_details["qa_report_file"]).expanduser().resolve()
+    if sha256_file(start_qa) != start_details.get("qa_report_sha256"):
+        raise ReleaseGateError("Pre-remediation QA report hash changed after the remediation was started.")
+    start_clean = Path(start_details["failing_clean_file"]).expanduser().resolve()
+    if sha256_file(start_clean) != start_details.get("failing_clean_sha256"):
+        raise ReleaseGateError("Pre-remediation failing Clean DOCX hash changed after the remediation was started.")
+    try:
+        before_report = json.loads(start_qa.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseGateError(f"Cannot read pre-remediation QA evidence: {exc}") from exc
+    if before_report.get("status") != "FAIL":
+        raise ReleaseGateError("Remediation start event is not bound to a failed QA report.")
+    for field, hash_field in (
+        ("qa_report_file", "qa_report_sha256"),
+        ("clean_file", "clean_sha256"),
+        ("marked_file", "marked_sha256"),
+    ):
+        value = completion_details.get(field)
+        expected_hash = completion_details.get(hash_field)
+        path = Path(value).expanduser().resolve() if isinstance(value, str) else None
+        if path is None or not path.is_file() or sha256_file(path) != expected_hash:
+            raise ReleaseGateError(f"Completed QA remediation artifact is missing or hash-stale: {field}.")
+    try:
+        after_report = json.loads(
+            Path(completion_details["qa_report_file"]).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseGateError(f"Cannot read post-remediation QA report: {exc}") from exc
+    if (
+        after_report.get("status") not in {"PASS", "PASS_WITH_WARNINGS"}
+        or after_report.get("status") != completion_details.get("qa_status")
+        or not isinstance(after_report.get("docx"), Mapping)
+        or after_report["docx"].get("docx_sha256") != completion_details.get("clean_sha256")
+        or Path(str(after_report["docx"].get("docx_file", ""))).expanduser().resolve()
+        != Path(completion_details["clean_file"]).expanduser().resolve()
+    ):
+        raise ReleaseGateError("Final remediation QA report does not pass or does not bind the exact regenerated Clean DOCX.")
+    documents = [
+        item for item in revision_ledger.documents
+        if item.role == start_details.get("document_role", item.role)
+        and item.output_sha256 == completion_details.get("marked_sha256")
+        and item.working_clean_sha256 == completion_details.get("clean_sha256")
+        and item.working_clean_file
+        and Path(item.working_clean_file).expanduser().resolve()
+        == Path(completion_details["clean_file"]).expanduser().resolve()
+    ]
+    if len(documents) != 1:
+        # Older event producers may omit the role in the completion details;
+        # the exact Marked/Clean path/hash pair remains the required identity.
+        documents = [
+            item for item in revision_ledger.documents
+            if item.output_sha256 == completion_details.get("marked_sha256")
+            and item.working_clean_sha256 == completion_details.get("clean_sha256")
+            and item.working_clean_file
+            and Path(item.working_clean_file).expanduser().resolve()
+            == Path(completion_details["clean_file"]).expanduser().resolve()
+        ]
+    if len(documents) != 1:
+        raise ReleaseGateError(
+            "RevisionLedger does not point to the exact Marked/Clean hash pair accepted by the remediation QA."
+        )
+    return {
+        "status": "PASS",
+        "remediation_round": 1,
+        "patch_id": start.subject_id,
+        "pre_remediation_qa_report": {
+            "file": str(start_qa), "sha256": start_details["qa_report_sha256"],
+        },
+        "post_remediation_qa_report": {
+            "file": completion_details["qa_report_file"],
+            "sha256": completion_details["qa_report_sha256"],
+            "status": completion_details["qa_status"],
+        },
+        "marked": {
+            "file": completion_details["marked_file"],
+            "sha256": completion_details["marked_sha256"],
+        },
+        "clean": {
+            "file": completion_details["clean_file"],
+            "sha256": completion_details["clean_sha256"],
+        },
+    }
+
+
 def build_final_release_manifest(
     revision_ledger: RevisionLedger,
     workflow_ledger: Mapping[str, Any],
@@ -1196,6 +1320,7 @@ def build_final_release_manifest(
             "In-memory Workflow Ledger does not match its current on-disk version; reload before release."
         )
     revision_ledger.validate_or_raise()
+    qa_remediation_record = _validate_qa_remediation_events(revision_ledger)
     workflow_errors = validate_workflow_ledger(workflow_ledger)
     if workflow_errors:
         raise ReleaseGateError("Workflow Ledger is invalid:\n- " + "\n- ".join(workflow_errors))
@@ -1624,6 +1749,7 @@ def build_final_release_manifest(
         "active_documents": active_records,
         "batches": batch_records,
         "recovered_batches": recovered_batch_records,
+        "qa_remediation": qa_remediation_record,
         "marked_documents": marked_documents,
         "deterministic_consistency_audit": consistency_audit,
         "final_documents": final_documents,
@@ -1652,6 +1778,7 @@ def build_final_release_manifest(
         "checks": {
             "all_published_batch_history_valid": True,
             "all_recovered_batch_history_valid": True,
+            "bounded_qa_remediation_valid": qa_remediation_record["status"] in {"PASS", "NOT_USED"},
             "all_protocol_v1_batch_creation_receipts_valid": True,
             "all_active_patches_verified": True,
             "all_response_units_completed": True,
