@@ -412,8 +412,10 @@ def assert_safe_paragraph_split(paragraph: ET._Element, child_index: int) -> Non
     children = list(paragraph)
     if child_index < 0 or child_index > len(children):
         raise ContractError("Split index outside paragraph")
-    for child in children:
-        if child.tag in _PROTECTED_TOPOLOGY or child.tag.startswith("{http://schemas.openxmlformats.org/officeDocument/2006/math}"):
+    for node in paragraph.iter():
+        if node is paragraph:
+            continue
+        if node.tag in _PROTECTED_TOPOLOGY or node.tag.startswith("{http://schemas.openxmlformats.org/officeDocument/2006/math}"):
             raise ContractError("PARAGRAPH_SPLIT_CROSSES_PROTECTED_OOXML_TOPOLOGY")
     # Any field code with begin but no end is invalid regardless of split point.
     depth = 0
@@ -431,6 +433,13 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
     def ppr(p):
         return p.find("w:pPr", NS)
     lp, rp = ppr(left), ppr(right)
+    if (lp is None) != (rp is None):
+        raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
+    if lp is not None and rp is not None:
+        left_bytes = ET.tostring(lp, method="c14n")
+        right_bytes = ET.tostring(rp, method="c14n")
+        if left_bytes != right_bytes:
+            raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
     def value(node, path):
         found = node.find(path, NS) if node is not None else None
         return found.get(qn("val")) if found is not None else None

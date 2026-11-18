@@ -94,10 +94,17 @@ class V232ContractTests(unittest.TestCase):
         field = ET.fromstring(f'<w:p xmlns:w="{W}"><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>')
         with self.assertRaises(ContractError):
             assert_safe_paragraph_split(field, 1)
+        nested_bookmark = ET.fromstring(f'<w:p xmlns:w="{W}"><w:hyperlink><w:bookmarkStart w:id="1" w:name="a"/></w:hyperlink></w:p>')
+        with self.assertRaisesRegex(ContractError, "PROTECTED_OOXML"):
+            assert_safe_paragraph_split(nested_bookmark, 1)
         left = ET.fromstring(f'<w:p xmlns:w="{W}"><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:p>')
         right = ET.fromstring(f'<w:p xmlns:w="{W}"><w:pPr><w:numPr><w:numId w:val="2"/></w:numPr></w:pPr></w:p>')
         with self.assertRaisesRegex(ContractError, "LIST_SEMANTICS"):
             assert_safe_paragraph_merge(left, right)
+        styled_left = ET.fromstring(f'<w:p xmlns:w="{W}"><w:pPr><w:pStyle w:val="A"/></w:pPr></w:p>')
+        styled_right = ET.fromstring(f'<w:p xmlns:w="{W}"><w:pPr><w:pStyle w:val="B"/></w:pPr></w:p>')
+        with self.assertRaisesRegex(ContractError, "PARAGRAPH_PROPERTIES"):
+            assert_safe_paragraph_merge(styled_left, styled_right)
 
     def test_package_transaction_publishes_manifest_commit_marker(self):
         payload = io.BytesIO()
