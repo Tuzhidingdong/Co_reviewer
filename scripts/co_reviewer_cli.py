@@ -424,6 +424,18 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 elif not t[field].strip(): errors.append(f"{tp}.{field} cannot be empty.")
             if not isinstance(t.get("replace"), str):
                 errors.append(f"{tp}.replace must be a string; use an empty string to delete text.")
+            authorization = t.get("authorized_change")
+            if not isinstance(authorization, dict) or not isinstance(authorization.get("intent"), str) or not authorization.get("intent", "").strip():
+                errors.append(f"{tp}.authorized_change.intent is required; human approval seals this exact scope.")
+            elif not isinstance(authorization.get("explicitly_authorized_tokens", []), list):
+                errors.append(f"{tp}.authorized_change.explicitly_authorized_tokens must be an array.")
+            else:
+                for token_index, token in enumerate(authorization.get("explicitly_authorized_tokens", [])):
+                    if not isinstance(token, dict) or not isinstance(token.get("text"), str) or not isinstance(token.get("replacement"), str):
+                        errors.append(f"{tp}.authorized_change.explicitly_authorized_tokens[{token_index}] requires exact text and replacement strings.")
+            protected_spans = t.get("protected_spans", [])
+            if not isinstance(protected_spans, list) or any(not isinstance(span, dict) for span in protected_spans):
+                errors.append(f"{tp}.protected_spans must be an array of objects.")
             if isinstance(t.get("document"), str) and t["document"] not in {"Reviewers", "Manuscript", "SI", "Other"}:
                 errors.append(f"{tp}.document must be Reviewers, Manuscript, SI or Other.")
             if isinstance(t.get("find"), str) and not t["find"].strip(): errors.append(f"{tp}.find cannot be empty.")
@@ -687,6 +699,8 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "operation_id": target.get("operation_id"),
                 "source_comment_ids": list(target.get("source_comment_ids", [])),
                 "location_phrase": target.get("location_phrase"),
+                "authorized_change": target.get("authorized_change"),
+                "protected_spans": list(target.get("protected_spans", [])),
             }
             if "p_idx" in target: edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
