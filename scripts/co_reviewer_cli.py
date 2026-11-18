@@ -1295,7 +1295,10 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     run for node in insert_nodes
                     for run in node.findall(".//w:r", NS)
                 ]
-                expected_run_formats = edit.get("inserted_run_formats")
+                expected_run_formats = edit.get(
+                    "inserted_run_format_signatures",
+                    edit.get("inserted_run_formats"),
+                )
                 if isinstance(expected_run_formats, list):
                     actual_run_formats = []
                     for run in inserted_runs:
