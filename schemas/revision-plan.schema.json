@@ -3,21 +3,46 @@
   "title": "Co_Reviewer Revision Plan",
   "description": "Human-approved, traceable reviewer-comment tasks with one or more linked document targets.",
   "type": "object",
-  "required": ["schema_version", "approved", "revision_items"],
+  "required": [
+    "schema_version",
+    "approved",
+    "revision_items"
+  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "approved": { "type": "boolean" },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "approved": {
+      "type": "boolean"
+    },
     "revision_items": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "reviewer", "comment", "status", "targets"],
+        "required": [
+          "id",
+          "reviewer",
+          "comment",
+          "status",
+          "targets"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "reviewer": { "type": "string", "minLength": 1 },
-          "comment": { "type": "string", "minLength": 1 },
-          "proposed_response": { "type": "string" },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1
+          },
+          "proposed_response": {
+            "type": "string"
+          },
           "approval_fingerprint": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$",
@@ -38,57 +63,144 @@
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["path", "sha256"],
+              "required": [
+                "path",
+                "sha256"
+              ],
               "properties": {
-                "path": { "type": "string", "minLength": 1 },
-                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
               },
               "additionalProperties": false
             }
           },
-          "semantic_review_confirmed": { "type": "boolean" },
-          "verified_at_utc": { "type": "string", "format": "date-time" },
-          "status": { "enum": ["planned", "approved", "applied", "verified", "blocked"] },
+          "semantic_review_confirmed": {
+            "type": "boolean"
+          },
+          "verified_at_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "approved",
+              "applied",
+              "verified",
+              "blocked"
+            ]
+          },
           "targets": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["document", "input_file", "output_file", "find", "replace"],
+              "required": [
+                "document",
+                "input_file",
+                "output_file",
+                "find",
+                "replace"
+              ],
               "properties": {
-                "document": { "enum": ["Reviewers", "Manuscript", "SI", "Other"] },
-                "input_file": { "type": "string", "minLength": 1 },
-                "output_file": { "type": "string", "minLength": 1 },
-                "part": { "type": "string", "default": "word/document.xml" },
-                "p_idx": { "type": "integer", "minimum": 0 },
-                "location": { "type": "string" },
-                "find": { "type": "string", "minLength": 1 },
-                "replace": { "type": "string" },
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI",
+                    "Other"
+                  ]
+                },
+                "input_file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "output_file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "part": {
+                  "type": "string",
+                  "default": "word/document.xml"
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "location": {
+                  "type": "string"
+                },
+                "find": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "replace": {
+                  "type": "string"
+                },
                 "source_sha256": {
                   "type": "string",
                   "pattern": "^[a-f0-9]{64}$",
                   "description": "SHA-256 of the exact input DOCX bytes recorded by preflight-plan and bound into user approval."
-                }
-,                "authorized_change": {
+                },
+                "authorized_change": {
                   "type": "object",
-                  "required": ["intent"],
+                  "description": "Proposed change scope. It becomes authorized only when the human approval fingerprint seals this exact target.",
+                  "required": [
+                    "intent"
+                  ],
                   "properties": {
-                    "intent": { "type": "string", "minLength": 1 },
+                    "intent": {
+                      "type": "string",
+                      "minLength": 1
+                    },
                     "explicitly_authorized_tokens": {
                       "type": "array",
                       "items": {
-                        "oneOf": [
-                          { "type": "string", "minLength": 1 },
-                          {
-                            "type": "object",
-                            "required": ["text"],
-                            "properties": {
-                              "kind": { "type": "string" },
-                              "text": { "type": "string", "minLength": 1 }
-                            },
-                            "additionalProperties": false
+                        "type": "object",
+                        "required": [
+                          "text",
+                          "replacement"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "replacement": {
+                            "type": "string"
                           }
-                        ]
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "explicitly_authorized_spans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     }
                   },
@@ -98,12 +210,22 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["start", "end"],
+                    "required": [
+                      "start",
+                      "end"
+                    ],
                     "properties": {
-                      "start": { "type": "integer", "minimum": 0 },
-                      "end": { "type": "integer", "minimum": 0 },
-                      "label": { "type": "string" },
-                      "authorized": { "type": "boolean", "default": false }
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "end": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "label": {
+                        "type": "string"
+                      }
                     },
                     "additionalProperties": false
                   }
@@ -116,17 +238,35 @@
         "allOf": [
           {
             "if": {
-              "required": ["status"],
+              "required": [
+                "status"
+              ],
               "properties": {
-                "status": { "enum": ["approved", "applied", "verified"] }
+                "status": {
+                  "enum": [
+                    "approved",
+                    "applied",
+                    "verified"
+                  ]
+                }
               }
             },
-            "then": { "required": ["approval_fingerprint"] }
+            "then": {
+              "required": [
+                "approval_fingerprint"
+              ]
+            }
           },
           {
             "if": {
-              "required": ["status"],
-              "properties": { "status": { "const": "verified" } }
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "const": "verified"
+                }
+              }
             },
             "then": {
               "required": [
@@ -135,7 +275,11 @@
                 "semantic_review_confirmed",
                 "verified_at_utc"
               ],
-              "properties": { "semantic_review_confirmed": { "const": true } }
+              "properties": {
+                "semantic_review_confirmed": {
+                  "const": true
+                }
+              }
             }
           }
         ],
