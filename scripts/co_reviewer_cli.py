@@ -763,6 +763,10 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     for item in prepared:
         cleaned_payload, hygiene = strip_docx_comments_bytes(item["payload"])
         item["payload"] = cleaned_payload
+        # The report and RevisionLedger lineage must identify the exact bytes
+        # that will be written, after comment-package hygiene has transformed
+        # the prepared DOCX. Keeping the pre-hygiene hash breaks Marked lineage.
+        item["report"]["output_sha256"] = hashlib.sha256(cleaned_payload).hexdigest()
         item["report"]["comment_hygiene"] = hygiene
     return [write_prepared_document(item) for item in prepared]
 
