@@ -263,6 +263,20 @@ class Patch:
             raise RevisionModelError("Patch operation IDs must be unique.")
         if self.status not in _PATCH_STATES:
             raise RevisionModelError(f"Unsupported Patch status: {self.status!r}.")
+        if not isinstance(self.applied_revision_ids, list):
+            raise RevisionModelError("applied_revision_ids must be an array.")
+        for record in self.applied_revision_ids:
+            if not isinstance(record, Mapping):
+                raise RevisionModelError("applied_revision_ids entries must be objects.")
+            _safe_docx_path(record.get("input_file"), "applied_revision_ids.input_file")
+            _safe_docx_path(record.get("output_file"), "applied_revision_ids.output_file")
+            _sha256(record.get("input_sha256"), "applied_revision_ids.input_sha256")
+            _sha256(record.get("output_sha256"), "applied_revision_ids.output_sha256")
+            revision_ids = record.get("revision_ids")
+            if (not isinstance(revision_ids, list) or not revision_ids
+                    or any(not isinstance(value, str) or not value.strip() for value in revision_ids)
+                    or len(revision_ids) != len(set(revision_ids))):
+                raise RevisionModelError("applied_revision_ids.revision_ids must be a non-empty unique string array.")
         if self.supersedes_patch_id is not None:
             _text(self.supersedes_patch_id, "supersedes_patch_id")
         _sha256(self.preflight_fingerprint, "preflight_fingerprint", optional=True)

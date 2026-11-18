@@ -270,5 +270,19 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(resolved["resolution"], "confirmed_by_user")
         self.assertEqual(resolved["number"], "3")
 
+
+    def test_revision_id_lineage_collects_all_incremental_ids_by_hash(self):
+        records = [
+            {"input_file": "source.docx", "input_sha256": "0" * 64,
+             "output_file": "marked_round_1.docx", "output_sha256": "1" * 64,
+             "revision_ids": ["1", "2"]},
+            {"input_file": "marked_round_1.docx", "input_sha256": "1" * 64,
+             "output_file": "marked_round_2.docx", "output_sha256": "2" * 64,
+             "revision_ids": ["3", "4"]},
+        ]
+        result = collect_revision_ids_from_lineage(records, "marked_round_2.docx", "2" * 64)
+        self.assertEqual(result["revision_ids"], ["1", "2", "3", "4"])
+        self.assertEqual(len(result["lineage"]), 2)
+
 if __name__ == "__main__":
     unittest.main()

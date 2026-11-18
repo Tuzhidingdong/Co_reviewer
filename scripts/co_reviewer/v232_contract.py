@@ -704,6 +704,63 @@ def remediation_transition(state: Mapping[str, Any], patch: Mapping[str, Any] | 
             "remediation_round": 1, "patch": dict(patch),
             "clean_must_be_recompiled": True}
 
+def collect_revision_ids_from_lineage(records: Sequence[Mapping[str, Any]],
+                                      marked_file: str | Path,
+                                      marked_sha256: str) -> dict[str, Any]:
+    """Collect current and inherited revision IDs through exact input/output hash links."""
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+        raise ContractError("Revision lineage records must be an array")
+    if not isinstance(marked_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", marked_sha256):
+        raise ContractError("Marked SHA-256 must be a lowercase 64-character digest")
+    current_path = Path(marked_file).expanduser().resolve()
+    current_sha = marked_sha256
+    seen: set[tuple[str, str]] = set()
+    all_ids: set[str] = set()
+    lineage = []
+    while True:
+        key = (str(current_path), current_sha)
+        if key in seen:
+            raise ContractError("Cycle detected in Marked revision lineage")
+        seen.add(key)
+        matches = []
+        for record in records:
+            if not isinstance(record, Mapping):
+                raise ContractError("Revision lineage entries must be objects")
+            output_file = record.get("output_file")
+            output_sha = record.get("output_sha256")
+            if not isinstance(output_file, str) or not output_file.strip():
+                raise ContractError("Revision lineage output_file is required")
+            if not isinstance(output_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", output_sha):
+                raise ContractError("Revision lineage output_sha256 is invalid")
+            if Path(output_file).expanduser().resolve() == current_path and output_sha == current_sha:
+                matches.append(record)
+        if not matches:
+            break
+        input_pairs = set()
+        for record in matches:
+            input_file = record.get("input_file")
+            input_sha = record.get("input_sha256")
+            if not isinstance(input_file, str) or not input_file.strip():
+                raise ContractError("Revision lineage input_file is required")
+            if not isinstance(input_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", input_sha):
+                raise ContractError("Revision lineage input_sha256 is invalid")
+            input_pairs.add((str(Path(input_file).expanduser().resolve()), input_sha))
+            revision_ids = record.get("revision_ids")
+            if (not isinstance(revision_ids, list)
+                    or any(not isinstance(value, str) or not value.strip() for value in revision_ids)):
+                raise ContractError("Revision lineage revision_ids must be a string array")
+            all_ids.update(revision_ids)
+        if len(input_pairs) != 1:
+            raise ContractError("Conflicting apply records share the same Marked output hash")
+        input_path_text, input_sha = next(iter(input_pairs))
+        lineage.append({
+            "output_file": str(current_path), "output_sha256": current_sha,
+            "revision_ids": sorted({value for record in matches for value in record.get("revision_ids", [])}),
+            "input_file": input_path_text, "input_sha256": input_sha,
+        })
+        current_path, current_sha = Path(input_path_text), input_sha
+    return {"revision_ids": sorted(all_ids), "lineage": lineage}
+
 def compile_clean_from_marked(marked_bytes: bytes, *,
                               expected_revision_ids: Sequence[str] | None = None) -> dict[str, Any]:
     """Deterministically compile only revision IDs authorized for this Marked build.

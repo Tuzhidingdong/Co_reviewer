@@ -63,6 +63,7 @@ from co_reviewer.v232_contract import (
     commit_document_package, compile_clean_from_marked,
     build_revision_baseline_inventory, targeted_revision_gate,
     extract_docx_text_for_reference_graph, renumber_reference_graph,
+    collect_revision_ids_from_lineage,
 )
 
 ET.register_namespace("w", W)
@@ -5397,26 +5398,38 @@ def cmd_compile_clean_from_marked(args):
         raise ValueError("Clean output must be a new path distinct from Marked.")
     marked_bytes = marked.read_bytes()
     expected_revision_ids = []
-    if args.apply_report:
+    if args.revision_ledger:
+        ledger_data = json.loads(Path(args.revision_ledger).read_text(encoding="utf-8"))
+        ledger = revision_ledger_from_mapping(ledger_data)
+        records = [record for patch in ledger.patches for record in patch.applied_revision_ids]
+        lineage = collect_revision_ids_from_lineage(
+            records, marked, hashlib.sha256(marked_bytes).hexdigest()
+        )
+        expected_revision_ids = lineage["revision_ids"]
+    elif args.apply_report:
         raw_reports = json.loads(Path(args.apply_report).read_text(encoding="utf-8"))
         reports = raw_reports if isinstance(raw_reports, list) else [raw_reports]
-        matched = [
-            report for report in reports
-            if isinstance(report, dict)
-            and report.get("output_file")
-            and Path(report["output_file"]).expanduser().resolve() == marked
-        ]
-        if len(matched) != 1:
-            raise ValueError("--apply-report must contain exactly one report for this Marked DOCX.")
-        report = matched[0]
-        actual_sha = hashlib.sha256(marked_bytes).hexdigest()
-        if report.get("output_sha256") != actual_sha:
-            raise ValueError("Apply report output_sha256 does not match the supplied Marked DOCX.")
-        for edit in report.get("results", []):
-            for key in ("delete_revision_id", "insert_revision_id"):
-                value = edit.get(key)
-                if value is not None:
-                    expected_revision_ids.append(str(value))
+        records = []
+        for report in reports:
+            if not isinstance(report, dict):
+                raise ValueError("--apply-report entries must be objects.")
+            revision_ids = sorted({
+                str(result[key])
+                for result in report.get("results", [])
+                for key in ("delete_revision_id", "insert_revision_id")
+                if result.get(key) is not None
+            })
+            records.append({
+                "input_file": report.get("input_file"),
+                "input_sha256": report.get("input_sha256"),
+                "output_file": report.get("output_file"),
+                "output_sha256": report.get("output_sha256"),
+                "revision_ids": revision_ids,
+            })
+        lineage = collect_revision_ids_from_lineage(
+            records, marked, hashlib.sha256(marked_bytes).hexdigest()
+        )
+        expected_revision_ids = lineage["revision_ids"]
     elif args.revision_ids:
         ids = json.loads(Path(args.revision_ids).read_text(encoding="utf-8"))
         if not isinstance(ids, list) or any(not isinstance(value, (str, int)) for value in ids):
@@ -5500,7 +5513,8 @@ def build_parser():
     cc.add_argument("--out", required=True)
     cc.add_argument("--report")
     cc_group = cc.add_mutually_exclusive_group()
-    cc_group.add_argument("--apply-report", help="Apply report JSON whose output_sha256 must match this Marked DOCX.")
+    cc_group.add_argument("--revision-ledger", help="RevisionLedger JSON; resolve exact applied revision-ID lineage by DOCX path and SHA-256.")
+    cc_group.add_argument("--apply-report", help="Apply report JSON chain whose input/output SHA-256 values bind this Marked DOCX.")
     cc_group.add_argument("--revision-ids", help="JSON array of exact current revision IDs; use only when independently verified.")
     cc.set_defaults(func=cmd_compile_clean_from_marked)
     cp = sub.add_parser("commit-document-package", help="Validate and publish a multi-DOCX immutable package candidate.")
