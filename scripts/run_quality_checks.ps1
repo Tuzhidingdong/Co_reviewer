@@ -129,6 +129,9 @@ function Invoke-QualityCheck {
     $ProcessInfo.FileName = $PythonCommand
     $ProcessInfo.WorkingDirectory = $RepoRoot
     $ProcessInfo.UseShellExecute = $false
+    # Redirected Python output must be UTF-8 on Windows PowerShell 5.1; the
+    # system ANSI code page (often CP1252) cannot encode Unicode CLI help text.
+    $ProcessInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
     $ProcessInfo.CreateNoWindow = $true
     $ProcessInfo.RedirectStandardOutput = $true
     $ProcessInfo.RedirectStandardError = $true
