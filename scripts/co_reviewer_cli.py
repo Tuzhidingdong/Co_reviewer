@@ -894,6 +894,28 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
     }
 
 
+def _accepted_paragraph_text(paragraph: ET.Element) -> str:
+    """Return reader-visible text after accepting insertions and rejecting deletions."""
+    excluded = {qn("del"), qn("moveFrom")}
+    pieces: list[str] = []
+
+    def visit(node: ET.Element) -> None:
+        if node.tag in excluded:
+            return
+        if node.tag == qn("t") and node.text:
+            pieces.append(node.text)
+        elif node.tag == qn("tab"):
+            pieces.append("\t")
+        elif node.tag in {qn("br"), qn("cr")}:
+            pieces.append("\n")
+        else:
+            for child in node:
+                visit(child)
+
+    visit(paragraph)
+    return "".join(pieces)
+
+
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Mechanically verify each planned Track Changes edit in its generated DOCX."""
     report_index = {}
@@ -905,7 +927,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                 output_path, edit.get("part", "word/document.xml"),
                 edit.get("find"), edit.get("replace")
             )
-            report_index.setdefault(key, []).append(edit)
+            report_index.setdefault(key, []).append((document_report, edit))
 
     results = []
     for item in plan.get("revision_items", []):
@@ -927,7 +949,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                 result["reason"] = "Apply report is missing this target or contains duplicate records."
                 results.append(result)
                 continue
-            edit = matches[0]
+            document_report, edit = matches[0]
             if edit.get("status") != "applied":
                 result["reason"] = "Apply report does not mark the edit as applied."
                 results.append(result)
@@ -950,6 +972,54 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                 if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0 or p_idx >= len(paragraphs):
                     raise ValueError("Paragraph index from apply report is outside the output document.")
                 paragraph = paragraphs[p_idx]
+
+                # Correct revision IDs/text are insufficient if the new text was
+                # inserted at the wrong point in its paragraph.
+                input_value = document_report.get("input_file")
+                if not input_value:
+                    raise ValueError(
+                        "Apply report is missing input_file; exact target-position verification cannot run."
+                    )
+                input_path = Path(input_value).expanduser().resolve()
+                if not input_path.is_file():
+                    raise ValueError(
+                        f"Source DOCX is missing; exact target-position verification cannot run: {input_path}"
+                    )
+                with zipfile.ZipFile(input_path, "r") as source_archive:
+                    if part not in source_archive.namelist():
+                        raise ValueError(f"Source Word XML part is missing: {part}")
+                    source_root = parse_xml(source_archive.read(part))
+                source_paragraphs = (
+                    source_root.findall(".//w:body//w:p", NS)
+                    if part == "word/document.xml"
+                    else source_root.findall(".//w:p", NS)
+                )
+                if p_idx >= len(source_paragraphs):
+                    raise ValueError("Paragraph index from apply report is outside the source document.")
+                expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[p_idx])
+                for batch_edit in document_report.get("results", []):
+                    if (
+                        batch_edit.get("part", "word/document.xml") != part
+                        or batch_edit.get("p_idx") != p_idx
+                    ):
+                        continue
+                    anchor_text = batch_edit.get("find")
+                    if not isinstance(anchor_text, str) or not anchor_text:
+                        raise ValueError("Apply report contains an invalid find anchor.")
+                    if expected_paragraph_text.count(anchor_text) != 1:
+                        raise ValueError(
+                            "Apply report anchors cannot be replayed uniquely in the source paragraph; "
+                            "exact target-position verification is blocked."
+                        )
+                    inserted_value = batch_edit.get("inserted_text")
+                    if not isinstance(inserted_value, str):
+                        inserted_value = str(batch_edit.get("replace", ""))
+                    expected_paragraph_text = expected_paragraph_text.replace(
+                        anchor_text, inserted_value, 1
+                    )
+                actual_paragraph_text = _accepted_paragraph_text(paragraph)
+                exact_target_position = actual_paragraph_text == expected_paragraph_text
+
                 delete_id = edit.get("delete_revision_id")
                 insert_id = edit.get("insert_revision_id")
                 delete_nodes = [
@@ -1019,11 +1089,17 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
                     "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
+                    "exact_target_position": exact_target_position,
                     "native_script_format_preserved": native_script_format_preserved
                 }
                 result["p_idx"] = p_idx
-                if old_ok and new_ok and native_script_format_preserved:
+                if old_ok and new_ok and native_script_format_preserved and exact_target_position:
                     result["status"] = "verified"
+                elif not exact_target_position:
+                    result["reason"] = (
+                        "Accepted text differs from the expected source-paragraph replacement; "
+                        "the edit is misplaced or an unrelated paragraph change occurred."
+                    )
                 elif not native_script_format_preserved:
                     result["reason"] = "Native subscript/superscript run formatting changed after the apply/save operation."
                 else:
