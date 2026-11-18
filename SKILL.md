@@ -46,6 +46,33 @@ For each selected item, the Supervisor must propose a structured decision with: 
 
 The XML inventory provides stable part/paragraph/paraId coordinates, not rendered page and line numbers. Word pagination and line wrapping depend on layout. Do not invent page/line values from XML; obtain them only after rendering/layout inspection in Word or report the stable paragraph coordinates instead. The model must decide whether the response belongs in Manuscript, SI, Reply only, multiple documents, no change, or needs clarification; it must cite the supplied evidence and leave every decision pending until the user approves a revision plan. Do not infer scientific results or invent edits.
 
+### Stage 1.5 — Historical revision baseline and target-scoped resolution
+
+Start-CoReviewerRound.ps1 also runs revision-baseline on each copied Reviewers/Manuscript/SI DOCX and records the report paths and hashes in round_manifest.json. The command is zero-model-call and never modifies the source. Inspect reports/Manuscript_revision_baseline.json and, when present, reports/SI_revision_baseline.json before semantic discovery or any edit.
+
+After exact candidate targets have been mapped, but before expensive manuscript discovery and before writing, run the target-scoped gate against the corresponding role's baseline. The target JSON must use exact Word part and zero-based p_idx values:
+
+```powershell
+$baseline = Join-Path $roundRoot "reports\Manuscript_revision_baseline.json"
+$targets = Join-Path $roundRoot "plan\historical_targets.json"
+$gate = Join-Path $roundRoot "reports\Manuscript_revision_gate.json"
+python scripts/co_reviewer_cli.py targeted-revision-gate --inventory $baseline --targets $targets --out $gate
+```
+
+If the gate reports no overlap, continue. If it reports overlapping history, stop and show the author the exact structure IDs, Word parts, paragraphs and element types. Obtain an explicit choice of ACCEPT_EXISTING, REJECT_EXISTING, or SELECTIVE_ACCEPT_CONFLICTS; never infer that choice from model confidence. The selective list contains baseline structure_id values, not Word's numeric w:id.
+
+For a supported conflict, resolve to a new DOCX path and retain the JSON evidence:
+
+```powershell
+$resolved = Join-Path $roundRoot "input\resolved\Manuscript.docx"
+$resolutionReport = Join-Path $roundRoot "reports\Manuscript_history_resolution.json"
+python scripts/co_reviewer_cli.py resolve-historical-revisions --marked (Join-Path $roundRoot "input\Manuscript.docx") --inventory $baseline --targets $targets --policy ACCEPT_EXISTING --out $resolved --report $resolutionReport
+```
+
+Replace the policy only with the author's explicit choice. For SELECTIVE_ACCEPT_CONFLICTS, additionally pass --selective-ids with a JSON-array file. The resolver checks that the baseline SHA matches the exact input, writes a new DOCX, and verifies unrelated historical structures remain unchanged. It supports native w:ins/w:del, paired move wrappers and standard property snapshots with valid prior-state payloads. Comments/anchors, paragraph-mark topology deletions, table-structure changes, numbering changes, unsupported snapshots, ambiguous paths and malformed move pairs remain blocked. Never delete or flatten those structures manually.
+
+When any source document is resolved, preserve the original round as evidence and start a fresh round using the new resolved copy as the Manuscript/SI input. This regenerates the audit, decision queue, source hashes and round manifest; do not reuse the old Decision Plan, inventory or approval fingerprints.
+
 Use `--comment-author` only when filtering by the comment author's name. Do not filter comments by the manuscript author's name. `--refresh-cache` forces re-parsing; otherwise a changed DOCX SHA-256 invalidates only that file's cached inventory. Matching, numbering and decision-queue generation are cheap deterministic passes over the cached inventories and can be repeated without reopening the source DOCX files.
 
 ### Stage 2 — Build and validate a pending Decision Plan

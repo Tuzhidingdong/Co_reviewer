@@ -3,7 +3,7 @@ description: Run the Co_Reviewer multi-document peer-review revision workflow
 ---
 
 1. Identify the active revision round and available Reply/Reviewers, Manuscript and SI DOCX files. Preserve all inputs.
-2. Run one `python scripts/co_reviewer_cli.py audit ...` pass for all available files. Reuse the SHA-256/parser-version cache; reparse only a source whose hash changed. Do not reread entire DOCX files when the cached inventory is valid.
+2. Run one `python scripts/co_reviewer_cli.py audit ...` pass for all available files. Reuse the SHA-256/parser-version cache; reparse only a source whose hash changed. Do not reread entire DOCX files when the cached inventory is valid. The round starter also writes zero-model-call historical revision baselines for every copied DOCX.
 3. Read the compact digest, deterministic audit and bounded decision queue. By default include all reviewer comments. Use `--comment-ids` only when the user explicitly narrows the requested scope.
 4. Complete the whole requested review round in one invocation. Split compound comments into atomic tasks; merge overlapping tasks while retaining every source comment ID. Do not ask the user to submit one comment at a time.
 5. Analyse the workspace-level figure/table audit independently of comment anchors. Distinguish true workspace-unresolved references, cross-document matches, subpanel/range references, same-document label collisions, repeated identical captions and cross-document caption reproductions. Caption-text equality does not prove visual-object identity. Never auto-renumber.

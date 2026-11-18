@@ -56,7 +56,8 @@ The Audit outputs are:
 - `reports/review_audit_report.json/.md`: cross-document matches and deterministic figure/table reference findings.
 - `reports/review_decision_queue.json`: bounded evidence packets for semantic review.
 
-The first run parses each DOCX once per SHA-256/cache-schema version. Unchanged files are reused from the local cache; a changed source invalidates only its own cache entry. Similarity/token-overlap matches are candidates, not confirmed targets. Figure/table numbering results are diagnostic; the tool never renumbers a document automatically.
+Historical baselines are stored as `reports/Reviewers_revision_baseline.json`, `reports/Manuscript_revision_baseline.json` and optional `reports/SI_revision_baseline.json`. After mapping exact candidate targets, use `targeted-revision-gate`; for supported, author-approved historical conflicts use `resolve-historical-revisions` to a new DOCX path. See the Stage 1.5 instructions in [SKILL.md](SKILL.md).
+The first run parses each DOCX once per SHA-256/cache-schema version. Unchanged files are reused from the local cache; a changed source invalidates only its own cache entry. The round starter also creates zero-model-call historical revision baseline reports for Reviewers, Manuscript and optional SI. Similarity/token-overlap matches are candidates, not confirmed targets. Figure/table numbering results are diagnostic; the tool never renumbers a document automatically.
 
 ### 2. Prepare and validate the Decision Plan
 

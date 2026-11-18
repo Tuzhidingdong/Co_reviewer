@@ -183,3 +183,7 @@ Supported: native `w:ins`/`w:del` wrappers, paired `w:moveFrom`/`w:moveTo` wrapp
 Fail-closed: comment anchors/definitions, paragraph-mark topology deletions, table cell structure revisions, move-range markers, `numberingChange`, malformed or unpaired move wrappers, unsupported property snapshots, stale inventories and ambiguous element paths. These cases are not silently removed or normalized.
 
 Five focused resolver regressions cover Accept, Reject, property restoration, selective structure-ID selection, stale baselines and unsupported structures. This increment does not claim Word GUI/save-round-trip acceptance and does not enable OMML writing. The complete CI matrix and the user's separate local Word/real-review acceptance remain required.
+
+### Round-start historical baseline integration
+
+`Start-CoReviewerRound.ps1` now creates SHA-256-bound, zero-model-call `revision-baseline` inventories for Reviewers, Manuscript and optional SI and records their paths/hashes/counts in `round_manifest.json`. The Skill and Agent workflow require a target-scoped gate before expensive discovery or writes, explicit author selection of Accept/Reject policy, a new output DOCX for supported resolution, and a fresh round after a source baseline has changed. This path does not authorize automatic acceptance of comment anchors or unsupported table/numbering structures.

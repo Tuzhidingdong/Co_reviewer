@@ -134,6 +134,29 @@ if ($LASTEXITCODE -ne 0) {
     throw "Co_Reviewer audit failed with exit code $LASTEXITCODE. Preserve this workspace for diagnosis: $workspace"
 }
 
+$revisionBaselineRows = @()
+$baselineInputs = @(
+    [pscustomobject]@{ role = "Reviewers"; file = $reviewersCopy },
+    [pscustomobject]@{ role = "Manuscript"; file = $manuscriptCopy }
+)
+if ($siCopy) { $baselineInputs += [pscustomobject]@{ role = "SI"; file = $siCopy } }
+foreach ($baselineInput in $baselineInputs) {
+    $baselinePath = Join-Path $reportsDir ($baselineInput.role + "_revision_baseline.json")
+    $baselineArgs = @((Join-Path $repoRoot "scripts/co_reviewer_cli.py"), "revision-baseline", "--docx", $baselineInput.file, "--out", $baselinePath)
+    Write-Host "[REVISION BASELINE] Inventorying $($baselineInput.role) without model calls."
+    & $pythonResolved @baselineArgs
+    if ($LASTEXITCODE -ne 0) { throw "Historical revision baseline failed for $($baselineInput.role). Preserve this workspace: $workspace" }
+    $baselineReport = Get-Content -LiteralPath $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $revisionBaselineRows += [pscustomobject]@{
+        role = $baselineInput.role
+        source_file = $baselineInput.file
+        source_sha256 = $baselineReport.source_sha256
+        existing_revision_count = $baselineReport.existing_revision_count
+        report = $baselinePath
+        report_sha256 = (Get-Sha256 $baselinePath)
+    }
+}
+
 $sourceRows = @(
     [pscustomobject]@{
         role = "Reviewers"
@@ -180,6 +203,7 @@ $manifest = [ordered]@{
         review_audit_report = $auditJsonPath
         review_audit_markdown = $auditMarkdownPath
         decision_queue = $decisionQueuePath
+        revision_baselines = $revisionBaselineRows
     }
     artifact_sha256 = [ordered]@{
         workspace_inventory = (Get-Sha256 $inventoryPath)
@@ -187,7 +211,9 @@ $manifest = [ordered]@{
         review_audit_report = (Get-Sha256 $auditJsonPath)
         review_audit_markdown = (Get-Sha256 $auditMarkdownPath)
         decision_queue = (Get-Sha256 $decisionQueuePath)
+        revision_baselines = @($revisionBaselineRows | ForEach-Object { [pscustomobject]@{ role = $_.role; sha256 = $_.report_sha256 } })
     }
+    revision_baselines = $revisionBaselineRows
     workflow_ledger = (Join-Path $planDir "workflow_ledger.json")
     execution_scope = (Join-Path $planDir "workflow_execution_scope.json")
     prepared_workflow_ledger = (Join-Path $planDir "workflow_ledger.prepared.json")
@@ -205,5 +231,6 @@ Write-Host "[WORKSPACE] $workspace"
 Write-Host "[INVENTORY] $inventoryPath"
 Write-Host "[DECISION QUEUE] $decisionQueuePath"
 Write-Host "[AUDIT REPORT] $auditJsonPath"
+Write-Host "[REVISION BASELINES] $($revisionBaselineRows.Count) role(s); reports in $reportsDir"
 Write-Host "[ROUND MANIFEST] $manifestPath"
 Write-Host "[NEXT] Review the complete decision queue and create an author-approved revision_decision_plan.json under $planDir."
