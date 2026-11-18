@@ -378,7 +378,7 @@ _RUN_PROPERTY_ORDER = (
 )
 
 
-def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True) -> list[str]:
+def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True, require_authorized_change: bool = False) -> list[str]:
     errors = []
     if not isinstance(plan, dict): return ["Plan must be a JSON object."]
     if plan.get("schema_version") != "1.0": errors.append("schema_version must be '1.0'.")
