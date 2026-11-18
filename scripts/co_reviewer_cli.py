@@ -528,6 +528,10 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         )
             format_authorization = t.get("format_authorization")
             if format_operations:
+                if t.get("find") != t.get("replace"):
+                    errors.append(
+                        f"{tp} FormatChange must be a pure format operation; text replacement requires a separate target."
+                    )
                 if (
                     not isinstance(format_authorization, dict)
                     or not isinstance(format_authorization.get("intent"), str)
