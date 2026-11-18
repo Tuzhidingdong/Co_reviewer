@@ -130,6 +130,59 @@ class JsonSchemaContractTests(unittest.TestCase):
             "events": [],
         })
 
+    def test_bounded_qa_remediation_state_schema_accepts_pending_and_complete_only(self):
+        schema = json.loads((SCHEMA_DIR / "qa-remediation.schema.json").read_text(encoding="utf-8"))
+        validator = validator_for(schema)(schema)
+        base = {
+            "schema_version": "1.0",
+            "state_id": "state-qa-1",
+            "revision_round_id": "round-1",
+            "phase": "PATCH_COMMIT_PENDING",
+            "remediation_round": 1,
+            "created_at_utc": "2026-11-18T12:00:00+00:00",
+            "actor": "Author",
+            "reason": "Mechanical formatting correction supported by QA evidence",
+            "event_id": "event-start-1",
+            "revision_ledger_file": "revision_ledger.json",
+            "patch_id": "PATCH-1",
+            "operation_id": "OP-1",
+            "document_role": "Manuscript",
+            "marked_input_file": "source.marked.docx",
+            "marked_input_sha256": "a" * 64,
+            "marked_output_file": "remediation.marked.docx",
+            "batch_id": "batch-qa-1",
+            "batch_dir": "runs/batch-qa-1",
+            "batch_intent_sha256": "b" * 64,
+            "batch_scope_sha256": "c" * 64,
+            "pre_remediation_qa_report_file": "before.quality.json",
+            "pre_remediation_qa_report_sha256": "d" * 64,
+            "pre_remediation_clean_file": "before.clean.docx",
+            "pre_remediation_clean_sha256": "e" * 64,
+            "clean_must_be_recompiled_from_marked": True,
+            "second_qa_failure_action": "BLOCKED",
+        }
+        validator.validate(base)
+        completed = {
+            **base,
+            "phase": "COMPLETE",
+            "completed_at_utc": "2026-11-18T12:05:00+00:00",
+            "completion_event_id": "event-complete-1",
+            "qa_status": "PASS",
+            "qa_report_file": "after.quality.json",
+            "qa_report_sha256": "f" * 64,
+            "clean_file": "after.clean.docx",
+            "clean_sha256": "1" * 64,
+            "marked_file": "remediation.marked.docx",
+            "marked_sha256": "2" * 64,
+            "compiled_revision_ids": ["101", "102"],
+            "block_reason": None,
+        }
+        validator.validate(completed)
+        malformed = dict(completed)
+        malformed["remediation_round"] = 2
+        with self.assertRaises(Exception):
+            validator.validate(malformed)
+
     def test_every_repository_schema_passes_its_declared_meta_schema(self):
         schema_paths = sorted(SCHEMA_DIR.glob("*.schema.json"))
         self.assertTrue(schema_paths, "No JSON Schema files were found.")
