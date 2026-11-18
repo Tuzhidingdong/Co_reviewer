@@ -246,6 +246,7 @@ class Patch:
     preflight_report_id: str | None = None
     approval_fingerprint: str | None = None
     apply_report_ids: list[str] = field(default_factory=list)
+    applied_revision_ids: list[dict[str, Any]] = field(default_factory=list)
     verification_report_id: str | None = None
     verified_output_hashes: list[dict[str, str]] = field(default_factory=list)
 
@@ -315,6 +316,7 @@ class Patch:
             "preflight_report_id": self.preflight_report_id,
             "approval_fingerprint": self.approval_fingerprint,
             "apply_report_ids": list(self.apply_report_ids),
+            "applied_revision_ids": copy.deepcopy(self.applied_revision_ids),
             "verification_report_id": self.verification_report_id,
             "verified_output_hashes": copy.deepcopy(self.verified_output_hashes),
         }
@@ -2065,10 +2067,35 @@ class RevisionLedger:
                 )
 
             patch.status = "applied"
+            revision_ids_by_output: dict[str, set[str]] = defaultdict(set)
+            for report, result in evidence_rows:
+                output_key = _canonical_path(str(report.get("output_file", "")))
+                for field_name in ("delete_revision_id", "insert_revision_id"):
+                    revision_id = result.get(field_name)
+                    if revision_id is not None:
+                        revision_ids_by_output[output_key].add(str(revision_id))
             for output_key, report in reports_by_output.items():
                 report_id = str(report.get("report_id") or report.get("output_file"))
                 if report_id not in patch.apply_report_ids:
                     patch.apply_report_ids.append(report_id)
+                input_sha = report.get("input_sha256")
+                output_sha = report.get("output_sha256")
+                _sha256(input_sha, "apply_report.input_sha256")
+                _sha256(output_sha, "apply_report.output_sha256")
+                revision_ids = sorted(revision_ids_by_output.get(output_key, set()))
+                if not revision_ids:
+                    raise RevisionModelError(
+                        f"Apply report for Patch {patch_id} has no Track Changes revision IDs."
+                    )
+                revision_record = {
+                    "input_file": str(report.get("input_file", "")),
+                    "input_sha256": input_sha,
+                    "output_file": str(report.get("output_file", "")),
+                    "output_sha256": output_sha,
+                    "revision_ids": revision_ids,
+                }
+                if revision_record not in patch.applied_revision_ids:
+                    patch.applied_revision_ids.append(revision_record)
                 self.events.append(RevisionEvent(
                     event_id=str(uuid.uuid4()),
                     subject_id=patch_id,
@@ -2080,6 +2107,9 @@ class RevisionLedger:
                         "input_file": report.get("input_file", ""),
                         "output_file": report.get("output_file", ""),
                         "edits_applied": report.get("edits_applied", 0),
+                        "input_sha256": report.get("input_sha256"),
+                        "output_sha256": report.get("output_sha256"),
+                        "revision_ids": sorted(revision_ids_by_output.get(output_key, set())),
                         "operation_ids": sorted(actual_by_output[output_key]),
                     },
                 ))
@@ -3104,6 +3134,7 @@ def revision_ledger_from_mapping(data: Mapping[str, Any]) -> RevisionLedger:
             preflight_report_id=row.get("preflight_report_id"),
             approval_fingerprint=row.get("approval_fingerprint"),
             apply_report_ids=list(row.get("apply_report_ids", [])),
+            applied_revision_ids=copy.deepcopy(row.get("applied_revision_ids", [])),
             verification_report_id=row.get("verification_report_id"),
             verified_output_hashes=copy.deepcopy(row.get("verified_output_hashes", [])),
         ))
