@@ -118,6 +118,9 @@ def validate_immutable_token_lock(original: str, proposed: str,
     return {"status": "PASS", "allowed": True, "conflicts": [], "missing_tokens": [], "added_tokens": []}
 
 
+def _word_tokens(text: str) -> list[str]:
+    return re.findall(r"\s+|[^\W_]+(?:['’][^\W_]+)?|_+|[^\w\s]", text, flags=re.UNICODE)
+
 def myers_diff(a: Sequence[str], b: Sequence[str]) -> list[tuple[str, str]]:
     """Myers O((N+M)D) shortest edit script over token sequences."""
     n, m = len(a), len(b)
@@ -433,13 +436,6 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
     def ppr(p):
         return p.find("w:pPr", NS)
     lp, rp = ppr(left), ppr(right)
-    if (lp is None) != (rp is None):
-        raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
-    if lp is not None and rp is not None:
-        left_bytes = ET.tostring(lp, method="c14n")
-        right_bytes = ET.tostring(rp, method="c14n")
-        if left_bytes != right_bytes:
-            raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
     def value(node, path):
         found = node.find(path, NS) if node is not None else None
         return found.get(qn("val")) if found is not None else None
@@ -447,6 +443,13 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
     right_num = (value(rp, "w:numPr/w:numId"), value(rp, "w:numPr/w:ilvl"))
     if left_num != right_num and (left_num != (None, None) or right_num != (None, None)):
         raise ContractError("PARAGRAPH_MERGE_LIST_SEMANTICS_MISMATCH")
+    if (lp is None) != (rp is None):
+        raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
+    if lp is not None and rp is not None:
+        left_bytes = ET.tostring(lp, method="c14n")
+        right_bytes = ET.tostring(rp, method="c14n")
+        if left_bytes != right_bytes:
+            raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
     return {"pPr_source": "left", "numPr": left_num, "right_pPr_discarded": True}
 
 def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, Any]:

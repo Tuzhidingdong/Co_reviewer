@@ -433,6 +433,12 @@ class RevisionEngineTests(unittest.TestCase):
                 }
             ]
         }
+        for item in plan["revision_items"]:
+            for target in item["targets"]:
+                target["authorized_change"] = {
+                    "intent": "Human-approved exact text correction",
+                    "explicitly_authorized_tokens": [],
+                }
         seal_approved_items(plan)
         with self.assertRaisesRegex(ValueError, "not found"):
             cli.apply_plan(plan, "Test Author")
