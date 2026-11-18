@@ -107,6 +107,10 @@ class RevisionEngineTests(unittest.TestCase):
         report = cli.apply_document(str(self.input), str(self.output), [{
             "p_idx": 0, "find": "Authors Journal 2026",
             "replace": "Writers Journal 2027",
+            "authorized_change": {
+                "intent": "Correct the reference year with explicit numeric authorization",
+                "explicitly_authorized_tokens": [{"text": "2026", "replacement": "2027"}],
+            },
             "replacement_format_map": format_map,
         }], "Test Author")
         with zipfile.ZipFile(self.output) as archive:
