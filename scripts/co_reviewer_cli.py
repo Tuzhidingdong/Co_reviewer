@@ -65,6 +65,7 @@ from co_reviewer.v232_contract import (
     extract_docx_text_for_reference_graph, extract_docx_reference_segments,
     renumber_reference_graph,
     collect_revision_ids_from_lineage,
+    remediation_transition,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
 from co_reviewer.omml_converter import create_omml_preview_docx
@@ -6332,11 +6333,15 @@ def cmd_complete_qa_remediation(args):
         marked_bytes, expected_revision_ids=lineage["revision_ids"]
     )
     clean_path.parent.mkdir(parents=True, exist_ok=True)
-    with clean_path.open("xb") as stream:
-        stream.write(compiled["clean_bytes"])
+    clean_report = create_working_clean_view(marked_path, clean_path)
     clean_sha = sha256_file(clean_path)
-    if clean_sha != compiled["clean_sha256"] or compiled["marked_sha256"] != marked_sha:
-        raise ValueError("Deterministic Marked-to-Clean compilation failed exact hash binding.")
+    if (
+        clean_sha != compiled["clean_sha256"]
+        or clean_report["output_sha256"] != compiled["clean_sha256"]
+        or clean_report["source_sha256"] != compiled["marked_sha256"]
+        or compiled["marked_sha256"] != marked_sha
+    ):
+        raise ValueError("Deterministic Marked-to-Clean projection failed exact source/output hash binding.")
     quality = audit_docx_quality(clean_path, profile=args.profile)
     write_json_new(qa_out, quality)
 
@@ -6345,6 +6350,19 @@ def cmd_complete_qa_remediation(args):
         "remediation_round": 1,
         "qa_status": quality["status"],
     })
+    document_index = next(
+        index for index, row in enumerate(ledger.documents)
+        if row.role == state.get("document_role")
+        and Path(row.output_file).expanduser().resolve() == marked_path
+    )
+    current_document = ledger.documents[document_index]
+    ledger.documents[document_index] = replace(
+        current_document,
+        output_sha256=marked_sha,
+        working_clean_file=str(clean_path),
+        working_clean_sha256=clean_sha,
+        working_view_fingerprint=clean_report["working_view_fingerprint"],
+    )
     completed_event = RevisionEvent(
         event_id=str(uuid.uuid4()),
         subject_id=patch.patch_id,
@@ -6360,6 +6378,7 @@ def cmd_complete_qa_remediation(args):
             "qa_report_sha256": sha256_file(qa_out),
             "clean_file": str(clean_path),
             "clean_sha256": clean_sha,
+            "working_view_fingerprint": clean_report["working_view_fingerprint"],
             "marked_file": str(marked_path),
             "marked_sha256": marked_sha,
             "compiled_revision_ids": lineage["revision_ids"],
@@ -6537,6 +6556,34 @@ def build_parser():
     cc_group.add_argument("--apply-report", help="Apply report JSON chain whose input/output SHA-256 values bind this Marked DOCX.")
     cc_group.add_argument("--revision-ids", help="JSON array of exact current revision IDs; use only when independently verified.")
     cc.set_defaults(func=cmd_compile_clean_from_marked)
+    brm = sub.add_parser(
+        "begin-qa-remediation",
+        help="Start the one permitted QA remediation using one approved formal Patch against the exact active Marked DOCX.",
+    )
+    brm.add_argument("--qa-report", required=True, help="Failed QA JSON for the current Working Clean DOCX.")
+    brm.add_argument("--revision-ledger", required=True)
+    brm.add_argument("--batch-dir", required=True, help="Immutable batch containing the approved remediation Patch.")
+    brm.add_argument("--patch-id", required=True)
+    brm.add_argument("--reason", required=True, help="Human-confirmed local mechanical correction reason.")
+    brm.add_argument("--actor", default="Co_Reviewer QA remediation")
+    brm.add_argument("--out", required=True, help="New immutable QA remediation state JSON.")
+    brm.set_defaults(func=cmd_begin_qa_remediation)
+
+    crm = sub.add_parser(
+        "complete-qa-remediation",
+        help="Publish-verified Marked → deterministic Clean compilation → second QA pass; a failure blocks all further remediation.",
+    )
+    crm.add_argument("--state", required=True, help="State JSON created by begin-qa-remediation.")
+    crm.add_argument("--workflow-ledger", required=True)
+    crm.add_argument("--revision-ledger", required=True)
+    crm.add_argument("--batch-dir", required=True)
+    crm.add_argument("--clean-out", required=True, help="New Clean DOCX path; never an input or existing output.")
+    crm.add_argument("--qa-report-out", required=True, help="New QA JSON path.")
+    crm.add_argument("--profile", choices=["word-final-clean"], default="word-final-clean")
+    crm.add_argument("--actor", default="Co_Reviewer QA remediation")
+    crm.add_argument("--out", required=True, help="New completed/blocked remediation state JSON.")
+    crm.set_defaults(func=cmd_complete_qa_remediation)
+
     cp = sub.add_parser("commit-document-package", help="Validate and publish a multi-DOCX immutable package candidate.")
     cp.add_argument("--release-root", required=True)
     cp.add_argument("--document", nargs="+", required=True, help="PACKAGE_PATH=DOCX_PATH entries.")
