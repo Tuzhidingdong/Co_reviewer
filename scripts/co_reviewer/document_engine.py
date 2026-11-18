@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from lxml import etree as ET
-from .v232_contract import narrow_revision
+from .v232_contract import narrow_revision, targeted_revision_gate
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 XML = "http://www.w3.org/XML/1998/namespace"
@@ -338,6 +338,16 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         source_name=str(source),
     )
+    revision_kinds = {
+        "text_revision_wrapper", "format_revision", "paragraph_revision",
+        "table_revision", "move_revision", "comment_anchor", "comment_definition",
+    }
+    revision_inventory = {
+        "revisions": [
+            item for item in structure_inventory.get("structures", [])
+            if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))
+        ]
+    }
     if structure_inventory["package_status"] != "READY":
         blocking = [
             f"{item['code']}: {item['message']}"
@@ -392,6 +402,19 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 why = "not found" if not found else "ambiguous across paragraphs"
                 raise ValueError(f"Target {old[:80]!r} {why} in {part}; no output was written.")
             idx, para = found[0]
+            history_gate = targeted_revision_gate(
+                revision_inventory, [{"part": part, "p_idx": idx}]
+            )
+            if history_gate["status"] != "PASS":
+                conflicts = [
+                    f"{item.get('kind')} at {item.get('part')}:{item.get('element_path')}"
+                    for item in history_gate["overlapping_revisions"]
+                ]
+                raise ValueError(
+                    "HISTORICAL_REVISION_OVERLAP_USER_DECISION_REQUIRED: target intersects "
+                    "existing tracked changes; resolve the overlapping history explicitly in Word "
+                    "and re-import before editing. " + "; ".join(conflicts[:8])
+                )
             assert_edit_target_supported(
                 structure_inventory, part=part, paragraph_index=idx
             )

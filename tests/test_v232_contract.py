@@ -207,5 +207,30 @@ class V232ContractTests(unittest.TestCase):
                                     protected_spans=[{"start": 0, "end": 10}])
         self.assertEqual(insertion["status"], "BLOCKED")
 
+
+    def test_engine_blocks_only_target_overlapping_historical_revisions(self):
+        from co_reviewer.document_engine import prepare_document
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "history.docx"
+            output = Path(tmp) / "history_out.docx"
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as z:
+                z.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+                z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+                z.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+                z.writestr("word/document.xml", f'<w:document xmlns:w="{W}"><w:body><w:p><w:ins w:id="1" w:author="A"><w:r><w:t>old text</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>unrelated text</w:t></w:r></w:p><w:sectPr/></w:body></w:document>')
+            source.write_bytes(payload.getvalue())
+            with self.assertRaisesRegex(ValueError, "HISTORICAL_REVISION_OVERLAP_USER_DECISION_REQUIRED"):
+                prepare_document(str(source), str(output), [{
+                    "p_idx": 0, "find": "old text", "replace": "new text",
+                    "authorized_change": {"intent": "Revise wording"}
+                }], "Tester")
+            self.assertFalse(output.exists())
+            unrelated = prepare_document(str(source), str(output), [{
+                "p_idx": 1, "find": "unrelated text", "replace": "updated text",
+                "authorized_change": {"intent": "Revise unrelated wording"}
+            }], "Tester")
+            self.assertTrue(unrelated["payload"])
+
 if __name__ == "__main__":
     unittest.main()
