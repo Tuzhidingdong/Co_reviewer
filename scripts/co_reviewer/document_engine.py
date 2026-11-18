@@ -305,7 +305,7 @@ def apply_format_operation(
     """Apply one explicitly authorized FormatChange to existing ordinary text Runs."""
     if not isinstance(find_text, str) or not find_text:
         return False, next_revision_id, [], "FormatChange find text must be non-empty."
-    if any(character in find_text for character in "\\t\\r\\n"):
+    if any(character in find_text for character in "\t\r\n"):
         return False, next_revision_id, [], "FormatChange cannot cross tabs or paragraph breaks."
     if any(ancestor.tag == qn("tbl") for ancestor in paragraph.iterancestors()):
         return False, next_revision_id, [], "FORMAT_CHANGE_TABLE_STYLE_RESOLUTION_REQUIRED"
