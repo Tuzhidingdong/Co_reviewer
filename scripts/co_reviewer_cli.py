@@ -425,7 +425,10 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
             if not isinstance(t.get("replace"), str):
                 errors.append(f"{tp}.replace must be a string; use an empty string to delete text.")
             authorization = t.get("authorized_change")
-            if authorization is None and not require_authorized_change:
+            if authorization is None and (
+                not require_authorized_change
+                or item.get("status") not in {"approved", "applied", "verified"}
+            ):
                 pass
             elif not isinstance(authorization, dict) or not isinstance(authorization.get("intent"), str) or not authorization.get("intent", "").strip():
                 errors.append(f"{tp}.authorized_change.intent is required; human approval seals this exact scope.")
@@ -1495,6 +1498,16 @@ def cmd_approve_plan(args):
 
     for item_id in requested:
         item = by_id[item_id]
+        # The approve-plan command is the human authorization event. For legacy
+        # operations without a separately authored intent, seal only the exact
+        # text replacement; immutable scientific tokens remain unauthorized.
+        for target in item.get("targets", []):
+            if target.get("authorized_change") is None:
+                target["authorized_change"] = {
+                    "intent": "Human approved this exact text replacement through approve-plan",
+                    "explicitly_authorized_tokens": [],
+                    "explicitly_authorized_spans": [],
+                }
         item["status"] = "approved"
         item["approval_fingerprint"] = revision_item_fingerprint(item)
     plan["approved"] = True
