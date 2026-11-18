@@ -120,7 +120,7 @@ class RevisionEngineTests(unittest.TestCase):
             runs = insertion.findall(".//w:r", cli.NS)
             self.assertEqual(
                 ["".join(n.text or "" for n in run.findall("w:t", cli.NS)) for run in runs],
-                ["Writers", " Journal", " 2027"],
+                ["Writers ", "Journal ", "2027"],
             )
             self.assertIsNone(runs[0].find("w:rPr/w:b", cli.NS))
             self.assertIsNotNone(runs[1].find("w:rPr/w:b", cli.NS))
