@@ -866,7 +866,17 @@ def assert_edit_target_supported(
             item_part == part
             and (item.get("paragraph_index") == paragraph_index or paragraph_index in span)
         )
-        global_context_match = item_part in _GLOBAL_CONTEXT_PARTS and not span
+        # A proofErr node in settings.xml is Word spelling/grammar UI metadata,
+        # not document-wide editing semantics. Target-local proofErr markers
+        # remain guarded by target_match above.
+        benign_global_proofing_marker = (
+            item_part == "word/settings.xml"
+            and item.get("element") == "proofErr"
+        )
+        global_context_match = (
+            item_part in _GLOBAL_CONTEXT_PARTS and not span
+            and not benign_global_proofing_marker
+        )
         if target_match or global_context_match:
             blockers.append(
                 f"{item.get('kind')} ({item.get('status')}) at {item.get('part')}:{item.get('element_path')}"
