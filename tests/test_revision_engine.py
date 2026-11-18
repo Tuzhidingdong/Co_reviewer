@@ -112,6 +112,9 @@ class RevisionEngineTests(unittest.TestCase):
                 "explicitly_authorized_tokens": [{"text": "2026", "replacement": "2027"}],
             },
             "replacement_format_map": format_map,
+            "revision_item_id": "R-MAP",
+            "document": "Manuscript",
+            "location": "Reference list",
         }], "Test Author")
         with zipfile.ZipFile(self.output) as archive:
             root = ET.fromstring(archive.read("word/document.xml"))
@@ -126,6 +129,25 @@ class RevisionEngineTests(unittest.TestCase):
             self.assertIsNotNone(runs[1].find("w:rPr/w:b", cli.NS))
             self.assertIsNone(runs[2].find("w:rPr/w:b", cli.NS))
         self.assertEqual(report["results"][0]["replacement_format_map"], format_map)
+        verification = cli.verify_apply_report({
+            "revision_items": [{
+                "id": "R-MAP", "reviewer": "Reviewer 1", "status": "applied",
+                "targets": [{
+                    "document": "Manuscript", "input_file": str(self.input),
+                    "output_file": str(self.output), "find": "Authors Journal 2026",
+                    "replace": "Writers Journal 2027", "p_idx": 0,
+                    "authorized_change": {
+                        "intent": "Correct the reference year with explicit numeric authorization",
+                        "explicitly_authorized_tokens": [{"text": "2026", "replacement": "2027"}],
+                    },
+                    "replacement_format_map": format_map,
+                }],
+            }]
+        }, [{**report, "input_file": str(self.input), "output_file": str(self.output)}])
+        self.assertTrue(verification["passed"], msg=str(verification["results"]))
+        self.assertTrue(
+            verification["results"][0]["checks"]["format_integrity"]["replacement_format_maps"][0]["passed"]
+        )
 
     def test_replacement_format_map_must_cover_every_character_without_gaps(self):
         make_docx(self.input, [[("old journal name", False)]])
@@ -138,6 +160,53 @@ class RevisionEngineTests(unittest.TestCase):
                 ],
             }], "Test Author")
         self.assertFalse(self.output.exists())
+
+    def test_verification_blocks_untracked_format_drift_in_unchanged_source_text(self):
+        make_docx(self.input, [[
+            ("unchanged ", False), ("old phrase", True), (" tail", False)
+        ]])
+        report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0, "find": "old phrase", "replace": "new phrase",
+            "revision_item_id": "R-DRIFT", "document": "Manuscript",
+            "location": "Body paragraph",
+        }], "Test Author")
+        plan = {
+            "revision_items": [{
+                "id": "R-DRIFT", "reviewer": "Reviewer 1", "status": "applied",
+                "targets": [{
+                    "document": "Manuscript", "input_file": str(self.input),
+                    "output_file": str(self.output), "find": "old phrase",
+                    "replace": "new phrase", "p_idx": 0,
+                }],
+            }]
+        }
+        clean_verification = cli.verify_apply_report(
+            plan, [{**report, "input_file": str(self.input), "output_file": str(self.output)}]
+        )
+        self.assertTrue(clean_verification["passed"], msg=str(clean_verification["results"]))
+
+        with zipfile.ZipFile(self.output, "r") as archive:
+            package = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(package["word/document.xml"])
+        paragraph = root.find(".//w:body//w:p", cli.NS)
+        first_run = paragraph.find("./w:r", cli.NS)
+        props = first_run.find("w:rPr", cli.NS)
+        if props is None:
+            props = ET.Element(q("rPr"))
+            first_run.insert(0, props)
+        ET.SubElement(props, q("b"))
+        package["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        with zipfile.ZipFile(self.output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in package.items():
+                archive.writestr(name, data)
+
+        tampered_verification = cli.verify_apply_report(
+            plan, [{**report, "input_file": str(self.input), "output_file": str(self.output)}]
+        )
+        self.assertFalse(tampered_verification["passed"])
+        self.assertFalse(
+            tampered_verification["results"][0]["checks"]["format_integrity"]["passed"]
+        )
 
     def test_format_change_is_native_rprchange_and_preserves_old_effective_value(self):
         make_docx(self.input, [[("Journal Name remains in the reference.", False)]])
