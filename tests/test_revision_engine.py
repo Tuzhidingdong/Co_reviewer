@@ -95,6 +95,68 @@ class RevisionEngineTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), set(original))
         self.assertEqual(report["validation"]["untouched_parts"], "byte-identical")
 
+    def test_mixed_format_replacement_uses_explicit_source_format_map(self):
+        make_docx(self.input, [[
+            ("Authors ", False), ("Journal ", True), ("2026", False)
+        ]])
+        format_map = [
+            {"replacement_start": 0, "replacement_end": 8, "source_offset": 0},
+            {"replacement_start": 8, "replacement_end": 16, "source_offset": 9},
+            {"replacement_start": 16, "replacement_end": 20, "source_offset": 18},
+        ]
+        report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0, "find": "Authors Journal 2026",
+            "replace": "Writers Journal 2027",
+            "replacement_format_map": format_map,
+        }], "Test Author")
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:body//w:p", cli.NS)
+            insertion = paragraph.find(".//w:ins", cli.NS)
+            runs = insertion.findall(".//w:r", cli.NS)
+            self.assertEqual(
+                ["".join(n.text or "" for n in run.findall("w:t", cli.NS)) for run in runs],
+                ["Writers", " Journal", " 2027"],
+            )
+            self.assertIsNone(runs[0].find("w:rPr/w:b", cli.NS))
+            self.assertIsNotNone(runs[1].find("w:rPr/w:b", cli.NS))
+            self.assertIsNone(runs[2].find("w:rPr/w:b", cli.NS))
+        self.assertEqual(report["results"][0]["replacement_format_map"], format_map)
+
+    def test_replacement_format_map_must_cover_every_character_without_gaps(self):
+        make_docx(self.input, [[("old journal name", False)]])
+        with self.assertRaisesRegex(ValueError, "contiguously"):
+            cli.apply_document(str(self.input), str(self.output), [{
+                "p_idx": 0, "find": "old journal name", "replace": "new title",
+                "replacement_format_map": [
+                    {"replacement_start": 0, "replacement_end": 3, "source_offset": 0},
+                    {"replacement_start": 4, "replacement_end": 8, "source_offset": 5},
+                ],
+            }], "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_format_change_is_native_rprchange_and_preserves_old_effective_value(self):
+        make_docx(self.input, [[("Journal Name remains in the reference.", False)]])
+        report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0,
+            "find": "remains in the reference",
+            "replace": "remains in the reference",
+            "format_authorization": {"intent": "Restore journal italics"},
+            "format_operations": [{"find": "Journal Name", "properties": {"i": True}}],
+        }], "Test Author")
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:body//w:p", cli.NS)
+            journal = next(
+                run for run in paragraph.findall("./w:r", cli.NS)
+                if "".join(node.text or "" for node in run.findall("w:t", cli.NS)) == "Journal Name"
+            )
+            self.assertIsNotNone(journal.find("w:rPr/w:i", cli.NS))
+            snapshot = journal.find("w:rPr/w:rPrChange/w:rPr", cli.NS)
+            self.assertIsNotNone(snapshot)
+            self.assertEqual(snapshot.find("w:i", cli.NS).get(cli.qn("val")), "0")
+        self.assertEqual(len(report["results"][0]["format_changes"]), 1)
+
     def test_trailing_runs_are_preserved_when_target_ends_mid_run(self):
         make_docx(self.input, [[
             ("before ", False),
