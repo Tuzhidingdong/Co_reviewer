@@ -95,14 +95,18 @@ footnote endnote
 fldChar fldSimple
 trackRevisions revisionView
 language themeFontLang docGrid
-abstractNum num numPr ilvl numId lvl lvlOverride startOverride
+numbering abstractNum num numPicBullet numPr ilvl numId lvl lvlOverride startOverride
 abstractNumId lvlText lvlJc numFmt lvlRestart suff isLgl
 nsid multiLevelType tmpl start
+lvlPicBulletId legacy indent left right hanging firstLine
 style styles basedOn next link qFormat uiPriority semiHidden unhideWhenUsed
 latentStyles lsdException tblStylePr tblStyleRowBandSize tblStyleColBandSize
 name basedOn next link pPr rPr tblPr trPr tcPr
 default docDefaults rPrDefault pPrDefault
 settings compat doNotTrackMoves doNotTrackFormatting
+zoom proofState defaultTabStop characterSpacingControl savePreviewPicture
+useFELayout compatSetting rsids rsid rsidRoot rsidR rsidRPr rsidP rsidSect
+doNotUseHTMLParagraphAutoSpacing doNotUseIndentAsNumberingTabStop
 mirrorIndents contextualSpacing autoSpaceDE autoSpaceDN adjustRightInd
 suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct leftLinePunct
 rightLinePunct noCompress doNotCompress doNotUseEastAsianBreakRules
