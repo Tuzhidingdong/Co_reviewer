@@ -549,12 +549,14 @@ class RevisionWorkflowTests(unittest.TestCase):
 
         with zipfile.ZipFile(second_output) as archive:
             root = ET.fromstring(archive.read("word/document.xml"))
-            paragraph = root.find(".//w:p", cli.NS)
+            paragraphs = root.findall(".//w:p", cli.NS)
             deleted = "".join(
-                node.text or "" for node in paragraph.findall(".//w:del//w:delText", cli.NS)
+                node.text or "" for paragraph in paragraphs
+                for node in paragraph.findall(".//w:del//w:delText", cli.NS)
             )
             inserted = "".join(
-                node.text or "" for node in paragraph.findall(".//w:ins//w:t", cli.NS)
+                node.text or "" for paragraph in paragraphs
+                for node in paragraph.findall(".//w:ins//w:t", cli.NS)
             )
             self.assertIn("old phrase", deleted)
             self.assertIn("outdated terminology", deleted)

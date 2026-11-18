@@ -447,7 +447,11 @@ def renumber_reference_graph(graph: Mapping[str, Any],
         if mention.get("resolution") != "ambiguous" or definition_id not in mention.get("candidate_definition_ids", []):
             raise ContractError("Confirmed mapping must select one candidate for an ambiguous mention: " + mention_id)
     for mention in updated.get("mentions", []):
-        candidates = mention.get("target_definition_ids", [])
+        candidates = (
+            mention.get("candidate_definition_ids", [])
+            if mention.get("resolution") == "ambiguous"
+            else mention.get("target_definition_ids", [])
+        )
         if mention.get("resolution") == "ambiguous" and changed_definition_ids.intersection(candidates):
             chosen = confirmed.get(mention["id"])
             if chosen is None:

@@ -540,12 +540,16 @@ class RevisionModelsTests(unittest.TestCase):
         applied_item = dict(approved_item, status="applied")
         report = {
             "input_file": "Manuscript.docx",
+            "input_sha256": HASH_A,
             "output_file": "Manuscript_revised.docx",
+            "output_sha256": HASH_B,
             "edits_applied": 1,
             "results": [{
                 "revision_item_id": "T1",
                 "operation_id": operation.operation_id,
                 "status": "applied",
+                "delete_revision_id": "21",
+                "insert_revision_id": "22",
             }],
         }
         ledger.record_legacy_apply_reports(
@@ -553,6 +557,7 @@ class RevisionModelsTests(unittest.TestCase):
         )
         self.assertEqual(patch.status, "applied")
         self.assertEqual(patch.approval_fingerprint, approved_item["approval_fingerprint"])
+        self.assertEqual(patch.applied_revision_ids[0]["revision_ids"], ["21", "22"])
 
         verified_item = {
             **applied_item,
