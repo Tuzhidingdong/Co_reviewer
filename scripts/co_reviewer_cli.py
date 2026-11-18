@@ -747,6 +747,10 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "location_phrase": target.get("location_phrase"),
                 "authorized_change": target.get("authorized_change"),
                 "protected_spans": list(target.get("protected_spans", [])),
+                "replacement_format_map": list(target.get("replacement_format_map", []))
+                    if target.get("replacement_format_map") is not None else None,
+                "format_authorization": target.get("format_authorization"),
+                "format_operations": list(target.get("format_operations", [])),
             }
             if "p_idx" in target: edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
