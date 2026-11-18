@@ -255,10 +255,19 @@ class V232ContractTests(unittest.TestCase):
 
     def test_reference_renumber_requires_confirmed_ambiguous_mapping(self):
         graph = build_package_reference_graph({
-            "Manuscript": "Figure 1. Main result. Figure 2. Other result.",
-            "SI": "Figure 1. Supplementary result. See Figure 1 for details.",
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "Figure 1. Main result."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "Figure 2. Other result."},
+            ],
+            "SI": [
+                {"part": "word/document.xml", "paragraph_index": 4, "text": "Figure 1. Supplementary result."},
+                {"part": "word/document.xml", "paragraph_index": 5, "text": "See Figure 1 for details."},
+            ],
+            "Response": [
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "See Figure 1."},
+            ],
         })
-        mention = next(m for m in graph["mentions"] if m["document"] == "SI" and m["resolution"] == "ambiguous")
+        mention = next(m for m in graph["mentions"] if m["document"] == "Response" and m["resolution"] == "ambiguous")
         with self.assertRaisesRegex(ContractError, "AMBIGUOUS_REFERENCE_MAPPING_REQUIRES_CONFIRMATION"):
             renumber_reference_graph(graph, {"Manuscript::1": "3"}, explicit_authorization=True)
         manuscript_definition = next(d for d in graph["definitions"] if d["document"] == "Manuscript" and d["number"] == "1")
