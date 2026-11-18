@@ -172,3 +172,14 @@ Important boundaries:
 - No real Microsoft Word GUI/COM accept/reject, formula editing or cross-version rendering claim is made by these code changes.
 
 The GitHub Actions result for each commit must be checked independently. The user’s unified local Windows test and final Word GUI acceptance have not yet occurred.
+
+
+## V2.3.2 implementation increment — target-scoped historical revision resolution
+
+The isolated development branch adds a deterministic Accept/Reject adapter exposed through `resolve-historical-revisions`. It binds the inventory to the exact source SHA-256, resolves only target-overlapping records, and writes the result to a new DOCX path. Unrelated historical structures are checked for unchanged canonical XML.
+
+Supported: native `w:ins`/`w:del` wrappers, paired `w:moveFrom`/`w:moveTo` wrappers, and standard property snapshots `rPrChange`, `pPrChange`, `tblPrChange`, `tblGridChange`, `trPrChange`, `tcPrChange`, and `sectPrChange` when the prior-property snapshot has the exact expected shape.
+
+Fail-closed: comment anchors/definitions, paragraph-mark topology deletions, table cell structure revisions, move-range markers, `numberingChange`, malformed or unpaired move wrappers, unsupported property snapshots, stale inventories and ambiguous element paths. These cases are not silently removed or normalized.
+
+Five focused resolver regressions cover Accept, Reject, property restoration, selective structure-ID selection, stale baselines and unsupported structures. This increment does not claim Word GUI/save-round-trip acceptance and does not enable OMML writing. The complete CI matrix and the user's separate local Word/real-review acceptance remain required.

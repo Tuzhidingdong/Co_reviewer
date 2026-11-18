@@ -832,8 +832,12 @@ def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, A
     """Zero-model-call inventory of pre-existing native revisions and comments."""
     from .structure_classifier import classify_docx_structure
     report = classify_docx_structure(source)
-    revision_kinds = {"text_revision_wrapper", "format_revision", "paragraph_revision",
-                      "table_revision", "move_revision", "comment_anchor", "comment_definition"}
+    revision_kinds = {
+        "text_revision_wrapper", "format_revision", "paragraph_revision",
+        "paragraph_mark_deletion", "table_structure_revision", "move_range_marker",
+        "comment_anchor", "comment_definition", "comment_range", "comment_range_marker",
+        "comment_reference", "incomplete_comment_range",
+    }
     records = [dict(item) for item in report.get("structures", [])
                if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))]
     return {"schema_version": "1.0", "source_sha256": report.get("source_sha256"),

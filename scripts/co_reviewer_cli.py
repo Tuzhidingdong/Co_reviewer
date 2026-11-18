@@ -66,6 +66,7 @@ from co_reviewer.v232_contract import (
     renumber_reference_graph,
     collect_revision_ids_from_lineage,
 )
+from co_reviewer.historical_revisions import resolve_historical_revisions
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -5374,9 +5375,45 @@ def cmd_targeted_revision_gate(args):
         print(f"[REVISION GATE] {Path(args.out).resolve()}")
     print(f"[REVISION GATE] {report['status']}; overlaps={len(report['overlapping_revisions'])}; "
           f"unresolved={len(report['unresolved_conflicts'])}")
-    if report["status"] == "RESOLUTION_ADAPTER_REQUIRED":
-        print("[BLOCKED] Policy recorded, but no deterministic revision-resolution adapter is enabled; resolve the conflict in Word and re-import.")
+    if report["status"] == "RESOLUTION_READY":
+        print("[NEXT STEP] Run resolve-historical-revisions with the same baseline and targets; unsupported structures remain fail-closed.")
     return 0 if report["status"] == "PASS" else 2
+
+def cmd_resolve_historical_revisions(args):
+    source = Path(args.marked).expanduser().resolve()
+    output = Path(args.out).expanduser().resolve()
+    if not source.is_file():
+        raise ValueError(f"Historical source DOCX does not exist: {source}")
+    if source == output or output.exists():
+        raise ValueError("Resolved historical DOCX must use a new output path; source overwrite is forbidden.")
+    inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
+    target_data = json.loads(Path(args.targets).read_text(encoding="utf-8"))
+    targets = target_data.get("targets") if isinstance(target_data, dict) else target_data
+    if not isinstance(targets, list):
+        raise ValueError("Target file must be an array or an object with a targets array")
+    selected = json.loads(Path(args.selective_ids).read_text(encoding="utf-8")) if args.selective_ids else []
+    if not isinstance(selected, list):
+        raise ValueError("--selective-ids must be a JSON array of structure_id values")
+    result = resolve_historical_revisions(
+        source.read_bytes(), inventory, targets, policy=args.policy,
+        selectively_resolved_ids=selected,
+    )
+    if result["status"] == "NO_OP":
+        raise ValueError("No historical revision overlaps the supplied targets; no output was created.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(result["docx_bytes"])
+    report = {key: value for key, value in result.items() if key != "docx_bytes"}
+    report.update({"source_path": str(source), "output_path": str(output)})
+    report_path = Path(args.report).expanduser().resolve() if args.report else output.with_suffix(".resolution.json")
+    if report_path in {source, output} or report_path.exists():
+        raise ValueError("Resolution report must use a new path distinct from source/output.")
+    write_json_atomic(report_path, report)
+    print(f"[HISTORICAL REVISIONS RESOLVED] {len(result['resolved'])}")
+    print(f"[SOURCE SHA256] {result['source_sha256']}")
+    print(f"[OUTPUT SHA256] {result['output_sha256']}")
+    print(f"[RESOLVED DOCX] {output}")
+    print(f"[RESOLUTION REPORT] {report_path}")
+    return 0
 
 def cmd_build_package_reference_graph(args):
     documents = {}
@@ -5515,6 +5552,15 @@ def build_parser():
     rgate.add_argument("--selective-ids")
     rgate.add_argument("--out")
     rgate.set_defaults(func=cmd_targeted_revision_gate)
+    rhr = sub.add_parser("resolve-historical-revisions", help="Resolve target-scoped historical Accept/Reject changes into a new DOCX copy.")
+    rhr.add_argument("--marked", required=True, help="Source DOCX with historical revisions.")
+    rhr.add_argument("--inventory", required=True, help="revision-baseline JSON bound to this exact source SHA-256.")
+    rhr.add_argument("--targets", required=True, help="JSON array or {targets:[...]} of part/p_idx targets.")
+    rhr.add_argument("--policy", required=True, choices=["ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"])
+    rhr.add_argument("--selective-ids", help="JSON array of exact structure_id values for selective Accept.")
+    rhr.add_argument("--out", required=True, help="New DOCX output path; source overwrite is forbidden.")
+    rhr.add_argument("--report", help="Optional new JSON resolution report path.")
+    rhr.set_defaults(func=cmd_resolve_historical_revisions)
     vc = sub.add_parser("validate-edit-contract", help="Validate Authorized Change, protected spans and deterministic immutable token locks.")
     vc.add_argument("--original", required=True)
     vc.add_argument("--proposed", required=True)

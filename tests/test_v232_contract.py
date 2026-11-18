@@ -378,3 +378,112 @@ class V232ContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def _revision_docx(self, directory: Path) -> Path:
+        path = directory / "historical.docx"
+        document_xml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="{W}"><w:body>
+          <w:p><w:ins w:id="1" w:author="Old"><w:r><w:t>accepted text</w:t></w:r></w:ins></w:p>
+          <w:p><w:del w:id="2" w:author="Old"><w:r><w:delText>deleted text</w:delText></w:r></w:del></w:p>
+          <w:p><w:ins w:id="3" w:author="Other"><w:r><w:t>unrelated history</w:t></w:r></w:ins></w:p>
+          <w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="4" w:author="Old"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>formatted</w:t></w:r></w:p>
+          <w:sectPr/>
+        </w:body></w:document>'''
+        members = {
+            "[Content_Types].xml": '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+            "_rels/.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+            "word/document.xml": document_xml,
+        }
+        path = directory / "historical.docx"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, value in members.items():
+                archive.writestr(name, value)
+        return path
+
+    def test_accept_historical_text_revision_only_in_target_and_preserve_unrelated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._revision_docx(Path(tmp))
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"] if (x.get("details") or {}).get("revision_id") == "1")
+            report = resolve_historical_revisions(payload, inventory, [
+                {"part": item["part"], "p_idx": item["paragraph_index"]}
+            ], policy="ACCEPT_EXISTING")
+            self.assertEqual(report["status"], "RESOLVED")
+            with zipfile.ZipFile(io.BytesIO(report["docx_bytes"])) as archive:
+                root = ET.fromstring(archive.read("word/document.xml"))
+            paragraphs = root.findall(".//w:body/w:p", {"w": W})
+            self.assertEqual("".join(paragraphs[0].itertext()), "accepted text")
+            self.assertIsNone(paragraphs[0].find("w:ins", {"w": W}))
+            self.assertIsNotNone(paragraphs[2].find("w:ins", {"w": W}))
+            self.assertEqual(len(report["preserved_unrelated"]), 3)
+
+    def test_reject_historical_deletion_restores_deleted_text_without_source_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._revision_docx(Path(tmp))
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"] if (x.get("details") or {}).get("revision_id") == "2")
+            report = resolve_historical_revisions(payload, inventory, [
+                {"part": item["part"], "p_idx": item["paragraph_index"]}
+            ], policy="REJECT_EXISTING")
+            with zipfile.ZipFile(io.BytesIO(report["docx_bytes"])) as archive:
+                root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.findall(".//w:body/w:p", {"w": W})[1]
+            self.assertEqual("".join(paragraph.itertext()), "deleted text")
+            self.assertIsNone(paragraph.find("w:del", {"w": W}))
+            self.assertIsNotNone(paragraph.find(".//w:t", {"w": W}))
+            self.assertEqual(source.read_bytes(), payload)
+
+    def test_reject_format_revision_restores_previous_run_properties(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._revision_docx(Path(tmp))
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"] if (x.get("details") or {}).get("revision_id") == "4")
+            report = resolve_historical_revisions(payload, inventory, [
+                {"part": item["part"], "p_idx": item["paragraph_index"]}
+            ], policy="REJECT_EXISTING")
+            with zipfile.ZipFile(io.BytesIO(report["docx_bytes"])) as archive:
+                root = ET.fromstring(archive.read("word/document.xml"))
+            run_props = root.findall(".//w:body/w:p[4]/w:r/w:rPr", {"w": W})[0]
+            self.assertIsNotNone(run_props.find("w:i", {"w": W}))
+            self.assertIsNone(run_props.find("w:b", {"w": W}))
+            self.assertIsNone(run_props.find("w:rPrChange", {"w": W}))
+
+    def test_stale_baseline_and_unsupported_comment_history_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._revision_docx(Path(tmp))
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            with self.assertRaisesRegex(ContractError, "STALE"):
+                resolve_historical_revisions(payload + b"x", inventory, [], policy="ACCEPT_EXISTING")
+            inventory["revisions"].append({
+                "structure_id": "comment-1", "kind": "comment_reference",
+                "part": "word/document.xml", "paragraph_index": 0, "element": "commentReference",
+                "element_path": "/w:document[1]/w:body[1]/w:p[1]/w:commentReference[1]",
+            })
+            with self.assertRaisesRegex(ContractError, "UNSUPPORTED_ADAPTER"):
+                resolve_historical_revisions(payload, inventory, [
+                    {"part": "word/document.xml", "p_idx": 0}
+                ], policy="ACCEPT_EXISTING")
+
+    def test_selective_resolution_requires_exact_structure_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._revision_docx(Path(tmp))
+            payload = source.read_bytes()
+            inventory = build_revision_baseline_inventory(payload)
+            item = next(x for x in inventory["revisions"] if (x.get("details") or {}).get("revision_id") == "1")
+            targets = [{"part": item["part"], "p_idx": item["paragraph_index"]}]
+            report = resolve_historical_revisions(
+                payload, inventory, targets, policy="SELECTIVE_ACCEPT_CONFLICTS",
+                selectively_resolved_ids=[item["structure_id"]],
+            )
+            self.assertEqual(report["status"], "RESOLVED")
+            self.assertEqual(len(report["resolved"]), 1)
+            with self.assertRaisesRegex(ContractError, "SELECTED_REVISION_NOT"):
+                resolve_historical_revisions(
+                    payload, inventory, targets, policy="SELECTIVE_ACCEPT_CONFLICTS",
+                    selectively_resolved_ids=["wrong-id"],
+                )
