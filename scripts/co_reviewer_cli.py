@@ -1143,6 +1143,193 @@ def _verify_format_changes(
     return all_ok, details
 
 
+def _paragraph_character_formats(paragraph: ET.Element) -> list[dict[str, str]]:
+    """Return accepted paragraph characters paired with their direct Run format fingerprint."""
+    excluded = {qn("del"), qn("moveFrom")}
+    rows: list[dict[str, str]] = []
+
+    def visit(node: ET.Element, active_run: ET.Element | None = None) -> None:
+        if node.tag in excluded:
+            return
+        if node.tag == qn("r"):
+            active_run = node
+        signature = _direct_run_format_sha256(active_run) if active_run is not None else hashlib.sha256(b"").hexdigest()
+        if node.tag == qn("t"):
+            rows.extend({"character": character, "format_sha256": signature} for character in (node.text or ""))
+        elif node.tag == qn("tab"):
+            rows.append({"character": "\\t", "format_sha256": signature})
+        elif node.tag in {qn("br"), qn("cr")}:
+            rows.append({"character": "\\n", "format_sha256": signature})
+        else:
+            for child in node:
+                visit(child, active_run)
+
+    visit(paragraph)
+    return rows
+
+
+def _verify_paragraph_format_integrity(
+    source_paragraph: ET.Element,
+    marked_paragraph: ET.Element,
+    apply_results: list[dict[str, Any]],
+    *,
+    part: str,
+    p_idx: int,
+) -> dict[str, Any]:
+    """Prove unchanged characters retain source formatting and mapped insertions use approved source Runs."""
+    source_rows = _paragraph_character_formats(source_paragraph)
+    source_text = "".join(row["character"] for row in source_rows)
+    working = [
+        {"character": row["character"], "source_index": index}
+        for index, row in enumerate(source_rows)
+    ]
+    authorized_format_source_indices: set[int] = set()
+    insertion_map_checks: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    relevant = [
+        item for item in apply_results
+        if (
+            isinstance(item, dict) and item.get("status") == "applied"
+            and item.get("part", "word/document.xml") == part
+            and item.get("p_idx") == p_idx
+        )
+    ]
+    for edit in relevant:
+        current_text = "".join(item["character"] for item in working)
+        anchor = edit.get("find")
+        if not isinstance(anchor, str) or not anchor or current_text.count(anchor) != 1:
+            errors.append("Apply report operations cannot be replayed uniquely for character-format verification.")
+            continue
+        start = current_text.index(anchor)
+        end = start + len(anchor)
+
+        # FormatChange applies to existing characters only. It cannot silently
+        # authorize a newly inserted Run or a text replacement.
+        operations = edit.get("format_operations", [])
+        if not isinstance(operations, list):
+            errors.append("format_operations is not an array.")
+            operations = []
+        for operation in operations:
+            format_anchor = operation.get("find") if isinstance(operation, dict) else None
+            replay_text = "".join(item["character"] for item in working)
+            if not isinstance(format_anchor, str) or not format_anchor or replay_text.count(format_anchor) != 1:
+                errors.append("FormatChange target is not unique during source-format mapping.")
+                continue
+            format_start = replay_text.index(format_anchor)
+            for mapped in working[format_start:format_start + len(format_anchor)]:
+                source_index = mapped.get("source_index")
+                if not isinstance(source_index, int):
+                    errors.append("FormatChange target points to text inserted earlier in the same paragraph.")
+                else:
+                    authorized_format_source_indices.add(source_index)
+
+        pure_format = (
+            anchor == edit.get("replace")
+            and bool(edit.get("format_changes"))
+            and edit.get("delete_revision_id") is None
+            and edit.get("insert_revision_id") is None
+        )
+        if pure_format:
+            continue
+
+        replacement = edit.get("inserted_text")
+        if not isinstance(replacement, str):
+            replacement = edit.get("replace", "")
+        replacement_map = edit.get("replacement_format_map")
+        insert_id = edit.get("insert_revision_id")
+        if replacement and insert_id is not None:
+            actual_insertions = [
+                node for node in marked_paragraph.findall(".//w:ins", NS)
+                if node.get(qn("id")) == str(insert_id)
+            ]
+            if len(actual_insertions) != 1:
+                errors.append("Mapped replacement does not have exactly one insertion wrapper.")
+            else:
+                actual_insert_rows = _paragraph_character_formats(actual_insertions[0])
+                expected_hashes: list[str] = []
+                if replacement_map:
+                    if not isinstance(replacement_map, list):
+                        errors.append("replacement_format_map is not an array.")
+                    else:
+                        for segment in replacement_map:
+                            try:
+                                rep_start = segment["replacement_start"]
+                                rep_end = segment["replacement_end"]
+                                source_offset = segment["source_offset"]
+                                source_anchor = working[start + source_offset]
+                                source_index = source_anchor.get("source_index")
+                                if not isinstance(source_index, int):
+                                    raise ValueError("mapped source Run is not an original source character")
+                                expected_hashes.extend(
+                                    [source_rows[source_index]["format_sha256"]] * (rep_end - rep_start)
+                                )
+                            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                                errors.append(f"Replacement format map cannot resolve to original source text: {exc}")
+                                expected_hashes = []
+                                break
+                else:
+                    source_hashes = [
+                        source_rows[item["source_index"]]["format_sha256"]
+                        for item in working[start:end]
+                        if isinstance(item.get("source_index"), int)
+                    ]
+                    if len(source_hashes) != len(anchor) or len(set(source_hashes)) > 1:
+                        errors.append(
+                            "Replacement spans mixed source formatting but has no complete replacement_format_map."
+                        )
+                    elif source_hashes:
+                        expected_hashes = [source_hashes[0]] * len(replacement)
+                actual_hashes = [row["format_sha256"] for row in actual_insert_rows]
+                map_ok = (
+                    len(actual_hashes) == len(replacement)
+                    and len(expected_hashes) == len(replacement)
+                    and actual_hashes == expected_hashes
+                )
+                insertion_map_checks.append({
+                    "insert_revision_id": insert_id,
+                    "replacement_characters": len(replacement),
+                    "format_map_supplied": bool(replacement_map),
+                    "passed": map_ok,
+                })
+                if not map_ok:
+                    errors.append("Inserted replacement Run formatting does not match its approved source-format map.")
+
+        working[start:end] = [
+            {"character": character, "source_index": None}
+            for character in replacement
+        ]
+
+    marked_rows = _paragraph_character_formats(marked_paragraph)
+    expected_text = "".join(item["character"] for item in working)
+    marked_text = "".join(row["character"] for row in marked_rows)
+    if expected_text != marked_text:
+        errors.append("Accepted paragraph character sequence differs from the ordered Apply operation replay.")
+    elif len(working) == len(marked_rows):
+        for output_index, mapped in enumerate(working):
+            source_index = mapped.get("source_index")
+            if not isinstance(source_index, int) or source_index in authorized_format_source_indices:
+                continue
+            if source_rows[source_index]["format_sha256"] != marked_rows[output_index]["format_sha256"]:
+                errors.append(
+                    f"Unchanged source character at offset {source_index} has a different direct Run format."
+                )
+                break
+    return {
+        "passed": not errors,
+        "source_characters": len(source_rows),
+        "marked_characters": len(marked_rows),
+        "unchanged_characters_checked": sum(
+            1 for item in working
+            if isinstance(item.get("source_index"), int)
+            and item.get("source_index") not in authorized_format_source_indices
+        ),
+        "authorized_format_characters": len(authorized_format_source_indices),
+        "replacement_format_maps": insertion_map_checks,
+        "errors": errors,
+    }
+
+
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Mechanically verify each planned Track Changes edit in its generated DOCX."""
     report_index = {}
@@ -1347,6 +1534,10 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     edit.get("format_changes", []),
                     edit.get("format_operations", []),
                 )
+                format_integrity = _verify_paragraph_format_integrity(
+                    source_paragraphs[p_idx], paragraph,
+                    document_report.get("results", []), part=part, p_idx=p_idx,
+                )
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
                     "delete_revision_id": delete_id, "insert_revision_id": insert_id,
@@ -1355,11 +1546,13 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "inserted_run_format_preserved": native_script_format_preserved,
                     "format_change_preserved": format_changes_preserved,
                     "format_change_details": format_change_details,
+                    "format_integrity": format_integrity,
                 }
                 result["p_idx"] = p_idx
                 if (
                     old_ok and new_ok and native_script_format_preserved
-                    and format_changes_preserved and exact_target_position
+                    and format_changes_preserved and format_integrity["passed"]
+                    and exact_target_position
                 ):
                     result["status"] = "verified"
                 elif not exact_target_position:
@@ -1371,6 +1564,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     result["reason"] = "Inserted Run formatting (font, size, bold, italic, script or direct properties) changed after Apply."
                 elif not format_changes_preserved:
                     result["reason"] = "A FormatChange revision or its old effective-property snapshot does not match the approved operation."
+                elif not format_integrity["passed"]:
+                    result["reason"] = "; ".join(format_integrity["errors"][:4])
                 else:
                     result["reason"] = "Expected deleted or inserted text was not found in the target paragraph."
             except (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.XMLSyntaxError) as exc:
