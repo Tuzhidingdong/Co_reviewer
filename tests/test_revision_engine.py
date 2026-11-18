@@ -152,10 +152,32 @@ class RevisionEngineTests(unittest.TestCase):
                 if "".join(node.text or "" for node in run.findall("w:t", cli.NS)) == "Journal Name"
             )
             self.assertIsNotNone(journal.find("w:rPr/w:i", cli.NS))
+            self.assertEqual(paragraph.findall(".//w:del", cli.NS), [])
+            self.assertEqual(paragraph.findall(".//w:ins", cli.NS), [])
             snapshot = journal.find("w:rPr/w:rPrChange/w:rPr", cli.NS)
             self.assertIsNotNone(snapshot)
             self.assertEqual(snapshot.find("w:i", cli.NS).get(cli.qn("val")), "0")
         self.assertEqual(len(report["results"][0]["format_changes"]), 1)
+        applied = dict(report["results"][0])
+        applied.update({
+            "revision_item_id": "R-FORMAT",
+            "document": "Manuscript",
+            "location": "Reference list",
+        })
+        report["results"][0].update(applied)
+        verification = cli.verify_apply_report({
+            "revision_items": [{
+                "id": "R-FORMAT", "reviewer": "Reviewer 1", "status": "applied",
+                "targets": [{
+                    "document": "Manuscript", "input_file": str(self.input),
+                    "output_file": str(self.output), "find": "remains in the reference",
+                    "replace": "remains in the reference", "p_idx": 0,
+                    "format_authorization": {"intent": "Restore journal italics"},
+                    "format_operations": [{"find": "Journal Name", "properties": {"i": True}}],
+                }],
+            }]
+        }, [{**report, "input_file": str(self.input), "output_file": str(self.output)}])
+        self.assertTrue(verification["passed"], msg=str(verification["results"]))
 
     def test_trailing_runs_are_preserved_when_target_ends_mid_run(self):
         make_docx(self.input, [[
