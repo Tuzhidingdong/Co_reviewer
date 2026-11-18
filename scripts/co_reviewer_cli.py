@@ -474,6 +474,75 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                                 "requires a non-empty exact text and optional non-empty kind; "
                                 "only kind/text fields are allowed."
                             )
+            format_map = t.get("replacement_format_map")
+            if format_map is not None:
+                if not isinstance(format_map, list) or not format_map:
+                    errors.append(f"{tp}.replacement_format_map must be a non-empty array when supplied.")
+                else:
+                    cursor = 0
+                    for segment_index, segment in enumerate(format_map):
+                        valid_segment = (
+                            isinstance(segment, dict)
+                            and set(segment) == {"replacement_start", "replacement_end", "source_offset"}
+                            and all(
+                                isinstance(segment.get(field), int) and not isinstance(segment.get(field), bool)
+                                for field in ("replacement_start", "replacement_end", "source_offset")
+                            )
+                        )
+                        if not valid_segment:
+                            errors.append(
+                                f"{tp}.replacement_format_map[{segment_index}] requires integer "
+                                "replacement_start/replacement_end/source_offset only."
+                            )
+                            continue
+                        start, end, source_offset = (
+                            segment["replacement_start"], segment["replacement_end"], segment["source_offset"]
+                        )
+                        if (
+                            start != cursor or end <= start or end > len(t.get("replace", ""))
+                            or source_offset < 0 or source_offset >= len(t.get("find", ""))
+                        ):
+                            errors.append(
+                                f"{tp}.replacement_format_map[{segment_index}] is not a contiguous, "
+                                "in-range replacement/source mapping."
+                            )
+                        cursor = end
+                    if cursor != len(t.get("replace", "")):
+                        errors.append(f"{tp}.replacement_format_map must cover the full replacement text.")
+            format_operations = t.get("format_operations", [])
+            if not isinstance(format_operations, list):
+                errors.append(f"{tp}.format_operations must be an array.")
+            else:
+                for format_index, format_operation in enumerate(format_operations):
+                    valid_format = (
+                        isinstance(format_operation, dict)
+                        and isinstance(format_operation.get("find"), str)
+                        and bool(format_operation.get("find", "").strip())
+                        and isinstance(format_operation.get("properties"), dict)
+                        and bool(format_operation.get("properties"))
+                        and not (set(format_operation) - {"find", "properties"})
+                    )
+                    if not valid_format:
+                        errors.append(
+                            f"{tp}.format_operations[{format_index}] requires exact find and non-empty properties only."
+                        )
+            format_authorization = t.get("format_authorization")
+            if format_operations:
+                if (
+                    not isinstance(format_authorization, dict)
+                    or not isinstance(format_authorization.get("intent"), str)
+                    or not format_authorization.get("intent", "").strip()
+                    or set(format_authorization) != {"intent"}
+                ):
+                    errors.append(
+                        f"{tp}.format_authorization.intent is required and may only contain intent."
+                    )
+            elif format_authorization is not None:
+                errors.append(f"{tp}.format_authorization requires format_operations.")
+            if t.get("find") == t.get("replace") and not format_operations:
+                errors.append(
+                    f"{tp} identical find/replace is valid only with explicit FormatChange operations."
+                )
             protected_spans = t.get("protected_spans", [])
             if not isinstance(protected_spans, list) or any(not isinstance(span, dict) for span in protected_spans):
                 errors.append(f"{tp}.protected_spans must be an array of objects.")
