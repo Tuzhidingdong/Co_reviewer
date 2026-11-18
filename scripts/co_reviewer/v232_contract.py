@@ -71,48 +71,52 @@ def extract_immutable_tokens(text: str) -> list[dict[str, Any]]:
             merged.append(item)
     return merged
 
-def _authorized_token_set(authorized: Mapping[str, Any] | None) -> set[tuple[str, str]]:
-    if not authorized:
+def _authorized_token_pairs(authorized: Mapping[str, Any] | None) -> set[tuple[str, str, str]]:
+    """Return exact old->new token authorizations; free-form intent is never sufficient."""
+    if authorized is None:
         return set()
+    if not isinstance(authorized, Mapping):
+        raise ContractError("Authorized Change must be an object")
     raw = authorized.get("explicitly_authorized_tokens", [])
     if not isinstance(raw, list):
         raise ContractError("explicitly_authorized_tokens must be an array")
-    result = set()
+    result: set[tuple[str, str, str]] = set()
     for item in raw:
-        if isinstance(item, str):
-            result.add(("*", re.sub(r"\s+", "", item).replace("−", "-")))
-        elif isinstance(item, Mapping) and isinstance(item.get("text"), str):
-            result.add((str(item.get("kind", "*")), re.sub(r"\s+", "", item["text"]).replace("−", "-")))
-        else:
-            raise ContractError("Malformed explicitly authorized token")
+        if not isinstance(item, Mapping) or not isinstance(item.get("text"), str) or not isinstance(item.get("replacement"), str):
+            raise ContractError("Each authorized token requires exact text and replacement strings")
+        kind = str(item.get("kind", "*"))
+        normalize = lambda value: re.sub(r"\\s+", "", value).replace("−", "-")
+        result.add((kind, normalize(item["text"]), normalize(item["replacement"])))
     return result
+
 
 def validate_immutable_token_lock(original: str, proposed: str,
                                   authorized: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Reject edits that alter/remove protected numeric/scientific/reference anchors."""
+    """Enforce ordered, exact old->new authorization for every protected-token change."""
     before, after = extract_immutable_tokens(original), extract_immutable_tokens(proposed)
-    allowed = _authorized_token_set(authorized)
-    # Multiset matching preserves repeated values and order. A token can be changed
-    # only when its exact old value is explicitly authorized by the approved plan.
-    remaining = list(after)
-    missing = []
-    for token in before:
-        key = (token["kind"], token["normalized"])
-        match_index = next((i for i, candidate in enumerate(remaining)
-                            if candidate["kind"] == token["kind"] and candidate["normalized"] == token["normalized"]), None)
-        if match_index is not None:
-            remaining.pop(match_index)
-        elif key in allowed or ("*", token["normalized"]) in allowed:
+    allowed = _authorized_token_pairs(authorized)
+    before_keys = [(x["kind"], x["normalized"]) for x in before]
+    after_keys = [(x["kind"], x["normalized"]) for x in after]
+    matcher = difflib.SequenceMatcher(a=before_keys, b=after_keys, autojunk=False)
+    conflicts = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
             continue
-        else:
-            missing.append(token)
-    if missing:
+        old_group, new_group = before[i1:i2], after[j1:j2]
+        if len(old_group) != 1 or len(new_group) != 1:
+            conflicts.append({"old_tokens": old_group, "new_tokens": new_group, "reason": "NON_ATOMIC_TOKEN_CHANGE"})
+            continue
+        old_token, new_token = old_group[0], new_group[0]
+        pair = (old_token["kind"], old_token["normalized"], new_token["normalized"])
+        wildcard_pair = ("*", old_token["normalized"], new_token["normalized"])
+        if pair not in allowed and wildcard_pair not in allowed:
+            conflicts.append({"old_tokens": old_group, "new_tokens": new_group, "reason": "PAIR_NOT_AUTHORIZED"})
+    if conflicts:
         return {"status": "UNPROTECTED_TOKEN_TOUCHED", "allowed": False,
-                "missing_tokens": missing, "added_tokens": remaining}
-    return {"status": "PASS", "allowed": True, "missing_tokens": [], "added_tokens": remaining}
+                "conflicts": conflicts, "missing_tokens": [x for c in conflicts for x in c["old_tokens"]],
+                "added_tokens": [x for c in conflicts for x in c["new_tokens"]]}
+    return {"status": "PASS", "allowed": True, "conflicts": [], "missing_tokens": [], "added_tokens": []}
 
-def _word_tokens(text: str) -> list[str]:
-    return re.findall(r"\s+|[^\W_]+(?:['’][^\W_]+)?|_+|[^\w\s]", text, flags=re.UNICODE)
 
 def myers_diff(a: Sequence[str], b: Sequence[str]) -> list[tuple[str, str]]:
     """Myers O((N+M)D) shortest edit script over token sequences."""

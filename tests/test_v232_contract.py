@@ -27,7 +27,7 @@ class V232ContractTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["status"], "UNPROTECTED_TOKEN_TOUCHED")
         allowed = validate_immutable_token_lock(original, changed, {
-            "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0"}]
+            "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "125"}]
         })
         self.assertTrue(allowed["allowed"])
 
@@ -160,6 +160,41 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(result["historical_revision_policy"], "PASS_NO_UNREGISTERED_REVISION_IDS")
         with self.assertRaisesRegex(ContractError, "HISTORICAL_REVISION_POLICY_BLOCKED"):
             compile_clean_from_marked(payload.getvalue(), expected_revision_ids=[])
+
+
+    def test_token_lock_blocks_unapproved_insertions_and_reordering(self):
+        inserted = validate_immutable_token_lock("The result was stable.", "The result was 99 stable.")
+        self.assertFalse(inserted["allowed"])
+        reordered = validate_immutable_token_lock("The values were 10 and 20 mg.", "The values were 20 and 10 mg.")
+        self.assertFalse(reordered["allowed"])
+
+    def test_token_lock_requires_exact_old_to_new_authorization(self):
+        original = "The value was 125.0 mg."
+        proposed = "The value was 125 mg."
+        wrong_pair = validate_immutable_token_lock(original, proposed, {
+            "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "126"}]
+        })
+        self.assertFalse(wrong_pair["allowed"])
+        exact_pair = validate_immutable_token_lock(original, proposed, {
+            "explicitly_authorized_tokens": [{"kind": "number", "text": "125.0", "replacement": "125"}]
+        })
+        self.assertTrue(exact_pair["allowed"])
+
+    def test_engine_requires_explicit_authorized_change(self):
+        from co_reviewer.document_engine import prepare_document
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.docx"
+            output = Path(tmp) / "output.docx"
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as z:
+                z.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+                z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+                z.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+                z.writestr("word/document.xml", f'<w:document xmlns:w="{W}"><w:body><w:p><w:r><w:t>plain wording</w:t></w:r></w:p><w:sectPr/></w:body></w:document>')
+            source.write_bytes(payload.getvalue())
+            with self.assertRaisesRegex(ValueError, "EXPLICIT_AUTHORIZED_CHANGE_REQUIRED"):
+                prepare_document(str(source), str(output), [{"p_idx": 0, "find": "plain", "replace": "clear"}], "Tester")
+            self.assertFalse(output.exists())
 
 if __name__ == "__main__":
     unittest.main()
