@@ -1431,9 +1431,17 @@ class BoundedQARemediationEvidenceTests(unittest.TestCase):
             (Path(__file__).resolve().parents[1] / "schemas" / "final-release-manifest.schema.json")
             .read_text(encoding="utf-8")
         )
-        validator = Draft202012Validator(schema["properties"]["qa_remediation"])
-        validator.validate({"status": "NOT_USED", "remediation_round": 0})
-        validator.validate({
+        validator = Draft202012Validator(schema)
+
+        def qa_branch_is_valid(value):
+            errors = list(validator.iter_errors({"qa_remediation": value}))
+            return not any(
+                error.absolute_path and error.absolute_path[0] == "qa_remediation"
+                for error in errors
+            )
+
+        self.assertTrue(qa_branch_is_valid({"status": "NOT_USED", "remediation_round": 0}))
+        self.assertTrue(qa_branch_is_valid({
             "status": "PASS",
             "remediation_round": 1,
             "patch_id": "PATCH-1",
@@ -1444,14 +1452,12 @@ class BoundedQARemediationEvidenceTests(unittest.TestCase):
             },
             "marked": {"file": "marked.docx", "sha256": "c" * 64},
             "clean": {"file": "clean.docx", "sha256": "d" * 64},
-        })
-        with self.assertRaises(Exception):
-            validator.validate({"status": "BLOCKED", "remediation_round": 1})
-        with self.assertRaises(Exception):
-            validator.validate({
-                "status": "NOT_USED", "remediation_round": 0,
-                "patch_id": "unexpected",
-            })
+        }))
+        self.assertFalse(qa_branch_is_valid({"status": "BLOCKED", "remediation_round": 1}))
+        self.assertFalse(qa_branch_is_valid({
+            "status": "NOT_USED", "remediation_round": 0,
+            "patch_id": "unexpected",
+        }))
 
 if __name__ == "__main__":
     unittest.main()
