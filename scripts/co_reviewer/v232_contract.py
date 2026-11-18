@@ -213,7 +213,12 @@ def narrow_revision(original: str, proposed: str, *,
                     or not isinstance(end, int) or isinstance(end, bool)
                     or start < 0 or end <= start or end > len(original)):
                 raise ContractError("Invalid protected span")
-            if edit_start < end and edit_end > start and (start, end) not in authorized_spans:
+            overlaps = (
+                start <= edit_start < end
+                if edit_start == edit_end
+                else edit_start < end and edit_end > start
+            )
+            if overlaps and (start, end) not in authorized_spans:
                 protected_hits.append({"span": dict(span), "edit": edit, "reason": "PROTECTED_SPAN_NOT_AUTHORIZED"})
     return {"status": "PASS" if lock["allowed"] and not protected_hits else "BLOCKED",
             "edits": edits, "token_lock": lock, "protected_span_conflicts": protected_hits,

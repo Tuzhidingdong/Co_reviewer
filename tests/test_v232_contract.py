@@ -202,6 +202,10 @@ class V232ContractTests(unittest.TestCase):
                                        "explicitly_authorized_spans": [{"start": 0, "end": 5}]},
                                    protected_spans=[{"start": 0, "end": 5}])
         self.assertEqual(approved["status"], "PASS")
+        insertion = narrow_revision("alpha beta", "alpha X beta",
+                                    authorized_change={"intent": "Insert phrase"},
+                                    protected_spans=[{"start": 0, "end": 10}])
+        self.assertEqual(insertion["status"], "BLOCKED")
 
 if __name__ == "__main__":
     unittest.main()
