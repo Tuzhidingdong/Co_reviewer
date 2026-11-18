@@ -1159,11 +1159,15 @@ def _paragraph_character_formats(paragraph: ET.Element) -> list[dict[str, str]]:
             active_run = node
         signature = _direct_run_format_sha256(active_run) if active_run is not None else hashlib.sha256(b"").hexdigest()
         if node.tag == qn("t"):
-            rows.extend({"character": character, "format_sha256": signature} for character in (node.text or ""))
+            rows.extend({
+                "character": character,
+                "format_sha256": signature,
+                "run_node": active_run,
+            } for character in (node.text or ""))
         elif node.tag == qn("tab"):
-            rows.append({"character": "\\t", "format_sha256": signature})
+            rows.append({"character": "\\t", "format_sha256": signature, "run_node": active_run})
         elif node.tag in {qn("br"), qn("cr")}:
-            rows.append({"character": "\\n", "format_sha256": signature})
+            rows.append({"character": "\\n", "format_sha256": signature, "run_node": active_run})
         else:
             for child in node:
                 visit(child, active_run)
@@ -1252,6 +1256,28 @@ def _verify_paragraph_format_integrity(
             else:
                 actual_insert_rows = _paragraph_character_formats(actual_insertions[0])
                 expected_hashes: list[str] = []
+                def expected_run_hash(source_index: int, vertical_alignment: str | None,
+                                      apply_script_alignment: bool) -> str:
+                    source_run = source_rows[source_index].get("run_node")
+                    if source_run is None:
+                        raise ValueError("source character is not inside an ordinary Run.")
+                    expected_run = copy.deepcopy(source_run)
+                    if apply_script_alignment:
+                        _set_run_property(expected_run, "vertAlign", vertical_alignment)
+                    return _direct_run_format_sha256(expected_run)
+
+                def append_expected_segment(
+                    replacement_start: int, replacement_end: int, source_index: int
+                ) -> None:
+                    segment_text = replacement[replacement_start:replacement_end]
+                    has_explicit_script = any(_script_character(character) for character in segment_text)
+                    for character in segment_text:
+                        script = _script_character(character)
+                        alignment = script[0] if script else None
+                        expected_hashes.append(
+                            expected_run_hash(source_index, alignment, has_explicit_script)
+                        )
+
                 if replacement_map:
                     if not isinstance(replacement_map, list):
                         errors.append("replacement_format_map is not an array.")
@@ -1265,25 +1291,33 @@ def _verify_paragraph_format_integrity(
                                 source_index = source_anchor.get("source_index")
                                 if not isinstance(source_index, int):
                                     raise ValueError("mapped source Run is not an original source character")
-                                expected_hashes.extend(
-                                    [source_rows[source_index]["format_sha256"]] * (rep_end - rep_start)
-                                )
+                                append_expected_segment(rep_start, rep_end, source_index)
                             except (KeyError, IndexError, TypeError, ValueError) as exc:
                                 errors.append(f"Replacement format map cannot resolve to original source text: {exc}")
                                 expected_hashes = []
                                 break
                 else:
-                    source_hashes = [
-                        source_rows[item["source_index"]]["format_sha256"]
-                        for item in working[start:end]
-                        if isinstance(item.get("source_index"), int)
+                    source_indices = [
+                        item.get("source_index") for item in working[start:end]
                     ]
-                    if len(source_hashes) != len(anchor) or len(set(source_hashes)) > 1:
+                    source_hashes = [
+                        source_rows[index]["format_sha256"]
+                        for index in source_indices if isinstance(index, int)
+                    ]
+                    if (
+                        len(source_hashes) != len(anchor)
+                        or len(set(source_hashes)) > 1
+                        or not source_indices
+                        or not isinstance(source_indices[0], int)
+                    ):
                         errors.append(
                             "Replacement spans mixed source formatting but has no complete replacement_format_map."
                         )
-                    elif source_hashes:
-                        expected_hashes = [source_hashes[0]] * len(replacement)
+                    else:
+                        # The legacy writer inherits the first matched Run's format.
+                        # Explicit Unicode script characters intentionally override only
+                        # vertAlign; all other direct Run properties remain source-derived.
+                        append_expected_segment(0, len(replacement), source_indices[0])
                 actual_hashes = [row["format_sha256"] for row in actual_insert_rows]
                 map_ok = (
                     len(actual_hashes) == len(replacement)
