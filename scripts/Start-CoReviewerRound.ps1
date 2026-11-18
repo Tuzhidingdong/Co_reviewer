@@ -183,6 +183,11 @@ if ($siCopy) {
     }
 }
 
+$revisionBaselineHashes = [ordered]@{}
+foreach ($baselineRow in $revisionBaselineRows) {
+    $revisionBaselineHashes[$baselineRow.role] = $baselineRow.report_sha256
+}
+
 $manifest = [ordered]@{
     schema_version = "1.0"
     review_round_id = $roundId
@@ -211,7 +216,7 @@ $manifest = [ordered]@{
         review_audit_report = (Get-Sha256 $auditJsonPath)
         review_audit_markdown = (Get-Sha256 $auditMarkdownPath)
         decision_queue = (Get-Sha256 $decisionQueuePath)
-        revision_baselines = @($revisionBaselineRows | ForEach-Object { [pscustomobject]@{ role = $_.role; sha256 = $_.report_sha256 } })
+        revision_baselines = $revisionBaselineHashes
     }
     revision_baselines = $revisionBaselineRows
     workflow_ledger = (Join-Path $planDir "workflow_ledger.json")

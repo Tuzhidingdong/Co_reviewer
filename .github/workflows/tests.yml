@@ -58,15 +58,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: python -m pip install -e ".[test]"
-      - name: Parse PowerShell quality-check script
+      - name: Parse all PowerShell entry points
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("scripts/run_quality_checks.ps1", [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
+          $scriptFiles = Get-ChildItem -LiteralPath "scripts" -Filter "*.ps1" -File -Recurse
+          foreach ($scriptFile in $scriptFiles) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Error ("PowerShell parse failed: " + $scriptFile.FullName)
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
           }
       - name: Run PowerShell 5.1 quality-check script
         shell: powershell
