@@ -1517,7 +1517,11 @@ class RevisionLedger:
                 raise RevisionModelError(
                     f"Legacy revision plan target count differs for patch {patch_id}."
                 )
-            fields = ("document", "input_file", "output_file", "part", "p_idx", "find", "replace", "location", "operation_id", "source_comment_ids", "location_phrase")
+            fields = (
+                "document", "input_file", "output_file", "part", "p_idx", "find",
+                "replace", "location", "operation_id", "source_comment_ids",
+                "location_phrase", "authorized_change", "protected_spans",
+            )
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
                 if not isinstance(actual_target, Mapping) or any(
                     actual_target.get(field) != expected_target.get(field)
@@ -1904,6 +1908,19 @@ class RevisionLedger:
                 raise RevisionModelError(f"Patch {patch_id} preflight fingerprint changed before approval.")
             if approval_fp != revision_item_fingerprint(dict(item)):
                 raise RevisionModelError(f"Patch {patch_id} approval fingerprint is stale or invalid.")
+            # Persist the human-approved authorization metadata in the typed
+            # Patch model so a later Ledger export cannot silently lose it.
+            approved_targets = item.get("targets", [])
+            if len(approved_targets) != len(patch.operations):
+                raise RevisionModelError(f"Approved target count changed for Patch {patch_id}.")
+            patch.operations = [
+                replace(
+                    operation,
+                    authorized_change=target.get("authorized_change"),
+                    protected_spans=tuple(target.get("protected_spans", [])),
+                )
+                for operation, target in zip(patch.operations, approved_targets)
+            ]
             patch.approval_fingerprint = approval_fp
             patch.status = "approved"
             self.events.append(RevisionEvent(

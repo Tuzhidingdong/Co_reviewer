@@ -19,8 +19,18 @@ from typing import Any, Mapping
 
 
 def revision_targets_fingerprint(item: dict[str, Any]) -> str:
-    """Fingerprint the exact target anchors and source DOCX versions checked by preflight."""
-    payload = {"targets": item.get("targets", [])}
+    """Fingerprint edit anchors and source versions; approval metadata is sealed separately."""
+    target_fields = (
+        "document", "input_file", "output_file", "part", "p_idx", "find",
+        "replace", "location", "operation_id", "source_comment_ids",
+        "location_phrase", "source_sha256",
+    )
+    targets = [
+        {key: target.get(key) for key in target_fields if key in target}
+        for target in item.get("targets", [])
+        if isinstance(target, dict)
+    ]
+    payload = {"targets": targets}
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
