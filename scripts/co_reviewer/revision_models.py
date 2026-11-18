@@ -245,9 +245,9 @@ class PatchOperation:
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
-            "replacement_format_map": [dict(x) for x in self.replacement_format_map],
-            "format_authorization": dict(self.format_authorization) if self.format_authorization is not None else None,
-            "format_operations": [dict(x) for x in self.format_operations],
+            **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
+            **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
+            **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
         }
 
     def to_legacy_target(self) -> dict[str, Any]:
@@ -265,9 +265,9 @@ class PatchOperation:
             "location_phrase": self.location_phrase,
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
-            "replacement_format_map": [dict(x) for x in self.replacement_format_map],
-            "format_authorization": dict(self.format_authorization) if self.format_authorization is not None else None,
-            "format_operations": [dict(x) for x in self.format_operations],
+            **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
+            **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
+            **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
