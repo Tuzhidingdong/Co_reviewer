@@ -285,6 +285,57 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual(len(result["lineage"]), 2)
 
 
+
+    def test_reference_graph_normalizes_aliases_and_keeps_word_paragraph_anchors(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 2,
+                 "text": "Figure 2a. Main result. See Fig. 2a."},
+                {"part": "word/document.xml", "paragraph_index": 5,
+                 "text": "Equation (3). Governing expression."},
+            ],
+            "SI": [
+                {"part": "word/document.xml", "paragraph_index": 7,
+                 "text": "See Eq. (3) and Figure 2a."},
+            ],
+            "Response": [
+                {"part": "word/document.xml", "paragraph_index": 1,
+                 "text": "We revised Figure 2a and Eq. (3)."},
+            ],
+        })
+        equation_mention = next(
+            item for item in graph["mentions"]
+            if item["document"] == "SI" and item["kind"] == "equation"
+        )
+        self.assertEqual(equation_mention["resolution"], "resolved")
+        self.assertEqual(equation_mention["resolution_scope"], "package")
+        self.assertEqual(equation_mention["part"], "word/document.xml")
+        self.assertEqual(equation_mention["paragraph_index"], 7)
+        figure_mention = next(
+            item for item in graph["mentions"]
+            if item["document"] == "SI" and item["kind"] == "figure"
+        )
+        self.assertEqual(figure_mention["resolution"], "resolved")
+        self.assertEqual(
+            figure_mention["target_definition_ids"][0],
+            next(d["id"] for d in graph["definitions"]
+                 if d["document"] == "Manuscript" and d["number"] == "2a"),
+        )
+
+    def test_reference_graph_prefers_local_numbering_and_preserves_ambiguity(self):
+        graph = build_package_reference_graph({
+            "Manuscript": "Figure 1. Main manuscript result. See Figure 1.",
+            "SI": "Figure 1. Supplementary result. See Figure 1.",
+            "Response": "See Figure 1.",
+        })
+        local = next(m for m in graph["mentions"] if m["document"] == "Manuscript")
+        self.assertEqual(local["resolution"], "resolved")
+        self.assertEqual(local["resolution_scope"], "document")
+        response = next(m for m in graph["mentions"] if m["document"] == "Response")
+        self.assertEqual(response["resolution"], "ambiguous")
+        self.assertEqual(len(response["candidate_definition_ids"]), 2)
+
+
     def test_effective_run_properties_resolves_default_style_theme_and_overlay_precedence(self):
         styles = f'''<w:styles xmlns:w="{W}">
           <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:i/></w:rPr></w:rPrDefault></w:docDefaults>

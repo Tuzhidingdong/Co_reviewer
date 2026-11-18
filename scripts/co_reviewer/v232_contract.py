@@ -533,53 +533,181 @@ def apply_micro_typography(text: str, decisions: Sequence[Mapping[str, Any]]) ->
 
 # Package-wide directed graph: each DOCX is a node; definitions and mentions
 # are separate records. Ambiguous matches remain unresolved, never guessed.
-_CAPTION = re.compile(r"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)\s*\(?\s*(S?\d+(?:\.\d+)*)\)?\b")
-_MENTION = re.compile(r"\b(Fig(?:ure)?\.?|Table|Eq(?:uation)?\.?|Scheme|Section)\s*\(?\s*(S?\d+(?:\.\d+)*)\)?\b", re.I)
-def build_package_reference_graph(documents: Mapping[str, str]) -> dict[str, Any]:
+_REFERENCE_LABELS = {
+    "figure": "figure", "fig": "figure", "fig.": "figure", "figures": "figure", "figs": "figure", "figs.": "figure",
+    "table": "table", "tables": "table",
+    "equation": "equation", "eq": "equation", "eq.": "equation", "equations": "equation", "eqs": "equation",
+    "scheme": "scheme", "schemes": "scheme",
+    "section": "section", "sections": "section",
+}
+_REFERENCE_NUMBER = r"(S?\d+(?:\.\d+)*(?:[A-Za-z])?)"
+_CAPTION = re.compile(
+    rf"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
+    rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
+)
+_MENTION = re.compile(
+    rf"\b(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
+    rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=$|[\s,.;:)\]])",
+    re.I,
+)
+
+
+def _canonical_reference_kind(value: str) -> str:
+    key = value.casefold()
+    return _REFERENCE_LABELS.get(key, _REFERENCE_LABELS.get(key.rstrip("."), key.rstrip(".")))
+
+
+def _reference_segments(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        return [
+            {"part": "text", "paragraph_index": index, "text": line}
+            for index, line in enumerate(value.splitlines() or [value])
+        ]
+    if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
+        raise ContractError("Document reference content must be text or an array of paragraph segments")
+    segments = []
+    seen_locations = set()
+    for index, row in enumerate(value):
+        if not isinstance(row, Mapping):
+            raise ContractError("Reference paragraph segments must be objects")
+        part = row.get("part", "word/document.xml")
+        paragraph_index = row.get("paragraph_index", index)
+        text_value = row.get("text")
+        if not isinstance(part, str) or not part.strip():
+            raise ContractError("Reference segment part must be a non-empty string")
+        if not isinstance(paragraph_index, int) or isinstance(paragraph_index, bool) or paragraph_index < 0:
+            raise ContractError("Reference segment paragraph_index must be a non-negative integer")
+        if not isinstance(text_value, str):
+            raise ContractError("Reference segment text must be a string")
+        key = (part, paragraph_index)
+        if key in seen_locations:
+            raise ContractError("Duplicate reference segment location: " + repr(key))
+        seen_locations.add(key)
+        segments.append({"part": part, "paragraph_index": paragraph_index, "text": text_value})
+    return segments
+
+
+def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
+    """Extract text with exact Word part and paragraph anchors for graph construction."""
+    import zipfile
+    source = Path(path)
+    if not source.is_file() or source.suffix.casefold() != ".docx":
+        raise ContractError("Reference graph input must be an existing DOCX")
+    allowed = re.compile(r"^word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$")
+    segments = []
+    with zipfile.ZipFile(source, "r") as archive:
+        for name in sorted(set(archive.namelist())):
+            if not allowed.match(name):
+                continue
+            root = _xml(archive.read(name))
+            for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
+                value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
+                if value.strip():
+                    segments.append({"part": name, "paragraph_index": paragraph_index, "text": value})
+    return segments
+
+
+def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a package-wide graph with Word part/paragraph anchors.
+
+    Local definitions are preferred for same-document references. Cross-document
+    resolution is allowed only when exactly one package definition matches;
+    multiple candidates remain ambiguous and require explicit user mapping.
+    """
     if not isinstance(documents, Mapping) or not documents:
         raise ContractError("Package graph requires at least one named document")
-    definitions, mentions = [], []
-    for doc_id, text in documents.items():
-        if not isinstance(doc_id, str) or not isinstance(text, str):
-            raise ContractError("Document IDs and text must be strings")
-        for m in _CAPTION.finditer(text):
-            definitions.append({"id": "def-" + hashlib.sha1((doc_id + str(m.start()) + m.group()).encode()).hexdigest()[:12],
-                                "document": doc_id, "kind": m.group(1).casefold(),
-                                "number": m.group(2), "text": m.group(), "offset": m.start()})
-        for m in _MENTION.finditer(text):
-            mentions.append({"id": "men-" + hashlib.sha1((doc_id + str(m.start()) + m.group()).encode()).hexdigest()[:12],
-                             "document": doc_id, "kind": m.group(1).casefold(),
-                             "number": m.group(2), "text": m.group(), "offset": m.start(),
-                             "target_definition_ids": []})
-    # Caption labels are definitions, not self-referential mentions. Keep
-    # references appearing later in caption prose.
-    mentions = [
-        mention for mention in mentions
-        if not any(
-            definition["document"] == mention["document"]
-            and definition["offset"] <= mention["offset"] < definition["offset"] + len(definition["text"])
-            for definition in definitions
-        )
-    ]
+    definitions: list[dict[str, Any]] = []
+    mentions: list[dict[str, Any]] = []
+    normalized_documents: dict[str, list[dict[str, Any]]] = {}
+    for doc_id, raw_content in documents.items():
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            raise ContractError("Document IDs must be non-empty strings")
+        segments = _reference_segments(raw_content)
+        normalized_documents[doc_id] = segments
+        for segment in segments:
+            text_value = segment["text"]
+            base = {
+                "document": doc_id,
+                "part": segment["part"],
+                "paragraph_index": segment["paragraph_index"],
+            }
+            caption_spans = []
+            for match in _CAPTION.finditer(text_value):
+                kind = _canonical_reference_kind(match.group(1))
+                number = match.group(2)
+                record_id = "def-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(match.start()) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                definitions.append({
+                    "id": record_id, **base, "kind": kind, "number": number,
+                    "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                })
+                caption_spans.append(match.span())
+            for match in _MENTION.finditer(text_value):
+                start_offset, end_offset = match.span()
+                if any(start_offset >= left and end_offset <= right for left, right in caption_spans):
+                    continue
+                kind = _canonical_reference_kind(match.group(1))
+                number = match.group(2)
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(start_offset) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                mentions.append({
+                    "id": record_id, **base, "kind": kind, "number": number,
+                    "text": match.group(), "offset": start_offset, "end_offset": end_offset,
+                    "target_definition_ids": [], "resolution": "unresolved",
+                })
+    definitions_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for definition in definitions:
+        key = (definition["kind"], definition["number"].casefold())
+        definitions_by_key.setdefault(key, []).append(definition)
     for mention in mentions:
-        candidates = [d for d in definitions if d["kind"].startswith(mention["kind"][:3])
-                      and d["number"].casefold() == mention["number"].casefold()]
-        if len(candidates) == 1:
-            mention["target_definition_ids"] = [candidates[0]["id"]]
+        key = (mention["kind"], mention["number"].casefold())
+        candidates = definitions_by_key.get(key, [])
+        local_candidates = [item for item in candidates if item["document"] == mention["document"]]
+        chosen_pool = local_candidates if local_candidates else candidates
+        mention["resolution_scope"] = "document" if local_candidates else "package"
+        if len(chosen_pool) == 1:
+            mention["target_definition_ids"] = [chosen_pool[0]["id"]]
             mention["resolution"] = "resolved"
-        elif not candidates:
-            mention["resolution"] = "unresolved"
-        else:
+        elif chosen_pool:
             mention["resolution"] = "ambiguous"
-            mention["candidate_definition_ids"] = [d["id"] for d in candidates]
-    edges = [{"source_document": m["document"], "mention_id": m["id"],
-              "target_definition_id": target,
-              "target_document": next(d["document"] for d in definitions if d["id"] == target)}
-             for m in mentions for target in m["target_definition_ids"]]
-    return {"schema_version": "1.0", "documents": sorted(documents),
-            "definitions": definitions, "mentions": mentions, "edges": edges,
-            "unresolved_count": sum(m["resolution"] != "resolved" for m in mentions),
-            "numbering_mutation_authorized": False}
+            mention["candidate_definition_ids"] = [item["id"] for item in chosen_pool]
+        else:
+            mention["resolution"] = "unresolved"
+    definitions_by_id = {item["id"]: item for item in definitions}
+    edges = [{
+        "source_document": mention["document"],
+        "source_part": mention["part"],
+        "source_paragraph_index": mention["paragraph_index"],
+        "mention_id": mention["id"],
+        "target_definition_id": definition_id,
+        "target_document": definitions_by_id[definition_id]["document"],
+        "target_part": definitions_by_id[definition_id]["part"],
+        "target_paragraph_index": definitions_by_id[definition_id]["paragraph_index"],
+    } for mention in mentions for definition_id in mention["target_definition_ids"]]
+    return {
+        "schema_version": "1.1",
+        "documents": sorted(normalized_documents),
+        "document_segments": {
+            doc_id: [{"part": item["part"], "paragraph_index": item["paragraph_index"]} for item in segments]
+            for doc_id, segments in sorted(normalized_documents.items())
+        },
+        "definitions": definitions,
+        "mentions": mentions,
+        "edges": edges,
+        "unresolved_count": sum(item["resolution"] != "resolved" for item in mentions),
+        "ambiguous_count": sum(item["resolution"] == "ambiguous" for item in mentions),
+        "numbering_mutation_authorized": False,
+    }
+
+
+def extract_docx_text_for_reference_graph(path: str | Path) -> str:
+    """Compatibility text view; graph construction should use segment extraction."""
+    return "\n".join(item["text"] for item in extract_docx_reference_segments(path))
+
 
 def renumber_reference_graph(graph: Mapping[str, Any],
                              number_map: Mapping[str, str],

@@ -62,7 +62,8 @@ from co_reviewer.v232_contract import (
     ContractError, narrow_revision, build_package_reference_graph,
     commit_document_package, compile_clean_from_marked,
     build_revision_baseline_inventory, targeted_revision_gate,
-    extract_docx_text_for_reference_graph, renumber_reference_graph,
+    extract_docx_text_for_reference_graph, extract_docx_reference_segments,
+    renumber_reference_graph,
     collect_revision_ids_from_lineage,
 )
 
@@ -5385,7 +5386,7 @@ def cmd_build_package_reference_graph(args):
         role, filename = item.split("=", 1)
         if not role or role in documents:
             raise ValueError("Document roles must be non-empty and unique")
-        documents[role] = extract_docx_text_for_reference_graph(filename)
+        documents[role] = extract_docx_reference_segments(filename)
     report = build_package_reference_graph(documents)
     if args.out:
         write_json_atomic(Path(args.out), report)
