@@ -1425,5 +1425,33 @@ class BoundedQARemediationEvidenceTests(unittest.TestCase):
             validate_qa_remediation_eligibility(wrong, {"find": operation.find, "replace": operation.replace})
 
 
+
+    def test_release_manifest_schema_models_not_used_and_completed_qa_remediation(self):
+        schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "final-release-manifest.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema["properties"]["qa_remediation"])
+        validator.validate({"status": "NOT_USED", "remediation_round": 0})
+        validator.validate({
+            "status": "PASS",
+            "remediation_round": 1,
+            "patch_id": "PATCH-1",
+            "batch_id": "BATCH-1",
+            "pre_remediation_qa_report": {"file": "before.json", "sha256": "a" * 64},
+            "post_remediation_qa_report": {
+                "file": "after.json", "sha256": "b" * 64, "status": "PASS_WITH_WARNINGS",
+            },
+            "marked": {"file": "marked.docx", "sha256": "c" * 64},
+            "clean": {"file": "clean.docx", "sha256": "d" * 64},
+        })
+        with self.assertRaises(Exception):
+            validator.validate({"status": "BLOCKED", "remediation_round": 1})
+        with self.assertRaises(Exception):
+            validator.validate({
+                "status": "NOT_USED", "remediation_round": 0,
+                "patch_id": "unexpected",
+            })
+
 if __name__ == "__main__":
     unittest.main()

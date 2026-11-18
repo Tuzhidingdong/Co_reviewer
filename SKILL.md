@@ -457,14 +457,14 @@ Open the preview in Microsoft Word and inspect formula rendering, save/close/reo
 
 ### One-round QA remediation (Phase 7)
 
-- Remediation is allowed only after a hash-bound QA report has status `FAIL` for the current Working Clean DOCX recorded in RevisionLedger. First prepare one new, human-approved, single-operation Patch in an immutable batch based on the exact current Marked path and SHA-256. The Patch output must be the batch-assigned new Marked path.
+- Remediation is allowed only for a hash-bound `word-final-clean` QA failure on the current Working Clean DOCX recorded in RevisionLedger, and only when every failing check is the local `placeholders` check. Structural/package/XML failures, tracked revisions, comments, formatting/semantic defects, and every other QA failure remain hard stops and require a separate authorized engineering or review path. The single operation must anchor every exact placeholder token reported by QA and remove all of them in its replacement. First prepare one new, human-approved, single-operation Patch in an immutable batch based on the exact current Marked path and SHA-256. The Patch output must be the batch-assigned new Marked path.
 - Start the bounded cycle with:
 
 ```powershell
 python scripts/co_reviewer_cli.py begin-qa-remediation --qa-report "runs/qa-before.quality.json" --revision-ledger revision_ledger.json --batch-dir "runs/batch-<id>" --patch-id "<patch-id>" --reason "Describe the specific local mechanical correction supported by the failed QA evidence." --out "runs/qa-remediation-started.json"
 ```
 
-- The command binds the failed QA report, source Clean, current Marked hash, approved Patch, batch intent/scope and approval event into RevisionLedger. It refuses a second start for the same RevisionLedger. Then use only the normal `apply`, `verify`, `confirm-verified`, `sync-workflow-ledger`, and `publish-batch` lifecycle. Do not directly modify Clean.
+- The command proves that the failed QA report is the `word-final-clean` profile and that all failed findings are exact, reported placeholders covered by the Patch find/replace. It binds the failed QA report, source Clean, current Marked hash, approved Patch, batch intent/scope and approval event into RevisionLedger. It refuses a second start for the same RevisionLedger. Then use only the normal `apply`, `verify`, `confirm-verified`, `sync-workflow-ledger`, and `publish-batch` lifecycle. Do not directly modify Clean.
 - After the batch is published, compile and QA the new Clean from Marked with:
 
 ```powershell

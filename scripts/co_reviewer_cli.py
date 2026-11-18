@@ -6182,7 +6182,7 @@ def cmd_begin_qa_remediation(args):
         or Path(operation.input_file).expanduser().resolve() != marked_path
         or Path(operation.output_file).expanduser().resolve()
         != Path(role_record["output_file"]).expanduser().resolve()
-        or (operation.source_sha256 and operation.source_sha256 != marked_sha)
+        or operation.source_sha256 != marked_sha
     ):
         raise ValueError(
             "Remediation Patch must target the current Marked source and the new immutable batch output path."
@@ -6278,7 +6278,11 @@ def cmd_begin_qa_remediation(args):
 
 def cmd_complete_qa_remediation(args):
     """After formal publication, recompile Clean from exact Marked bytes and enforce the second QA gate."""
-    from co_reviewer.batch_store import load_active_document_pointers, read_batch_intent
+    from co_reviewer.batch_store import (
+        _validate_committed_batch_publication,
+        load_active_document_pointers,
+        read_batch_intent,
+    )
 
     state_path = Path(args.state).expanduser().resolve()
     state = _read_json_object(state_path, "QA remediation state")
@@ -6327,8 +6331,29 @@ def cmd_complete_qa_remediation(args):
     if len(patch.operations) != 1 or patch.operations[0].operation_id != state.get("operation_id"):
         raise ValueError("Remediation Patch operation identity differs from the immutable state record.")
     operation = patch.operations[0]
+    published_documents = _validate_committed_batch_publication(
+        batch_dir,
+        intent,
+        workflow,
+        {row.patch_id: row.status for row in ledger.patches},
+    )
+    published_role = published_documents.get(state.get("document_role"))
+    if (
+        not isinstance(published_role, dict)
+        or Path(published_role.get("file", "")).expanduser().resolve()
+           != Path(operation.output_file).expanduser().resolve()
+        or not isinstance(published_role.get("sha256"), str)
+    ):
+        raise ValueError("Committed batch publication does not attest the remediation Marked output.")
     if (
         operation.operation_id != matching_start_events[0].details.get("operation_id")
+        or Path(operation.input_file).expanduser().resolve()
+           != Path(state.get("marked_input_file", "")).expanduser().resolve()
+        or Path(operation.output_file).expanduser().resolve()
+           != Path(state.get("marked_output_file", "")).expanduser().resolve()
+        or operation.source_sha256 != state.get("marked_input_sha256")
+        or matching_start_events[0].details.get("marked_input_file") != state.get("marked_input_file")
+        or matching_start_events[0].details.get("marked_output_file") != state.get("marked_output_file")
         or matching_start_events[0].details.get("marked_input_sha256") != state.get("marked_input_sha256")
         or matching_start_events[0].details.get("batch_id") != state.get("batch_id")
         or matching_start_events[0].details.get("document_role") != state.get("document_role")

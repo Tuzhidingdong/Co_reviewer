@@ -12,6 +12,7 @@
     "active_documents",
     "batches",
     "recovered_batches",
+    "qa_remediation",
     "marked_documents",
     "deterministic_consistency_audit",
     "final_documents",
@@ -407,6 +408,71 @@
         },
         "additionalProperties": false
       }
+    },
+    "qa_remediation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "remediation_round"],
+          "properties": {
+            "status": {"const": "NOT_USED"},
+            "remediation_round": {"const": 0}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "status", "remediation_round", "patch_id", "batch_id",
+            "pre_remediation_qa_report", "post_remediation_qa_report",
+            "marked", "clean"
+          ],
+          "properties": {
+            "status": {"const": "PASS"},
+            "remediation_round": {"const": 1},
+            "patch_id": {"type": "string", "minLength": 1},
+            "batch_id": {"type": "string", "minLength": 1},
+            "pre_remediation_qa_report": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            },
+            "post_remediation_qa_report": {
+              "type": "object",
+              "required": ["file", "sha256", "status"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "status": {"enum": ["PASS", "PASS_WITH_WARNINGS"]}
+              },
+              "additionalProperties": false
+            },
+            "marked": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            },
+            "clean": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "marked_documents": {
       "type": "object",
