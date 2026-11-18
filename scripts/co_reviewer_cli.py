@@ -1584,6 +1584,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "exact_deletion_match": old_ok, "exact_insertion_match": new_ok,
                     "exact_target_position": exact_target_position,
                     "inserted_run_format_preserved": native_script_format_preserved,
+                    "native_script_format_preserved": native_script_format_preserved,
                     "format_change_preserved": format_changes_preserved,
                     "format_change_details": format_change_details,
                     "format_integrity": format_integrity,
