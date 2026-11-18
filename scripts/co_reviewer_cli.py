@@ -3069,8 +3069,27 @@ def cmd_create_working_clean_views(args):
     from co_reviewer.word_pdf_mapper import build_unique_location_phrase
     try:
         for index, (document, marked_path, clean_path) in enumerate(plans):
+            marked_bytes = marked_path.read_bytes()
+            marked_sha256 = hashlib.sha256(marked_bytes).hexdigest()
+            if document.output_sha256 and document.output_sha256 != marked_sha256:
+                raise ValueError(
+                    f"Marked DOCX for {document.role} changed since its last recorded output hash."
+                )
+            lineage_records = [
+                record for patch in ledger.patches for record in patch.applied_revision_ids
+            ]
+            lineage = collect_revision_ids_from_lineage(
+                lineage_records, marked_path, marked_sha256
+            )
+            clean_validation = compile_clean_from_marked(
+                marked_bytes, expected_revision_ids=lineage["revision_ids"]
+            )
             report = create_working_clean_view(marked_path, clean_path)
             created.append(clean_path)
+            if report["source_sha256"] != clean_validation["marked_sha256"]:
+                raise ValueError(f"Marked DOCX for {document.role} changed during Clean projection.")
+            if report["output_sha256"] != clean_validation["clean_sha256"]:
+                raise ValueError(f"Working Clean projection for {document.role} differs from the validated compiler output.")
             if document.output_sha256 and document.output_sha256 != report["source_sha256"]:
                 raise ValueError(
                     f"Marked DOCX for {document.role} changed since its last recorded output hash."
