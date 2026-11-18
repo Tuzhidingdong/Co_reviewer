@@ -466,6 +466,54 @@ class RevisionEngineTests(unittest.TestCase):
         self.assertFalse(any(".status must be" in error for error in errors))
 
 
+    def test_plan_validation_checks_exact_token_insertion_and_deletion_arrays(self):
+        def make_plan(authorization):
+            return {
+                "schema_version": "1.0",
+                "approved": False,
+                "revision_items": [{
+                    "id": "R-AUTH", "reviewer": "Reviewer 1",
+                    "comment": "Add or remove specified values.",
+                    "status": "planned",
+                    "targets": [{
+                        "document": "Manuscript",
+                        "input_file": "input.docx",
+                        "output_file": "output.docx",
+                        "find": "existing phrase",
+                        "replace": "revised phrase",
+                        "authorized_change": authorization,
+                    }],
+                }],
+            }
+
+        valid = {
+            "intent": "Approve these exact values only",
+            "explicitly_authorized_insertions": [
+                {"kind": "number", "text": "1.2"},
+                {"kind": "unit", "text": "mAh"},
+            ],
+            "explicitly_authorized_deletions": [
+                {"kind": "citation", "text": "[12]"},
+            ],
+        }
+        self.assertEqual(
+            cli.validate_plan(
+                make_plan(valid), require_approval=False, check_approval_integrity=False
+            ),
+            [],
+        )
+
+        invalid = {
+            "intent": "Malformed authorization",
+            "explicitly_authorized_insertions": [{"kind": "number", "text": "  "}],
+            "explicitly_authorized_deletions": "not-an-array",
+        }
+        errors = cli.validate_plan(
+            make_plan(invalid), require_approval=False, check_approval_integrity=False
+        )
+        self.assertTrue(any("explicitly_authorized_insertions[0]" in error for error in errors))
+        self.assertTrue(any("explicitly_authorized_deletions must be an array" in error for error in errors))
+
     def test_multi_document_plan_preflights_before_writing(self):
         first_input = self.root / "first.docx"
         second_input = self.root / "second.docx"
