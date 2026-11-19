@@ -26,6 +26,9 @@ from co_reviewer.structure_classifier import (
     StructureClassificationError,
     assert_edit_target_supported,
     classify_docx_structure,
+    _PRESERVED_SETTINGS_ROOT_ELEMENTS,
+    _PRESERVED_SETTINGS_CHILDREN,
+    _PRESERVED_COMPAT_CHILDREN,
 )
 
 
@@ -523,21 +526,23 @@ class StructureClassifierTests(unittest.TestCase):
 
     def test_standard_settings_hierarchies_and_style_hidden_metadata_are_preserved(self):
         body = '<w:p><w:r><w:t>Replace this phrase</w:t></w:r></w:p>'
+        root_settings = sorted(
+            _PRESERVED_SETTINGS_ROOT_ELEMENTS
+            - {"footnotePr", "endnotePr", "compat", "docVars"}
+        )
+        compat_children = sorted(_PRESERVED_COMPAT_CHILDREN - {"compatSetting"})
         settings_xml = (
             f'<w:settings xmlns:w="{W}">'
-            '<w:footnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:footnote/></w:footnotePr>'
-            '<w:endnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:endnote/></w:endnotePr>'
-            '<w:compat><w:spaceForUL/><w:ulTrailSpace/>'
-            '<w:useWord97LineBreakRules/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>'
-            '</w:compat>'
-            '<w:docVars><w:docVar w:name="LegacyVariable" w:val="KeepMe"/>'
-            '<w:docVar w:name="SecondVariable" w:val="AlsoKeepMe"/></w:docVars>'
-            '<w:doNotIncludeSubdocsInStats w:val="true"/>'
-            '<w:bordersDoNotSurroundHeader/><w:bordersDoNotSurroundFooter/>'
-            '<w:drawingGridHorizontalSpacing/><w:drawingGridVerticalSpacing/>'
-            '<w:displayHorizontalDrawingGridEvery/><w:displayVerticalDrawingGridEvery/>'
-            '<w:noPunctuationKerning/><w:hdrShapeDefaults/>'
-            '</w:settings>'
+            + "".join(f"<w:{name}/>" for name in root_settings)
+            + '<w:footnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:footnote/></w:footnotePr>'
+            + '<w:endnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:endnote/></w:endnotePr>'
+            + '<w:compat>'
+            + "".join(f"<w:{name}/>" for name in compat_children)
+            + '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>'
+            + '</w:compat>'
+            + '<w:docVars><w:docVar w:name="LegacyVariable" w:val="KeepMe"/>'
+            + '<w:docVar w:name="SecondVariable" w:val="AlsoKeepMe"/></w:docVars>'
+            + '</w:settings>'
         ).encode("utf-8")
         styles_xml = (
             f'<w:styles xmlns:w="{W}">'
@@ -574,14 +579,11 @@ class StructureClassifierTests(unittest.TestCase):
         expected_counts = {
             "footnotePr": 1, "pos": 2, "numFmt": 2, "numStart": 2,
             "numRestart": 2, "footnote": 1, "endnotePr": 1, "endnote": 1,
-            "compat": 1, "spaceForUL": 1, "ulTrailSpace": 1,
-            "useWord97LineBreakRules": 1, "compatSetting": 1,
-            "docVars": 1, "docVar": 2, "doNotIncludeSubdocsInStats": 1,
-            "bordersDoNotSurroundHeader": 1, "bordersDoNotSurroundFooter": 1,
-            "drawingGridHorizontalSpacing": 1, "drawingGridVerticalSpacing": 1,
-            "displayHorizontalDrawingGridEvery": 1, "displayVerticalDrawingGridEvery": 1,
-            "noPunctuationKerning": 1, "hdrShapeDefaults": 1, "hidden": 1,
+            "compat": 1, "compatSetting": 1,
+            "docVars": 1, "docVar": 2, "hidden": 1,
         }
+        expected_counts.update({name: 1 for name in root_settings})
+        expected_counts.update({name: 1 for name in _PRESERVED_COMPAT_CHILDREN})
         actual_counts = {}
         for item in preserved:
             actual_counts[item["element"]] = actual_counts.get(item["element"], 0) + 1
