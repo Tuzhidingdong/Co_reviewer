@@ -326,6 +326,32 @@ class StructureClassifierTests(unittest.TestCase):
                 report, part="word/document.xml", paragraph_index=editable_index
             )
 
+    def test_unmatched_body_level_bookmark_remains_part_scoped_blocker(self):
+        body = (
+            '<w:p><w:r><w:t>before orphan marker</w:t></w:r></w:p>'
+            '<w:bookmarkStart w:id="20" w:name="unmatchedBodyMarker"/>'
+            '<w:p><w:r><w:t>after orphan marker</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+
+        self.assertEqual(report["package_status"], "READY", report["issues"])
+        self.assertIn("UNPAIRED_BOOKMARK_RANGE", {item["code"] for item in report["issues"]})
+        orphan = next(
+            item for item in report["structures"]
+            if item["kind"] == "incomplete_bookmark_range"
+        )
+        self.assertEqual(orphan["paragraph_indices"], [])
+        self.assertEqual(
+            orphan["details"]["scope_policy"],
+            "part_scope_no_paragraph_anchor",
+        )
+        for paragraph_index in (0, 1):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=paragraph_index
+                )
+
     def test_missing_relationship_target_blocks_package(self):
         body = '<w:p><w:hyperlink r:id="rIdMissing"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>'
         _write_docx(self.docx, _document(body))
