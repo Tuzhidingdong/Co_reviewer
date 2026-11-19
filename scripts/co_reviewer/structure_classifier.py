@@ -522,105 +522,133 @@ def _pair_ranges(
             starts[node.get(f"{{{W}}}id", "")].append(node)
         elif node.tag == end_tag:
             ends[node.get(f"{{{W}}}id", "")].append(node)
-    # Range markers must be interpreted in document order. In particular, a
-    # bookmarkStart without a later matching bookmarkEnd is not an open-ended
-    # range: OOXML defines it as an unmatched/non-conformant marker, not a span
-    # through the remainder of the part.
-    node_order = {node: index for index, node in enumerate(root.iter())}
+    # Word range markers may legally be direct children of containers such
+    # as w:body, not only descendants of w:p. Resolve their actual XML order
+    # and intersect the marker interval with each paragraph's full subtree.
+    # This avoids treating a valid body-level endpoint as an absent endpoint.
+    ordered_nodes = list(root.iter())
+    node_order = {node: index for index, node in enumerate(ordered_nodes)}
+    paragraph_order: dict[int, tuple[int, int]] = {}
+    for paragraph, paragraph_index in paragraph_indices.items():
+        paragraph_nodes = list(paragraph.iter())
+        paragraph_order[paragraph_index] = (
+            node_order[paragraph],
+            node_order[paragraph_nodes[-1]],
+        )
+
+    def paragraphs_intersecting_range(first_order: int, last_order: int) -> list[int]:
+        lower, upper = sorted((first_order, last_order))
+        return sorted(
+            paragraph_index
+            for paragraph_index, (paragraph_start, paragraph_end) in paragraph_order.items()
+            if paragraph_end > lower and paragraph_start < upper
+        )
+
     ids = sorted(set(starts) | set(ends))
     for marker_id in ids:
         left, right = starts.get(marker_id, []), ends.get(marker_id, [])
-        if (
-            len(left) == 1 and len(right) == 1 and marker_id
+        nodes = left + right
+        marker_positions = [node_order[node] for node in nodes]
+        valid_pair = (
+            len(left) == 1 and len(right) == 1 and bool(marker_id)
             and node_order[left[0]] < node_order[right[0]]
-        ):
-            left_index = _nearest_paragraph(left[0], paragraph_indices)
-            right_index = _nearest_paragraph(right[0], paragraph_indices)
-            all_indices = sorted(paragraph_indices.values())
-            if left_index is not None and right_index is not None:
-                span = [i for i in all_indices if min(left_index, right_index) <= i <= max(left_index, right_index)]
-            elif left_index is not None:
-                span = [i for i in all_indices if i >= left_index]
-            elif right_index is not None:
-                span = [i for i in all_indices if i <= right_index]
-            else:
-                span = []
+        )
+        if valid_pair:
+            start_order = node_order[left[0]]
+            end_order = node_order[right[0]]
+            span = paragraphs_intersecting_range(start_order, end_order)
             _record(
                 records, source_sha256=source_sha256, part=part, node=left[0],
                 kind=kind, status=GUARDED,
-                reason=f"{kind} is a range-level structure; edits intersecting its span require a dedicated adapter.",
+                reason=(
+                    f"{kind} is a range-level structure; paragraphs intersecting "
+                    "the actual XML document-order interval require a dedicated adapter."
+                ),
                 paragraph_indices=paragraph_indices, paragraph_span=span,
-                details={"range_id": marker_id, "start_path": _path(left[0]), "end_path": _path(right[0])},
+                details={
+                    "range_id": marker_id,
+                    "start_path": _path(left[0]),
+                    "end_path": _path(right[0]),
+                    "scope_mapping": "xml_document_order_paragraph_intersection",
+                    "start_order": start_order,
+                    "end_order": end_order,
+                },
             )
         else:
-            nodes = left + right
             marker_indices = [
                 value for value in (_nearest_paragraph(node, paragraph_indices) for node in nodes)
                 if value is not None
             ]
-            all_indices = sorted(paragraph_indices.values())
-            if (
+            single_orphan_bookmark = (
                 kind == "bookmark_range"
-                and marker_indices
-                and (
-                    (len(left) == 1 and not right)
-                    or (len(right) == 1 and not left)
-                )
-            ):
-                # An unmatched bookmarkStart/bookmarkEnd does not define a
-                # valid range. Gate only the paragraph holding that orphan
-                # marker; never invent a document-to-end or start-to-document
-                # range. If the marker is outside a paragraph, the issue below
-                # remains part-scoped and the edit gate blocks the part.
+                and len(nodes) == 1
+                and ((len(left) == 1 and not right) or (len(right) == 1 and not left))
+            )
+            if single_orphan_bookmark:
+                # An unmatched bookmark marker is non-conformant and does not
+                # establish an open-ended range. Gate only its containing
+                # paragraph; if it is outside all paragraphs, the issue below
+                # remains part-scoped because no paragraph anchor is available.
                 span = sorted(set(marker_indices))
-            elif len(left) == 1 and not right and marker_indices:
-                span = [value for value in all_indices if value >= marker_indices[0]]
-            elif len(right) == 1 and not left and marker_indices:
-                span = [value for value in all_indices if value <= marker_indices[0]]
-            elif marker_indices:
-                # Duplicated or misordered marker groups are ambiguous. Bound
-                # the conservative gate to the known marker interval; do not
-                # extrapolate beyond either observed endpoint.
-                span = [
-                    value for value in all_indices
-                    if min(marker_indices) <= value <= max(marker_indices)
-                ]
+                scope_policy = (
+                    "marker_paragraph_only" if marker_indices
+                    else "part_scope_no_paragraph_anchor"
+                )
+            elif len(marker_positions) >= 2:
+                # Duplicate, empty-ID or misordered marker groups remain
+                # fail-closed, but only across the known outer marker interval.
+                span = paragraphs_intersecting_range(
+                    min(marker_positions), max(marker_positions)
+                )
+                scope_policy = "bounded_xml_document_order"
+            elif kind != "bookmark_range" and marker_indices:
+                # Retain the existing conservative directional treatment for
+                # incomplete non-bookmark ranges; bookmark ranges never use it.
+                all_indices = sorted(paragraph_indices.values())
+                if left and not right:
+                    span = [value for value in all_indices if value >= marker_indices[0]]
+                elif right and not left:
+                    span = [value for value in all_indices if value <= marker_indices[0]]
+                else:
+                    span = sorted(set(marker_indices))
+                scope_policy = "legacy_directional"
             else:
                 span = []
+                scope_policy = "part_scope_no_paragraph_anchor" if nodes else "unmapped"
+
             for node in nodes:
                 _record(
                     records, source_sha256=source_sha256, part=part, node=node,
                     kind=f"incomplete_{kind}", status=BLOCKED,
                     reason=(
                         "Unmatched bookmark marker is non-conformant and does not establish an editable range; "
-                        "the marker paragraph is gated without extending protection to adjacent paragraphs."
-                        if kind == "bookmark_range" and (
-                            (len(left) == 1 and not right) or (len(right) == 1 and not left)
-                        ) else
+                        "only its containing paragraph is gated, or the part is gated when no paragraph anchor exists."
+                        if single_orphan_bookmark else
                         f"{kind} start/end markers are missing, duplicated, have an empty ID, or are out of document order."
                     ),
                     paragraph_indices=paragraph_indices, paragraph_span=span,
                     details={
                         "range_id": marker_id, "start_count": len(left), "end_count": len(right),
-                        "scope_policy": (
-                            "marker_paragraph_only"
-                            if kind == "bookmark_range" and (
-                                (len(left) == 1 and not right) or (len(right) == 1 and not left)
-                            ) else "bounded_marker_interval"
-                        ),
+                        "scope_policy": scope_policy,
+                        "marker_orders": sorted(marker_positions),
                     },
                 )
             node = nodes[0] if nodes else None
+            issue_paragraph = (
+                _nearest_paragraph(node, paragraph_indices) if node is not None else None
+            )
+            if issue_paragraph is None and span:
+                issue_paragraph = span[0]
             issues.append({
                 "code": f"UNPAIRED_{kind.upper()}",
                 "severity": BLOCKED,
                 "part": part,
-                "paragraph_index": _nearest_paragraph(node, paragraph_indices) if node is not None else None,
+                "paragraph_index": issue_paragraph,
                 "element_path": _path(node) if node is not None else None,
                 "message": (
                     f"{kind} id {marker_id!r} has {len(left)} start and {len(right)} end marker(s). "
                     + ("No range is inferred from an unmatched bookmark marker."
-                       if kind == "bookmark_range" else "")
+                       if single_orphan_bookmark else "")
                 ),
             })
 
