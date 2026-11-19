@@ -15,6 +15,7 @@ from docx import Document
 
 from co_reviewer.document_engine import (
     make_insert_runs, make_run, parse_xml, prepare_document, qn, W,
+    replace_in_paragraph,
 )
 from co_reviewer.structure_classifier import (
     BLOCKED,
@@ -293,12 +294,22 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertIsNotNone(preserved.find("w:rPr/w:rPrChange", {"w": W}))
 
 
-    def test_settings_proofing_marker_does_not_block_unrelated_body_edit(self):
+    def test_standard_word_settings_metadata_does_not_block_body_edits(self):
         body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
-        settings = (
+        setting_names = (
+            "bordersDoNotSurroundHeader",
+            "bordersDoNotSurroundFooter",
+            "drawingGridHorizontalSpacing",
+            "drawingGridVerticalSpacing",
+            "displayHorizontalDrawingGridEvery",
+            "displayVerticalDrawingGridEvery",
+            "noPunctuationKerning",
+            "hdrShapeDefaults",
+        )
+        settings_xml = (
             f'<w:settings xmlns:w="{W}">'
-            '<w:proofErr w:type="spellStart"/>'
-            '</w:settings>'
+            + "".join(f"<w:{name}/>" for name in setting_names)
+            + "</w:settings>"
         ).encode("utf-8")
         content_types = (
             f'<Types xmlns="{CT}">'
@@ -306,23 +317,207 @@ class StructureClassifierTests(unittest.TestCase):
             '<Default Extension="xml" ContentType="application/xml"/>'
             '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
             '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
-            '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
             '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
-            '</Types>'
+            "</Types>"
         ).encode("utf-8")
         _write_docx(
             self.docx, _document(body),
-            extra={"word/settings.xml": settings, "[Content_Types].xml": content_types},
+            extra={"word/settings.xml": settings_xml, "[Content_Types].xml": content_types},
+        )
+
+        report = classify_docx_structure(self.docx)
+        self.assertEqual(report["package_status"], "READY", report["issues"])
+        settings = [
+            item for item in report["structures"]
+            if item["part"] == "word/settings.xml"
+        ]
+        self.assertEqual({item["element"] for item in settings}, set(setting_names))
+        self.assertTrue(all(item["kind"] == "preserved_document_setting" for item in settings))
+        self.assertTrue(all(item["status"] == SUPPORTED for item in settings))
+        self.assertTrue(all(item["details"].get("preserve_unchanged") is True for item in settings))
+        assert_edit_target_supported(
+            report, part="word/document.xml", paragraph_index=0
+        )
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            self.assertEqual(archive.read("word/settings.xml"), settings_xml)
+
+    def test_unknown_or_misplaced_settings_elements_remain_fail_closed(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        unknown_settings = f'<w:settings xmlns:w="{W}"><w:futureSetting/></w:settings>'.encode()
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            "</Types>"
+        ).encode()
+        _write_docx(
+            self.docx, _document(body),
+            extra={"word/settings.xml": unknown_settings, "[Content_Types].xml": content_types},
+        )
+        report = classify_docx_structure(self.docx)
+        self.assertTrue(any(
+            item["kind"] == "unknown_wordprocessingml_element"
+            and item["part"] == "word/settings.xml"
+            and item["element"] == "futureSetting"
+            and item["status"] == BLOCKED
+            for item in report["structures"]
+        ))
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
+        misplaced_body = (
+            '<w:p><w:bordersDoNotSurroundHeader/>'
+            '<w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(misplaced_body))
+        misplaced = classify_docx_structure(self.docx)
+        self.assertTrue(any(
+            item["kind"] == "misplaced_document_setting"
+            and item["status"] == BLOCKED
+            for item in misplaced["structures"]
+        ))
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                misplaced, part="word/document.xml", paragraph_index=0
+            )
+
+    def test_document_protection_and_revision_generation_settings_remain_guarded(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        settings_xml = (
+            f'<w:settings xmlns:w="{W}">'
+            '<w:documentProtection/>'
+            '<w:doNotTrackMoves/>'
+            '<w:doNotTrackFormatting/>'
+            "</w:settings>"
+        ).encode("utf-8")
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            "</Types>"
+        ).encode("utf-8")
+        _write_docx(
+            self.docx, _document(body),
+            extra={"word/settings.xml": settings_xml, "[Content_Types].xml": content_types},
+        )
+        report = classify_docx_structure(self.docx)
+        guarded = [
+            item for item in report["structures"]
+            if item["part"] == "word/settings.xml"
+        ]
+        self.assertEqual({item["element"] for item in guarded}, {
+            "documentProtection", "doNotTrackMoves", "doNotTrackFormatting"
+        })
+        self.assertTrue(all(item["kind"] == "document_editing_setting" for item in guarded))
+        self.assertTrue(all(item["status"] == GUARDED for item in guarded))
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
+    def test_proofing_markers_are_nonblocking_but_permission_markers_remain_guarded(self):
+        body = (
+            '<w:p><w:proofErr w:type="spellStart"/>'
+            '<w:r><w:t>ordinary target text</w:t></w:r>'
+            '<w:proofErr w:type="spellEnd"/></w:p>'
+            '<w:p><w:permStart w:id="7"/>'
+            '<w:r><w:t>permission protected text</w:t></w:r>'
+            '<w:permEnd w:id="7"/></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        proofing = [
+            item for item in report["structures"]
+            if item["kind"] == "proofing_range_marker"
+        ]
+        permissions = [
+            item for item in report["structures"]
+            if item["kind"] == "protected_range_marker"
+        ]
+        self.assertEqual(len(proofing), 2)
+        self.assertTrue(all(item["status"] == SUPPORTED for item in proofing))
+        self.assertEqual(
+            {item["details"]["proofing_type"] for item in proofing},
+            {"spellStart", "spellEnd"},
+        )
+        self.assertEqual(len(permissions), 2)
+        self.assertTrue(all(item["status"] == GUARDED for item in permissions))
+        assert_edit_target_supported(
+            report, part="word/document.xml", paragraph_index=0
+        )
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=1
+            )
+
+    def test_proofing_markers_are_preserved_by_ordinary_run_replacement(self):
+        paragraph = parse_xml(
+            f'<w:p xmlns:w="{W}">'
+            '<w:proofErr w:type="spellStart"/>'
+            '<w:r><w:t>Replace this phrase</w:t></w:r>'
+            '<w:proofErr w:type="spellEnd"/>'
+            "</w:p>".encode("utf-8")
+        )
+        applied, next_id, message = replace_in_paragraph(
+            paragraph, "Replace this phrase", "Revised wording",
+            "Test Author", "2026-11-19T00:00:00Z", 1,
+        )
+        self.assertTrue(applied, message)
+        self.assertEqual(
+            [item.get(f"{{{W}}}type") for item in paragraph.findall("w:proofErr", {"w": W})],
+            ["spellStart", "spellEnd"],
+        )
+        self.assertEqual(
+            "".join(item.text or "" for item in paragraph.findall(".//w:delText", {"w": W})),
+            "Replace this phrase",
+        )
+        self.assertEqual(
+            "".join(item.text or "" for item in paragraph.findall(".//w:ins//w:t", {"w": W})),
+            "Revised wording",
+        )
+        children = list(paragraph)
+        self.assertEqual(children[0].tag, f"{{{W}}}proofErr")
+        self.assertEqual(children[-1].tag, f"{{{W}}}proofErr")
+
+    def test_proofErr_in_settings_part_is_not_accepted_as_valid_proofing_metadata(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        settings_xml = (
+            f'<w:settings xmlns:w="{W}">'
+            '<w:proofErr w:type="spellStart"/>'
+            "</w:settings>"
+        ).encode("utf-8")
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            "</Types>"
+        ).encode("utf-8")
+        _write_docx(
+            self.docx, _document(body),
+            extra={"word/settings.xml": settings_xml, "[Content_Types].xml": content_types},
         )
         report = classify_docx_structure(self.docx)
         marker = next(
             item for item in report["structures"]
             if item["part"] == "word/settings.xml" and item["element"] == "proofErr"
         )
-        self.assertEqual(marker["status"], GUARDED)
-        assert_edit_target_supported(
-            report, part="word/document.xml", paragraph_index=0
-        )
+        self.assertEqual(marker["status"], BLOCKED)
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
