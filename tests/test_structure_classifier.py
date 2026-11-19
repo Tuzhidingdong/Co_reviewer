@@ -266,6 +266,66 @@ class StructureClassifierTests(unittest.TestCase):
             report, part="word/document.xml", paragraph_index=3
         )
 
+    def test_valid_bookmark_pair_with_body_level_end_maps_to_actual_xml_boundary(self):
+        body = (
+            '<w:p><w:r><w:t>before bookmark</w:t></w:r></w:p>'
+            '<w:p><w:bookmarkStart w:id="18" w:name="bodyLevelEnd"/>'
+            '<w:r><w:t>bookmark start paragraph</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>bookmark middle paragraph</w:t></w:r></w:p>'
+            '<w:bookmarkEnd w:id="18"/>'
+            '<w:p><w:r><w:t>after bookmark</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+
+        self.assertEqual(report["package_status"], "READY", report["issues"])
+        valid = next(
+            item for item in report["structures"]
+            if item["kind"] == "bookmark_range"
+        )
+        self.assertEqual(valid["paragraph_indices"], [1, 2])
+        self.assertEqual(
+            valid["details"]["scope_mapping"],
+            "xml_document_order_paragraph_intersection",
+        )
+        for blocked_index in (1, 2):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=blocked_index
+                )
+        for editable_index in (0, 3):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=editable_index
+            )
+
+    def test_valid_bookmark_pair_with_body_level_start_maps_to_actual_xml_boundary(self):
+        body = (
+            '<w:p><w:r><w:t>before bookmark</w:t></w:r></w:p>'
+            '<w:bookmarkStart w:id="19" w:name="bodyLevelStart"/>'
+            '<w:p><w:r><w:t>bookmark start paragraph</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>bookmark end paragraph</w:t>'
+            '<w:bookmarkEnd w:id="19"/></w:r></w:p>'
+            '<w:p><w:r><w:t>after bookmark</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+
+        self.assertEqual(report["package_status"], "READY", report["issues"])
+        valid = next(
+            item for item in report["structures"]
+            if item["kind"] == "bookmark_range"
+        )
+        self.assertEqual(valid["paragraph_indices"], [1, 2])
+        for blocked_index in (1, 2):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=blocked_index
+                )
+        for editable_index in (0, 3):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=editable_index
+            )
+
     def test_missing_relationship_target_blocks_package(self):
         body = '<w:p><w:hyperlink r:id="rIdMissing"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>'
         _write_docx(self.docx, _document(body))
