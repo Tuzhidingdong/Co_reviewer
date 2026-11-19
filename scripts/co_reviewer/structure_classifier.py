@@ -105,7 +105,7 @@ style styles basedOn next link qFormat uiPriority semiHidden unhideWhenUsed
 latentStyles lsdException tblStylePr tblStyleRowBandSize tblStyleColBandSize
 name basedOn next link pPr rPr tblPr trPr tcPr
 default docDefaults rPrDefault pPrDefault
-settings compat doNotTrackMoves doNotTrackFormatting
+settings compat documentProtection writeProtection autoFormatOverride doNotTrackMoves doNotTrackFormatting
 zoom proofState defaultTabStop characterSpacingControl savePreviewPicture
 clrSchemeMapping doNotAutoCompressPictures shapeDefaults decimalSymbol listSeparator
 useFELayout compatSetting rsids rsid rsidRoot rsidR rsidRPr rsidP rsidSect
@@ -119,9 +119,33 @@ embedRegular embedBold embedItalic embedBoldItalic embed embedDataId embeddedFon
 subsetted notTrueType
 shapedefaults shapelayout idmap top bottom left right start end insideH insideV between bar
 updateFields mirrorMargins evenAndOddHeaders
+bordersDoNotSurroundHeader bordersDoNotSurroundFooter
+drawingGridHorizontalSpacing drawingGridVerticalSpacing
+displayHorizontalDrawingGridEvery displayVerticalDrawingGridEvery
+noPunctuationKerning hdrShapeDefaults
 fldData
 """.split())
 
+# These standard Word settings are document-level layout/display metadata. They are
+# inventoried as preserved metadata only when they are direct children of w:settings;
+# the production writer never edits or regenerates word/settings.xml.
+_PRESERVED_SETTINGS_ELEMENTS = frozenset({
+    "bordersDoNotSurroundHeader",
+    "bordersDoNotSurroundFooter",
+    "drawingGridHorizontalSpacing",
+    "drawingGridVerticalSpacing",
+    "displayHorizontalDrawingGridEvery",
+    "displayVerticalDrawingGridEvery",
+    "noPunctuationKerning",
+    "hdrShapeDefaults",
+})
+_GUARDED_SETTINGS_ELEMENTS = frozenset({
+    "documentProtection",
+    "writeProtection",
+    "autoFormatOverride",
+    "doNotTrackFormatting",
+    "doNotTrackMoves",
+})
 
 def _xml_parser() -> ET.XMLParser:
     return ET.XMLParser(
@@ -695,8 +719,54 @@ def _classify_members(
                     kind, status, reason = "structured_container", DEFERRED, f"{local} content requires a dedicated OOXML adapter."
                 elif local in {"drawing", "pict", "object"}:
                     kind, status, reason = "embedded_object", DEFERRED, "Drawing/object content is not editable as ordinary paragraph text."
-                elif local in {"permStart", "permEnd", "proofErr"}:
-                    kind, status, reason = "protected_range_marker", GUARDED, f"{local} defines a protected or proofing range."
+                elif local in _PRESERVED_SETTINGS_ELEMENTS:
+                    if (
+                        part == "word/settings.xml"
+                        and node.getparent() is not None
+                        and node.getparent().tag == f"{{{W}}}settings"
+                    ):
+                        kind, status, reason = (
+                            "preserved_document_setting", SUPPORTED,
+                            "Recognized standard Word layout/display setting; retained byte-for-byte outside the body edit scope.",
+                        )
+                        details["preserve_unchanged"] = True
+                    else:
+                        kind, status, reason = (
+                            "misplaced_document_setting", BLOCKED,
+                            "A settings-only WordprocessingML element is not in the direct-child position of word/settings.xml.",
+                        )
+                elif local in _GUARDED_SETTINGS_ELEMENTS:
+                    if (
+                        part == "word/settings.xml"
+                        and node.getparent() is not None
+                        and node.getparent().tag == f"{{{W}}}settings"
+                    ):
+                        kind, status, reason = (
+                            "document_editing_setting", GUARDED,
+                            "Document protection or revision-generation settings require an explicit supported policy.",
+                        )
+                    else:
+                        kind, status, reason = (
+                            "misplaced_document_setting", BLOCKED,
+                            "A settings-only WordprocessingML element is not in the direct-child position of word/settings.xml.",
+                        )
+                elif local == "proofErr":
+                    details["proofing_type"] = node.get(f"{{{W}}}type")
+                    if part != "word/settings.xml" and _nearest_paragraph(node, paragraph_indices) is not None:
+                        kind, status, reason = (
+                            "proofing_range_marker", SUPPORTED,
+                            "Word spelling/grammar annotation anchor, not an editing-permission range; retained in place and treated as an ordinary-run boundary.",
+                        )
+                    else:
+                        kind, status, reason = (
+                            "proofing_range_marker", BLOCKED,
+                            "A proofing anchor outside paragraph-bearing content is malformed or misplaced.",
+                        )
+                elif local in {"permStart", "permEnd"}:
+                    kind, status, reason = (
+                        "protected_range_marker", GUARDED,
+                        "Editing-permission range markers remain protected and require a dedicated permission-aware adapter.",
+                    )
                 elif local in {"trackRevisions", "revisionView"}:
                     kind, status, reason = "revision_setting", GUARDED, "Document revision settings are retained but require explicit policy."
                 elif local not in _KNOWN_WML_LOCALS:
@@ -866,17 +936,9 @@ def assert_edit_target_supported(
             item_part == part
             and (item.get("paragraph_index") == paragraph_index or paragraph_index in span)
         )
-        # A proofErr node in settings.xml is Word spelling/grammar UI metadata,
-        # not document-wide editing semantics. Target-local proofErr markers
-        # remain guarded by target_match above.
-        benign_global_proofing_marker = (
-            item_part == "word/settings.xml"
-            and item.get("element") == "proofErr"
-        )
-        global_context_match = (
-            item_part in _GLOBAL_CONTEXT_PARTS and not span
-            and not benign_global_proofing_marker
-        )
+        # Explicitly preserved settings metadata has SUPPORTED status and is
+        # skipped above. Unknown/guarded settings remain global blockers.
+        global_context_match = item_part in _GLOBAL_CONTEXT_PARTS and not span
         if target_match or global_context_match:
             blockers.append(
                 f"{item.get('kind')} ({item.get('status')}) at {item.get('part')}:{item.get('element_path')}"
