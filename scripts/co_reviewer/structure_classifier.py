@@ -522,10 +522,18 @@ def _pair_ranges(
             starts[node.get(f"{{{W}}}id", "")].append(node)
         elif node.tag == end_tag:
             ends[node.get(f"{{{W}}}id", "")].append(node)
+    # Range markers must be interpreted in document order. In particular, a
+    # bookmarkStart without a later matching bookmarkEnd is not an open-ended
+    # range: OOXML defines it as an unmatched/non-conformant marker, not a span
+    # through the remainder of the part.
+    node_order = {node: index for index, node in enumerate(root.iter())}
     ids = sorted(set(starts) | set(ends))
     for marker_id in ids:
         left, right = starts.get(marker_id, []), ends.get(marker_id, [])
-        if len(left) == 1 and len(right) == 1 and marker_id:
+        if (
+            len(left) == 1 and len(right) == 1 and marker_id
+            and node_order[left[0]] < node_order[right[0]]
+        ):
             left_index = _nearest_paragraph(left[0], paragraph_indices)
             right_index = _nearest_paragraph(right[0], paragraph_indices)
             all_indices = sorted(paragraph_indices.values())
@@ -551,11 +559,28 @@ def _pair_ranges(
                 if value is not None
             ]
             all_indices = sorted(paragraph_indices.values())
-            if len(left) == 1 and not right and marker_indices:
+            if (
+                kind == "bookmark_range"
+                and marker_indices
+                and (
+                    (len(left) == 1 and not right)
+                    or (len(right) == 1 and not left)
+                )
+            ):
+                # An unmatched bookmarkStart/bookmarkEnd does not define a
+                # valid range. Gate only the paragraph holding that orphan
+                # marker; never invent a document-to-end or start-to-document
+                # range. If the marker is outside a paragraph, the issue below
+                # remains part-scoped and the edit gate blocks the part.
+                span = sorted(set(marker_indices))
+            elif len(left) == 1 and not right and marker_indices:
                 span = [value for value in all_indices if value >= marker_indices[0]]
             elif len(right) == 1 and not left and marker_indices:
                 span = [value for value in all_indices if value <= marker_indices[0]]
             elif marker_indices:
+                # Duplicated or misordered marker groups are ambiguous. Bound
+                # the conservative gate to the known marker interval; do not
+                # extrapolate beyond either observed endpoint.
                 span = [
                     value for value in all_indices
                     if min(marker_indices) <= value <= max(marker_indices)
@@ -566,9 +591,24 @@ def _pair_ranges(
                 _record(
                     records, source_sha256=source_sha256, part=part, node=node,
                     kind=f"incomplete_{kind}", status=BLOCKED,
-                    reason=f"{kind} start/end markers are missing, duplicated, or have an empty ID.",
+                    reason=(
+                        "Unmatched bookmark marker is non-conformant and does not establish an editable range; "
+                        "the marker paragraph is gated without extending protection to adjacent paragraphs."
+                        if kind == "bookmark_range" and (
+                            (len(left) == 1 and not right) or (len(right) == 1 and not left)
+                        ) else
+                        f"{kind} start/end markers are missing, duplicated, have an empty ID, or are out of document order."
+                    ),
                     paragraph_indices=paragraph_indices, paragraph_span=span,
-                    details={"range_id": marker_id, "start_count": len(left), "end_count": len(right)},
+                    details={
+                        "range_id": marker_id, "start_count": len(left), "end_count": len(right),
+                        "scope_policy": (
+                            "marker_paragraph_only"
+                            if kind == "bookmark_range" and (
+                                (len(left) == 1 and not right) or (len(right) == 1 and not left)
+                            ) else "bounded_marker_interval"
+                        ),
+                    },
                 )
             node = nodes[0] if nodes else None
             issues.append({
@@ -577,7 +617,11 @@ def _pair_ranges(
                 "part": part,
                 "paragraph_index": _nearest_paragraph(node, paragraph_indices) if node is not None else None,
                 "element_path": _path(node) if node is not None else None,
-                "message": f"{kind} id {marker_id!r} has {len(left)} start and {len(right)} end marker(s).",
+                "message": (
+                    f"{kind} id {marker_id!r} has {len(left)} start and {len(right)} end marker(s). "
+                    + ("No range is inferred from an unmatched bookmark marker."
+                       if kind == "bookmark_range" else "")
+                ),
             })
 
 
