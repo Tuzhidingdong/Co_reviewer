@@ -336,7 +336,7 @@ class StructureClassifierTests(unittest.TestCase):
             if item["part"] == "word/settings.xml"
         ]
         self.assertEqual({item["element"] for item in settings}, set(setting_names))
-        self.assertTrue(all(item["kind"] == "preserved_document_setting" for item in settings))
+        self.assertTrue(all(item["kind"] == "preserved_standard_metadata" for item in settings))
         self.assertTrue(all(item["status"] == SUPPORTED for item in settings))
         self.assertTrue(all(item["details"].get("preserve_unchanged") is True for item in settings))
         assert_edit_target_supported(
@@ -381,7 +381,7 @@ class StructureClassifierTests(unittest.TestCase):
         _write_docx(self.docx, _document(misplaced_body))
         misplaced = classify_docx_structure(self.docx)
         self.assertTrue(any(
-            item["kind"] == "misplaced_document_setting"
+            item["kind"] == "misplaced_standard_metadata"
             and item["status"] == BLOCKED
             for item in misplaced["structures"]
         ))
