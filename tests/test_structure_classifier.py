@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import sys
 import tempfile
 import unittest
@@ -513,6 +514,166 @@ class StructureClassifierTests(unittest.TestCase):
             if item["part"] == "word/settings.xml" and item["element"] == "proofErr"
         )
         self.assertEqual(marker["status"], BLOCKED)
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
+
+
+    def test_standard_settings_hierarchies_and_style_hidden_metadata_are_preserved(self):
+        body = '<w:p><w:r><w:t>Replace this phrase</w:t></w:r></w:p>'
+        settings_xml = (
+            f'<w:settings xmlns:w="{W}">'
+            '<w:footnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:footnote/></w:footnotePr>'
+            '<w:endnotePr><w:pos/><w:numFmt/><w:numStart/><w:numRestart/><w:endnote/></w:endnotePr>'
+            '<w:compat><w:spaceForUL/><w:ulTrailSpace/>'
+            '<w:useWord97LineBreakRules/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>'
+            '</w:compat>'
+            '<w:docVars><w:docVar w:name="LegacyVariable" w:val="KeepMe"/>'
+            '<w:docVar w:name="SecondVariable" w:val="AlsoKeepMe"/></w:docVars>'
+            '<w:doNotIncludeSubdocsInStats w:val="true"/>'
+            '<w:bordersDoNotSurroundHeader/><w:bordersDoNotSurroundFooter/>'
+            '<w:drawingGridHorizontalSpacing/><w:drawingGridVerticalSpacing/>'
+            '<w:displayHorizontalDrawingGridEvery/><w:displayVerticalDrawingGridEvery/>'
+            '<w:noPunctuationKerning/><w:hdrShapeDefaults/>'
+            '</w:settings>'
+        ).encode("utf-8")
+        styles_xml = (
+            f'<w:styles xmlns:w="{W}">'
+            '<w:style w:type="paragraph" w:styleId="Normal">'
+            '<w:name w:val="Normal"/></w:style>'
+            '<w:style w:type="character" w:styleId="InternalOnly">'
+            '<w:name w:val="Internal Only"/><w:hidden/></w:style>'
+            '</w:styles>'
+        ).encode("utf-8")
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            '</Types>'
+        ).encode("utf-8")
+        original = _write_docx(
+            self.docx, _document(body),
+            extra={
+                "word/settings.xml": settings_xml,
+                "word/styles.xml": styles_xml,
+                "[Content_Types].xml": content_types,
+            },
+        )
+
+        report = classify_docx_structure(self.docx)
+        self.assertEqual(report["package_status"], "READY", report["issues"])
+        preserved = [
+            item for item in report["structures"]
+            if item["kind"] == "preserved_standard_metadata"
+        ]
+        expected_counts = {
+            "footnotePr": 1, "pos": 2, "numFmt": 2, "numStart": 2,
+            "numRestart": 2, "footnote": 1, "endnotePr": 1, "endnote": 1,
+            "compat": 1, "spaceForUL": 1, "ulTrailSpace": 1,
+            "useWord97LineBreakRules": 1, "compatSetting": 1,
+            "docVars": 1, "docVar": 2, "doNotIncludeSubdocsInStats": 1,
+            "bordersDoNotSurroundHeader": 1, "bordersDoNotSurroundFooter": 1,
+            "drawingGridHorizontalSpacing": 1, "drawingGridVerticalSpacing": 1,
+            "displayHorizontalDrawingGridEvery": 1, "displayVerticalDrawingGridEvery": 1,
+            "noPunctuationKerning": 1, "hdrShapeDefaults": 1, "hidden": 1,
+        }
+        actual_counts = {}
+        for item in preserved:
+            actual_counts[item["element"]] = actual_counts.get(item["element"], 0) + 1
+            self.assertEqual(item["status"], SUPPORTED)
+            self.assertTrue(item["details"].get("preserve_unchanged"))
+            self.assertTrue(item["details"].get("metadata_context"))
+        self.assertEqual(actual_counts, expected_counts)
+        assert_edit_target_supported(
+            report, part="word/document.xml", paragraph_index=0
+        )
+
+        prepared = prepare_document(
+            str(self.docx), str(self.root / "prepared.docx"),
+            [{
+                "part": "word/document.xml", "p_idx": 0,
+                "find": "Replace this phrase", "replace": "Updated wording",
+            }],
+            "Metadata preservation test",
+        )
+        self.assertEqual(prepared["report"]["modified_parts"], ["word/document.xml"])
+        self.assertEqual(prepared["report"]["validation"]["untouched_parts"], "byte-identical")
+        with zipfile.ZipFile(io.BytesIO(prepared["payload"]), "r") as archive:
+            self.assertEqual(archive.read("word/settings.xml"), settings_xml)
+            self.assertEqual(archive.read("word/styles.xml"), styles_xml)
+            self.assertEqual(archive.read("[Content_Types].xml"), content_types)
+
+    def test_unknown_children_inside_known_settings_containers_remain_fail_closed(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        settings_xml = (
+            f'<w:settings xmlns:w="{W}">'
+            '<w:footnotePr><w:futureFootnoteProperty/></w:footnotePr>'
+            '<w:compat><w:futureCompatOption/></w:compat>'
+            '<w:docVars><w:futureVariableShape/></w:docVars>'
+            '</w:settings>'
+        ).encode("utf-8")
+        content_types = (
+            f'<Types xmlns="{CT}">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+            '</Types>'
+        ).encode("utf-8")
+        _write_docx(
+            self.docx, _document(body),
+            extra={"word/settings.xml": settings_xml, "[Content_Types].xml": content_types},
+        )
+        report = classify_docx_structure(self.docx)
+        blockers = [
+            item for item in report["structures"]
+            if item["status"] == BLOCKED and item["part"] == "word/settings.xml"
+        ]
+        self.assertEqual(
+            {item["element"] for item in blockers},
+            {"futureFootnoteProperty", "futureCompatOption", "futureVariableShape"},
+        )
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
+    def test_settings_only_metadata_outside_registered_parent_context_remains_blocked(self):
+        body = (
+            '<w:p><w:spaceForUL/>'
+            '<w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        self.assertTrue(any(
+            item["element"] == "spaceForUL"
+            and item["status"] == BLOCKED
+            for item in report["structures"]
+        ))
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=0
+            )
+
+    def test_style_hidden_is_only_preserved_in_a_style_definition(self):
+        body = '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        misplaced_styles = (
+            f'<w:styles xmlns:w="{W}"><w:hidden/></w:styles>'
+        ).encode("utf-8")
+        _write_docx(self.docx, _document(body), extra={"word/styles.xml": misplaced_styles})
+        report = classify_docx_structure(self.docx)
+        self.assertTrue(any(
+            item["element"] == "hidden"
+            and item["part"] == "word/styles.xml"
+            and item["status"] == BLOCKED
+            for item in report["structures"]
+        ))
         with self.assertRaises(StructureClassificationError):
             assert_edit_target_supported(
                 report, part="word/document.xml", paragraph_index=0
