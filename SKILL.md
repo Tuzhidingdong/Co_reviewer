@@ -300,6 +300,12 @@ Final body-text page/line positions come only from Microsoft Word COM on the fin
 
 After Word refreshes built-in SEQ, REF, PAGE and PAGEREF fields (not citation-manager ADDIN fields), it repaginates and exports the PDF. Native numeric SEQ Figure and SEQ Table results are checked for gaps, duplicates and unexpected starting numbers. A deterministic numbering error blocks export. Chapter-reset, non-numeric or manually typed caption schemes are explicitly marked manual_review; they are not reported as automatically certified.
 
+### Word bookmark ranges and malformed markers
+
+The structure classifier pairs `w:bookmarkStart` and `w:bookmarkEnd` by identical `w:id` and document order. A valid pair is guarded only across its actual bounded range. An unmatched bookmark marker is a non-conformant orphan, not an open-ended range: never treat an unmatched start as protecting every paragraph through the end of the document, or an unmatched end as protecting every paragraph before it. Preserve the original marker unchanged and block edits only in the paragraph containing that orphan; when the marker cannot be mapped to a paragraph, keep the affected part blocked. Duplicate or misordered marker groups remain guarded over the bounded interval between observed markers.
+
+Never delete, auto-close, renumber or relocate bookmark markers to make a plan pass. The missing boundary cannot be inferred safely from the remaining XML. Report the exact marker ID, paragraph and structure issue; let the user decide whether a separate, explicitly authorized document repair is warranted. Re-run the official `validate-plan` and `preflight-plan` gates after a classifier update. Do not claim that reducing a false-positive range validates unrelated formatting, text-match or evidence blockers.
+
 ### Table and non-body manual locators
 
 When a target cannot safely receive an automatic body-line locator (for example, a table cell or unsupported header/footer object), set location_requirement to manual_required. The Word mapper still exports the final DOCX/PDF for that document role but does not invent a line number. After map-response-locations, enter one locator row for every exact linked PatchOperation:
