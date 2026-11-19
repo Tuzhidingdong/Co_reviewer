@@ -205,17 +205,66 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertEqual(report["package_status"], "BLOCKED")
         self.assertIn("INVALID_RELATIONSHIPS_ROOT", {item["code"] for item in report["issues"]})
 
-    def test_unpaired_bookmark_is_reported_as_a_blocking_issue(self):
+    def test_unpaired_bookmark_markers_only_block_their_own_paragraphs(self):
         body = (
-            '<w:p><w:bookmarkStart w:id="4" w:name="unclosed"/>'
-            '<w:r><w:t>text</w:t></w:r></w:p>'
-            '<w:p><w:r><w:t>later text</w:t></w:r></w:p>'
+            '<w:p><w:bookmarkStart w:id="4" w:name="unclosedStart"/>'
+            '<w:r><w:t>start marker paragraph</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>ordinary paragraph after start</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>orphan end paragraph</w:t></w:r>'
+            '<w:bookmarkEnd w:id="5"/></w:p>'
+            '<w:p><w:r><w:t>ordinary paragraph after end</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>later ordinary paragraph</w:t></w:r></w:p>'
         )
         _write_docx(self.docx, _document(body))
         report = classify_docx_structure(self.docx)
+
+        self.assertEqual(report["package_status"], "READY", report["issues"])
         self.assertIn("UNPAIRED_BOOKMARK_RANGE", {item["code"] for item in report["issues"]})
-        with self.assertRaises(StructureClassificationError):
-            assert_edit_target_supported(report, part="word/document.xml", paragraph_index=0)
+        orphan_records = [
+            item for item in report["structures"]
+            if item["kind"] == "incomplete_bookmark_range"
+        ]
+        self.assertEqual({item["paragraph_index"] for item in orphan_records}, {0, 2})
+        self.assertTrue(all(
+            item["paragraph_indices"] == [item["paragraph_index"]]
+            and item["details"]["scope_policy"] == "marker_paragraph_only"
+            for item in orphan_records
+        ))
+
+        for blocked_index in (0, 2):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=blocked_index
+                )
+        for editable_index in (1, 3, 4):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=editable_index
+            )
+
+    def test_valid_bookmark_pair_still_blocks_its_exact_cross_paragraph_range(self):
+        body = (
+            '<w:p><w:bookmarkStart w:id="8" w:name="validRange"/>'
+            '<w:r><w:t>range start</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>range middle</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>range end</w:t></w:r><w:bookmarkEnd w:id="8"/></w:p>'
+            '<w:p><w:r><w:t>outside the bookmark</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+
+        valid = next(
+            item for item in report["structures"]
+            if item["kind"] == "bookmark_range"
+        )
+        self.assertEqual(valid["paragraph_indices"], [0, 1, 2])
+        for blocked_index in (0, 1, 2):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=blocked_index
+                )
+        assert_edit_target_supported(
+            report, part="word/document.xml", paragraph_index=3
+        )
 
     def test_missing_relationship_target_blocks_package(self):
         body = '<w:p><w:hyperlink r:id="rIdMissing"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>'
