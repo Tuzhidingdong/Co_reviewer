@@ -276,6 +276,48 @@ def _preserved_standard_metadata_context(part: str, node: ET._Element) -> str | 
     return None
 
 
+def _is_misplaced_standard_metadata(part: str, node: ET._Element) -> bool:
+    """Reject registered settings vocabulary when it appears outside its schema context."""
+    if not isinstance(node.tag, str) or _qname(node.tag).namespace != W:
+        return False
+    local = _qname(node.tag).localname
+    parent = node.getparent()
+    parent_local = _qname(parent.tag).localname if parent is not None and isinstance(parent.tag, str) else None
+    grandparent = parent.getparent() if parent is not None else None
+    grandparent_local = (
+        _qname(grandparent.tag).localname
+        if grandparent is not None and isinstance(grandparent.tag, str) else None
+    )
+
+    if local in _PRESERVED_SETTINGS_ROOT_ELEMENTS:
+        if _preserved_standard_metadata_context(part, node) is not None:
+            return False
+        # footnotePr/endnotePr also have legitimate section-specific locations.
+        if (
+            local in {"footnotePr", "endnotePr"}
+            and part == "word/document.xml"
+            and parent_local == "sectPr"
+        ):
+            return False
+        return True
+
+    if local in {"footnote", "endnote", "pos", "numFmt", "numStart", "numRestart"}:
+        if parent_local in {"footnotePr", "endnotePr"}:
+            if _preserved_standard_metadata_context(part, node) is not None:
+                return False
+            if part == "word/document.xml" and grandparent_local == "sectPr":
+                return False
+            return True
+
+    if local == "docVar" and _preserved_standard_metadata_context(part, node) is None:
+        return True
+
+    if local in _PRESERVED_COMPAT_CHILDREN:
+        return _preserved_standard_metadata_context(part, node) is None
+
+    return False
+
+
 def _xml_parser() -> ET.XMLParser:
     return ET.XMLParser(
         resolve_entities=False,
@@ -856,6 +898,11 @@ def _classify_members(
                     )
                     details["preserve_unchanged"] = True
                     details["metadata_context"] = metadata_context
+                elif _is_misplaced_standard_metadata(part, node):
+                    kind, status, reason = (
+                        "misplaced_standard_metadata", BLOCKED,
+                        "A registered settings/style metadata element appears outside its schema-defined package-part and parent-child context.",
+                    )
                 elif local in _GUARDED_SETTINGS_ELEMENTS:
                     if (
                         part == "word/settings.xml"
