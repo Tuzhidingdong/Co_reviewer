@@ -129,7 +129,10 @@ fldData
 # These standard Word settings are document-level layout/display metadata. They are
 # inventoried as preserved metadata only when they are direct children of w:settings;
 # the production writer never edits or regenerates word/settings.xml.
-_PRESERVED_SETTINGS_ELEMENTS = frozenset({
+_PRESERVED_SETTINGS_ROOT_ELEMENTS = frozenset({
+    # Standard direct children of w:settings that do not alter editing permissions
+    # or revision-generation policy. Their package part is never rewritten by
+    # a body-text Patch.
     "bordersDoNotSurroundHeader",
     "bordersDoNotSurroundFooter",
     "drawingGridHorizontalSpacing",
@@ -138,6 +141,87 @@ _PRESERVED_SETTINGS_ELEMENTS = frozenset({
     "displayVerticalDrawingGridEvery",
     "noPunctuationKerning",
     "hdrShapeDefaults",
+    "footnotePr",
+    "endnotePr",
+    "compat",
+    "docVars",
+    "doNotIncludeSubdocsInStats",
+})
+_PRESERVED_SETTINGS_CHILDREN = {
+    "footnotePr": frozenset({"pos", "numFmt", "numStart", "numRestart", "footnote"}),
+    "endnotePr": frozenset({"pos", "numFmt", "numStart", "numRestart", "endnote"}),
+    "docVars": frozenset({"docVar"}),
+}
+# Word's compatibility container has a schema-defined vocabulary. Matching is
+# parent-qualified: these are preserved only as direct w:compat children within
+# word/settings.xml. Unknown future children remain BLOCKED.
+_PRESERVED_COMPAT_CHILDREN = frozenset({
+    "adjustLineHeightInTable",
+    "alignTablesRowByRow",
+    "allowSpaceOfSameStyleInTable",
+    "applyBreakingRules",
+    "autofitToFirstFixedWidthCell",
+    "autoSpaceLikeWord95",
+    "balanceSingleByteDoubleByteWidth",
+    "cachedColBalance",
+    "compatSetting",
+    "convMailMergeEsc",
+    "displayHangulFixedWidth",
+    "doNotAutofitConstrainedTables",
+    "doNotBreakConstrainedForcedTable",
+    "doNotBreakWrappedTables",
+    "doNotExpandShiftReturn",
+    "doNotLeaveBackslashAlone",
+    "doNotSnapToGridInCell",
+    "doNotSuppressIndentation",
+    "doNotSuppressParagraphBorders",
+    "doNotUseEastAsianBreakRules",
+    "doNotUseHTMLParagraphAutoSpacing",
+    "doNotUseIndentAsNumberingTabStop",
+    "doNotVertAlignCellWithSp",
+    "doNotVertAlignInTxbx",
+    "doNotWrapTextWithPunct",
+    "footnoteLayoutLikeW8",
+    "forgetLastTabAlignment",
+    "growAutofit",
+    "layoutRawTableWidth",
+    "layoutTableRowsApart",
+    "lineWrapLikeWord6",
+    "mwSmallCaps",
+    "noColumnBalance",
+    "noExtraLineSpacing",
+    "noLeading",
+    "noSpaceRaiseLower",
+    "noTabHangInd",
+    "printBodyTextBeforeHeader",
+    "printColBlack",
+    "selectFldWithFirstOrLastChar",
+    "shapeLayoutLikeW8",
+    "showBreaksInFrames",
+    "spaceForUL",
+    "spacingInWholePoints",
+    "splitPgBreakAndParaMark",
+    "subFontBySize",
+    "suppressBottomSpacing",
+    "suppressSpacingAtTopOfPage",
+    "suppressSpBfAfterPgBrk",
+    "suppressTopSpacing",
+    "suppressTopSpacingWP",
+    "swapBordersFacingPages",
+    "truncateFontHeightsLikeWP6",
+    "underlineTabInNumList",
+    "ulTrailSpace",
+    "useAltKinsokuLineBreakRules",
+    "useAnsiKerningPairs",
+    "useFELayout",
+    "useNormalStyleForList",
+    "usePrinterMetrics",
+    "useSingleBorderforContiguousCells",
+    "useWord2002TableStyleRules",
+    "useWord97LineBreakRules",
+    "wpJustification",
+    "wpSpaceWidth",
+    "wrapTrailSpaces",
 })
 _GUARDED_SETTINGS_ELEMENTS = frozenset({
     "documentProtection",
@@ -146,6 +230,51 @@ _GUARDED_SETTINGS_ELEMENTS = frozenset({
     "doNotTrackFormatting",
     "doNotTrackMoves",
 })
+
+def _preserved_standard_metadata_context(part: str, node: ET._Element) -> str | None:
+    """Return the exact schema context for standard metadata that is preserved.
+
+    The allow-list is intentionally parent-qualified. It does not bless unknown
+    children merely because they occur somewhere inside word/settings.xml or
+    word/styles.xml.
+    """
+    if not isinstance(node.tag, str) or _qname(node.tag).namespace != W:
+        return None
+    local = _qname(node.tag).localname
+    parent = node.getparent()
+    if parent is None or not isinstance(parent.tag, str):
+        return None
+    parent_local = _qname(parent.tag).localname
+
+    if part == "word/settings.xml":
+        if parent.tag == f"{{{W}}}settings" and local in _PRESERVED_SETTINGS_ROOT_ELEMENTS:
+            return "word/settings.xml/w:settings"
+        grandparent = parent.getparent()
+        if (
+            grandparent is not None
+            and grandparent.tag == f"{{{W}}}settings"
+            and local in _PRESERVED_SETTINGS_CHILDREN.get(parent_local, ())
+        ):
+            return f"word/settings.xml/w:settings/w:{parent_local}"
+        if (
+            parent.tag == f"{{{W}}}compat"
+            and grandparent is not None
+            and grandparent.tag == f"{{{W}}}settings"
+            and local in _PRESERVED_COMPAT_CHILDREN
+        ):
+            return "word/settings.xml/w:settings/w:compat"
+
+    if (
+        part == "word/styles.xml"
+        and parent.tag == f"{{{W}}}style"
+        and local == "hidden"
+    ):
+        # w:hidden under w:style hides the style from Word's UI; it does not
+        # hide the text formatted by that style.
+        return "word/styles.xml/w:styles/w:style"
+
+    return None
+
 
 def _xml_parser() -> ET.XMLParser:
     return ET.XMLParser(
@@ -719,22 +848,14 @@ def _classify_members(
                     kind, status, reason = "structured_container", DEFERRED, f"{local} content requires a dedicated OOXML adapter."
                 elif local in {"drawing", "pict", "object"}:
                     kind, status, reason = "embedded_object", DEFERRED, "Drawing/object content is not editable as ordinary paragraph text."
-                elif local in _PRESERVED_SETTINGS_ELEMENTS:
-                    if (
-                        part == "word/settings.xml"
-                        and node.getparent() is not None
-                        and node.getparent().tag == f"{{{W}}}settings"
-                    ):
-                        kind, status, reason = (
-                            "preserved_document_setting", SUPPORTED,
-                            "Recognized standard Word layout/display setting; retained byte-for-byte outside the body edit scope.",
-                        )
-                        details["preserve_unchanged"] = True
-                    else:
-                        kind, status, reason = (
-                            "misplaced_document_setting", BLOCKED,
-                            "A settings-only WordprocessingML element is not in the direct-child position of word/settings.xml.",
-                        )
+                elif _preserved_standard_metadata_context(part, node) is not None:
+                    metadata_context = _preserved_standard_metadata_context(part, node)
+                    kind, status, reason = (
+                        "preserved_standard_metadata", SUPPORTED,
+                        "Recognized schema-positioned Word settings/style metadata; retained byte-for-byte outside the body edit scope.",
+                    )
+                    details["preserve_unchanged"] = True
+                    details["metadata_context"] = metadata_context
                 elif local in _GUARDED_SETTINGS_ELEMENTS:
                     if (
                         part == "word/settings.xml"
