@@ -1,0 +1,116 @@
+{
+  "passed": true,
+  "targets_total": 8,
+  "targets_preflighted": 8,
+  "approval_scope_changed_items": 0,
+  "source_files": [
+    {
+      "sha256": "20d9e75c91a6db1709293834d09c2254db0193914602b9ff23d906cd73f52163"
+    },
+    {
+      "sha256": "a83c7108642bd79a7271e2369252721fe899e2dd8595b2670d8041a755c71229"
+    }
+  ],
+  "preflight_items": [
+    {
+      "revision_item_id": "R-M-01",
+      "preflight_fingerprint": "f252659267291408f06c0847b7cc8c722bc5b6bb909e37a74c2fdb148d07913a"
+    },
+    {
+      "revision_item_id": "R-M-02",
+      "preflight_fingerprint": "3e1f1e094833c1f22acf88acfa582ad1c7d8dc7d14244bbefb01e7b9dd334656"
+    },
+    {
+      "revision_item_id": "R-M-03",
+      "preflight_fingerprint": "d61beed635611e73050ca2263c8b03a72ffffcaac6d34d6e8feb28b7e13b2728"
+    },
+    {
+      "revision_item_id": "R-M-04",
+      "preflight_fingerprint": "92db8ae9d3b309abb0b24203857ce4ebe78ca7b568ba3675c5b3dd523eab4b6b"
+    },
+    {
+      "revision_item_id": "R-M-44",
+      "preflight_fingerprint": "7ca715ea969492a9aed91c661efb97382884ca827610ed4df809740153311b24"
+    },
+    {
+      "revision_item_id": "R-S-24a",
+      "preflight_fingerprint": "d6bfcef7343b73df70007cff84db88a2a7702ff84f779d3ed0b52d863b1c3f9c"
+    },
+    {
+      "revision_item_id": "R-S-24b",
+      "preflight_fingerprint": "38c9b9b98621b809ed2fa976d706b4528400a0119ce9706dedded5189fda5d98"
+    }
+  ],
+  "documents": [
+    {
+      "input_sha256": "20d9e75c91a6db1709293834d09c2254db0193914602b9ff23d906cd73f52163",
+      "output_sha256": "757503e90870f5b78b18ac5c79340bcdc4fadf5f09f9f593bfef45f2f162bc96",
+      "edits_requested": 6,
+      "modified_parts": [
+        "word/document.xml"
+      ],
+      "status": "preflighted",
+      "edits_prepared": 6
+    },
+    {
+      "input_sha256": "a83c7108642bd79a7271e2369252721fe899e2dd8595b2670d8041a755c71229",
+      "output_sha256": "55753d5aca08707b21247a6c02d9ce8657da1d513739fe9666d35466a66fbbb9",
+      "edits_requested": 2,
+      "modified_parts": [
+        "word/document.xml"
+      ],
+      "status": "preflighted",
+      "edits_prepared": 2
+    }
+  ],
+  "results": [
+    {
+      "p_idx": 6,
+      "status": "preflighted",
+      "revision_item_id": "R-M-01",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 6,
+      "status": "preflighted",
+      "revision_item_id": "R-M-02",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 6,
+      "status": "preflighted",
+      "revision_item_id": "R-M-02",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 6,
+      "status": "preflighted",
+      "revision_item_id": "R-M-03",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 7,
+      "status": "preflighted",
+      "revision_item_id": "R-M-04",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 34,
+      "status": "preflighted",
+      "revision_item_id": "R-M-44",
+      "document": "Manuscript"
+    },
+    {
+      "p_idx": 47,
+      "status": "preflighted",
+      "revision_item_id": "R-S-24a",
+      "document": "SI"
+    },
+    {
+      "p_idx": 52,
+      "status": "preflighted",
+      "revision_item_id": "R-S-24b",
+      "document": "SI"
+    }
+  ]
+}

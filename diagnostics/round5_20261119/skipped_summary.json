@@ -1,0 +1,306 @@
+[
+  {
+    "instruction_id": "M-05",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-06",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-07",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-08",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-09",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-10",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-11",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-12",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-13",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-14",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-15",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-16",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-17",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-18",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-19",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-20",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-21",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-22",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-23",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-24",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-25",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-26",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-27",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-28",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "M-29",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-30",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-31",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-32",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-33",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-34",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-35",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-36",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-37",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-38",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-39",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-40",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-41",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "M-42",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "M-43",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "M-44",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "M-45",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-46",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-47",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-48",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-49",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-50",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "S-01",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-02",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-03",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-04",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-05",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-06",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-07",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "S-08",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-09",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-10",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-11",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-12",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-13",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-14",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-15",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-16",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-17",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-18",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-19",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-20",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-21",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-22",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-23",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-24",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "S-25",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-26",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-27",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-28",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "S-29",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-30",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  }
+]

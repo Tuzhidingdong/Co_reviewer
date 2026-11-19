@@ -1,0 +1,78 @@
+{
+  "scope": "Mechanical DOCX Track Changes verification and untracked-text audit only; scientific correctness and cross-document semantic consistency require separate review.",
+  "targets_total": 8,
+  "targets_verified": 8,
+  "targets_failed": 0,
+  "passed": true,
+  "untracked_text_audit": {
+    "passed": true,
+    "documents_checked": 2,
+    "violations": 0
+  },
+  "results": [
+    {
+      "revision_item_id": "R-M-01",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 6,
+      "delete_revision_id": 1,
+      "insert_revision_id": 2
+    },
+    {
+      "revision_item_id": "R-M-02",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 6,
+      "delete_revision_id": 3,
+      "insert_revision_id": 4
+    },
+    {
+      "revision_item_id": "R-M-02",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 6,
+      "delete_revision_id": 5,
+      "insert_revision_id": 6
+    },
+    {
+      "revision_item_id": "R-M-03",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 6,
+      "delete_revision_id": 7,
+      "insert_revision_id": 8
+    },
+    {
+      "revision_item_id": "R-M-04",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 7,
+      "delete_revision_id": 9,
+      "insert_revision_id": 10
+    },
+    {
+      "revision_item_id": "R-M-44",
+      "document": "Manuscript",
+      "status": "verified",
+      "p_idx": 34,
+      "delete_revision_id": 11,
+      "insert_revision_id": 12
+    },
+    {
+      "revision_item_id": "R-S-24a",
+      "document": "SI",
+      "status": "verified",
+      "p_idx": 47,
+      "delete_revision_id": 1,
+      "insert_revision_id": 2
+    },
+    {
+      "revision_item_id": "R-S-24b",
+      "document": "SI",
+      "status": "verified",
+      "p_idx": 52,
+      "delete_revision_id": 3,
+      "insert_revision_id": 4
+    }
+  ]
+}

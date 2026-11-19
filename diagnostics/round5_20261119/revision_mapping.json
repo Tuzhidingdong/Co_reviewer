@@ -1,0 +1,402 @@
+[
+  {
+    "instruction_id": "M-01",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "M-02",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "M-03",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "M-04",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "M-05",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-06",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-07",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-08",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-09",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-10",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-11",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-12",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-13",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-14",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-15",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-16",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-17",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-18",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-19",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-20",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-21",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-22",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-23",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-24",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-25",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-26",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-27",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-28",
+    "status": "BLOCKED",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "M-29",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-30",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-31",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-32",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-33",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-34",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-35",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-36",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-37",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-38",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-39",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-40",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-41",
+    "status": "BLOCKED",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "M-42",
+    "status": "BLOCKED",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "M-43",
+    "status": "BLOCKED",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "M-44",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "M-45",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-46",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-47",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-48",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-49",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "M-50",
+    "status": "BLOCKED",
+    "reason_code": "UNSAFE_FIND_WINDOW"
+  },
+  {
+    "instruction_id": "S-01",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-02",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-03",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-04",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-05",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-06",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-07",
+    "status": "BLOCKED",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "S-08",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-09",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-10",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-11",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-12",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-13",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-14",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-15",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-16",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-17",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-18",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-19",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-20",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-21",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-22",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-23",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-24",
+    "status": "APPLIED",
+    "reason_code": "APPLIED_VERIFIED"
+  },
+  {
+    "instruction_id": "S-25",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-26",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-27",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-28",
+    "status": "BLOCKED",
+    "reason_code": "NO_EXACT_TARGET"
+  },
+  {
+    "instruction_id": "S-29",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  },
+  {
+    "instruction_id": "S-30",
+    "status": "BLOCKED",
+    "reason_code": "GATE_BLOCKED_PARAGRAPH"
+  }
+]
