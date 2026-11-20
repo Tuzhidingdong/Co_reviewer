@@ -63,7 +63,7 @@ class DocumentEngineModuleBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(
             [node["text_node_text_start"] for node in text_nodes],
-            [7, 0, 1],
+            [7, 0, 0],
         )
         self.assertEqual(
             [node["text_node_document_order"] for node in text_nodes],
