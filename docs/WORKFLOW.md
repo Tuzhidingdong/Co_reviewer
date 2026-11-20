@@ -311,6 +311,8 @@ The Workflow Ledger stores deterministic `risk_tier`, `risk_policy_version` and 
 
 Batch construction never mixes tiers. The default route selects one safe tier at a time and holds Tier 2 out; explicit `--task-ids` must also be risk-homogeneous. Risk is recalculated after exact PatchOperations are added to the prepared Workflow Ledger. A change to risk classification changes the scope fingerprint and invalidates stale authorization.
 
+For Tier 1 tasks, the author must make a separate explicit high-risk review acknowledgement when approving the Workflow task. Use both `--high-risk-review-confirmed` and `--high-risk-review-note` with `approve-workflow-tasks`. The CLI records reviewer identity/time and the note inside the Workflow task fingerprint. A recheck clears this evidence; renewed scope requires renewed Tier 1 review. This is in addition to Patch Approval and Semantic Review.
+
 ### Manual Suggestion artifacts
 
 When Apply encounters a blocked structure, it writes a new, source-hash-bound JSON artifact to `<batch>/manual_suggestions/` (or beside a non-batch plan). The CLI prints the artifact path and SHA-256, then stops; Apply remains failed/blocked and does not continue to publication. The artifact is explicitly `not_applied=true` and `docx_write_performed=false`; it is not a Patch and cannot be mistaken for revised manuscript text.
