@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .identity import CitationProfile, DocumentIdentity, DocumentObjectIdentity, TargetRef
+from .safety_policy import assess_task_risk
 
 WORKFLOW_STATUSES = frozenset({
     "identified",
@@ -79,6 +80,7 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids", "response_unit_specs",
+    "risk_tier", "risk_policy_version", "risk_reasons",
 )
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
@@ -366,6 +368,17 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
             errors.append(f"Task {task_id} stage must be a string.")
         if isinstance(status, str) and status in WORKFLOW_STATUSES:
             errors.extend(_state_evidence_errors(task_id, task, status))
+        if "risk_tier" in task:
+            expected_risk = assess_task_risk(task)
+            if task.get("risk_tier") != expected_risk["risk_tier"]:
+                errors.append(
+                    f"Task {task_id} risk_tier does not match deterministic policy "
+                    f"({expected_risk['risk_tier']})."
+                )
+            if task.get("risk_policy_version") != expected_risk["risk_policy_version"]:
+                errors.append(f"Task {task_id} risk_policy_version is stale or unsupported.")
+            if task.get("risk_reasons") != expected_risk["risk_reasons"]:
+                errors.append(f"Task {task_id} risk_reasons do not match deterministic policy.")
 
     for task_id, deps in dependencies.items():
         for dependency in deps:
@@ -985,6 +998,7 @@ def workflow_tasks_from_decision_plan(tasks: Any, target_refs_by_task: Mapping[s
         })
         if stable_refs:
             record["target_refs"] = stable_refs
+        record.update(assess_task_risk(record))
         adapted.append(record)
     return adapted
 
