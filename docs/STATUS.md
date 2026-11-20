@@ -54,7 +54,7 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | AC | Current state | Evidence / remaining work |
 |---|---|---|
 | 01 Single Active Baseline | IMPLEMENTED_UNVERIFIED | RC branch and parent recorded above; validate exact PR/CI head on acceptance |
-| 02 Branch Convergence | PARTIAL | PR #1 and #3–#8 are ancestry contained in PR #9 and are being closed as superseded; PR #2 remains divergent with 31 unique commits/39 behind and requires selective AC-07 scope disposition |
+| 02 Branch Convergence | PARTIAL | PR #1 and #3–#8 are ancestry contained in PR #9 and are now CLOSED as superseded; PR #2 remains divergent with 31 unique commits/39 behind and requires selective AC-07 scope disposition |
 | 03 Status Consistency | IMPLEMENTED_UNVERIFIED | This is the single status file; refresh hashes after final CI/fixes |
 | 04 Plan Protection | IMPLEMENTED_UNVERIFIED | Frozen plan left unchanged; verify its SHA-256 remains the value above |
 | 05 Round Isolation | IMPLEMENTED_UNVERIFIED | Existing round starter/orchestration and manifest |
