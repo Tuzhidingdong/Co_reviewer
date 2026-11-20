@@ -10,6 +10,12 @@ RISK_POLICY_VERSION = "1.0"
 RISK_TIERS = ("TIER_0", "TIER_1", "TIER_2")
 _MUTATING_ACTIONS = {"replace", "add", "remove", "renumber", "reference_update"}
 _HIGH_RISK_TYPES = {"cross_document_consistency", "global_numbering"}
+_HIGH_RISK_TERMS = re.compile(
+    r"\\b(?:format(?:ting)?|font|typeface|style|bold|italic|underline|"
+    r"superscript|subscript|formula|equation|citation|reference|figure|"
+    r"table|scheme|numbering|renumber|unit|cross[- ]document)\\b",
+    re.IGNORECASE,
+)
 _SCIENTIFIC_TOKEN = re.compile(
     r"(?:\d|\[[^\]]*\]|\b(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*[A-Z0-9]"
     r"|\b(?:mg|g|kg|mL|L|mol|mmol|M|mM|eV|kJ|kcal|nm|um|μm|Å|K|°C|%)\b"
@@ -129,6 +135,9 @@ def assess_task_risk(task: Mapping[str, Any]) -> dict[str, Any]:
     if any(isinstance(value, str) and _SCIENTIFIC_TOKEN.search(value) for value in text_fields):
         high_risk = True
         reasons.append("scientific_or_reference_token_in_task_evidence")
+    if any(isinstance(value, str) and _HIGH_RISK_TERMS.search(value) for value in text_fields):
+        high_risk = True
+        reasons.append("high_risk_format_formula_reference_or_numbering_language")
 
     if high_risk:
         tier = "TIER_1"
