@@ -672,6 +672,112 @@ class V232ContractTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), b"keep")
 
 
+    def test_package_graph_resolves_and_renumbers_static_numeric_citations(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "[1] Smith et al. Reference one."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[2] Jones et al. Reference two."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "The method follows prior work [1, 2]."},
+            ]
+        })
+        definitions = [row for row in graph["definitions"] if row["kind"] == "citation"]
+        mentions = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual({row["number"] for row in definitions}, {"1", "2"})
+        self.assertEqual({row["number"] for row in mentions}, {"1", "2"})
+        self.assertTrue(all(row["resolution"] == "resolved" for row in mentions))
+        updated = renumber_reference_graph(
+            graph,
+            {"Manuscript::citation::1": "4"},
+            explicit_authorization=True,
+        )
+        self.assertTrue(any(
+            row["kind"] == "citation" and row["old_number"] == "1" and row["new_number"] == "4"
+            for row in updated["definition_updates"]
+        ))
+        self.assertTrue(any(
+            row["kind"] == "citation" and row["old_text"] == "1" and row["new_text"] == "4"
+            for row in updated["mention_updates"]
+        ))
+
+    def test_legacy_reference_number_key_rejects_cross_kind_collision(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[1] Smith et al. Reference one."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "See Fig. 1 and [1]."},
+            ]
+        })
+        with self.assertRaisesRegex(ContractError, "UNIQUE_REFERENCE_KIND_REQUIRED"):
+            renumber_reference_graph(
+                graph, {"Manuscript::1": "2"}, explicit_authorization=True
+            )
+
+    def test_native_word_reference_fields_are_separate_and_block_number_propagation(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {
+                    "part": "word/document.xml", "paragraph_index": 1,
+                    "text": "See Figure 1 and [1].",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": [" REF _Ref123 \\h "],
+                    "word_field_markers_present": True,
+                },
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "[1] Smith et al. Reference one."},
+            ]
+        })
+        self.assertEqual(len(graph["field_references"]), 1)
+        self.assertEqual(graph["field_references"][0]["field_type"], "REF")
+        mixed_mentions = [
+            row for row in graph["mentions"]
+            if row["paragraph_index"] == 1
+        ]
+        self.assertTrue(mixed_mentions)
+        self.assertTrue(all(row["resolution"] == "manual_review_required" for row in mixed_mentions))
+        with self.assertRaisesRegex(ContractError, "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING"):
+            renumber_reference_graph(
+                graph, {"Manuscript::figure::1": "2"}, explicit_authorization=True
+            )
+
+    def test_page_number_fields_do_not_block_unrelated_reference_renumbering(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {
+                    "part": "word/document.xml", "paragraph_index": 1,
+                    "text": "Page 1",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": [" PAGE "],
+                    "word_field_markers_present": True,
+                },
+            ]
+        })
+        self.assertEqual(graph["field_references"][0]["field_type"], "PAGE")
+        updated = renumber_reference_graph(
+            graph, {"Manuscript::figure::1": "2"}, explicit_authorization=True
+        )
+        self.assertEqual(updated["definition_updates"][0]["new_number"], "2")
+
+    def test_citation_ranges_require_manual_mapping_before_numbering(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "[1] Smith. One."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[2] Jones. Two."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "[3] Lee. Three."},
+                {"part": "word/document.xml", "paragraph_index": 3, "text": "See prior work [1-3]."},
+            ]
+        })
+        range_mention = next(
+            row for row in graph["mentions"]
+            if row["kind"] == "citation" and row["number"] == "1-3"
+        )
+        self.assertEqual(range_mention["resolution"], "manual_review_required")
+        with self.assertRaisesRegex(ContractError, "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION"):
+            renumber_reference_graph(
+                graph, {"Manuscript::citation::1": "4"}, explicit_authorization=True
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
