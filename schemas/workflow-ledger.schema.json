@@ -238,6 +238,9 @@
         "unresolved_questions": { "type": "array", "items": { "type": "string" } },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "requires_user_approval": { "type": "boolean" },
+        "risk_tier": { "enum": ["TIER_0", "TIER_1", "TIER_2"] },
+        "risk_policy_version": { "const": "1.0" },
+        "risk_reasons": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "status": {
           "enum": [
             "identified",
