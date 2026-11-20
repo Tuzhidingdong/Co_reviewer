@@ -309,6 +309,8 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "source_comment_ids": list(task["source_comment_ids"]),
             },
         ]
+        from co_reviewer.safety_policy import assess_task_risk
+        task.update(assess_task_risk(task))
         errors = validate_workflow_ledger(workflow)
         self.assertEqual(errors, [])
         audit_workflow_path.write_text(
