@@ -15,7 +15,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 import co_reviewer_cli as cli
 from co_reviewer.working_view import (
-    WorkingViewError, create_working_clean_view,
+    WorkingViewError, accepted_view_docx_bytes, create_working_clean_view,
     inspect_clean_baseline, strip_docx_comments_bytes,
 )
 from test_revision_engine import make_docx
@@ -68,6 +68,33 @@ class WorkingCleanViewTests(unittest.TestCase):
         self.assertTrue(report["validation"]["input_unchanged"])
         self.assertEqual(report["validation"]["residual_revision_markup"], "none")
         self.assertNotEqual(report["source_sha256"], report["output_sha256"])
+
+    def test_clean_projection_is_byte_deterministic_for_identical_marked_input(self):
+        make_docx(self.original, [[
+            ("The ", False),
+            ("old phrase", True),
+            (" remains unchanged.", False),
+        ]])
+        cli.apply_document(
+            str(self.original),
+            str(self.marked),
+            [{
+                "p_idx": 0,
+                "find": "old phrase",
+                "replace": "new wording",
+            }],
+            "Deterministic Working View Test",
+        )
+
+        first_path = self.root / "working_clean_first.docx"
+        second_path = self.root / "working_clean_second.docx"
+        first_report = create_working_clean_view(self.marked, first_path)
+        second_report = create_working_clean_view(self.marked, second_path)
+        accepted_bytes = accepted_view_docx_bytes(self.marked.read_bytes())
+
+        self.assertEqual(first_report["output_sha256"], second_report["output_sha256"])
+        self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+        self.assertEqual(first_path.read_bytes(), accepted_bytes)
 
     def test_removes_comment_anchors_and_comment_package_parts(self):
         make_docx(self.original, [[("Keep this sentence.", False)]])
