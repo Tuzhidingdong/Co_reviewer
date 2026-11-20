@@ -56,9 +56,36 @@ $fixture = Join-Path $env:TEMP ("CoReviewer_WordCompatibility_" + (Get-Date -For
 if ($LASTEXITCODE -ne 0) { throw "Could not create the isolated Word compatibility fixture." }
 ```
 
-The fixture contains five synthetic targets: two body paragraphs (including subscript/superscript conversion), one table cell, one header and one footer. Follow the generated plan through the CLI normal preflight, explicit Patch approval, native Track Changes Apply and verification gates. Do not edit the Marked DOCX with python-docx or raw XML.
+The fixture contains five synthetic targets: two body paragraphs (including subscript/superscript conversion), one table cell, one header and one footer. Run the following commands to preflight, explicitly approve, apply native Track Changes and verify the original saved output:
 
-Open the generated Marked DOCX in Microsoft Word, confirm there is no repair warning, inspect the five insertions/deletions and script formatting, save, close and reopen it. Run the post-Word verification command from the repository Word compatibility workflow and retain its JSON report. Do not claim Word round-trip acceptance before the post-Word report passes.
+```powershell
+$plan = Join-Path $fixture "word_compatibility_plan.json"
+$preflight = Join-Path $fixture "word_compatibility_preflight.json"
+$apply = Join-Path $fixture "word_compatibility_apply_report.json"
+$beforeWord = Join-Path $fixture "word_compatibility_verification_before_word.json"
+$afterWord = Join-Path $fixture "word_compatibility_verification_after_word.json"
+
+& $python scripts/co_reviewer_cli.py preflight-plan --plan $plan --out $preflight --author "Synthetic Word Compatibility"
+if ($LASTEXITCODE -ne 0) { throw "Word fixture preflight failed." }
+
+& $python scripts/co_reviewer_cli.py approve-plan --plan $plan --ids WORD-QA-01 --actor "Human Author"
+if ($LASTEXITCODE -ne 0) { throw "Word fixture approval failed." }
+
+& $python scripts/co_reviewer_cli.py apply --plan $plan --report $apply --author "Synthetic Word Compatibility"
+if ($LASTEXITCODE -ne 0) { throw "Word fixture Track Changes Apply failed." }
+
+& $python scripts/co_reviewer_cli.py verify --plan $plan --apply-report $apply --out $beforeWord
+if ($LASTEXITCODE -ne 0) { throw "Pre-Word verification failed." }
+```
+
+Open the generated Marked DOCX (word_compatibility_revised.docx) in Microsoft Word, confirm there is no repair warning, inspect the five insertions/deletions and script formatting, save, close and reopen it. Then run post-Word verification to a **new** report path:
+
+```powershell
+& $python scripts/co_reviewer_cli.py verify --plan $plan --apply-report $apply --out $afterWord
+if ($LASTEXITCODE -ne 0) { throw "Post-Word verification failed. Preserve the DOCX and both reports." }
+```
+
+Do not claim Word round-trip acceptance before the post-Word report passes. The after-Word report path is consumed by the Word COM/PDF mapping runner below.
 
 ## 4. Word COM / PDF mapping fixture
 
