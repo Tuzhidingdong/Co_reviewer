@@ -17,6 +17,7 @@ from co_reviewer.document_engine import (
     qn,
     safe_part,
     visible_text,
+    map_target_text_to_xml_nodes,
 )
 
 
@@ -33,6 +34,52 @@ class DocumentEngineModuleBoundaryTests(unittest.TestCase):
         ).encode("utf-8")
         paragraph = parse_xml(xml)
         self.assertEqual(visible_text(paragraph), "Zn\t2+\naq")
+
+    def test_structural_event_map_resolves_exact_runs_text_nodes_and_xml_order(self):
+        root = parse_xml((
+            f'<w:document xmlns:w="{W}"><w:body><w:p>'
+            '<w:r><w:t>prefix target </w:t><w:t>middle</w:t></w:r>'
+            '<w:r><w:t> suffix end</w:t></w:r>'
+            '</w:p></w:body></w:document>'
+        ).encode("utf-8"))
+        paragraph = root.find(".//w:p", NS)
+        event_map = map_target_text_to_xml_nodes(
+            root, paragraph, "target middle suffix"
+        )
+        self.assertEqual(event_map["status"], "MAPPED")
+        self.assertTrue(event_map["mapping_reconstructed_exactly"])
+        self.assertEqual(
+            [run["target_text"] for run in event_map["run_map"]],
+            ["target middle", " suffix"],
+        )
+        text_nodes = [
+            node for run in event_map["run_map"] for node in run["text_nodes"]
+        ]
+        self.assertEqual(
+            [node["target_text"] for node in text_nodes],
+            ["target ", "middle", " suffix"],
+        )
+        self.assertEqual(
+            [node["text_node_text_start"] for node in text_nodes],
+            [7, 0, 1],
+        )
+        self.assertEqual(
+            [node["text_node_document_order"] for node in text_nodes],
+            sorted(node["text_node_document_order"] for node in text_nodes),
+        )
+        self.assertTrue(all(node["text_node_xml_path"].startswith("/") for node in text_nodes))
+
+    def test_structural_event_map_fails_closed_when_target_crosses_non_run_boundary(self):
+        root = parse_xml((
+            f'<w:document xmlns:w="{W}"><w:body><w:p>'
+            '<w:r><w:t>before</w:t></w:r>'
+            '<w:bookmarkStart w:id="1" w:name="anchor"/>'
+            '<w:r><w:t>after</w:t></w:r>'
+            '</w:p></w:body></w:document>'
+        ).encode("utf-8"))
+        paragraph = root.find(".//w:p", NS)
+        with self.assertRaisesRegex(ValueError, "contiguous ordinary Run sequence"):
+            map_target_text_to_xml_nodes(root, paragraph, "beforeafter")
 
     def test_revision_id_scans_existing_native_revision_wrappers(self):
         xml = (

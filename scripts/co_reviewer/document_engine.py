@@ -52,6 +52,131 @@ def visible_text(paragraph: ET.Element) -> str:
             out.append("\n")
     return "".join(out)
 
+def _xml_element_path(node: ET.Element) -> str:
+    """Return a deterministic child-index path for an element in its source part."""
+    segments = []
+    current = node
+    while current.getparent() is not None:
+        parent = current.getparent()
+        segments.append(str(list(parent).index(current)))
+        current = parent
+    return "/" + "/".join(reversed(segments))
+
+
+def map_target_text_to_xml_nodes(
+    root: ET.Element,
+    paragraph: ET.Element,
+    target_text: str,
+) -> dict[str, Any]:
+    """Map one unique ordinary-Run target to exact w:r/w:t nodes before mutation.
+
+    This is an audit map, not an authorization. It deliberately refuses targets
+    that cannot be represented as one unique contiguous ordinary Run sequence.
+    """
+    if not isinstance(root, ET.Element) or not isinstance(paragraph, ET.Element):
+        raise TypeError("root and paragraph must be lxml elements.")
+    if not isinstance(target_text, str) or not target_text:
+        raise ValueError("target_text must be a non-empty string.")
+    document_order = {node: index for index, node in enumerate(root.iter())}
+    paragraph_text = visible_text(paragraph)
+    if paragraph_text.count(target_text) != 1:
+        raise ValueError("Target must occur exactly once in the paragraph visible-text projection.")
+
+    containers = [paragraph]
+    containers.extend(
+        node for node in paragraph.iter()
+        if node is not paragraph and node.tag == qn("hyperlink")
+    )
+    matches = []
+    for container in containers:
+        children = list(container)
+        index = 0
+        while index < len(children):
+            if children[index].tag != qn("r"):
+                index += 1
+                continue
+            runs = []
+            values = []
+            while index < len(children) and children[index].tag == qn("r"):
+                value = run_plain_text(children[index])
+                if value is None:
+                    break
+                runs.append(children[index])
+                values.append(value)
+                index += 1
+            if not runs:
+                index += 1
+                continue
+            joined = "".join(values)
+            start = joined.find(target_text)
+            while start >= 0:
+                matches.append((container, runs, start, joined))
+                start = joined.find(target_text, start + 1)
+
+    if len(matches) != 1:
+        raise ValueError(
+            "Target does not map to exactly one contiguous ordinary Run sequence "
+            "and may cross a protected or unsupported XML boundary."
+        )
+    container, runs, target_start, joined = matches[0]
+    target_end = target_start + len(target_text)
+    run_map = []
+    run_cursor = 0
+    for run_index, run in enumerate(runs):
+        run_text = run_plain_text(run) or ""
+        run_start, run_end = run_cursor, run_cursor + len(run_text)
+        overlap_start, overlap_end = max(target_start, run_start), min(target_end, run_end)
+        if overlap_start < overlap_end:
+            text_nodes = []
+            node_cursor = 0
+            for child_index, child in enumerate(run):
+                if child.tag != qn("t"):
+                    continue
+                value = child.text or ""
+                node_start, node_end = node_cursor, node_cursor + len(value)
+                text_start, text_end = max(overlap_start - run_start, node_start), min(overlap_end - run_start, node_end)
+                if text_start < text_end:
+                    text_nodes.append({
+                        "text_node_index_in_run": child_index,
+                        "text_node_document_order": document_order[child],
+                        "text_node_xml_path": _xml_element_path(child),
+                        "text_node_text_start": text_start - node_start,
+                        "text_node_text_end": text_end - node_start,
+                        "target_text": value[text_start - node_start:text_end - node_start],
+                    })
+                node_cursor = node_end
+            run_map.append({
+                "run_index_in_sequence": run_index,
+                "run_document_order": document_order[run],
+                "run_xml_path": _xml_element_path(run),
+                "run_text_start": overlap_start - run_start,
+                "run_text_end": overlap_end - run_start,
+                "target_text": run_text[overlap_start - run_start:overlap_end - run_start],
+                "text_nodes": text_nodes,
+            })
+        run_cursor = run_end
+
+    mapped = "".join(
+        node["target_text"] for run in run_map for node in run["text_nodes"]
+    )
+    if mapped != target_text:
+        raise ValueError("Run/Text-node event map does not reconstruct the exact target text.")
+    return {
+        "schema_version": "1.0",
+        "status": "MAPPED",
+        "source_part_document_order": document_order.get(root),
+        "paragraph_document_order": document_order[paragraph],
+        "paragraph_xml_path": _xml_element_path(paragraph),
+        "container_xml_path": _xml_element_path(container),
+        "target_text": target_text,
+        "target_start_in_run_sequence": target_start,
+        "target_end_in_run_sequence": target_end,
+        "run_map": run_map,
+        "text_node_count": sum(len(run["text_nodes"]) for run in run_map),
+        "mapping_reconstructed_exactly": True,
+    }
+
+
 def has_drawing(paragraph: ET.Element) -> bool:
     return any(x.tag in {qn("drawing"), qn("pict"), qn("object")} for x in paragraph.iter())
 
@@ -707,6 +832,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "and re-import before editing. " + "; ".join(conflicts[:8])
                 )
             try:
+                structural_event_map = map_target_text_to_xml_nodes(root, para, old)
                 structure_safety = assert_edit_target_supported_with_bounded_safe_span(
                     structure_inventory,
                     part=part,
@@ -903,6 +1029,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "format_authorization": copy.deepcopy(format_authorization),
                 "format_operations": copy.deepcopy(format_operations),
                 "structure_safety": copy.deepcopy(structure_safety),
+                "structural_event_map": copy.deepcopy(structural_event_map),
                 "authorization_validation": {
                     "status": contract["status"],
                     "diff_algorithm": contract["diff_algorithm"],
