@@ -282,7 +282,7 @@ class WorkflowEngineTests(unittest.TestCase):
         tampered = json.loads(json.dumps(first))
         tampered["tasks"][0]["source_versions"][0]["sha256"] = "e" * 64
         self.assertTrue(any(
-            "is not present in the Workflow Ledger source_files" in error
+            "is not present in the initial source inventory" in error
             for error in validate_workflow_ledger(tampered)
         ))
 
