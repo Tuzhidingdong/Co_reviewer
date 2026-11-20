@@ -79,7 +79,7 @@ class NumberingTransactionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plan, _ = self._impact_plan(root)
-            with self.assertRaisesRegex(NumberingTransactionError, "exact impact plan"):
+            with self.assertRaisesRegex(NumberingTransactionError, "displayed impact plan"):
                 authorize_numbering_impact_plan(plan, "0" * 64, "Human Author")
             approval = authorize_numbering_impact_plan(
                 plan, plan["impact_plan_sha256"], "Human Author",
