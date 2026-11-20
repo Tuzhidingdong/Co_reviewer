@@ -628,6 +628,11 @@ def prepare_workflow_execution(
         # citations, references or formatting enter the executable operands.
         from .safety_policy import assess_task_risk
         task.update(assess_task_risk(task))
+        for field in (
+            "high_risk_review_confirmed", "high_risk_reviewed_by",
+            "high_risk_reviewed_at_utc", "high_risk_review_note",
+        ):
+            task.pop(field, None)
 
         reviewer_map[task_id] = _reviewer_spec(
             task_id,
