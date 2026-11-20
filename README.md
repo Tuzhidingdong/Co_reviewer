@@ -13,6 +13,7 @@ The current implementation branch extends the original revision engine with type
 ## V2.3.2 RC closeout controls
 
 - **Bounded Safe Span:** a narrow, fail-closed structural candidate for unique ordinary Run text outside paired bookmark ranges. It never overrides historical revision, Token Lock, Protected Content, formatting, Patch approval or Verify gates.
+- **Tier 1 author review:** elevated-risk tasks require explicit `--high-risk-review-confirmed` plus a review note at Workflow authorization; reviewer identity/time/note are fingerprint-bound and reset after recheck.
 - **Blocked-edit Manual Suggestions:** Apply can preserve a hash-bound diagnostic with exact source/context, blocker details and an optional evidence-grounded proposal. The artifact is explicitly unapplied and never changes a DOCX.
 - **Deterministic Risk Tiers:** Tier 0 ordinary wording, Tier 1 scientific/reference/format/cross-document work, Tier 2 unresolved/ambiguous work. Batches remain risk-homogeneous; Tier 2 is held for clarification.
 - **Citation-aware Reference Graph:** static numeric citations and reference-list definitions are distinct from native Word fields. Citation ranges and unsupported Word field references remain manual-review items and block unsafe numbering propagation.
