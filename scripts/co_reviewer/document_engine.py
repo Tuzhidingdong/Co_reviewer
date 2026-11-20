@@ -746,7 +746,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                     "word_part": part,
                     "target": target_identity,
-                    "reviewer_comment_ids": [str(value) for value in edit.get("source_comment_ids", [])],
+                    "reviewer_comment_ids": [str(value) for value in (edit.get("source_comment_ids") or [])],
                     "operation_id": edit.get("operation_id"),
                     "source_excerpt": old,
                     "before_context": paragraph_text[max(0, position - 160):position] if position >= 0 else "",
