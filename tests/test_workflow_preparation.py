@@ -220,6 +220,8 @@ class WorkflowPreparationTests(unittest.TestCase):
         operation = task["patch_operations"][0]
 
         self.assertEqual(task["status"], "planned")
+        self.assertEqual(task["risk_tier"], "TIER_1")
+        self.assertEqual(task["risk_policy_version"], "1.0")
         self.assertTrue(task["requires_user_approval"])
         self.assertNotIn("human_approval_confirmed", task)
         self.assertEqual(task["patch_id"], "P-T1")
