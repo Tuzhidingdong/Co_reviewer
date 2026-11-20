@@ -45,6 +45,18 @@ class RiskPolicyTests(unittest.TestCase):
         )
         self.assertEqual(assess_task_risk(cross_document)["risk_tier"], "TIER_1")
 
+    def test_formatting_formula_and_reference_changes_are_tier_one(self):
+        for phrase in (
+            "Change the heading font to bold.",
+            "Correct the equation layout.",
+            "Update the citation reference.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(
+                    assess_task_risk(_task(proposed_action=phrase))["risk_tier"],
+                    "TIER_1",
+                )
+
     def test_ambiguous_target_evidence_is_tier_two(self):
         task = _task(evidence=[
             {"evidence_id": "E1", "evidence_type": "paragraph",
