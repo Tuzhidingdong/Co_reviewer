@@ -2198,6 +2198,25 @@ def cmd_authorize_workflow_tasks(args):
         raise ValueError("Unknown Workflow task ID(s): " + ", ".join(unknown))
 
     now = datetime.now(timezone.utc).isoformat()
+    tier1_ids = [
+        task_id for task_id in requested
+        if by_id[task_id].get("risk_tier") == "TIER_1"
+    ]
+    if tier1_ids:
+        if getattr(args, "high_risk_review_confirmed", False) is not True:
+            raise ValueError(
+                "Tier 1 task(s) require explicit --high-risk-review-confirmed after reviewing "
+                "the highlighted scientific/reference/format/cross-document changes: "
+                + ", ".join(tier1_ids)
+            )
+        risk_note = getattr(args, "high_risk_review_note", None)
+        if not isinstance(risk_note, str) or not risk_note.strip():
+            raise ValueError(
+                "Tier 1 approval requires --high-risk-review-note describing the high-risk scope reviewed."
+            )
+    else:
+        risk_note = None
+
     for task_id in requested:
         task = by_id[task_id]
         if task.get("status") not in {"planned", "blocked", "recheck_required"}:
@@ -2227,6 +2246,11 @@ def cmd_authorize_workflow_tasks(args):
                 + ", ".join(pending_dependencies)
             )
         previous_status = task["status"]
+        if task.get("risk_tier") == "TIER_1":
+            task["high_risk_review_confirmed"] = True
+            task["high_risk_reviewed_by"] = args.actor
+            task["high_risk_reviewed_at_utc"] = now
+            task["high_risk_review_note"] = risk_note.strip()
         updated = transition_task(task, "ready")
         task.clear()
         task.update(updated)
@@ -2250,6 +2274,9 @@ def cmd_authorize_workflow_tasks(args):
     ready_batch = select_ready_tasks(workflow["tasks"])
     write_json_atomic(workflow_path, workflow)
     print(f"[APPROVED] {len(requested)} task(s): {', '.join(requested)}")
+    if tier1_ids:
+        print("[TIER 1 REVIEW CONFIRMED] " + ", ".join(tier1_ids))
+        print("[TIER 1 REVIEW NOTE] " + risk_note.strip())
     print(
         "[READY BATCH] "
         + (", ".join(ready_batch) if ready_batch else "No conflict-free task currently executable.")
@@ -6866,6 +6893,15 @@ def build_parser():
     awt.add_argument("--ids", nargs="+", required=True)
     awt.add_argument("--actor", default="Human Author")
     awt.add_argument("--plan-approved", action="store_true", required=True)
+    awt.add_argument(
+        "--high-risk-review-confirmed",
+        action="store_true",
+        help="Explicitly confirm the separately highlighted Tier 1 scientific/reference/format/cross-document scope was reviewed.",
+    )
+    awt.add_argument(
+        "--high-risk-review-note",
+        help="Required for Tier 1 tasks: concise description of the elevated-risk scope reviewed by the author.",
+    )
     awt.set_defaults(func=cmd_authorize_workflow_tasks)
     bl = sub.add_parser("build-revision-ledger", help="Build typed Patches from the current conflict-free ready batch and merge them into the round ledger.")
     bl.add_argument("--workflow-ledger", required=True)
