@@ -9,7 +9,7 @@
 |---|---|
 | Repository | `Tuzhidingdong/Co_reviewer` |
 | Effective integration branch | `upgrade/v0.5.1-p1-rc-closeout-20261120` |
-| Last source/test-validated HEAD | `cc2490a02ef5d6d4dfe85ff4512d89827cd2e7e0` |
+| Last source/test-validated HEAD | `b478fe444e88235a9b0efa9909d1b5ace9b438e0` |
 | Status snapshot commit | This documentation update; source files are unchanged from the validated HEAD |
 | Parent / frozen baseline | `8b77863329163d853c90bbfb5872fc313e2eaa76` |
 | Parent branch | `docs/freeze-global-user-task-plan-v2.3.2-20261120` |
@@ -129,7 +129,7 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 ## 6. Current blockers and next acceptance actions
 
 1. **Completed on source HEAD `cc2490a`:** unified GitHub Actions run #1466 (`44666162940`, push) and PR run #1467 (`44666166342`) both completed successfully; each had four green jobs.
-2. **Completed for the tested increment:** 405/405 unit tests passed on Python 3.10 and 405/405 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. No current-head unit or CI failures remain in the recorded run.
+2. **Completed for the validated snapshot:** 405/405 unit tests passed on Python 3.10 and 405/405 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. No unit, parser or quality-check failures remain in the recorded runs.
 3. Complete AC-25..31 boundary/graph coverage and integrate complete numbering impact output with the existing package transaction before claiming those criteria complete.
 4. Implement and run AC-45 as one continuous synthetic round with two sequential published batches and downstream refresh.
 5. Review old PR/branch diffs and record an explicit convergence disposition.
