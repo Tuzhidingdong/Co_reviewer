@@ -46,7 +46,12 @@ from co_reviewer.revision_models import (
     RevisionLedger,
     response_units_to_legacy_plan,
 )
-from co_reviewer.workflow_engine import build_workflow_ledger, transition_task
+from co_reviewer.workflow_engine import (
+    build_workflow_ledger,
+    transition_task,
+    validate_workflow_ledger,
+    workflow_tasks_from_decision_plan,
+)
 from co_reviewer.v232_contract import ContractError, validate_qa_remediation_eligibility
 from response_letter_docx import render_response_docx
 
@@ -746,6 +751,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
         revision = SimpleNamespace(revision_round_id="round-release-tests", patches=[])
         workflow_events = []
+        published_versions = {}
         active_pointer = None
 
         def add_batch(batch_id, task_id, patch_id, rolled_back):
@@ -839,7 +845,13 @@ class ReleaseManifestGateTests(unittest.TestCase):
             (batch_dir / "batch_published.json").write_text(
                 json.dumps(publish_receipt, ensure_ascii=False), encoding="utf-8"
             )
+            published_versions[batch_id] = {
+                "role": "Manuscript",
+                "file": str(output_path.resolve()),
+                "sha256": output_sha,
+            }
             workflow_events.append({
+                "event_id": f"EV-{batch_id}-PUBLISH",
                 "task_id": task_id,
                 "event_type": "batch_published",
                 "timestamp_utc": STAMP,
@@ -881,6 +893,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
                     json.dumps(rollback_receipt, ensure_ascii=False), encoding="utf-8"
                 )
                 workflow_events.append({
+                    "event_id": f"EV-{batch_id}-ROLLBACK",
                     "task_id": task_id,
                     "event_type": "batch_rolled_back",
                     "timestamp_utc": STAMP,
@@ -894,15 +907,94 @@ class ReleaseManifestGateTests(unittest.TestCase):
         add_batch("batch-old-001", "T1", "P1", rolled_back=True)
         add_batch("batch-current-002", "T2", "P2", rolled_back=False)
         add_batch("batch-next-003", "T3", "P3", rolled_back=False)
+        initial_source = {
+            "role": "Manuscript",
+            "file": str(self.source.resolve()),
+            "sha256": source_sha,
+        }
+        task_specs = [
+            {
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "local_revision",
+                "title": "Publish first revision",
+                "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the first approved document revision.",
+                "targets": [],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    initial_source,
+                    published_versions["batch-old-001"],
+                ],
+            },
+            {
+                "task_id": "T2",
+                "sequence": 2,
+                "task_type": "local_revision",
+                "title": "Publish second revision",
+                "source_comment_ids": ["C2"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the second approved document revision.",
+                "targets": [],
+                "dependencies": ["T1"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    initial_source,
+                    published_versions["batch-current-002"],
+                ],
+            },
+            {
+                "task_id": "T3",
+                "sequence": 3,
+                "task_type": "local_revision",
+                "title": "Publish third revision",
+                "source_comment_ids": ["C3"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the third approved document revision.",
+                "targets": [],
+                "dependencies": ["T2"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    published_versions["batch-current-002"],
+                    published_versions["batch-next-003"],
+                ],
+            },
+        ]
         workflow_ledger = {
-            "source_files": [{
-                "role": "Manuscript",
-                "file": str(self.source),
-                "sha256": source_sha,
-            }],
-            "tasks": [{"task_id": "T1"}, {"task_id": "T2"}, {"task_id": "T3"}],
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-release-tests",
+            "created_at_utc": STAMP,
+            "source_files": [initial_source],
+            "active_documents": {"Manuscript": active_pointer},
+            "documents": [],
+            "object_registry": [],
+            "tasks": workflow_tasks_from_decision_plan(task_specs),
             "events": workflow_events,
         }
+        self.assertEqual(validate_workflow_ledger(workflow_ledger), [])
+        self.assertEqual(len(workflow_ledger["source_files"]), 1)
+        self.assertEqual(
+            workflow_ledger["source_files"][0],
+            initial_source,
+            "Published and rolled-back versions must remain in append-only batch events, not initial source_files.",
+        )
         records = _collect_release_batch_history(
             workflow_ledger,
             {"Manuscript": active_pointer},
