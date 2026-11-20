@@ -2836,6 +2836,43 @@ def build_revision_ledger(
             data.setdefault("input_file", paths.get("input_file"))
             data.setdefault("output_file", paths.get("output_file"))
             data.setdefault("document", document)
+            task_target_refs = task.get("target_refs", [])
+            if data.get("target_ref") is None and isinstance(task_target_refs, list) and task_target_refs:
+                document_identity = next(
+                    (
+                        row for row in workflow_ledger.get("documents", [])
+                        if isinstance(row, Mapping) and row.get("role") == document
+                    ),
+                    None,
+                )
+                part = data.get("part", "word/document.xml")
+                p_idx = data.get("p_idx")
+                matches = []
+                for ref in task_target_refs:
+                    if not isinstance(ref, Mapping):
+                        continue
+                    hint = ref.get("location_hint")
+                    if (
+                        isinstance(document_identity, Mapping)
+                        and ref.get("document_id") == document_identity.get("document_id")
+                        and ref.get("revision_id") == document_identity.get("revision_id")
+                        and ref.get("part") == part
+                        and isinstance(hint, Mapping)
+                        and hint.get("p_idx") == p_idx
+                    ):
+                        matches.append(ref)
+                if len(matches) != 1:
+                    raise RevisionModelError(
+                        f"Task {task_id} PatchOperation {index + 1} must resolve to exactly one registered TargetRef; found {len(matches)}."
+                    )
+                data["target_ref"] = copy.deepcopy(dict(matches[0]))
+                data["target_identity_mode"] = "stable_target_ref"
+            elif data.get("target_ref") is not None:
+                data["target_identity_mode"] = "stable_target_ref"
+            elif data.get("target_identity_mode") != "legacy_p_idx_explicit":
+                raise RevisionModelError(
+                    f"Task {task_id} PatchOperation {index + 1} has no registered TargetRef; explicit legacy_p_idx_explicit mode is required for migration."
+                )
             if force_document_paths and isinstance(document, str) and document in document_paths:
                 managed = document_paths[document]
                 data["input_file"] = managed.get("input_file")

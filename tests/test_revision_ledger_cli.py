@@ -91,6 +91,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "location": "Results paragraph 1",
             "evidence_ids": ["E1"],
             "source_comment_ids": ["C1"],
+            "target_identity_mode": "legacy_p_idx_explicit",
         })
         patch = Patch(
             patch_id="T1",

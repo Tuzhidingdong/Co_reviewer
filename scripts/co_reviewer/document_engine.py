@@ -921,12 +921,15 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "Typed PatchOperation has no stable TargetRef or explicit legacy identity mode; refusing implicit p_idx fallback."
                 )
             else:
-                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0:
-                    raise ValueError("Legacy untyped P0 operation requires an explicit paragraph location hint.")
+                if p_idx is not None and (
+                    not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0
+                ):
+                    raise ValueError("Legacy untyped P0 operation has an invalid paragraph location hint.")
                 target_identity_validation = {
                     "mode": "legacy_untyped_p0",
                     "status": "compatibility_not_stable_identity",
                     "p_idx_location_hint": p_idx,
+                    "requires_unique_text_match": True,
                 }
             if p_idx is None: candidates = list(enumerate(paras))
             else:

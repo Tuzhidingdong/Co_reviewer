@@ -641,6 +641,9 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "source_comment_ids": list(target.get("source_comment_ids", [])),
                 "authorized_change": target.get("authorized_change"),
                 "protected_spans": list(target.get("protected_spans", [])),
+                "target_ref": target.get("target_ref"),
+                "target_identity_mode": target.get("target_identity_mode"),
+                "source_sha256": target.get("source_sha256") or sha256_file(target["input_file"]),
             }
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]

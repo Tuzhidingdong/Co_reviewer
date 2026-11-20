@@ -85,6 +85,8 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
                         "find": "protected one", "replace": "changed text",
                         "document": "Manuscript", "operation_id": "OP-1",
                         "source_comment_ids": ["C1"],
+                        "target_identity_mode": "legacy_p_idx_explicit",
+                        "source_sha256": source_hash,
                     }],
                     "Test Author",
                 )

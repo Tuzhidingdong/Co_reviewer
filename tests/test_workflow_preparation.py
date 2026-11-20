@@ -102,6 +102,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         ]
         self.scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -260,6 +261,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         refreshed_scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -362,6 +364,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         stale_scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -440,6 +443,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
