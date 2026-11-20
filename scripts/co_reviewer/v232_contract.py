@@ -642,7 +642,8 @@ _CITATION_DEFINITION = re.compile(r"(?im)^\s*\[\s*(\d+)\s*\](?=\s+\S)")
 _CITATION_GROUP = re.compile(r"(?<!\w)\[(?P<body>\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]")
 _CITATION_RANGE = re.compile(r"(?<!\w)\[\s*(\d+)\s*[-–]\s*(\d+)\s*\]")
 _WORD_FIELD_TYPE = re.compile(
-    r"\b(REF|PAGEREF|NOTEREF|SEQ|CITATION|ADDIN|TOC|HYPERLINK|XE|TA)\b",
+    r"\b(REF|PAGEREF|NOTEREF|SEQ|CITATION|ADDIN|TOC|HYPERLINK|XE|TA|"
+    r"PAGE|NUMPAGES|DATE|TIME|AUTHOR|FILENAME|FILESIZE|NUMWORDS|NUMCHARS|EDITTIME)\b",
     re.I,
 )
 
@@ -1022,10 +1023,19 @@ def renumber_reference_graph(
     # unmapped: REF/PAGEREF/SEQ/CITATION/ADDIN instructions are not static text
     # and no writing Field Adapter is enabled in this release candidate.
     field_references = updated.get("field_references", [])
-    if field_references:
+    non_reference_fields = {
+        "PAGE", "NUMPAGES", "DATE", "TIME", "AUTHOR", "FILENAME",
+        "FILESIZE", "NUMWORDS", "NUMCHARS", "EDITTIME",
+    }
+    unresolved_reference_fields = [
+        row for row in field_references
+        if not isinstance(row, Mapping)
+        or row.get("field_type") not in non_reference_fields
+    ]
+    if unresolved_reference_fields:
         raise ContractError(
             "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING: package-wide numbering "
-            "propagation is blocked while native Word fields remain unresolved."
+            "propagation is blocked while REF/SEQ/CITATION/ADDIN or unclassified Word fields remain unresolved."
         )
 
     changed_definition_ids = {
