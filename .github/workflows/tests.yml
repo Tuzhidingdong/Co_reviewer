@@ -12,6 +12,7 @@ on:
       - "upgrade/v0.5.1-p0-*"
       - "upgrade/v0.5.1-p1-*"
       - "fix/v232-*"
+      - "docs/freeze-global-user-task-plan-v2.3.2-20261120"
   workflow_dispatch:
 
 concurrency:
