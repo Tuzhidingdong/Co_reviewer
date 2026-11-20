@@ -20,6 +20,8 @@ from co_reviewer.document_engine import (
     map_target_text_to_xml_nodes,
 )
 
+NS = {"w": W}
+
 
 class DocumentEngineModuleBoundaryTests(unittest.TestCase):
     def test_extracted_engine_facade_exposes_existing_primitives(self):

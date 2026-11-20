@@ -79,8 +79,11 @@ def map_target_text_to_xml_nodes(
         raise ValueError("target_text must be a non-empty string.")
     document_order = {node: index for index, node in enumerate(root.iter())}
     paragraph_text = visible_text(paragraph)
-    if paragraph_text.count(target_text) != 1:
-        raise ValueError("Target must occur exactly once in the paragraph visible-text projection.")
+    occurrences = paragraph_text.count(target_text)
+    if occurrences == 0:
+        raise ValueError("Target text was not found in the paragraph visible-text projection.")
+    if occurrences > 1:
+        raise ValueError("Target is ambiguous: it occurs more than once in the paragraph visible-text projection.")
 
     containers = [paragraph]
     containers.extend(
@@ -115,7 +118,7 @@ def map_target_text_to_xml_nodes(
 
     if len(matches) != 1:
         raise ValueError(
-            "Target does not map to exactly one contiguous ordinary Run sequence "
+            "Target refused: it does not map to exactly one contiguous ordinary Run sequence "
             "and may cross a protected or unsupported XML boundary."
         )
     container, runs, target_start, joined = matches[0]
