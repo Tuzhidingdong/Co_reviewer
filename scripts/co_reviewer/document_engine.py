@@ -17,7 +17,7 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from lxml import etree as ET
 from .v232_contract import (
@@ -724,6 +724,92 @@ def safe_part(part: str) -> str:
         raise ValueError(f"Unsupported or unsafe Word XML part path: {part}")
     return part
 
+def _resolve_target_ref_paragraph(
+    source: Path,
+    part: str,
+    edit: Mapping[str, Any],
+    paragraphs: Sequence[ET.Element],
+) -> tuple[int, dict[str, Any]]:
+    """Resolve a stable TargetRef from exact source DOCX bytes; never guess by p_idx."""
+    from .identity import TargetRef, canonical_fingerprint, normalize_visible_text, sha256_file
+    from .docx_identity import _read_docx
+
+    raw_ref = edit.get("target_ref")
+    if not isinstance(raw_ref, Mapping):
+        raise ValueError("Stable TargetRef must be an object.")
+    try:
+        ref = TargetRef(
+            document_id=raw_ref.get("document_id"), revision_id=raw_ref.get("revision_id"),
+            object_id=raw_ref.get("object_id"), object_type=raw_ref.get("object_type"),
+            part=raw_ref.get("part"), object_fingerprint=raw_ref.get("object_fingerprint"),
+            start_offset=raw_ref.get("start_offset"), end_offset=raw_ref.get("end_offset"),
+            location_hint=raw_ref.get("location_hint"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Stable TargetRef is invalid: {exc}") from exc
+    if ref.part != part:
+        raise ValueError("TargetRef part does not match the PatchOperation part.")
+    actual_sha256 = sha256_file(source)
+    expected_sha256 = edit.get("source_sha256")
+    if not isinstance(expected_sha256, str) or expected_sha256 != actual_sha256:
+        raise ValueError("TargetRef source SHA-256 is absent or stale; re-preflight and re-authorize the Patch.")
+    expected_revision_id = canonical_fingerprint({
+        "document_id": ref.document_id, "source_sha256": actual_sha256,
+    })
+    if ref.revision_id != expected_revision_id:
+        raise ValueError("TargetRef revision_id does not match the exact source DOCX version.")
+    _, descriptors = _read_docx(source)
+    if sha256_file(source) != actual_sha256:
+        raise ValueError("Source DOCX changed while its TargetRef was being resolved.")
+    hint = ref.location_hint if isinstance(ref.location_hint, Mapping) else {}
+    native_id = hint.get("para_id")
+    matches = []
+    for descriptor in descriptors:
+        if descriptor.get("part") != part or descriptor.get("object_type") != ref.object_type:
+            continue
+        payload = descriptor.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        fingerprint = canonical_fingerprint({
+            "object_type": descriptor.get("object_type"),
+            "part": descriptor.get("part"),
+            "payload": payload,
+        })
+        if fingerprint != ref.object_fingerprint:
+            continue
+        if native_id and descriptor.get("native_id") != native_id:
+            continue
+        matches.append(descriptor)
+    if len(matches) != 1:
+        raise ValueError(
+            "TargetRef object fingerprint must resolve to exactly one current DOCX object; "
+            "no paragraph-index fallback is permitted."
+        )
+    resolved_hint = matches[0].get("location_hint")
+    resolved_p_idx = resolved_hint.get("p_idx") if isinstance(resolved_hint, Mapping) else None
+    if not isinstance(resolved_p_idx, int) or isinstance(resolved_p_idx, bool):
+        raise ValueError("TargetRef resolved object has no unique paragraph location.")
+    supplied_p_idx = edit.get("p_idx")
+    if supplied_p_idx is not None and supplied_p_idx != resolved_p_idx:
+        raise ValueError("TargetRef identity conflicts with the PatchOperation paragraph hint.")
+    if resolved_p_idx < 0 or resolved_p_idx >= len(paragraphs):
+        raise ValueError("TargetRef paragraph location is outside the current Word part.")
+    normalized_text = normalize_visible_text(visible_text(paragraphs[resolved_p_idx]))
+    normalized_find = normalize_visible_text(str(edit.get("find", "")))
+    if not normalized_find or normalized_text.count(normalized_find) != 1:
+        raise ValueError("TargetRef paragraph does not contain one unique exact source-text occurrence.")
+    if ref.start_offset is not None and ref.end_offset is not None:
+        if normalized_text[ref.start_offset:ref.end_offset] != normalized_find:
+            raise ValueError("TargetRef character offsets do not identify the PatchOperation source text.")
+    return resolved_p_idx, {
+        "mode": "stable_target_ref", "status": "verified",
+        "document_id": ref.document_id, "revision_id": ref.revision_id,
+        "object_id": ref.object_id, "object_type": ref.object_type,
+        "object_fingerprint": ref.object_fingerprint, "part": ref.part,
+        "p_idx_location_hint": resolved_p_idx,
+        "start_offset": ref.start_offset, "end_offset": ref.end_offset,
+    }
+
 def prepare_document(input_file: str, output_file: str, edits: list[dict[str, Any]], author: str):
     """Prepare and fully validate a DOCX in memory without writing the output path."""
     source, target = Path(input_file).expanduser().resolve(), Path(output_file).expanduser().resolve()
@@ -811,6 +897,37 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             if any(ch in old for ch in "\t\r\n") or any(ch in new for ch in "\t\r\n"):
                 raise ValueError("Tabs/newlines are not supported in safe find/replace text.")
             p_idx = edit.get("p_idx")
+            target_identity_validation = None
+            target_ref = edit.get("target_ref")
+            target_identity_mode = edit.get("target_identity_mode")
+            if target_ref is not None:
+                if target_identity_mode != "stable_target_ref":
+                    raise ValueError("TargetRef Apply requires target_identity_mode=stable_target_ref.")
+                p_idx, target_identity_validation = _resolve_target_ref_paragraph(
+                    source, part, edit, paras
+                )
+            elif target_identity_mode == "legacy_p_idx_explicit":
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0 or p_idx >= len(paras):
+                    raise ValueError("Explicit legacy identity mode requires a valid p_idx location hint.")
+                if not isinstance(edit.get("source_sha256"), str) or hashlib.sha256(source.read_bytes()).hexdigest() != edit.get("source_sha256"):
+                    raise ValueError("Explicit legacy p_idx mode requires the exact preflight source SHA-256.")
+                target_identity_validation = {
+                    "mode": "legacy_p_idx_explicit",
+                    "status": "migration_compatibility_not_stable_identity",
+                    "p_idx_location_hint": p_idx,
+                }
+            elif edit.get("operation_id"):
+                raise ValueError(
+                    "Typed PatchOperation has no stable TargetRef or explicit legacy identity mode; refusing implicit p_idx fallback."
+                )
+            else:
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0:
+                    raise ValueError("Legacy untyped P0 operation requires an explicit paragraph location hint.")
+                target_identity_validation = {
+                    "mode": "legacy_untyped_p0",
+                    "status": "compatibility_not_stable_identity",
+                    "p_idx_location_hint": p_idx,
+                }
             if p_idx is None: candidates = list(enumerate(paras))
             else:
                 if not isinstance(p_idx, int) or p_idx < 0 or p_idx >= len(paras):
@@ -1033,6 +1150,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "format_operations": copy.deepcopy(format_operations),
                 "structure_safety": copy.deepcopy(structure_safety),
                 "structural_event_map": copy.deepcopy(structural_event_map),
+                "target_ref": copy.deepcopy(dict(target_ref)) if isinstance(target_ref, Mapping) else None,
+                "target_identity_validation": copy.deepcopy(target_identity_validation),
                 "authorization_validation": {
                     "status": contract["status"],
                     "diff_algorithm": contract["diff_algorithm"],

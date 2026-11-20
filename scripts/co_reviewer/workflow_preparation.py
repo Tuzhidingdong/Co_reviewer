@@ -328,7 +328,7 @@ def prepare_workflow_execution(
     """Merge exact Patch operands without authorizing tasks or editing documents."""
     if not isinstance(execution_scope, Mapping):
         raise WorkflowPreparationError("Execution scope root must be a JSON object.")
-    allowed_root_fields = {"schema_version", "revision_round_id", "workflow_ledger_sha256", "tasks", "reviewer_map"}
+    allowed_root_fields = {"schema_version", "revision_round_id", "workflow_ledger_sha256", "identity_mode", "tasks", "reviewer_map"}
     if set(execution_scope) - allowed_root_fields:
         raise WorkflowPreparationError("Execution scope contains unsupported root fields.")
     if not isinstance(inventory, (Mapping, list)):
@@ -340,6 +340,10 @@ def prepare_workflow_execution(
         raise WorkflowPreparationError("Execution scope schema_version must be '1.0'.")
     if execution_scope.get("revision_round_id") != workflow.get("revision_round_id"):
         raise WorkflowPreparationError("Execution scope belongs to a different review round.")
+
+    identity_mode = execution_scope.get("identity_mode", "stable_target_ref")
+    if identity_mode not in {"stable_target_ref", "legacy_p_idx_explicit"}:
+        raise WorkflowPreparationError("Execution Scope identity_mode must be stable_target_ref or legacy_p_idx_explicit.")
 
     workflow_file = Path(workflow_path).expanduser().resolve()
     scope_file = Path(execution_scope_path).expanduser().resolve()
@@ -510,6 +514,54 @@ def prepare_workflow_execution(
             if target_index in matched_targets:
                 raise WorkflowPreparationError(f"Task {task_id} maps multiple operations to the same Decision target.")
             matched_targets.add(target_index)
+
+            task_target_refs = task.get("target_refs", [])
+            if not isinstance(task_target_refs, list):
+                raise WorkflowPreparationError(f"Task {task_id} target_refs must be an array.")
+            document_identities = [
+                row for row in workflow.get("documents", [])
+                if isinstance(row, Mapping) and _role(row.get("role")) == role
+            ]
+            if task_target_refs:
+                if len(document_identities) != 1:
+                    raise WorkflowPreparationError(
+                        f"Task {task_id} has TargetRefs but no unique registered document identity for {role}."
+                    )
+                identity = document_identities[0]
+                stable_matches = []
+                for ref in task_target_refs:
+                    if not isinstance(ref, Mapping):
+                        continue
+                    hint = ref.get("location_hint")
+                    if (
+                        ref.get("document_id") == identity.get("document_id")
+                        and ref.get("revision_id") == identity.get("revision_id")
+                        and ref.get("part") == part
+                        and isinstance(hint, Mapping)
+                        and hint.get("p_idx") == p_idx
+                    ):
+                        stable_matches.append(ref)
+                supplied_ref = operation.get("target_ref")
+                if supplied_ref is not None:
+                    if not isinstance(supplied_ref, Mapping):
+                        raise WorkflowPreparationError(f"PatchOperation {op_id} target_ref must be an object.")
+                    stable_matches = [row for row in stable_matches if dict(row) == dict(supplied_ref)]
+                if len(stable_matches) != 1:
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} must bind exactly one registered TargetRef at {role}/{part}/p_idx={p_idx}; found {len(stable_matches)}."
+                    )
+                operation["target_ref"] = copy.deepcopy(dict(stable_matches[0]))
+                operation["target_identity_mode"] = "stable_target_ref"
+            else:
+                if document_identities or workflow.get("object_registry"):
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} is missing its registered TargetRef; rebind the task identity manifest instead of falling back to p_idx."
+                    )
+                if identity_mode != "legacy_p_idx_explicit":
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} has no stable TargetRef; set identity_mode=legacy_p_idx_explicit only for an intentional migration."
+                    )
+                operation["target_identity_mode"] = "legacy_p_idx_explicit"
 
             sources = operation.get("source_comment_ids")
             if not isinstance(sources, list) or not sources:

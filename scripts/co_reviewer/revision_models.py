@@ -96,6 +96,7 @@ class PatchOperation:
     source_comment_ids: tuple[str, ...] = ()
     location_phrase: str | None = None
     target_ref: Mapping[str, Any] | None = None
+    target_identity_mode: str | None = None
     authorized_change: Mapping[str, Any] | None = None
     protected_spans: tuple[Mapping[str, Any], ...] = ()
     replacement_format_map: tuple[Mapping[str, Any], ...] = ()
@@ -208,6 +209,12 @@ class PatchOperation:
                 end_offset=self.target_ref.get("end_offset"),
                 location_hint=self.target_ref.get("location_hint"),
             )
+        if self.target_identity_mode not in {None, "stable_target_ref", "legacy_p_idx_explicit"}:
+            raise RevisionModelError("target_identity_mode must be stable_target_ref or legacy_p_idx_explicit.")
+        if self.target_ref is not None and self.target_identity_mode == "legacy_p_idx_explicit":
+            raise RevisionModelError("A stable TargetRef cannot be downgraded to legacy paragraph-index mode.")
+        if self.target_identity_mode == "stable_target_ref" and self.target_ref is None:
+            raise RevisionModelError("stable_target_ref mode requires a registered target_ref.")
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any], *, fallback_id: str = "") -> "PatchOperation":
@@ -233,6 +240,7 @@ class PatchOperation:
             source_comment_ids=tuple(raw_source_comment_ids),
             location_phrase=data.get("location_phrase"),
             target_ref=data.get("target_ref"),
+            target_identity_mode=data.get("target_identity_mode"),
             authorized_change=data.get("authorized_change"),
             protected_spans=tuple(data.get("protected_spans", [])),
             replacement_format_map=tuple(data.get("replacement_format_map", [])),
@@ -256,6 +264,7 @@ class PatchOperation:
             "source_comment_ids": list(self.source_comment_ids),
             "location_phrase": self.location_phrase,
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
+            "target_identity_mode": self.target_identity_mode,
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
             **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
@@ -284,6 +293,10 @@ class PatchOperation:
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
+        if self.target_ref is not None:
+            target["target_ref"] = dict(self.target_ref)
+        if self.target_identity_mode is not None:
+            target["target_identity_mode"] = self.target_identity_mode
         if self.source_sha256:
             target["source_sha256"] = self.source_sha256
         return target
@@ -1595,7 +1608,7 @@ class RevisionLedger:
             fields = (
                 "document", "input_file", "output_file", "part", "p_idx", "find",
                 "replace", "location", "operation_id", "source_comment_ids",
-                "location_phrase", "authorized_change", "protected_spans",
+                "location_phrase", "target_ref", "target_identity_mode", "authorized_change", "protected_spans",
                 "replacement_format_map", "format_authorization", "format_operations",
             )
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):

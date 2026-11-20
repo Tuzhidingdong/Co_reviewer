@@ -825,6 +825,9 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                     if target.get("replacement_format_map") is not None else None,
                 "format_authorization": target.get("format_authorization"),
                 "format_operations": list(target.get("format_operations", [])),
+                "target_ref": target.get("target_ref"),
+                "target_identity_mode": target.get("target_identity_mode"),
+                "source_sha256": target.get("source_sha256"),
             }
             if "p_idx" in target: edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)

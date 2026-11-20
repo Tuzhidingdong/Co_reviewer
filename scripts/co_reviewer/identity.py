@@ -23,7 +23,7 @@ def revision_targets_fingerprint(item: dict[str, Any]) -> str:
     target_fields = (
         "document", "input_file", "output_file", "part", "p_idx", "find",
         "replace", "location", "operation_id", "source_comment_ids",
-        "location_phrase", "source_sha256",
+        "location_phrase", "source_sha256", "target_ref", "target_identity_mode",
     )
     targets = [
         {key: target.get(key) for key in target_fields if key in target}
