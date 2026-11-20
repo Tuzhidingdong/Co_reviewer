@@ -3297,7 +3297,7 @@ def cmd_build_revision_ledger(args):
             )
     print(
         f"[RISK] {risk_assessment['risk_tier']} batch; "
-        + ("separate high-risk author review required."
+        + ("explicit Tier 1 author review is recorded and this batch remains isolated."
            if risk_assessment["high_risk_review_required"]
            else "eligible for a reviewed low-risk batch.")
     )
