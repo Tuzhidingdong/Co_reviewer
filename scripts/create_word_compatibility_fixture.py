@@ -49,11 +49,26 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
     input_path = str(paths["input"])
     output_path = str(paths["output"])
     target_specs = [
-        ("word/document.xml", "0.5 M", "1.0 M", "Main body paragraph"),
-        ("word/document.xml", "SO4", "SO₄²⁻", "Native subscript and superscript"),
-        ("word/document.xml", "1.8 V", "2.0 V", "Table cell"),
-        ("word/header1.xml", "ABC-01", "ABC-02", "Header"),
-        ("word/footer1.xml", "Internal review copy 01", "Internal review copy 02", "Footer"),
+        (
+            "word/document.xml", "0.5 M", "1.0 M", "Main body paragraph",
+            {"kind": "quantity", "text": "0.5 M", "replacement": "1.0 M"},
+        ),
+        (
+            "word/document.xml", "SO4", "SO₄²⁻", "Native subscript and superscript",
+            {"kind": "formula", "text": "SO4", "replacement": "SO₄²⁻"},
+        ),
+        (
+            "word/document.xml", "1.8 V", "2.0 V", "Table cell",
+            {"kind": "quantity", "text": "1.8 V", "replacement": "2.0 V"},
+        ),
+        (
+            "word/header1.xml", "ABC-01", "ABC-02", "Header",
+            {"kind": "number", "text": "01", "replacement": "02"},
+        ),
+        (
+            "word/footer1.xml", "Internal review copy 01", "Internal review copy 02", "Footer",
+            {"kind": "number", "text": "01", "replacement": "02"},
+        ),
     ]
     targets = [
         {
@@ -64,8 +79,12 @@ def build_fixture(output_dir: Path) -> dict[str, Path]:
             "find": find,
             "replace": replace,
             "location": location,
+            "authorized_change": {
+                "intent": "Explicitly authorized synthetic Word compatibility token round-trip.",
+                "explicitly_authorized_tokens": [authorized_token],
+            },
         }
-        for part, find, replace, location in target_specs
+        for part, find, replace, location, authorized_token in target_specs
     ]
     plan = {
         "schema_version": "1.0",
