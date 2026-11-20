@@ -8,6 +8,15 @@
     "schema_version": { "const": "0.5.1" },
     "revision_round_id": { "type": "string", "minLength": 1 },
     "created_at_utc": { "type": "string", "format": "date-time" },
+    "identity_manifest": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
     "source_files": {
       "description": "Immutable, de-duplicated initial input inventory (one record per logical role). Do not append later published versions here; they are recorded in batch_published events and active_documents.",
       "type": "array",

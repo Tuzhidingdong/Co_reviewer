@@ -142,6 +142,10 @@
           ],
           "maxLength": 255
         },
+        "target_identity_mode": {
+          "enum": ["stable_target_ref", "legacy_p_idx_explicit"],
+          "description": "Explicitly labels stable identity or migration-only paragraph-index compatibility."
+        },
         "target_ref": {
           "oneOf": [
             {

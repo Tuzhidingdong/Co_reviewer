@@ -3971,6 +3971,74 @@ def cmd_confirm_response_units(args):
     return 0
 
 
+def cmd_attach_document_identities(args):
+    """Bind a parser-backed identity manifest to a new Workflow Ledger."""
+    from co_reviewer.docx_identity import build_target_refs_by_task, validate_manifest_sources
+    from co_reviewer.workflow_engine import validate_workflow_ledger, workflow_tasks_from_decision_plan
+    from co_reviewer.batch_store import write_json_new
+
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    manifest_path = Path(args.identity_manifest).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if len({workflow_path, manifest_path, output_path}) != 3:
+        raise ValueError("Workflow Ledger, identity manifest and output must use distinct paths.")
+    if output_path.exists():
+        raise FileExistsError(f"Refusing to overwrite Workflow Ledger output: {output_path}")
+    workflow_sha = sha256_file(workflow_path)
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    manifest_sha = sha256_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if sha256_file(manifest_path) != manifest_sha:
+        raise ValueError("Document identity manifest changed while it was being read; retry binding.")
+    workflow_errors = validate_workflow_ledger(workflow)
+    if workflow_errors:
+        raise ValueError("Input Workflow Ledger is invalid:\n- " + "\n- ".join(workflow_errors))
+    manifest_errors = validate_manifest_sources(manifest, workflow)
+    if manifest_errors:
+        raise ValueError("Document identity manifest does not match this Workflow Ledger:\n- " + "\n- ".join(manifest_errors))
+    refs_by_task, ref_errors = build_target_refs_by_task(workflow.get("tasks", []), manifest)
+    if ref_errors:
+        raise ValueError("Stable TargetRef registration failed:\n- " + "\n- ".join(ref_errors))
+    for task in workflow.get("tasks", []):
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("task_id")
+        expected_count = sum(
+            1 for target in task.get("targets", [])
+            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update"}
+        )
+        actual_count = len(refs_by_task.get(task_id, []))
+        if actual_count != expected_count:
+            raise ValueError(
+                f"Task {task_id} has {expected_count} mutating targets but {actual_count} stable TargetRefs; no paragraph-index fallback is permitted."
+            )
+    adapted = workflow_tasks_from_decision_plan(
+        workflow.get("tasks", []), target_refs_by_task=refs_by_task
+    )
+    adapted_by_id = {row["task_id"]: row for row in adapted}
+    prepared = json.loads(json.dumps(workflow, ensure_ascii=False))
+    prepared["documents"] = json.loads(json.dumps(manifest.get("documents", []), ensure_ascii=False))
+    prepared["object_registry"] = json.loads(json.dumps(manifest.get("objects", []), ensure_ascii=False))
+    prepared["identity_manifest"] = {"file": str(manifest_path), "sha256": manifest_sha}
+    for task in prepared.get("tasks", []):
+        identity_task = adapted_by_id.get(task.get("task_id"))
+        if identity_task is None:
+            raise ValueError(f"Identity adapter omitted workflow task {task.get('task_id')}.")
+        task["target_refs"] = identity_task.get("target_refs", [])
+        task["target_groups"] = identity_task.get("target_groups", [])
+    errors = validate_workflow_ledger(prepared)
+    if errors:
+        raise ValueError("Identity-bound Workflow Ledger is invalid:\n- " + "\n- ".join(errors))
+    if sha256_file(manifest_path) != manifest_sha or sha256_file(workflow_path) != workflow_sha:
+        raise ValueError("Workflow or identity manifest changed during binding; refusing to publish the bound ledger.")
+    output_sha = write_json_new(output_path, prepared)
+    target_count = sum(len(row.get("target_refs", [])) for row in prepared.get("tasks", []) if isinstance(row, Mapping))
+    print(f"[IDENTITY BOUND] {len(prepared['documents'])} document(s); {len(prepared['object_registry'])} object(s); {target_count} stable TargetRef(s).")
+    print(f"[WORKFLOW LEDGER] {output_path} | SHA-256 {output_sha}")
+    print("[NEXT] Create the Execution Scope against this new Workflow Ledger SHA-256; stable TargetRefs will be bound automatically during preparation.")
+    return 0
+
+
 def cmd_build_document_identity(args):
     from co_reviewer.docx_identity import build_document_identity_manifest
 
@@ -6973,6 +7041,11 @@ def build_parser():
     ident.add_argument("--previous-manifest", help="Optional prior identity manifest used for conservative object-ID reuse.")
     ident.add_argument("--out", default="document_identity_manifest.json")
     ident.set_defaults(func=cmd_build_document_identity)
+    bind_ident = sub.add_parser("attach-document-identities", help="Bind a parser-backed identity manifest to a new Workflow Ledger and register stable TargetRefs.")
+    bind_ident.add_argument("--workflow-ledger", required=True)
+    bind_ident.add_argument("--identity-manifest", required=True)
+    bind_ident.add_argument("--out", required=True, help="New Workflow Ledger path; input files are preserved.")
+    bind_ident.set_defaults(func=cmd_attach_document_identities)
     mloc = sub.add_parser("map-response-locations", help="Use Microsoft Word COM to paginate final Clean DOCX files, export PDFs and map verified Patch text to final page/line locations.")
     mloc.add_argument("--ledger", required=True)
     mloc.add_argument("--out-dir", required=True, help="New or empty directory for Word-final Clean DOCX and PDF artifacts.")

@@ -22,6 +22,10 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "identity_mode": {
+      "enum": ["stable_target_ref", "legacy_p_idx_explicit"],
+      "description": "Omit or use stable_target_ref for registered identities. legacy_p_idx_explicit is migration-only and is never represented as stable identity."
+    },
     "tasks": {
       "type": "array",
       "minItems": 1,
@@ -115,7 +119,7 @@
                   "maxLength": 255
                 },
                 "target_ref": {
-                  "type": "object"
+                  "$ref": "document-identity.schema.json#/$defs/targetRef"
                 }
               }
             }
