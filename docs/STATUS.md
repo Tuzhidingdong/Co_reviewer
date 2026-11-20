@@ -9,7 +9,7 @@
 |---|---|
 | Repository | `Tuzhidingdong/Co_reviewer` |
 | Effective integration branch | `upgrade/v0.5.1-p1-rc-closeout-20261120` |
-| Last source/test-validated HEAD | `b478fe444e88235a9b0efa9909d1b5ace9b438e0` |
+| Last source/test-validated HEAD | `567d3061c86e17fe337e8e181459e6ebe2ef7d91` |
 | Status snapshot commit | This documentation update; source files are unchanged from the validated HEAD |
 | Parent / frozen baseline | `8b77863329163d853c90bbfb5872fc313e2eaa76` |
 | Parent branch | `docs/freeze-global-user-task-plan-v2.3.2-20261120` |
@@ -35,6 +35,9 @@ Hashes below are SHA-256 over the exact file contents at the code snapshot HEAD,
 | `scripts/co_reviewer/bounded_safe_span.py` | `bf0354b625d72ea2103c010d45a4ce222d71041e2811fcfa98f523beda617e54` |
 | `scripts/co_reviewer/safety_policy.py` | `03ac2531067ad587b7db1183a9ca346b1fbdb76f769a44af628cea14547b0123` |
 | `scripts/co_reviewer/manual_suggestion.py` | `e8e1db8ec67fbf2d7d91ec1651c9fe3d07870bd26adcb4e9afad5f5d21350095` |
+| `scripts/co_reviewer/working_view.py` | `dd8975de86d40c226c491a395562c4d3f2500dedd1c78672bb9728b293c036cb` |
+| `tests/test_working_view.py` | `bf2a5a0265b4a7013765f4310e5d54094d228d7d1faf005c5b61374dc9342372` |
+| `docs/RC_LOCAL_ACCEPTANCE.md` | `12814b6d6b040d44e47d9dfab372fc85b26546802e4b7cb6c08accff7325de13` |
 | `schemas/workflow-ledger.schema.json` | `04403acc34d725ed6b9e78df0b1dd95e40a130677ea4299a11662eff98f1f77e` |
 | `schemas/manual-suggestion.schema.json` | `5d5c557d812bd1f5dfa0250e05c84aca8dad5e47c1a3ffc6a73588438fb0085a` |
 | `schemas/revision-decision-plan.schema.json` | `52badad4e47e86859851b80b019d55c5fd15f1d8e214c016341caeaaf8d4ba48` |
@@ -129,7 +132,7 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 ## 6. Current blockers and next acceptance actions
 
 1. **Completed on source HEAD `cc2490a`:** unified GitHub Actions run #1466 (`44666162940`, push) and PR run #1467 (`44666166342`) both completed successfully; each had four green jobs.
-2. **Completed for the validated snapshot:** 405/405 unit tests passed on Python 3.10 and 405/405 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. No unit, parser or quality-check failures remain in the recorded runs.
+2. **Completed for the validated source/test HEAD:** 406/406 unit tests passed on Python 3.10 and 406/406 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. The regression test proves compiler bytes and independently written Working Clean DOCX files are byte-identical. No unit, parser or quality-check failures remain in the recorded runs.
 3. Complete AC-25..31 boundary/graph coverage and integrate complete numbering impact output with the existing package transaction before claiming those criteria complete.
 4. Implement and run AC-45 as one continuous synthetic round with two sequential published batches and downstream refresh.
 5. Review old PR/branch diffs and record an explicit convergence disposition.
