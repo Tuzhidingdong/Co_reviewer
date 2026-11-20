@@ -43,12 +43,37 @@ def assess_task_risk(task: Mapping[str, Any]) -> dict[str, Any]:
 
     reasons: list[str] = []
     task_type = task.get("task_type", "other")
-    targets = _rows(task.get("targets"))
-    evidence = _rows(task.get("evidence"))
-    operations = _rows(task.get("patch_operations"))
+    raw_targets = task.get("targets", [])
+    raw_evidence = task.get("evidence", [])
+    raw_operations = task.get("patch_operations", [])
+    raw_target_documents = task.get("target_documents", [])
+    targets = _rows(raw_targets)
+    evidence = _rows(raw_evidence)
+    operations = _rows(raw_operations)
     unresolved = task.get("unresolved_questions", [])
     readiness = str(task.get("readiness", "")).strip().casefold()
-    target_documents = task.get("target_documents", [])
+    target_documents = raw_target_documents
+
+    for field, raw_value in (
+        ("targets", raw_targets),
+        ("evidence", raw_evidence),
+        ("patch_operations", raw_operations),
+        ("target_documents", raw_target_documents),
+    ):
+        if raw_value is not None and not isinstance(raw_value, (list, tuple)):
+            reasons.append(f"malformed_{field}_collection")
+    for field, raw_value in (
+        ("targets", raw_targets),
+        ("evidence", raw_evidence),
+        ("patch_operations", raw_operations),
+    ):
+        if isinstance(raw_value, (list, tuple)) and any(
+            not isinstance(row, Mapping) for row in raw_value
+        ):
+            reasons.append(f"malformed_{field}_entry")
+    if not isinstance(task_type, str):
+        reasons.append("malformed_task_type")
+        task_type = "other"
 
     if isinstance(unresolved, (list, tuple)) and any(
         isinstance(item, str) and item.strip() for item in unresolved
@@ -57,21 +82,29 @@ def assess_task_risk(task: Mapping[str, Any]) -> dict[str, Any]:
     if readiness in {"blocked", "clarification_needed", "ambiguous", "unresolved"}:
         reasons.append("task_readiness_not_executable")
 
-    mutating_targets = [
-        row for row in targets
-        if row.get("action") in _MUTATING_ACTIONS
-    ]
+    mutating_targets = []
+    for row in targets:
+        action = row.get("action")
+        if not isinstance(action, str) or action not in (
+            _MUTATING_ACTIONS | {"keep", "inspect_only", "reply_only"}
+        ):
+            reasons.append("malformed_or_unsupported_target_action")
+            continue
+        if action in _MUTATING_ACTIONS:
+            mutating_targets.append(row)
     has_mutating_scope = bool(mutating_targets or operations)
 
     if task_type == "evidence_request" and has_mutating_scope:
         reasons.append("evidence_request_cannot_authorize_a_document_edit")
 
     if has_mutating_scope:
-        target_evidence_ids = {
-            str(evidence_id)
-            for row in mutating_targets
-            for evidence_id in (row.get("evidence_ids") or [])
-        }
+        target_evidence_ids: set[str] = set()
+        for row in mutating_targets:
+            raw_evidence_ids = row.get("evidence_ids", [])
+            if not isinstance(raw_evidence_ids, (list, tuple)):
+                reasons.append("malformed_target_evidence_ids")
+                continue
+            target_evidence_ids.update(str(evidence_id) for evidence_id in raw_evidence_ids)
         evidence_by_id = {
             str(row.get("evidence_id")): row
             for row in evidence
@@ -88,9 +121,17 @@ def assess_task_risk(task: Mapping[str, Any]) -> dict[str, Any]:
                     f"target_evidence_not_confirmed:{evidence_id}:{row.get('match_status')}"
                 )
         for row in evidence:
+            match_status = row.get("match_status")
+            if not isinstance(match_status, str) or match_status not in {
+                "confirmed", "candidate", "ambiguous", "unresolved", "not_applicable"
+            }:
+                reasons.append(
+                    f"malformed_evidence_match_status:{row.get('evidence_id', '<unknown>')}"
+                )
+                continue
             if row.get("evidence_type") == "reviewer_comment":
                 continue
-            if row.get("match_status") in {"candidate", "ambiguous", "unresolved"}:
+            if match_status in {"candidate", "ambiguous", "unresolved"}:
                 reasons.append(
                     f"unresolved_evidence_present:{row.get('evidence_id', '<unknown>')}"
                 )
