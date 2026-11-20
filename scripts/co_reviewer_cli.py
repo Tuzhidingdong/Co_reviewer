@@ -69,6 +69,12 @@ from co_reviewer.v232_contract import (
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
 from co_reviewer.omml_converter import create_omml_preview_docx
+from co_reviewer.numbering_transaction import (
+    NumberingTransactionError,
+    authorize_numbering_impact_plan,
+    build_numbering_impact_plan,
+    commit_numbering_package_transaction,
+)
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -6208,23 +6214,78 @@ def cmd_build_package_reference_graph(args):
           f"{len(report['mentions'])} mention(s), {report['unresolved_count']} unresolved/ambiguous")
     return 0
 
-def cmd_renumber_package_graph(args):
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
-    mapping = json.loads(Path(args.number_map).read_text(encoding="utf-8"))
-    if not isinstance(mapping, dict):
-        raise ValueError("Number map must be a JSON object keyed as DOCUMENT::OLD_NUMBER")
-    confirmed = json.loads(Path(args.confirm_ambiguous_map).read_text(encoding="utf-8")) if args.confirm_ambiguous_map else {}
-    if not isinstance(confirmed, dict):
-        raise ValueError("Confirmed ambiguous map must be a JSON object mapping mention IDs to definition IDs")
-    updated = renumber_reference_graph(
-        graph, mapping, explicit_authorization=args.authorized,
-        confirmed_ambiguous_mappings=confirmed,
+def _parse_role_path_arguments(items, label):
+    records = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"{label} entries must use ROLE=PATH")
+        role, filename = item.split("=", 1)
+        if not role or not filename or role in records:
+            raise ValueError(f"{label} roles and paths must be non-empty and roles unique")
+        records[role] = filename
+    return records
+
+
+def cmd_create_numbering_impact_plan(args):
+    graph = _read_json_object(args.graph, "Reference Graph")
+    number_map = _read_json_object(args.number_map, "Number map")
+    confirmed = _read_json_object(args.confirm_ambiguous_map, "Confirmed ambiguous mapping") if args.confirm_ambiguous_map else {}
+    documents = _parse_role_path_arguments(args.document, "Source DOCX")
+    plan = build_numbering_impact_plan(
+        graph, number_map, documents, confirmed_ambiguous_mappings=confirmed
     )
-    if args.out:
-        write_json_atomic(Path(args.out), updated)
-        print(f"[REFERENCE GRAPH UPDATED] {Path(args.out).resolve()}")
-    print(f"[REFERENCE UPDATES] definitions={len(updated['definition_updates'])}; mentions={len(updated['mention_updates'])}")
+    write_json_atomic(Path(args.out).expanduser().resolve(), plan)
+    print(f"[NUMBERING IMPACT PLAN] {Path(args.out).expanduser().resolve()}")
+    print(f"[IMPACT PLAN SHA256] {plan['impact_plan_sha256']}")
+    print(f"[CHANGES] definitions={plan['change_counts']['definitions']}; mentions={plan['change_counts']['mentions']}; documents={plan['change_counts']['documents']}")
+    print("[AUTHORIZATION] Awaiting author approval of this exact SHA-256; no DOCX has been changed.")
     return 0
+
+
+def cmd_authorize_numbering_impact_plan(args):
+    plan = _read_json_object(args.plan, "Numbering impact plan")
+    approval = authorize_numbering_impact_plan(
+        plan, args.approved_plan_sha256, args.approved_by
+    )
+    write_json_atomic(Path(args.out).expanduser().resolve(), approval)
+    print(f"[NUMBERING APPROVAL] {Path(args.out).expanduser().resolve()}")
+    print(f"[APPROVAL SHA256] {approval['approval_sha256']}")
+    print(f"[AUTHORIZED PLAN SHA256] {approval['impact_plan_sha256']}")
+    return 0
+
+
+def cmd_commit_numbering_package(args):
+    plan = _read_json_object(args.plan, "Numbering impact plan")
+    approval = _read_json_object(args.approval, "Numbering author approval")
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    revision_ledger = _load_revision_ledger(revision_path)
+    receipt = commit_numbering_package_transaction(
+        plan, approval,
+        batch_dir=_resolve_batch_dir_argument(args.batch_dir),
+        workflow_ledger_path=workflow_path,
+        revision_ledger_path=revision_path,
+        revision_ledger=revision_ledger,
+        release_root=args.release_root,
+    )
+    print(f"[NUMBERING PACKAGE COMMITTED] {receipt['package_id']}")
+    print(f"[IMPACT PLAN SHA256] {receipt['impact_plan_sha256']}")
+    print(f"[APPROVAL SHA256] {receipt['approval_sha256']}")
+    print(f"[BATCH] {receipt['batch_id']}")
+    print(f"[PACKAGE DIRECTORY] {receipt['package_directory']}")
+    print(f"[FINAL GRAPH SHA256] {receipt['final_graph_sha256']}")
+    print(f"[TRANSACTION RECEIPT] {Path(args.release_root).expanduser().resolve() / ('numbering-' + receipt['batch_id'] + '-' + receipt['impact_plan_sha256'][:16]) / 'numbering_transaction_receipt.json'}")
+    return 0
+
+
+def cmd_renumber_package_graph(args):
+    raise ValueError(
+        "Direct boolean-authorized graph mutation is disabled. Use create-numbering-impact-plan, "
+        "authorize-numbering-impact-plan with the exact displayed SHA-256, then the normal "
+        "Patch/Apply/Verify/Publish workflow and commit-numbering-package."
+    )
 
 def _read_json_object(path_value: str | Path, label: str) -> dict[str, Any]:
     path = Path(path_value).expanduser().resolve()
@@ -6815,11 +6876,32 @@ def build_parser():
     rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
     rg.set_defaults(func=cmd_build_package_reference_graph)
-    rn = sub.add_parser("renumber-package-graph", help="Generate authorized, resolved definition/mention renumbering updates.")
+    np = sub.add_parser("create-numbering-impact-plan", help="Create a complete non-authorizing, source-hash-bound package numbering impact plan.")
+    np.add_argument("--graph", required=True)
+    np.add_argument("--number-map", required=True)
+    np.add_argument("--document", nargs="+", required=True, help="Every graph source DOCX as ROLE=PATH.")
+    np.add_argument("--confirm-ambiguous-map", help="JSON mapping ambiguous mention IDs to user-confirmed definition IDs.")
+    np.add_argument("--out", required=True)
+    np.set_defaults(func=cmd_create_numbering_impact_plan)
+    na = sub.add_parser("authorize-numbering-impact-plan", help="Authorize only the exact SHA-256 of a reviewed numbering impact plan.")
+    na.add_argument("--plan", required=True)
+    na.add_argument("--approved-plan-sha256", required=True)
+    na.add_argument("--approved-by", required=True)
+    na.add_argument("--out", required=True)
+    na.set_defaults(func=cmd_authorize_numbering_impact_plan)
+    nc = sub.add_parser("commit-numbering-package", help="Commit an author-approved numbering package only after its complete verified Workflow batch is published.")
+    nc.add_argument("--plan", required=True)
+    nc.add_argument("--approval", required=True)
+    nc.add_argument("--batch-dir", required=True)
+    nc.add_argument("--workflow-ledger", required=True)
+    nc.add_argument("--revision-ledger", required=True)
+    nc.add_argument("--release-root", required=True)
+    nc.set_defaults(func=cmd_commit_numbering_package)
+    rn = sub.add_parser("renumber-package-graph", help="Deprecated unsafe shortcut; use the hash-bound numbering transaction commands.")
     rn.add_argument("--graph", required=True)
     rn.add_argument("--number-map", required=True)
-    rn.add_argument("--authorized", action="store_true", help="Explicit package-wide authorization supplied by the user.")
-    rn.add_argument("--confirm-ambiguous-map", help="JSON mapping of ambiguous mention IDs to user-confirmed definition IDs.")
+    rn.add_argument("--authorized", action="store_true")
+    rn.add_argument("--confirm-ambiguous-map")
     rn.add_argument("--out", required=True)
     rn.set_defaults(func=cmd_renumber_package_graph)
     cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")
