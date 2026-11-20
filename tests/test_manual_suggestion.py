@@ -56,6 +56,12 @@ class ManualSuggestionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "target requires"):
             build_manual_suggestion(_payload(target={}))
 
+    def test_schema_bound_identifiers_reject_duplicates_and_invalid_operation_ids(self):
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            build_manual_suggestion(_payload(reviewer_comment_ids=["C1", "C1"]))
+        with self.assertRaisesRegex(ValueError, "operation_id"):
+            build_manual_suggestion(_payload(operation_id=7))
+
     def test_cli_writes_a_new_manual_suggestion_without_overwriting_input(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
