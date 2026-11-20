@@ -35,8 +35,8 @@ class RiskPolicyTests(unittest.TestCase):
 
     def test_scientific_tokens_and_cross_document_scope_are_tier_one(self):
         numeric = _task(
-            "target_documents": ["Manuscript"],
-            "patch_operations": [{"find": "10 mg", "replace": "12 mg"}],
+            target_documents=["Manuscript"],
+            patch_operations=[{"find": "10 mg", "replace": "12 mg"}],
         )
         self.assertEqual(assess_task_risk(numeric)["risk_tier"], "TIER_1")
         cross_document = _task(
