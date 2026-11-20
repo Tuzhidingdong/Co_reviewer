@@ -50,6 +50,8 @@ class RiskPolicyTests(unittest.TestCase):
             "Change the heading font to bold.",
             "Correct the equation layout.",
             "Update the citation reference.",
+            "Correct the sample identifier.",
+            "Revise the concentration condition.",
         ):
             with self.subTest(phrase=phrase):
                 self.assertEqual(
