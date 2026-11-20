@@ -673,6 +673,43 @@ class WorkflowEngineTests(unittest.TestCase):
             for error in validate_workflow_tasks([forged])
         ))
 
+    def test_tier_one_ready_task_requires_explicit_high_risk_review_evidence(self):
+        task = _task("T1", [], "ready", [])
+        task["task_type"] = "cross_document_consistency"
+        task["target_documents"] = ["Manuscript", "SI"]
+        adapted = workflow_tasks_from_decision_plan([task])
+        self.assertEqual(adapted[0]["risk_tier"], "TIER_1")
+        errors = validate_workflow_tasks(adapted)
+        self.assertTrue(any("high_risk_review_confirmed" in error for error in errors))
+
+        reviewed = dict(adapted[0])
+        reviewed.update({
+            "high_risk_review_confirmed": True,
+            "high_risk_reviewed_by": "Human Author",
+            "high_risk_reviewed_at_utc": STAMP,
+            "high_risk_review_note": "Reviewed numeric/reference and cross-document impact.",
+        })
+        self.assertFalse(validate_workflow_tasks([reviewed]))
+
+    def test_recheck_invalidates_high_risk_review_attestation(self):
+        task = _task("T1", [], "ready", [])
+        task["task_type"] = "cross_document_consistency"
+        task["target_documents"] = ["Manuscript", "SI"]
+        task.update({
+            "high_risk_review_confirmed": True,
+            "high_risk_reviewed_by": "Human Author",
+            "high_risk_reviewed_at_utc": STAMP,
+            "high_risk_review_note": "Reviewed initial cross-document scope.",
+        })
+        updated = transition_task(
+            task,
+            "recheck_required",
+            reason="An upstream batch changed a linked document.",
+        )
+        self.assertEqual(updated["status"], "recheck_required")
+        self.assertNotIn("high_risk_review_confirmed", updated)
+        self.assertNotIn("high_risk_review_note", updated)
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             _task("A", [], "planned", ["shared"]),
