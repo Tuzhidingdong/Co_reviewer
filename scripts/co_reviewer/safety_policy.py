@@ -11,9 +11,9 @@ RISK_TIERS = ("TIER_0", "TIER_1", "TIER_2")
 _MUTATING_ACTIONS = {"replace", "add", "remove", "renumber", "reference_update"}
 _HIGH_RISK_TYPES = {"cross_document_consistency", "global_numbering"}
 _HIGH_RISK_TERMS = re.compile(
-    r"\\b(?:format(?:ting)?|font|typeface|style|bold|italic|underline|"
+    r"\b(?:format(?:ting)?|font|typeface|style|bold|italic|underline|"
     r"superscript|subscript|formula|equation|citation|reference|figure|"
-    r"table|scheme|numbering|renumber|unit|cross[- ]document)\\b",
+    r"table|scheme|numbering|renumber|unit|cross[- ]document)\b",
     re.IGNORECASE,
 )
 _SCIENTIFIC_TOKEN = re.compile(
