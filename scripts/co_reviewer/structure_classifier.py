@@ -1269,7 +1269,7 @@ def assert_edit_target_supported_with_bounded_safe_span(
     if blocking_issues or not relevant or any(
         item.get("kind") != "bookmark_range" for item in relevant
     ):
-        raise original_error
+        raise gate_error
 
     from .bounded_safe_span import analyze_bounded_safe_span
 
