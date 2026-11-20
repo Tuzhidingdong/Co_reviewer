@@ -67,6 +67,18 @@ def build_manual_suggestion(payload: Mapping[str, Any]) -> dict[str, Any]:
     ):
         if not isinstance(value, list):
             raise ValueError(f"{name} must be an array.")
+    normalized_comment_ids = [str(value) for value in comment_ids]
+    if any(not value.strip() for value in normalized_comment_ids):
+        raise ValueError("reviewer_comment_ids cannot contain empty identifiers.")
+    if len(normalized_comment_ids) != len(set(normalized_comment_ids)):
+        raise ValueError("reviewer_comment_ids cannot contain duplicates.")
+    if any(not isinstance(value, Mapping) for value in structures):
+        raise ValueError("blocking_structures entries must be structured objects.")
+    operation_id = payload.get("operation_id")
+    if operation_id is not None and (
+        not isinstance(operation_id, str) or not operation_id.strip()
+    ):
+        raise ValueError("operation_id must be a non-empty string or null.")
 
     proposed = payload.get("proposed_edit")
     if proposed is not None and not isinstance(proposed, str):
@@ -83,8 +95,8 @@ def build_manual_suggestion(payload: Mapping[str, Any]) -> dict[str, Any]:
         "source_sha256": source_hash,
         "word_part": str(payload["word_part"]),
         "target": target,
-        "reviewer_comment_ids": [str(value) for value in comment_ids],
-        "operation_id": payload.get("operation_id"),
+        "reviewer_comment_ids": normalized_comment_ids,
+        "operation_id": operation_id,
         "source_excerpt": payload["source_excerpt"],
         "before_context": str(payload.get("before_context") or ""),
         "after_context": str(payload.get("after_context") or ""),
