@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Unapplied Manual Suggestion",
+  "description": "A source-hash-bound diagnostic for a blocked edit. It is never an Applied Patch and cannot authorize a DOCX write.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "suggestion_id",
+    "status",
+    "document_role",
+    "source_document_path",
+    "source_sha256",
+    "word_part",
+    "target",
+    "reviewer_comment_ids",
+    "operation_id",
+    "source_excerpt",
+    "before_context",
+    "after_context",
+    "blocking_reason",
+    "blocking_structures",
+    "missing_evidence",
+    "proposed_edit",
+    "not_applied",
+    "docx_write_performed",
+    "human_action_required"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "artifact_kind": {
+      "const": "manual_suggestion"
+    },
+    "suggestion_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{24}$"
+    },
+    "status": {
+      "const": "BLOCKED_MANUAL_REVIEW"
+    },
+    "document_role": {
+      "enum": [
+        "Manuscript",
+        "SI",
+        "Reviewers",
+        "Reply"
+      ]
+    },
+    "source_document_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "word_part": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "para_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paragraph_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_ref": {
+          "type": [
+            "string",
+            "object"
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "object_id"
+          ]
+        },
+        {
+          "required": [
+            "para_id"
+          ]
+        },
+        {
+          "required": [
+            "paragraph_index"
+          ]
+        },
+        {
+          "required": [
+            "target_ref"
+          ]
+        }
+      ],
+      "additionalProperties": true
+    },
+    "reviewer_comment_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "operation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_excerpt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "before_context": {
+      "type": "string"
+    },
+    "after_context": {
+      "type": "string"
+    },
+    "blocking_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blocking_structures": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {}
+    },
+    "proposed_edit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "not_applied": {
+      "const": true
+    },
+    "docx_write_performed": {
+      "const": false
+    },
+    "human_action_required": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}
