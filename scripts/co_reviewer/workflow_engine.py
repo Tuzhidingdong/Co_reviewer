@@ -336,17 +336,6 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
     rows: dict[str, Mapping[str, Any]] = {}
     dependencies: dict[str, list[str]] = {}
 
-    known_task_ids_for_sources = {
-        task.get("task_id")
-        for task in tasks
-        if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
-    }
-    source_records.update(
-        _published_source_records_from_events(
-            ledger.get("events", []),
-            known_task_ids_for_sources,
-        )
-    )
     for index, task in enumerate(tasks):
         if not isinstance(task, Mapping):
             errors.append(f"Workflow tasks[{index}] must be an object.")
@@ -1270,6 +1259,17 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
     if not isinstance(tasks, list) or not tasks:
         errors.append("Workflow ledger tasks must be a non-empty array.")
         tasks = []
+    known_task_ids_for_sources = {
+        task.get("task_id")
+        for task in tasks
+        if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
+    }
+    source_records.update(
+        _published_source_records_from_events(
+            ledger.get("events", []),
+            known_task_ids_for_sources,
+        )
+    )
     for index, task in enumerate(tasks):
         if not isinstance(task, Mapping):
             continue
