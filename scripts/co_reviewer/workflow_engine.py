@@ -336,6 +336,17 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
     rows: dict[str, Mapping[str, Any]] = {}
     dependencies: dict[str, list[str]] = {}
 
+    known_task_ids_for_sources = {
+        task.get("task_id")
+        for task in tasks
+        if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
+    }
+    source_records.update(
+        _published_source_records_from_events(
+            ledger.get("events", []),
+            known_task_ids_for_sources,
+        )
+    )
     for index, task in enumerate(tasks):
         if not isinstance(task, Mapping):
             errors.append(f"Workflow tasks[{index}] must be an object.")
@@ -1044,6 +1055,45 @@ _WORKFLOW_EVENT_TYPES = frozenset({
 })
 
 
+def _published_source_records_from_events(
+    events: Any,
+    known_task_ids: set[str],
+) -> set[tuple[str, str, str]]:
+    """Return source versions grounded in structurally valid append-only publish events.
+
+    source_files is the immutable initial-input inventory. Published versions are
+    recorded by batch_published event documents and must not be copied into that
+    initial inventory merely to satisfy task provenance validation.
+    """
+    records: set[tuple[str, str, str]] = set()
+    if not isinstance(events, list):
+        return records
+    for event in events:
+        if not isinstance(event, Mapping) or event.get("event_type") != "batch_published":
+            continue
+        if event.get("task_id") not in known_task_ids:
+            continue
+        batch_id = event.get("batch_id")
+        documents = event.get("documents")
+        if not isinstance(batch_id, str) or not batch_id.strip() or not isinstance(documents, Mapping) or not documents:
+            continue
+        for role, pointer in documents.items():
+            if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+                continue
+            if not isinstance(pointer, Mapping):
+                continue
+            file_path = pointer.get("file")
+            digest = pointer.get("sha256")
+            if (
+                isinstance(file_path, str) and file_path.strip()
+                and _is_sha256(digest)
+                and pointer.get("batch_id") == batch_id
+                and _is_aware_timestamp(pointer.get("updated_at_utc"))
+            ):
+                records.add((role, _canonical_workflow_file_path(file_path), digest))
+    return records
+
+
 def validate_workflow_ledger(ledger: Any) -> list[str]:
     """Validate the persisted review-round ledger and all of its task records."""
     if not isinstance(ledger, Mapping):
@@ -1062,6 +1112,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         errors.append("Workflow ledger source_files must be an array.")
         sources = []
     seen_sources: set[tuple[str, str]] = set()
+    seen_source_roles: set[str] = set()
     source_records: set[tuple[str, str, str]] = set()
     source_hashes_by_role: dict[str, set[str]] = defaultdict(set)
     for index, source in enumerate(sources):
@@ -1074,6 +1125,12 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         )
         if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
             errors.append(f"{prefix}.role is unsupported.")
+        elif role in seen_source_roles:
+            errors.append(
+                f"{prefix} duplicates initial source role {role}; source_files is an initial-input inventory, not version history."
+            )
+        else:
+            seen_source_roles.add(role)
         if not isinstance(file_path, str) or not file_path.strip():
             errors.append(f"{prefix}.file must be non-empty.")
         if not _is_sha256(digest):
@@ -1242,7 +1299,9 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                 errors.append(f"{prefix} duplicates a source version.")
             seen_task_sources.add(key)
             if key not in source_records:
-                errors.append(f"{prefix} is not present in the Workflow Ledger source_files.")
+                errors.append(
+                    f"{prefix} is not present in the initial source inventory, current active pointers, or validated published-batch history."
+                )
         task_type = task.get("task_type")
         if not isinstance(task_type, str) or task_type not in _WORKFLOW_TASK_TYPES:
             errors.append(f"Task {task_id} has unsupported task_type {task_type!r}.")
@@ -1372,6 +1431,37 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             errors.append(f"{prefix}.event_type is unsupported.")
         if "fingerprint" in event and not _is_sha256(event.get("fingerprint")):
             errors.append(f"{prefix}.fingerprint must be a lowercase SHA-256 digest.")
+        if event_type in {"batch_published", "batch_rolled_back"}:
+            batch_id = event.get("batch_id")
+            if not isinstance(batch_id, str) or not batch_id.strip():
+                errors.append(f"{prefix}.batch_id must be a non-empty string for batch events.")
+            documents = event.get("documents")
+            if not isinstance(documents, Mapping) or not documents:
+                errors.append(f"{prefix}.documents must be a non-empty role-to-pointer object for batch events.")
+                continue
+            for role, pointer in documents.items():
+                pointer_prefix = f"{prefix}.documents[{role}]"
+                if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+                    errors.append(f"{pointer_prefix} has an unsupported document role.")
+                    continue
+                if not isinstance(pointer, Mapping):
+                    errors.append(f"{pointer_prefix} must be an object.")
+                    continue
+                file_path = pointer.get("file")
+                digest = pointer.get("sha256")
+                pointer_batch_id = pointer.get("batch_id")
+                if not isinstance(file_path, str) or not file_path.strip():
+                    errors.append(f"{pointer_prefix}.file must be non-empty.")
+                if not _is_sha256(digest):
+                    errors.append(f"{pointer_prefix}.sha256 must be a lowercase SHA-256 digest.")
+                if event_type == "batch_published" and pointer_batch_id != batch_id:
+                    errors.append(f"{pointer_prefix}.batch_id must match its batch_published event.")
+                elif event_type == "batch_rolled_back" and pointer_batch_id is not None and (
+                    not isinstance(pointer_batch_id, str) or not pointer_batch_id.strip()
+                ):
+                    errors.append(f"{pointer_prefix}.batch_id must be a non-empty string or null.")
+                if not _is_aware_timestamp(pointer.get("updated_at_utc")):
+                    errors.append(f"{pointer_prefix}.updated_at_utc must be timezone-aware.")
 
     for task in tasks:
         if not isinstance(task, Mapping) or task.get("status") != "ready":

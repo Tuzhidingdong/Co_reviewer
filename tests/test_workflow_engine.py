@@ -735,6 +735,105 @@ class WorkflowEngineTests(unittest.TestCase):
         })
         jsonschema.validate(ledger, schema)
 
+    def test_task_source_versions_use_append_only_publication_history_not_initial_source_files(self):
+        initial_hash = "1" * 64
+        batch_one_hash = "2" * 64
+        batch_two_hash = "3" * 64
+        initial_sources = [{
+            "role": "Manuscript",
+            "file": "/round/input/Manuscript.docx",
+            "sha256": initial_hash,
+        }]
+        batch_one_file = "/round/runs/batch-001/documents/Manuscript.marked.docx"
+        batch_two_file = "/round/runs/batch-002/documents/Manuscript.marked.docx"
+        task_one = _task("T1", [], "planned", [], 1)
+        task_one["source_versions"] = [
+            dict(initial_sources[0]),
+            {"role": "Manuscript", "file": batch_one_file, "sha256": batch_one_hash},
+        ]
+        task_two = _task("T2", ["T1"], "planned", [], 2)
+        task_two["source_versions"] = [
+            {"role": "Manuscript", "file": batch_one_file, "sha256": batch_one_hash},
+            {"role": "Manuscript", "file": batch_two_file, "sha256": batch_two_hash},
+        ]
+        ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-published-source-history",
+            "created_at_utc": STAMP,
+            "source_files": json.loads(json.dumps(initial_sources)),
+            "active_documents": {
+                "Manuscript": {
+                    "file": batch_two_file,
+                    "sha256": batch_two_hash,
+                    "batch_id": "batch-002",
+                    "updated_at_utc": STAMP,
+                }
+            },
+            "documents": [],
+            "object_registry": [],
+            "tasks": [task_one, task_two],
+            "events": [
+                {
+                    "event_id": "EV-BATCH-001",
+                    "task_id": "T1",
+                    "timestamp_utc": STAMP,
+                    "event_type": "batch_published",
+                    "batch_id": "batch-001",
+                    "documents": {
+                        "Manuscript": {
+                            "file": batch_one_file,
+                            "sha256": batch_one_hash,
+                            "batch_id": "batch-001",
+                            "updated_at_utc": STAMP,
+                        }
+                    },
+                },
+                {
+                    "event_id": "EV-BATCH-002",
+                    "task_id": "T2",
+                    "timestamp_utc": STAMP,
+                    "event_type": "batch_published",
+                    "batch_id": "batch-002",
+                    "documents": {
+                        "Manuscript": {
+                            "file": batch_two_file,
+                            "sha256": batch_two_hash,
+                            "batch_id": "batch-002",
+                            "updated_at_utc": STAMP,
+                        }
+                    },
+                },
+            ],
+        }
+
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+        self.assertEqual(ledger["source_files"], initial_sources)
+
+        tampered = json.loads(json.dumps(ledger))
+        tampered["events"][0]["documents"]["Manuscript"]["sha256"] = "4" * 64
+        self.assertTrue(any(
+            "not present in the initial source inventory" in error
+            for error in validate_workflow_ledger(tampered)
+        ))
+
+        malformed = json.loads(json.dumps(ledger))
+        malformed["events"][0]["documents"]["Manuscript"]["batch_id"] = "another-batch"
+        self.assertTrue(any(
+            "batch_id must match its batch_published event" in error
+            for error in validate_workflow_ledger(malformed)
+        ))
+
+        duplicated_initial_role = json.loads(json.dumps(ledger))
+        duplicated_initial_role["source_files"].append({
+            "role": "Manuscript",
+            "file": "/round/input/alternate-Manuscript.docx",
+            "sha256": "5" * 64,
+        })
+        self.assertTrue(any(
+            "duplicates initial source role Manuscript" in error
+            for error in validate_workflow_ledger(duplicated_initial_role)
+        ))
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             _task("A", [], "planned", ["shared"]),
