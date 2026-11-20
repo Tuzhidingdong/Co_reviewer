@@ -105,6 +105,17 @@ def fixture():
     return plan, audit, inventory
 
 
+def _as_response_only_plan(plan):
+    task = plan["tasks"][0]
+    task["task_type"] = "response_only"
+    task["target_documents"] = []
+    task["targets"] = []
+    task["proposed_action"] = (
+        "Prepare the author response using cited evidence without editing a DOCX."
+    )
+    return plan
+
+
 def _make_identity_ready_sources(root: Path, plan, audit, inventory):
     from docx import Document
     from co_reviewer.identity import sha256_file
@@ -171,6 +182,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
 
     def test_cli_can_persist_validated_workflow_ledger_without_overwriting_inputs(self):
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path = root / "plan.json"
@@ -200,6 +212,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
 
     def test_round_manifest_binds_workflow_ledger_to_starter_round_and_sources(self):
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path = root / "plan.json"
@@ -253,6 +266,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
     def test_refresh_manifest_binds_latest_refresh_paths_and_artifact_hashes(self):
         import hashlib
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path, audit_path, inventory_path = root / "plan.json", root / "audit.json", root / "inventory.json"
@@ -299,6 +313,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
     def test_refresh_manifest_rejects_same_path_with_changed_inventory_bytes(self):
         import hashlib
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path, audit_path, inventory_path = root / "plan.json", root / "audit.json", root / "inventory.json"
@@ -343,6 +358,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
     def test_round_manifest_accepts_its_exact_latest_refresh_artifacts(self):
         import hashlib
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path, audit_path, inventory_path = root / "plan.json", root / "audit.json", root / "inventory.json"
@@ -372,6 +388,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
 
     def test_round_manifest_without_audit_inventory_paths_is_rejected(self):
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path, audit_path, inventory_path = (
@@ -392,6 +409,7 @@ class DecisionPlanValidationTests(unittest.TestCase):
 
     def test_round_manifest_and_explicit_round_id_conflict_is_rejected(self):
         plan, audit, inventory = fixture()
+        _as_response_only_plan(plan)
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             plan_path, audit_path, inventory_path = (
@@ -443,6 +461,34 @@ class DecisionPlanValidationTests(unittest.TestCase):
                 "body_paragraph",
             )
             self.assertIn("|object=", ledger["tasks"][0]["target_groups"][0])
+
+    def test_cli_auto_builds_stable_targetrefs_for_mutating_workflow_ledger(self):
+        plan, audit, inventory = fixture()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _make_identity_ready_sources(root, plan, audit, inventory)
+            plan_path = root / "plan.json"
+            audit_path = root / "audit.json"
+            inventory_path = root / "inventory.json"
+            ledger_path = root / "ledger.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+            args = [
+                "--plan", str(plan_path),
+                "--audit", str(audit_path),
+                "--inventory", str(inventory_path),
+                "--workflow-ledger-out", str(ledger_path),
+                "--revision-round-id", "round-auto-stable-refs",
+            ]
+            self.assertEqual(validate_decision_plan_main(args), 0)
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertGreaterEqual(len(ledger["object_registry"]), 1)
+            self.assertEqual(len(ledger["tasks"][0]["target_refs"]), 1)
+            self.assertIn("|object=", ledger["tasks"][0]["target_groups"][0])
+            self.assertNotIn("|p_idx=", ledger["tasks"][0]["target_groups"][0])
+            self.assertEqual(validate_workflow_ledger(ledger), [])
 
     def test_identity_manifest_with_stale_source_hash_is_rejected(self):
         from co_reviewer.docx_identity import build_document_identity_manifest

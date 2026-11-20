@@ -361,7 +361,9 @@ def validate_decision_plan(
 
     # The workflow engine is now the single dependency-graph implementation.
     # Keep the legacy checks above for readable source-plan validation messages;
-    # the adapter also derives provisional target groups for the quotient DAG.
+    # the adapter also derives provisional target groups for validation-only DAG
+    # checks. Production Workflow Ledger creation resolves stable TargetRefs below
+    # (and auto-builds a parser-backed identity manifest when one was not supplied).
     workflow_tasks = workflow_tasks_from_decision_plan(tasks)
     for workflow_error in validate_workflow_tasks(workflow_tasks):
         errors.append(workflow_error)
@@ -376,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inventory", required=True, help="workspace_inventory.json used for this decision round")
     parser.add_argument(
         "--identity-manifest",
-        help="Optional parser-backed identity manifest; converts decision-plan p_idx/paraId anchors into stable TargetRefs.",
+        help="Optional parser-backed identity manifest for cross-round object-ID reuse. When omitted for a mutating Workflow Ledger, one is generated from the hash-bound workspace inventory.",
     )
     parser.add_argument(
         "--workflow-ledger-out",
@@ -571,6 +573,32 @@ def main(argv: list[str] | None = None) -> int:
                     return 2
     errors = validate_decision_plan(plan, audit=audit, inventory=inventory)
     target_refs_by_task: dict[str, list[dict[str, Any]]] = {}
+    mutating_actions = {"replace", "add", "remove", "renumber", "reference_update"}
+    has_mutating_targets = any(
+        isinstance(task, dict)
+        and isinstance(task.get("targets"), list)
+        and any(
+            isinstance(target, dict) and target.get("action") in mutating_actions
+            for target in task["targets"]
+        )
+        for task in plan.get("tasks", [])
+    )
+    generated_identity_report = None
+    if identity_manifest is None and args.workflow_ledger_out and has_mutating_targets:
+        try:
+            from co_reviewer.docx_identity import build_document_identity_manifest
+            identity_manifest, generated_identity_report = build_document_identity_manifest(inventory)
+            print(
+                "[IDENTITY] No manifest was supplied; generated parser-backed identities "
+                "from the exact hash-bound workspace inventory."
+            )
+        except Exception as exc:
+            print(
+                "[INVALID] A mutating Workflow Ledger requires parser-backed stable TargetRefs; "
+                f"automatic identity generation failed: {exc}",
+                file=sys.stderr,
+            )
+            return 2
     if identity_manifest is not None:
         errors.extend(validate_manifest_sources(identity_manifest, plan))
         if not errors:
@@ -596,8 +624,13 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(workflow_schedule.target_group_components)} target-group component(s)."
     )
     if identity_manifest is not None:
+        identity_origin = (
+            "auto-generated" if generated_identity_report is not None else "supplied"
+        )
         print(
-            "[IDENTITY] Stable TargetRefs mapped: "
+            "[IDENTITY] Stable TargetRefs mapped ("
+            + identity_origin
+            + " manifest): "
             + str(sum(len(rows) for rows in target_refs_by_task.values()))
         )
     if args.workflow_ledger_out:
