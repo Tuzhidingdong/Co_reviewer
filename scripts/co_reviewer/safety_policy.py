@@ -54,6 +54,19 @@ def assess_task_risk(task: Mapping[str, Any]) -> dict[str, Any]:
     readiness = str(task.get("readiness", "")).strip().casefold()
     target_documents = raw_target_documents
 
+    if not isinstance(unresolved, (list, tuple)):
+        reasons.append("malformed_unresolved_questions")
+    if isinstance(unresolved, (list, tuple)) and any(
+        not isinstance(item, str) for item in unresolved
+    ):
+        reasons.append("malformed_unresolved_question_entry")
+    if isinstance(raw_target_documents, (list, tuple)) and any(
+        not isinstance(item, str) for item in raw_target_documents
+    ):
+        reasons.append("malformed_target_document_role")
+    if not isinstance(task.get("readiness", ""), str):
+        reasons.append("malformed_readiness")
+
     for field, raw_value in (
         ("targets", raw_targets),
         ("evidence", raw_evidence),
