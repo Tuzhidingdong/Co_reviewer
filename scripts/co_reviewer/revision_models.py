@@ -2826,6 +2826,10 @@ def build_revision_ledger(
             raise RevisionModelError(
                 f"Task {task_id} has Patch operations but is not in ready state."
             )
+        if raw_operations and not comment_text:
+            raise RevisionModelError(
+                f"Task {task_id} has no traceable reviewer comment text from reviewer evidence or reviewer_comments_by_id."
+            )
         operation_records: list[PatchOperation] = []
         for index, raw in enumerate(raw_operations):
             if not isinstance(raw, Mapping):

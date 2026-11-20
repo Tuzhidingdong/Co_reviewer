@@ -394,6 +394,7 @@ class RevisionModelsTests(unittest.TestCase):
                     "replace": f"new text {task_id}",
                     "evidence_ids": [f"E-{task_id}"],
                     "source_comment_ids": [comment_id],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }
 
@@ -461,6 +462,7 @@ class RevisionModelsTests(unittest.TestCase):
                 "replace": "new",
                 "evidence_ids": [],
                 "source_comment_ids": ["C1"],
+                "target_identity_mode": "legacy_p_idx_explicit",
             }],
         }
         workflow = {

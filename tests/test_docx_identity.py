@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from argparse import Namespace
 import json
 import tempfile
 import unittest

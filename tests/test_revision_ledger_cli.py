@@ -289,6 +289,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": "new phrase",
                     "evidence_ids": ["E2"],
                     "source_comment_ids": ["C2", "C3"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }],
         }
@@ -640,6 +641,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": f"new text {task_id}",
                     "evidence_ids": [f"E-{task_id}"],
                     "source_comment_ids": [f"C-{task_id}"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }
 
@@ -1015,6 +1017,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": "new target wording",
                     "evidence_ids": ["E1"],
                     "source_comment_ids": ["C1"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }
 
