@@ -326,6 +326,10 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                     "ids": ["T1"],
                     "actor": "Human Author",
                     "plan_approved": True,
+                    "high_risk_review_confirmed": True,
+                    "high_risk_review_note": (
+                        "Reviewed sample identifier values and Manuscript/SI synchronization."
+                    ),
                 })(),
             ),
             0,
