@@ -3215,7 +3215,65 @@ def cmd_build_revision_ledger(args):
             + "\n- ".join(workflow_errors)
         )
     scheduler_batch = select_ready_tasks(workflow.get("tasks", []))
-    selected_task_ids = list(dict.fromkeys(getattr(args, "task_ids", None) or scheduler_batch))
+    workflow_tasks_by_id = {
+        task.get("task_id"): task
+        for task in workflow.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("task_id"), str)
+    }
+    from co_reviewer.safety_policy import assess_task_risk, validate_batch_risk_tiers
+
+    requested_task_ids = getattr(args, "task_ids", None)
+    if requested_task_ids:
+        selected_task_ids = list(dict.fromkeys(requested_task_ids))
+        selected_rows = [
+            workflow_tasks_by_id[task_id]
+            for task_id in selected_task_ids
+            if task_id in workflow_tasks_by_id
+        ]
+        risk_assessment = validate_batch_risk_tiers(selected_rows)
+    else:
+        # Auto-select one homogeneous risk tier at a time. Tier 2 remains
+        # visible for clarification and is never silently put into a Patch.
+        assessed = {
+            task_id: assess_task_risk(workflow_tasks_by_id[task_id])
+            for task_id in scheduler_batch
+            if task_id in workflow_tasks_by_id
+        }
+        first_safe_tier = next(
+            (assessed[task_id]["risk_tier"] for task_id in scheduler_batch
+             if task_id in assessed and assessed[task_id]["risk_tier"] != "TIER_2"),
+            None,
+        )
+        if first_safe_tier is None:
+            blocked = ", ".join(
+                f"{task_id} ({', '.join(assessed[task_id]['risk_reasons'])})"
+                for task_id in scheduler_batch if task_id in assessed
+            )
+            raise ValueError(
+                "No executable risk-homogeneous batch is available. Tier 2 task(s) need clarification: "
+                + blocked
+            )
+        selected_task_ids = [
+            task_id for task_id in scheduler_batch
+            if task_id in assessed and assessed[task_id]["risk_tier"] == first_safe_tier
+        ]
+        selected_rows = [workflow_tasks_by_id[task_id] for task_id in selected_task_ids]
+        risk_assessment = validate_batch_risk_tiers(selected_rows)
+        tier2_ids = [
+            task_id for task_id in scheduler_batch
+            if task_id in assessed and assessed[task_id]["risk_tier"] == "TIER_2"
+        ]
+        if tier2_ids:
+            print(
+                "[RISK] Tier 2 task(s) held out for clarification: "
+                + ", ".join(tier2_ids)
+            )
+    print(
+        f"[RISK] {risk_assessment['risk_tier']} batch; "
+        + ("separate high-risk author review required."
+           if risk_assessment["high_risk_review_required"]
+           else "eligible for a reviewed low-risk batch.")
+    )
     unavailable = set(selected_task_ids) - set(scheduler_batch)
     if unavailable:
         raise ValueError(
@@ -4448,7 +4506,25 @@ def cmd_apply(args):
         if any(not isinstance(entry, dict) for entry in report_history):
             raise ValueError("Existing apply report contains an invalid entry; refusing to overwrite it.")
 
-    reports = apply_plan(plan, args.author)
+    try:
+        reports = apply_plan(plan, args.author)
+    except Exception as exc:
+        from co_reviewer.manual_suggestion import ManualFallbackRequired
+        if isinstance(exc, ManualFallbackRequired):
+            from co_reviewer.batch_store import write_json_new
+            suggestion = exc.suggestion
+            suggestion_root = batch_dir if batch_dir is not None else plan_path.parent
+            suggestion_dir = suggestion_root / "manual_suggestions"
+            suggestion_path = suggestion_dir / f"{suggestion['suggestion_id']}.json"
+            if suggestion_path.exists():
+                suggestion_path = suggestion_dir / (
+                    f"{suggestion['suggestion_id']}-{uuid.uuid4().hex[:8]}.json"
+                )
+            digest = write_json_new(suggestion_path, suggestion)
+            print(f"[MANUAL SUGGESTION] {suggestion_path}")
+            print(f"[MANUAL SUGGESTION SHA256] {digest}")
+            print("[NOT APPLIED] No DOCX write was authorized by this diagnostic.")
+        raise
     report_history.extend(reports)
     applied_ids = {
         edit.get("revision_item_id")
@@ -6568,6 +6644,23 @@ def cmd_commit_document_package(args):
     print(f"[COMMIT MARKER] {result['commit_marker']}")
     return 0
 
+def cmd_create_manual_suggestion(args):
+    from co_reviewer.manual_suggestion import build_manual_suggestion
+    from co_reviewer.batch_store import write_json_new
+
+    input_path = Path(args.input).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if input_path == output_path:
+        raise ValueError("Manual suggestion output must not overwrite its input diagnostic.")
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    suggestion = build_manual_suggestion(payload)
+    digest = write_json_new(output_path, suggestion)
+    print(f"[MANUAL SUGGESTION] {output_path}")
+    print(f"[MANUAL SUGGESTION SHA256] {digest}")
+    print("[NOT APPLIED] This artifact is diagnostic only; it does not modify or authorize a DOCX edit.")
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Co_Reviewer safe Word revision toolkit.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -6882,6 +6975,13 @@ def build_parser():
     dq.add_argument("--expected-font", help="Optional required Normal-style font name.")
     dq.add_argument("--out", help="Optional JSON report path.")
     dq.set_defaults(func=cmd_audit_docx_quality)
+    ms = sub.add_parser(
+        "create-manual-suggestion",
+        help="Create a hash-bound, explicitly unapplied manual suggestion from a blocked-target diagnostic.",
+    )
+    ms.add_argument("--input", required=True, help="JSON diagnostic with exact source excerpt, target, blocker and source hash.")
+    ms.add_argument("--out", required=True, help="New JSON artifact path; existing files are never overwritten.")
+    ms.set_defaults(func=cmd_create_manual_suggestion)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)
