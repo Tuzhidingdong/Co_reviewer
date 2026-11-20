@@ -3,20 +3,50 @@
   "title": "Co_Reviewer v0.5.1 Revision Workflow Ledger",
   "description": "Unified task ledger for document revisions, author decisions, evidence requests and response-only work. It is distinct from the DOCX-only revision plan.",
   "type": "object",
-  "required": ["schema_version", "revision_round_id", "documents", "object_registry", "tasks"],
+  "required": [
+    "schema_version",
+    "revision_round_id",
+    "documents",
+    "object_registry",
+    "tasks"
+  ],
   "properties": {
-    "schema_version": { "const": "0.5.1" },
-    "revision_round_id": { "type": "string", "minLength": 1 },
-    "created_at_utc": { "type": "string", "format": "date-time" },
+    "schema_version": {
+      "const": "0.5.1"
+    },
+    "revision_round_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
     "source_files": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["role", "file", "sha256"],
+        "required": [
+          "role",
+          "file",
+          "sha256"
+        ],
         "properties": {
-          "role": { "enum": ["Reviewers", "Manuscript", "SI"] },
-          "file": { "type": "string", "minLength": 1 },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          "role": {
+            "enum": [
+              "Reviewers",
+              "Manuscript",
+              "SI"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         },
         "additionalProperties": false
       }
@@ -26,32 +56,59 @@
       "description": "Current committed DOCX pointer per logical role. Pointers change atomically only after an entire batch is verified.",
       "additionalProperties": {
         "type": "object",
-        "required": ["file", "sha256", "batch_id", "updated_at_utc"],
+        "required": [
+          "file",
+          "sha256",
+          "batch_id",
+          "updated_at_utc"
+        ],
         "properties": {
-          "file": { "type": "string", "minLength": 1 },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "batch_id": { "type": ["string", "null"] },
-          "updated_at_utc": { "type": "string", "format": "date-time" }
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at_utc": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
         "additionalProperties": false
       }
     },
     "documents": {
       "type": "array",
-      "items": { "$ref": "document-identity.schema.json#/$defs/documentIdentity" }
+      "items": {
+        "$ref": "document-identity.schema.json#/$defs/documentIdentity"
+      }
     },
     "object_registry": {
       "type": "array",
-      "items": { "$ref": "document-identity.schema.json#/$defs/documentObjectIdentity" }
+      "items": {
+        "$ref": "document-identity.schema.json#/$defs/documentObjectIdentity"
+      }
     },
     "tasks": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/workflowTask" }
+      "items": {
+        "$ref": "#/$defs/workflowTask"
+      }
     },
     "events": {
       "type": "array",
-      "items": { "$ref": "#/$defs/workflowEvent" }
+      "items": {
+        "$ref": "#/$defs/workflowEvent"
+      }
     }
   },
   "$defs": {
@@ -65,9 +122,18 @@
         "target_groups"
       ],
       "properties": {
-        "task_id": { "type": "string", "minLength": 1 },
-        "sequence": { "type": "integer", "minimum": 1 },
-        "stage": { "type": "string", "minLength": 1 },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
         "task_type": {
           "enum": [
             "local_revision",
@@ -80,15 +146,29 @@
             "other"
           ]
         },
-        "title": { "type": "string", "minLength": 1 },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
         "source_comment_ids": {
           "type": "array",
-          "items": { "type": ["string", "integer"] },
+          "items": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
           "uniqueItems": true
         },
         "target_documents": {
           "type": "array",
-          "items": { "enum": ["Reviewers", "Manuscript", "SI"] },
+          "items": {
+            "enum": [
+              "Reviewers",
+              "Manuscript",
+              "SI"
+            ]
+          },
           "uniqueItems": true
         },
         "evidence": {
@@ -105,13 +185,43 @@
               "match_status"
             ],
             "properties": {
-              "evidence_id": { "type": "string", "minLength": 1 },
-              "document": { "enum": ["Reviewers", "Manuscript", "SI", "Reply"] },
-              "part": { "type": "string", "minLength": 1 },
-              "p_idx": { "type": "integer", "minimum": 0 },
-              "para_id": { "type": ["string", "null"] },
-              "source_comment_id": { "type": ["string", "integer", "null"] },
-              "source_excerpt": { "type": "string", "minLength": 1 },
+              "evidence_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "document": {
+                "enum": [
+                  "Reviewers",
+                  "Manuscript",
+                  "SI",
+                  "Reply"
+                ]
+              },
+              "part": {
+                "type": "string",
+                "minLength": 1
+              },
+              "p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "para_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_comment_id": {
+                "type": [
+                  "string",
+                  "integer",
+                  "null"
+                ]
+              },
+              "source_excerpt": {
+                "type": "string",
+                "minLength": 1
+              },
               "evidence_type": {
                 "enum": [
                   "reviewer_comment",
@@ -125,23 +235,56 @@
                 ]
               },
               "match_status": {
-                "enum": ["confirmed", "candidate", "ambiguous", "unresolved", "not_applicable"]
+                "enum": [
+                  "confirmed",
+                  "candidate",
+                  "ambiguous",
+                  "unresolved",
+                  "not_applicable"
+                ]
               }
             },
             "additionalProperties": false
           }
         },
-        "proposed_action": { "type": "string", "minLength": 1 },
+        "proposed_action": {
+          "type": "string",
+          "minLength": 1
+        },
         "targets": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["document", "part", "p_idx", "action", "evidence_ids"],
+            "required": [
+              "document",
+              "part",
+              "p_idx",
+              "action",
+              "evidence_ids"
+            ],
             "properties": {
-              "document": { "enum": ["Reviewers", "Manuscript", "SI", "Reply"] },
-              "part": { "type": "string", "minLength": 1 },
-              "p_idx": { "type": "integer", "minimum": 0 },
-              "para_id": { "type": ["string", "null"] },
+              "document": {
+                "enum": [
+                  "Reviewers",
+                  "Manuscript",
+                  "SI",
+                  "Reply"
+                ]
+              },
+              "part": {
+                "type": "string",
+                "minLength": 1
+              },
+              "p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "para_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "action": {
                 "enum": [
                   "replace",
@@ -154,47 +297,143 @@
                   "reply_only"
                 ]
               },
-              "evidence_ids": { "type": "array", "items": { "type": "string" } }
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             },
             "additionalProperties": false
           }
         },
-        "patch_id": { "type": "string", "minLength": 1 },
-        "supersedes_patch_id": { "type": "string", "minLength": 1 },
-        "reviewer": { "type": "string", "minLength": 1 },
-        "proposed_response": { "type": "string" },
+        "patch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supersedes_patch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposed_response": {
+          "type": "string"
+        },
         "patch_operations": {
           "type": "array",
-          "items": { "$ref": "revision-ledger.schema.json#/$defs/patchOperation" }
+          "items": {
+            "$ref": "revision-ledger.schema.json#/$defs/patchOperation"
+          }
         },
         "response_unit_specs": {
           "type": "array",
           "description": "Explicit per-reviewer-comment disposition. no_change must name confirmed source anchor evidence; it is never inferred from a missing Patch.",
           "items": {
             "type": "object",
-            "required": ["comment_id", "disposition", "location_requirement"],
+            "required": [
+              "comment_id",
+              "disposition",
+              "location_requirement"
+            ],
             "properties": {
-              "comment_id": { "type": ["string", "integer"] },
-              "disposition": { "enum": ["revised", "reply_only", "no_change", "clarification_needed"] },
-              "location_requirement": { "enum": ["required", "existing_anchor_required", "not_required", "manual_required"] },
-              "resolution_reason": { "type": "string" },
-              "anchor_evidence_id": { "type": "string", "minLength": 1 }
+              "comment_id": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              },
+              "disposition": {
+                "enum": [
+                  "revised",
+                  "reply_only",
+                  "no_change",
+                  "clarification_needed"
+                ]
+              },
+              "location_requirement": {
+                "enum": [
+                  "required",
+                  "existing_anchor_required",
+                  "not_required",
+                  "manual_required"
+                ]
+              },
+              "resolution_reason": {
+                "type": "string"
+              },
+              "anchor_evidence_id": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "allOf": [
               {
-                "if": { "properties": { "disposition": { "const": "no_change" } }, "required": ["disposition"] },
+                "if": {
+                  "properties": {
+                    "disposition": {
+                      "const": "no_change"
+                    }
+                  },
+                  "required": [
+                    "disposition"
+                  ]
+                },
                 "then": {
-                  "required": ["anchor_evidence_id"],
-                  "properties": { "location_requirement": { "enum": ["existing_anchor_required", "manual_required"] } }
+                  "required": [
+                    "anchor_evidence_id"
+                  ],
+                  "properties": {
+                    "location_requirement": {
+                      "enum": [
+                        "existing_anchor_required",
+                        "manual_required"
+                      ]
+                    }
+                  }
                 }
               },
               {
-                "if": { "properties": { "disposition": { "const": "reply_only" } }, "required": ["disposition"] },
-                "then": { "properties": { "location_requirement": { "const": "not_required" } } }
+                "if": {
+                  "properties": {
+                    "disposition": {
+                      "const": "reply_only"
+                    }
+                  },
+                  "required": [
+                    "disposition"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "location_requirement": {
+                      "const": "not_required"
+                    }
+                  }
+                }
               },
               {
-                "if": { "properties": { "disposition": { "const": "clarification_needed" } }, "required": ["disposition"] },
-                "then": { "properties": { "location_requirement": { "not": { "const": "not_required" } } } }
+                "if": {
+                  "properties": {
+                    "disposition": {
+                      "const": "clarification_needed"
+                    }
+                  },
+                  "required": [
+                    "disposition"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "location_requirement": {
+                      "not": {
+                        "const": "not_required"
+                      }
+                    }
+                  }
+                }
               }
             ],
             "additionalProperties": false
@@ -202,28 +441,52 @@
         },
         "dependencies": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
         },
         "target_groups": {
           "type": "array",
           "description": "Scheduler lock groups. Stable TargetRefs use document_id|object=object_id; unmigrated tasks temporarily use document|part|p_idx.",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
         },
         "target_refs": {
           "type": "array",
-          "items": { "$ref": "document-identity.schema.json#/$defs/targetRef" }
+          "items": {
+            "$ref": "document-identity.schema.json#/$defs/targetRef"
+          }
         },
         "source_versions": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["role", "file", "sha256"],
+            "required": [
+              "role",
+              "file",
+              "sha256"
+            ],
             "properties": {
-              "role": { "enum": ["Reviewers", "Manuscript", "SI"] },
-              "file": { "type": "string", "minLength": 1 },
-              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              "role": {
+                "enum": [
+                  "Reviewers",
+                  "Manuscript",
+                  "SI"
+                ]
+              },
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
             },
             "additionalProperties": false
           }
@@ -235,12 +498,37 @@
             "blocked_by_missing_evidence"
           ]
         },
-        "unresolved_questions": { "type": "array", "items": { "type": "string" } },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "requires_user_approval": { "type": "boolean" },
-        "risk_tier": { "enum": ["TIER_0", "TIER_1", "TIER_2"] },
-        "risk_policy_version": { "const": "1.0" },
-        "risk_reasons": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "unresolved_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "requires_user_approval": {
+          "type": "boolean"
+        },
+        "risk_tier": {
+          "enum": [
+            "TIER_0",
+            "TIER_1",
+            "TIER_2"
+          ]
+        },
+        "risk_policy_version": {
+          "const": "1.0"
+        },
+        "risk_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
         "status": {
           "enum": [
             "identified",
@@ -255,45 +543,137 @@
             "recheck_required"
           ]
         },
-        "block_reason": { "type": "string" },
-        "recheck_from": { "type": "string" },
-        "invalidation_reason": { "type": "string" },
-        "approval_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "input_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "preflight_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "preflight_report_id": { "type": "string", "minLength": 1 },
-        "preflighted_at_utc": { "type": "string", "format": "date-time" },
-        "human_approval_confirmed": { "type": "boolean" },
-        "approved_by": { "type": "string", "minLength": 1 },
-        "approved_at_utc": { "type": "string", "format": "date-time" },
-        "output_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "execution_report_id": { "type": "string", "minLength": 1 },
-        "applied_at_utc": { "type": "string", "format": "date-time" },
-        "semantic_review_confirmed": { "type": "boolean" },
-        "verified_by": { "type": "string", "minLength": 1 },
-        "verified_at_utc": { "type": "string", "format": "date-time" },
-        "verification_report_id": { "type": "string", "minLength": 1 },
-        "verification_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "completion_record_id": { "type": "string", "minLength": 1 },
-        "completion_record_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "completed_at_utc": { "type": "string", "format": "date-time" },
-        "completion_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "block_reason": {
+          "type": "string"
+        },
+        "recheck_from": {
+          "type": "string"
+        },
+        "invalidation_reason": {
+          "type": "string"
+        },
+        "approval_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "input_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "preflight_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "preflight_report_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preflighted_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "human_approval_confirmed": {
+          "type": "boolean"
+        },
+        "approved_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approved_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "output_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "execution_report_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applied_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "semantic_review_confirmed": {
+          "type": "boolean"
+        },
+        "verified_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verified_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verification_report_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "completion_record_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completion_record_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "completed_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completion_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "response_unit_ids": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true
+        },
+        "high_risk_review_confirmed": {
+          "type": "boolean"
+        },
+        "high_risk_reviewed_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "high_risk_reviewed_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "high_risk_review_note": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "allOf": [
         {
           "if": {
-            "required": ["task_type"],
-            "properties": { "task_type": { "const": "response_only" } }
+            "required": [
+              "task_type"
+            ],
+            "properties": {
+              "task_type": {
+                "const": "response_only"
+              }
+            }
           },
           "then": {
             "properties": {
-              "target_groups": { "maxItems": 0 },
-              "target_refs": { "maxItems": 0 },
+              "target_groups": {
+                "maxItems": 0
+              },
+              "target_refs": {
+                "maxItems": 0
+              },
               "status": {
                 "enum": [
                   "identified",
@@ -309,19 +689,47 @@
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "const": "blocked" } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked"
+              }
+            }
           },
-          "then": { "required": ["block_reason"] }
+          "then": {
+            "required": [
+              "block_reason"
+            ]
+          }
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "enum": ["preflighted", "approved", "applied", "verified", "completed"] } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "preflighted",
+                  "approved",
+                  "applied",
+                  "verified",
+                  "completed"
+                ]
+              }
+            }
           },
           "not": {
-            "required": ["task_type"],
-            "properties": { "task_type": { "const": "response_only" } }
+            "required": [
+              "task_type"
+            ],
+            "properties": {
+              "task_type": {
+                "const": "response_only"
+              }
+            }
           },
           "then": {
             "required": [
@@ -334,12 +742,29 @@
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "enum": ["approved", "applied", "verified", "completed"] } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "approved",
+                  "applied",
+                  "verified",
+                  "completed"
+                ]
+              }
+            }
           },
           "not": {
-            "required": ["task_type"],
-            "properties": { "task_type": { "const": "response_only" } }
+            "required": [
+              "task_type"
+            ],
+            "properties": {
+              "task_type": {
+                "const": "response_only"
+              }
+            }
           },
           "then": {
             "required": [
@@ -348,30 +773,69 @@
               "approved_at_utc",
               "approval_fingerprint"
             ],
-            "properties": { "human_approval_confirmed": { "const": true } }
+            "properties": {
+              "human_approval_confirmed": {
+                "const": true
+              }
+            }
           }
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "enum": ["applied", "verified", "completed"] } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "applied",
+                  "verified",
+                  "completed"
+                ]
+              }
+            }
           },
           "not": {
-            "required": ["task_type"],
-            "properties": { "task_type": { "const": "response_only" } }
+            "required": [
+              "task_type"
+            ],
+            "properties": {
+              "task_type": {
+                "const": "response_only"
+              }
+            }
           },
           "then": {
-            "required": ["output_fingerprint", "execution_report_id", "applied_at_utc"]
+            "required": [
+              "output_fingerprint",
+              "execution_report_id",
+              "applied_at_utc"
+            ]
           }
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "enum": ["verified", "completed"] } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "verified",
+                  "completed"
+                ]
+              }
+            }
           },
           "not": {
-            "required": ["task_type"],
-            "properties": { "task_type": { "const": "response_only" } }
+            "required": [
+              "task_type"
+            ],
+            "properties": {
+              "task_type": {
+                "const": "response_only"
+              }
+            }
           },
           "then": {
             "required": [
@@ -381,13 +845,23 @@
               "verification_report_id",
               "verification_fingerprint"
             ],
-            "properties": { "semantic_review_confirmed": { "const": true } }
+            "properties": {
+              "semantic_review_confirmed": {
+                "const": true
+              }
+            }
           }
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "const": "completed" } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              }
+            }
           },
           "then": {
             "required": [
@@ -400,11 +874,56 @@
         },
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "const": "recheck_required" } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "recheck_required"
+              }
+            }
           },
           "then": {
-            "required": ["recheck_from", "invalidation_reason"]
+            "required": [
+              "recheck_from",
+              "invalidation_reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "risk_tier",
+              "status"
+            ],
+            "properties": {
+              "risk_tier": {
+                "const": "TIER_1"
+              },
+              "status": {
+                "enum": [
+                  "ready",
+                  "preflighted",
+                  "approved",
+                  "applied",
+                  "verified",
+                  "completed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "high_risk_review_confirmed",
+              "high_risk_reviewed_by",
+              "high_risk_reviewed_at_utc",
+              "high_risk_review_note"
+            ],
+            "properties": {
+              "high_risk_review_confirmed": {
+                "const": true
+              }
+            }
           }
         }
       ],
@@ -412,11 +931,25 @@
     },
     "workflowEvent": {
       "type": "object",
-      "required": ["event_id", "task_id", "timestamp_utc", "event_type"],
+      "required": [
+        "event_id",
+        "task_id",
+        "timestamp_utc",
+        "event_type"
+      ],
       "properties": {
-        "event_id": { "type": "string", "minLength": 1 },
-        "task_id": { "type": "string", "minLength": 1 },
-        "timestamp_utc": { "type": "string", "format": "date-time" },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
         "event_type": {
           "enum": [
             "status_transition",
@@ -430,22 +963,55 @@
             "batch_rolled_back"
           ]
         },
-        "from_status": { "type": "string" },
-        "to_status": { "type": "string" },
-        "reason": { "type": "string" },
-        "actor": { "type": "string" },
-        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "batch_id": { "type": "string", "minLength": 1 },
+        "from_status": {
+          "type": "string"
+        },
+        "to_status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "documents": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
-            "required": ["file", "sha256", "batch_id", "updated_at_utc"],
+            "required": [
+              "file",
+              "sha256",
+              "batch_id",
+              "updated_at_utc"
+            ],
             "properties": {
-              "file": { "type": "string", "minLength": 1 },
-              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-              "batch_id": { "type": ["string", "null"] },
-              "updated_at_utc": { "type": "string", "format": "date-time" }
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "batch_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "updated_at_utc": {
+                "type": "string",
+                "format": "date-time"
+              }
             },
             "additionalProperties": false
           }
