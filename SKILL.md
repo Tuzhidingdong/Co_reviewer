@@ -36,6 +36,8 @@ Every prepared task receives a code-derived risk classification. Never copy a mo
 
 Automatic batch construction selects one non-Tier-2 risk tier at a time. Explicit task selection must also be homogeneous. The selected tier, policy version and deterministic reasons are part of the Workflow task scope fingerprint. Preparation recalculates the tier after exact PatchOperations are supplied, so a numeric or reference token in a `find/replace` operand can raise a previously low-risk task to Tier 1. Any later scope change invalidates preflight/approval fingerprints and requires renewed authorization.
 
+For Tier 1 tasks, the author must provide a separate explicit risk-review confirmation when approving Workflow tasks. Include `--high-risk-review-confirmed` and a concise `--high-risk-review-note` describing the scientific, numeric, reference, formatting or cross-document scope reviewed. The evidence is stored in the Workflow task and bound into its scope fingerprint. After any upstream change/recheck, the prior Tier 1 review is cleared and must be renewed.
+
 ### Blocked-edit Manual Suggestions
 
 A structure-safety failure may produce an independent JSON artifact under the immutable batch's `manual_suggestions/` folder. It contains the source-document SHA-256, Word part, stable/location hint, exact source excerpt, context anchors, blocking reason, involved structures, missing evidence and (only when evidence is sufficient) a proposed edit.
