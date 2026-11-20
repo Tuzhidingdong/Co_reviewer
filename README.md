@@ -10,6 +10,16 @@ The current implementation branch extends the original revision engine with type
 
 **Important:** older examples later in this README show the legacy revision-plan adapter. On the P1 implementation branch, do not send Marked DOCX outputs to a shared/reused path. Use the `runs/batch-{id}/` lifecycle documented above; publish a batch only after its Patch and Workflow task verification passes. Final page/line mapping is a round-level step after all document batches are published.
 
+## V2.3.2 RC closeout controls
+
+- **Bounded Safe Span:** a narrow, fail-closed structural candidate for unique ordinary Run text outside paired bookmark ranges. It never overrides historical revision, Token Lock, Protected Content, formatting, Patch approval or Verify gates.
+- **Blocked-edit Manual Suggestions:** Apply can preserve a hash-bound diagnostic with exact source/context, blocker details and an optional evidence-grounded proposal. The artifact is explicitly unapplied and never changes a DOCX.
+- **Deterministic Risk Tiers:** Tier 0 ordinary wording, Tier 1 scientific/reference/format/cross-document work, Tier 2 unresolved/ambiguous work. Batches remain risk-homogeneous; Tier 2 is held for clarification.
+- **Citation-aware Reference Graph:** static numeric citations and reference-list definitions are distinct from native Word fields. Citation ranges and unsupported Word field references remain manual-review items and block unsafe numbering propagation.
+- **Typed numbering keys:** prefer `DOCUMENT::KIND::OLD_NUMBER` to distinguish, for example, `Manuscript::figure::1` from `Manuscript::citation::1`.
+
+The added Safe Span and Manual Suggestion paths are safety-gated; a structural allow-candidate is not authorization. Full OMML/complex Field writing remains Deferred until its own Adapter tests and Word save/reopen acceptance are complete.
+
 ## What it does
 
 - Inspects DOCX comments, native Word selection ranges, paragraphs, tables, captions/drawings, placeholders, media and existing tracked changes.
