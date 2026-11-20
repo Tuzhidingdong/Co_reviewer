@@ -312,6 +312,8 @@ def _refresh_task_evidence(
     if not adapted:
         raise WorkflowPreparationError(f"Task {task.get('task_id')} could not rebuild target groups.")
     task["target_groups"]=adapted[0]["target_groups"]
+    for field in ("risk_tier", "risk_policy_version", "risk_reasons"):
+        task[field] = copy.deepcopy(adapted[0][field])
     return True
 
 
@@ -620,6 +622,13 @@ def prepare_workflow_execution(
             task["patch_id"] = patch_id
         else:
             task.pop("patch_id", None)
+
+        # Recompute risk from the exact author-reviewed operations. This may
+        # raise a task from Tier 0 to Tier 1 when numbers, units, formulas,
+        # citations, references or formatting enter the executable operands.
+        from .safety_policy import assess_task_risk
+        task.update(assess_task_risk(task))
+
         reviewer_map[task_id] = _reviewer_spec(
             task_id,
             comment_ids,
