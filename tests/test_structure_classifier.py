@@ -406,13 +406,16 @@ class StructureClassifierTests(unittest.TestCase):
         blocked_docx = self.root / "blocked.docx"
         _write_docx(blocked_docx, _document(blocked_body))
         blocked_output = self.root / "blocked-output.docx"
-        with self.assertRaises(StructureClassificationError):
+        from co_reviewer.manual_suggestion import ManualFallbackRequired
+        with self.assertRaises(ManualFallbackRequired) as caught:
             prepare_document(
                 str(blocked_docx), str(blocked_output),
                 [{"part": "word/document.xml", "p_idx": 0,
                   "find": "Replace this phrase", "replace": "Updated phrase"}],
                 "Structure classifier test",
             )
+        self.assertTrue(caught.exception.suggestion["not_applied"])
+        self.assertFalse(caught.exception.suggestion["docx_write_performed"])
         self.assertFalse(blocked_output.exists())
 
     def test_new_insert_runs_do_not_inherit_historical_rpr_change(self):
