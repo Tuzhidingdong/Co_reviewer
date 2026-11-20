@@ -1267,7 +1267,8 @@ def assert_edit_target_supported_with_bounded_safe_span(
             blocking_issues.append(issue)
 
     if blocking_issues or not relevant or any(
-        item.get("kind") != "bookmark_range" for item in relevant
+        item.get("kind") not in {"bookmark_range", "bookmark_marker"}
+        for item in relevant
     ):
         raise gate_error
 
