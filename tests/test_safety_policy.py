@@ -40,8 +40,8 @@ class RiskPolicyTests(unittest.TestCase):
         )
         self.assertEqual(assess_task_risk(numeric)["risk_tier"], "TIER_1")
         cross_document = _task(
-            "task_type": "cross_document_consistency",
-            "target_documents": ["Manuscript", "SI"],
+            task_type="cross_document_consistency",
+            target_documents=["Manuscript", "SI"],
         )
         self.assertEqual(assess_task_risk(cross_document)["risk_tier"], "TIER_1")
 
