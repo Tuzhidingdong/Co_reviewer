@@ -72,6 +72,25 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertIn("unpaired", result["reason"])
 
+    def test_mixed_direct_formatting_runs_fail_closed(self):
+        root, paragraph = _document(
+            '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>mixed </w:t></w:r>'
+            '<w:r><w:rPr><w:i/></w:rPr><w:t>formatting</w:t></w:r></w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "mixed formatting")
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("different direct formatting", result["reason"])
+
+    def test_adjacent_ordinary_runs_with_identical_formatting_are_supported(self):
+        root, paragraph = _document(
+            '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>same </w:t></w:r>'
+            '<w:r><w:rPr><w:b/></w:rPr><w:t>format</w:t></w:r></w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "same format")
+        self.assertTrue(result["allowed"])
+        self.assertEqual(len(result["run_map"]), 2)
+
     def test_duplicate_target_text_is_not_assigned_a_guessed_offset(self):
         root, paragraph = _document(
             '<w:p>' + _run("repeat") + _run(" and repeat") + '</w:p>'
