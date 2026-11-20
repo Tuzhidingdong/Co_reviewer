@@ -4506,24 +4506,23 @@ def cmd_apply(args):
         if any(not isinstance(entry, dict) for entry in report_history):
             raise ValueError("Existing apply report contains an invalid entry; refusing to overwrite it.")
 
+    from co_reviewer.manual_suggestion import ManualFallbackRequired
     try:
         reports = apply_plan(plan, args.author)
-    except Exception as exc:
-        from co_reviewer.manual_suggestion import ManualFallbackRequired
-        if isinstance(exc, ManualFallbackRequired):
-            from co_reviewer.batch_store import write_json_new
-            suggestion = exc.suggestion
-            suggestion_root = batch_dir if batch_dir is not None else plan_path.parent
-            suggestion_dir = suggestion_root / "manual_suggestions"
-            suggestion_path = suggestion_dir / f"{suggestion['suggestion_id']}.json"
-            if suggestion_path.exists():
-                suggestion_path = suggestion_dir / (
-                    f"{suggestion['suggestion_id']}-{uuid.uuid4().hex[:8]}.json"
-                )
-            digest = write_json_new(suggestion_path, suggestion)
-            print(f"[MANUAL SUGGESTION] {suggestion_path}")
-            print(f"[MANUAL SUGGESTION SHA256] {digest}")
-            print("[NOT APPLIED] No DOCX write was authorized by this diagnostic.")
+    except ManualFallbackRequired as exc:
+        from co_reviewer.batch_store import write_json_new
+        suggestion = exc.suggestion
+        suggestion_root = batch_dir if batch_dir is not None else plan_path.parent
+        suggestion_dir = suggestion_root / "manual_suggestions"
+        suggestion_path = suggestion_dir / f"{suggestion['suggestion_id']}.json"
+        if suggestion_path.exists():
+            suggestion_path = suggestion_dir / (
+                f"{suggestion['suggestion_id']}-{uuid.uuid4().hex[:8]}.json"
+            )
+        digest = write_json_new(suggestion_path, suggestion)
+        print(f"[MANUAL SUGGESTION] {suggestion_path}")
+        print(f"[MANUAL SUGGESTION SHA256] {digest}")
+        print("[NOT APPLIED] No DOCX write was authorized by this diagnostic.")
         raise
     report_history.extend(reports)
     applied_ids = {
@@ -6652,6 +6651,8 @@ def cmd_create_manual_suggestion(args):
     output_path = Path(args.out).expanduser().resolve()
     if input_path == output_path:
         raise ValueError("Manual suggestion output must not overwrite its input diagnostic.")
+    if output_path.exists():
+        raise FileExistsError(f"Manual suggestion output already exists; refusing to overwrite: {output_path}")
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     suggestion = build_manual_suggestion(payload)
     digest = write_json_new(output_path, suggestion)
