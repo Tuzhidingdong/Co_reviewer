@@ -673,6 +673,9 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
         text_value = row.get("text")
         mechanism = row.get("reference_mechanism", "static_text")
         instructions = row.get("word_field_instructions", [])
+        field_markers_present = row.get("word_field_markers_present", False)
+        if not isinstance(field_markers_present, bool):
+            raise ContractError("word_field_markers_present must be boolean")
         if not isinstance(part, str) or not part.strip():
             raise ContractError("Reference segment part must be a non-empty string")
         if not isinstance(paragraph_index, int) or isinstance(paragraph_index, bool) or paragraph_index < 0:
@@ -691,6 +694,7 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
             "part": part, "paragraph_index": paragraph_index, "text": text_value,
             "reference_mechanism": mechanism,
             "word_field_instructions": list(instructions),
+            "word_field_markers_present": field_markers_present,
         })
     return segments
 
@@ -739,6 +743,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                             "mixed_with_word_field" if has_field_markers else "static_text"
                         ),
                         "word_field_instructions": list(dict.fromkeys(instructions)),
+                        "word_field_markers_present": has_field_markers,
                     })
     return segments
 
@@ -771,7 +776,10 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 "reference_mechanism": mechanism,
             }
             instructions = segment.get("word_field_instructions", [])
-            for field_index, instruction in enumerate(instructions):
+            field_rows = list(instructions)
+            if mechanism == "mixed_with_word_field" and not field_rows:
+                field_rows = [""]
+            for field_index, instruction in enumerate(field_rows):
                 field_match = _WORD_FIELD_TYPE.search(instruction)
                 field_type = field_match.group(1).upper() if field_match else "UNKNOWN"
                 record_id = "field-" + hashlib.sha1(
@@ -797,6 +805,9 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 definitions.append({
                     "id": record_id, **base, "kind": kind, "number": number,
                     "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                    "reference_mechanism": (
+                        "manual_review_required" if mechanism == "mixed_with_word_field" else mechanism
+                    ),
                 })
                 caption_spans.append(match.span())
 
@@ -885,6 +896,8 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
 
     definitions_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for definition in definitions:
+        if definition.get("reference_mechanism") == "manual_review_required":
+            continue
         key = (definition["kind"], definition["number"].casefold())
         definitions_by_key.setdefault(key, []).append(definition)
     for mention in mentions:
