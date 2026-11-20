@@ -955,35 +955,142 @@ def extract_docx_text_for_reference_graph(path: str | Path) -> str:
     """Compatibility text view; graph construction should use segment extraction."""
     return "\n".join(item["text"] for item in extract_docx_reference_segments(path))
 
-def renumber_reference_graph(graph: Mapping[str, Any],
-                             number_map: Mapping[str, str],
-                             *, explicit_authorization: bool,
-                             confirmed_ambiguous_mappings: Mapping[str, str] | None = None) -> dict[str, Any]:
+def renumber_reference_graph(
+    graph: Mapping[str, Any],
+    number_map: Mapping[str, str],
+    *,
+    explicit_authorization: bool,
+    confirmed_ambiguous_mappings: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     if explicit_authorization is not True:
         raise ContractError("Cross-file renumbering requires explicit package-wide authorization")
-    if not isinstance(number_map, Mapping) or any(
-        not isinstance(k, str) or "::" not in k or not isinstance(v, str) or not v.strip()
-        for k, v in number_map.items()
-    ):
-        raise ContractError("number_map must map DOCUMENT::OLD_NUMBER keys to non-empty new numbers")
+    if not isinstance(number_map, Mapping):
+        raise ContractError("number_map must be an object keyed by DOCUMENT::OLD_NUMBER or DOCUMENT::KIND::OLD_NUMBER")
     confirmed = dict(confirmed_ambiguous_mappings or {})
     if any(not isinstance(k, str) or not isinstance(v, str) for k, v in confirmed.items()):
         raise ContractError("Confirmed ambiguous mappings must map mention IDs to definition IDs")
     updated = copy.deepcopy(dict(graph))
-    by_id = {d["id"]: d for d in updated.get("definitions", [])}
+    definitions = updated.get("definitions", [])
+    mentions = updated.get("mentions", [])
+    if not isinstance(definitions, list) or not isinstance(mentions, list):
+        raise ContractError("Reference graph definitions and mentions must be arrays")
+
+    normalized_map: dict[tuple[str, str, str], str] = {}
+    for raw_key, new_number in number_map.items():
+        if (
+            not isinstance(raw_key, str)
+            or not isinstance(new_number, str)
+            or not new_number.strip()
+        ):
+            raise ContractError("Every number_map entry must have a string key and non-empty replacement number")
+        parts = raw_key.split("::")
+        if len(parts) == 2:
+            document, old_number = parts
+            matching_kinds = {
+                item.get("kind") for item in definitions
+                if isinstance(item, Mapping)
+                and item.get("document") == document
+                and str(item.get("number")) == old_number
+            }
+            if len(matching_kinds) != 1:
+                raise ContractError(
+                    "UNIQUE_REFERENCE_KIND_REQUIRED: legacy DOCUMENT::OLD_NUMBER key "
+                    + repr(raw_key)
+                    + " does not identify exactly one reference kind; use DOCUMENT::KIND::OLD_NUMBER."
+                )
+            kind = next(iter(matching_kinds))
+        elif len(parts) == 3:
+            document, raw_kind, old_number = parts
+            kind = _canonical_reference_kind(raw_kind)
+        else:
+            raise ContractError(
+                "number_map keys must use DOCUMENT::OLD_NUMBER or DOCUMENT::KIND::OLD_NUMBER."
+            )
+        if not document.strip() or not old_number.strip() or not isinstance(kind, str) or not kind:
+            raise ContractError("number_map contains an empty document, kind or old number")
+        if kind not in set(_REFERENCE_LABELS.values()):
+            raise ContractError("Unsupported reference kind in number_map: " + str(kind))
+        key = (document, kind, old_number)
+        if key in normalized_map:
+            raise ContractError("number_map contains duplicate typed definition keys: " + repr(key))
+        normalized_map[key] = new_number.strip()
+
+    if not normalized_map:
+        raise ContractError("number_map must contain at least one definition change")
+
+    # A package-wide edit cannot safely proceed while native Word fields remain
+    # unmapped: REF/PAGEREF/SEQ/CITATION/ADDIN instructions are not static text
+    # and no writing Field Adapter is enabled in this release candidate.
+    field_references = updated.get("field_references", [])
+    if field_references:
+        raise ContractError(
+            "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING: package-wide numbering "
+            "propagation is blocked while native Word fields remain unresolved."
+        )
+
     changed_definition_ids = {
-        d["id"] for d in updated.get("definitions", [])
-        if d["document"] + "::" + d["number"] in number_map
+        item.get("id")
+        for item in definitions
+        if isinstance(item, Mapping)
+        and (item.get("document"), item.get("kind"), str(item.get("number"))) in normalized_map
     }
-    mentions_by_id = {m["id"]: m for m in updated.get("mentions", [])}
+    if not changed_definition_ids:
+        raise ContractError("number_map did not identify any definition in the supplied graph")
+
+    # Fail closed if a potentially affected static mention is not uniquely
+    # resolved, including citation ranges and field-mixed paragraphs.
+    for mention in mentions:
+        if not isinstance(mention, Mapping):
+            raise ContractError("Reference graph contains a malformed mention record")
+        kind = mention.get("kind")
+        document = mention.get("document")
+        number = str(mention.get("number", ""))
+        resolution = mention.get("resolution")
+        candidates = (
+            mention.get("candidate_definition_ids", [])
+            if resolution == "ambiguous"
+            else mention.get("target_definition_ids", [])
+        )
+        direct_change = (document, kind, number) in normalized_map
+        range_change = False
+        if kind == "citation" and re.fullmatch(r"\d+[-–]\d+", number):
+            left, right = re.split(r"[-–]", number)
+            low, high = sorted((int(left), int(right)))
+            range_change = any(
+                map_document == document
+                and map_kind == "citation"
+                and low <= int(map_number) <= high
+                for map_document, map_kind, map_number in normalized_map
+                if map_number.isdigit()
+            )
+        affected = direct_change or bool(set(candidates) & changed_definition_ids) or range_change
+        if affected and resolution not in {"resolved", "confirmed_by_user", "ambiguous"}:
+            raise ContractError(
+                "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION: "
+                + str(mention.get("id", "<unknown>"))
+            )
+
+    mentions_by_id = {
+        item["id"]: item for item in mentions
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
     unknown_mentions = set(confirmed) - set(mentions_by_id)
     if unknown_mentions:
-        raise ContractError("Ambiguous mapping references unknown mention IDs: " + ", ".join(sorted(unknown_mentions)))
+        raise ContractError(
+            "Ambiguous mapping references unknown mention IDs: "
+            + ", ".join(sorted(unknown_mentions))
+        )
     for mention_id, definition_id in confirmed.items():
         mention = mentions_by_id[mention_id]
-        if mention.get("resolution") != "ambiguous" or definition_id not in mention.get("candidate_definition_ids", []):
-            raise ContractError("Confirmed mapping must select one candidate for an ambiguous mention: " + mention_id)
-    for mention in updated.get("mentions", []):
+        if (
+            mention.get("resolution") != "ambiguous"
+            or definition_id not in mention.get("candidate_definition_ids", [])
+        ):
+            raise ContractError(
+                "Confirmed mapping must select one candidate for an ambiguous mention: "
+                + mention_id
+            )
+    for mention in mentions:
         candidates = (
             mention.get("candidate_definition_ids", [])
             if mention.get("resolution") == "ambiguous"
@@ -996,33 +1103,72 @@ def renumber_reference_graph(graph: Mapping[str, Any],
                     "AMBIGUOUS_REFERENCE_MAPPING_REQUIRES_CONFIRMATION: " + mention["id"]
                 )
             if chosen not in candidates:
-                raise ContractError("Confirmed definition is not a candidate for mention " + mention["id"])
+                raise ContractError(
+                    "Confirmed definition is not a candidate for mention " + mention["id"]
+                )
             mention["target_definition_ids"] = [chosen]
             mention["resolution"] = "confirmed_by_user"
-    by_id = {d["id"]: d for d in updated.get("definitions", [])}
+
+    final_numbers: dict[tuple[str, str], str] = {}
     definition_updates = []
-    for definition in updated.get("definitions", []):
-        old_number = definition["number"]
-        key = definition["document"] + "::" + old_number
-        if key in number_map:
-            definition["number"] = number_map[key]
-            definition["text"] = definition["text"].replace(old_number, definition["number"], 1)
-            definition_updates.append({"document": definition["document"], "definition_id": definition["id"],
-                                      "offset": definition["offset"], "old_number": old_number,
-                                      "new_number": definition["number"]})
+    by_id: dict[str, dict[str, Any]] = {}
+    for definition in definitions:
+        if not isinstance(definition, dict):
+            raise ContractError("Reference graph contains a malformed definition record")
+        definition_id = definition.get("id")
+        document = definition.get("document")
+        kind = definition.get("kind")
+        old_number = str(definition.get("number"))
+        key = (document, kind, old_number)
+        new_number = normalized_map.get(key, old_number)
+        collision_key = (document, kind)
+        if (collision_key, new_number) in final_numbers:
+            raise ContractError(
+                "DUPLICATE_REFERENCE_NUMBER_AFTER_PROPAGATION: "
+                + str(document) + "::" + str(kind) + "::" + new_number
+            )
+        final_numbers[(collision_key, new_number)] = str(definition_id)
+        if key in normalized_map:
+            definition["number"] = new_number
+            definition["text"] = definition["text"].replace(old_number, new_number, 1)
+            definition_updates.append({
+                "document": document,
+                "definition_id": definition_id,
+                "kind": kind,
+                "offset": definition["offset"],
+                "old_number": old_number,
+                "new_number": new_number,
+            })
+        if isinstance(definition_id, str):
+            by_id[definition_id] = definition
+
     mention_updates = []
-    for mention in updated.get("mentions", []):
+    for mention in mentions:
         targets = mention.get("target_definition_ids", [])
         if len(targets) == 1 and targets[0] in by_id:
             definition = by_id[targets[0]]
-            old_number = mention["number"]
-            if old_number != definition["number"]:
+            old_number = str(mention["number"])
+            new_number = str(definition["number"])
+            if old_number != new_number:
                 old_text = mention["text"]
-                mention["number"] = definition["number"]
-                mention["text"] = old_text.replace(old_number, mention["number"], 1)
-                mention_updates.append({"document": mention["document"], "mention_id": mention["id"],
-                                        "offset": mention["offset"], "old_text": old_text,
-                                        "new_text": mention["text"]})
+                mention["number"] = new_number
+                mention["text"] = old_text.replace(old_number, new_number, 1)
+                update = {
+                    "document": mention["document"],
+                    "mention_id": mention["id"],
+                    "kind": mention["kind"],
+                    "offset": mention["offset"],
+                    "old_text": old_text,
+                    "new_text": mention["text"],
+                }
+                if mention.get("surface_text") is not None:
+                    update["old_surface_text"] = mention["surface_text"]
+                    update["new_surface_text"] = mention["surface_text"].replace(
+                        old_number, new_number, 1
+                    )
+                    mention["surface_text"] = update["new_surface_text"]
+                mention_updates.append(update)
+
     updated["definition_updates"] = definition_updates
     updated["mention_updates"] = mention_updates
     updated["numbering_mutation_authorized"] = True
