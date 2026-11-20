@@ -626,6 +626,7 @@ _REFERENCE_LABELS = {
     "equation": "equation", "eq": "equation", "eq.": "equation", "equations": "equation", "eqs": "equation",
     "scheme": "scheme", "schemes": "scheme",
     "section": "section", "sections": "section",
+    "citation": "citation", "citations": "citation",
 }
 _REFERENCE_NUMBER = r"(S?\d+(?:\.\d+)*(?:[A-Za-z])?)"
 _CAPTION = re.compile(
@@ -635,6 +636,13 @@ _CAPTION = re.compile(
 _MENTION = re.compile(
     rf"\b(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=$|[\s,.;:)\]])",
+    re.I,
+)
+_CITATION_DEFINITION = re.compile(r"(?im)^\s*\[\s*(\d+)\s*\](?=\s+\S)")
+_CITATION_GROUP = re.compile(r"(?<!\w)\[(?P<body>\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]")
+_CITATION_RANGE = re.compile(r"(?<!\w)\[\s*(\d+)\s*[-–]\s*(\d+)\s*\]")
+_WORD_FIELD_TYPE = re.compile(
+    r"\b(REF|PAGEREF|NOTEREF|SEQ|CITATION|ADDIN|TOC|HYPERLINK|XE|TA)\b",
     re.I,
 )
 
@@ -647,7 +655,10 @@ def _canonical_reference_kind(value: str) -> str:
 def _reference_segments(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str):
         return [
-            {"part": "text", "paragraph_index": index, "text": line}
+            {
+                "part": "text", "paragraph_index": index, "text": line,
+                "reference_mechanism": "static_text", "word_field_instructions": [],
+            }
             for index, line in enumerate(value.splitlines() or [value])
         ]
     if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
@@ -660,22 +671,38 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
         part = row.get("part", "word/document.xml")
         paragraph_index = row.get("paragraph_index", index)
         text_value = row.get("text")
+        mechanism = row.get("reference_mechanism", "static_text")
+        instructions = row.get("word_field_instructions", [])
         if not isinstance(part, str) or not part.strip():
             raise ContractError("Reference segment part must be a non-empty string")
         if not isinstance(paragraph_index, int) or isinstance(paragraph_index, bool) or paragraph_index < 0:
             raise ContractError("Reference segment paragraph_index must be a non-negative integer")
         if not isinstance(text_value, str):
             raise ContractError("Reference segment text must be a string")
+        if mechanism not in {"static_text", "mixed_with_word_field"}:
+            raise ContractError("Reference segment mechanism must be static_text or mixed_with_word_field")
+        if not isinstance(instructions, list) or any(not isinstance(item, str) for item in instructions):
+            raise ContractError("word_field_instructions must be an array of strings")
         key = (part, paragraph_index)
         if key in seen_locations:
             raise ContractError("Duplicate reference segment location: " + repr(key))
         seen_locations.add(key)
-        segments.append({"part": part, "paragraph_index": paragraph_index, "text": text_value})
+        segments.append({
+            "part": part, "paragraph_index": paragraph_index, "text": text_value,
+            "reference_mechanism": mechanism,
+            "word_field_instructions": list(instructions),
+        })
     return segments
 
 
 def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
-    """Extract text with exact Word part and paragraph anchors for graph construction."""
+    """Extract paragraph text and separately identify native Word field instructions.
+
+    Paragraphs containing fields are marked mixed_with_word_field. Their displayed
+    text is not silently treated as ordinary static text for reference resolution.
+    The field instructions are retained as independent diagnostics for manual
+    mapping until a supported Field/Citation Adapter exists.
+    """
     import zipfile
     source = Path(path)
     if not source.is_file() or source.suffix.casefold() != ".docx":
@@ -689,22 +716,45 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
             root = _xml(archive.read(name))
             for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
                 value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
-                if value.strip():
-                    segments.append({"part": name, "paragraph_index": paragraph_index, "text": value})
+                instructions = []
+                for node in paragraph.findall(".//w:fldSimple", NS):
+                    instruction = node.get(qn("instr"), "")
+                    if instruction.strip():
+                        instructions.append(instruction.strip())
+                for node in paragraph.findall(".//w:instrText", NS):
+                    instruction = node.text or ""
+                    if instruction.strip():
+                        instructions.append(instruction.strip())
+                has_field_markers = bool(
+                    instructions
+                    or paragraph.findall(".//w:fldChar", NS)
+                    or paragraph.findall(".//w:fldSimple", NS)
+                )
+                if value.strip() or has_field_markers:
+                    segments.append({
+                        "part": name,
+                        "paragraph_index": paragraph_index,
+                        "text": value,
+                        "reference_mechanism": (
+                            "mixed_with_word_field" if has_field_markers else "static_text"
+                        ),
+                        "word_field_instructions": list(dict.fromkeys(instructions)),
+                    })
     return segments
 
 
 def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any]:
-    """Build a package-wide graph with Word part/paragraph anchors.
+    """Build a package-wide graph of definitions, static mentions and native Word fields.
 
-    Local definitions are preferred for same-document references. Cross-document
-    resolution is allowed only when exactly one package definition matches;
-    multiple candidates remain ambiguous and require explicit user mapping.
+    Static text references are resolved only when exactly one definition is found.
+    Native Word fields and mixed paragraphs are represented separately and remain
+    manual-review items; they are never misreported as ordinary static citations.
     """
     if not isinstance(documents, Mapping) or not documents:
         raise ContractError("Package graph requires at least one named document")
     definitions: list[dict[str, Any]] = []
     mentions: list[dict[str, Any]] = []
+    field_references: list[dict[str, Any]] = []
     normalized_documents: dict[str, list[dict[str, Any]]] = {}
     for doc_id, raw_content in documents.items():
         if not isinstance(doc_id, str) or not doc_id.strip():
@@ -713,11 +763,29 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
         normalized_documents[doc_id] = segments
         for segment in segments:
             text_value = segment["text"]
+            mechanism = segment["reference_mechanism"]
             base = {
                 "document": doc_id,
                 "part": segment["part"],
                 "paragraph_index": segment["paragraph_index"],
+                "reference_mechanism": mechanism,
             }
+            instructions = segment.get("word_field_instructions", [])
+            for field_index, instruction in enumerate(instructions):
+                field_match = _WORD_FIELD_TYPE.search(instruction)
+                field_type = field_match.group(1).upper() if field_match else "UNKNOWN"
+                record_id = "field-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(field_index) + instruction).encode("utf-8")
+                ).hexdigest()[:16]
+                field_references.append({
+                    "id": record_id, **base,
+                    "reference_mechanism": "native_word_field",
+                    "field_type": field_type,
+                    "instruction": instruction,
+                    "display_text": text_value,
+                    "resolution": "manual_review_required",
+                })
             caption_spans = []
             for match in _CAPTION.finditer(text_value):
                 kind = _canonical_reference_kind(match.group(1))
@@ -731,6 +799,67 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     "text": match.group(), "offset": match.start(), "end_offset": match.end(),
                 })
                 caption_spans.append(match.span())
+
+            citation_definition_spans = []
+            for match in _CITATION_DEFINITION.finditer(text_value):
+                span = match.span()
+                record_id = "def-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(match.start()) + "citation" + match.group(1)).encode("utf-8")
+                ).hexdigest()[:16]
+                definitions.append({
+                    "id": record_id, **base, "kind": "citation",
+                    "number": match.group(1), "text": match.group(),
+                    "offset": match.start(1), "end_offset": match.end(1),
+                    "reference_mechanism": (
+                        "manual_review_required" if mechanism == "mixed_with_word_field" else mechanism
+                    ),
+                })
+                citation_definition_spans.append(span)
+
+            for match in _CITATION_RANGE.finditer(text_value):
+                if any(match.start() >= left and match.end() <= right
+                       for left, right in citation_definition_spans):
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(match.start()) + "citation-range" + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                mentions.append({
+                    "id": record_id, **base, "kind": "citation",
+                    "number": match.group(1) + "-" + match.group(2),
+                    "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": "Citation ranges require an explicit expansion/mapping before renumbering.",
+                })
+
+            for match in _CITATION_GROUP.finditer(text_value):
+                if any(match.start() >= left and match.end() <= right
+                       for left, right in citation_definition_spans):
+                    continue
+                for number_match in re.finditer(r"\d+", match.group("body")):
+                    number = number_match.group()
+                    offset = match.start("body") + number_match.start()
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(offset) + "citation" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base, "kind": "citation",
+                        "number": number, "text": number,
+                        "surface_text": match.group(), "offset": offset,
+                        "end_offset": offset + len(number),
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                        **({
+                            "resolution_reason": "The paragraph contains native Word fields; static and field-generated text cannot be separated safely."
+                        } if mechanism == "mixed_with_word_field" else {}),
+                    })
+
             for match in _MENTION.finditer(text_value):
                 start_offset, end_offset = match.span()
                 if any(start_offset >= left and end_offset <= right for left, right in caption_spans):
@@ -744,13 +873,23 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 mentions.append({
                     "id": record_id, **base, "kind": kind, "number": number,
                     "text": match.group(), "offset": start_offset, "end_offset": end_offset,
-                    "target_definition_ids": [], "resolution": "unresolved",
+                    "target_definition_ids": [],
+                    "resolution": (
+                        "manual_review_required"
+                        if mechanism == "mixed_with_word_field" else "unresolved"
+                    ),
+                    **({
+                        "resolution_reason": "The paragraph contains native Word fields; static and field-generated text cannot be separated safely."
+                    } if mechanism == "mixed_with_word_field" else {}),
                 })
+
     definitions_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for definition in definitions:
         key = (definition["kind"], definition["number"].casefold())
         definitions_by_key.setdefault(key, []).append(definition)
     for mention in mentions:
+        if mention.get("resolution") == "manual_review_required":
+            continue
         key = (mention["kind"], mention["number"].casefold())
         candidates = definitions_by_key.get(key, [])
         local_candidates = [item for item in candidates if item["document"] == mention["document"]]
@@ -776,17 +915,25 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
         "target_paragraph_index": definitions_by_id[definition_id]["paragraph_index"],
     } for mention in mentions for definition_id in mention["target_definition_ids"]]
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "documents": sorted(normalized_documents),
         "document_segments": {
-            doc_id: [{"part": item["part"], "paragraph_index": item["paragraph_index"]} for item in segments]
+            doc_id: [{
+                "part": item["part"],
+                "paragraph_index": item["paragraph_index"],
+                "reference_mechanism": item["reference_mechanism"],
+            } for item in segments]
             for doc_id, segments in sorted(normalized_documents.items())
         },
         "definitions": definitions,
         "mentions": mentions,
+        "field_references": field_references,
         "edges": edges,
-        "unresolved_count": sum(item["resolution"] != "resolved" for item in mentions),
+        "unresolved_count": sum(item["resolution"] not in {"resolved", "confirmed_by_user"} for item in mentions),
         "ambiguous_count": sum(item["resolution"] == "ambiguous" for item in mentions),
+        "manual_field_review_count": len(field_references) + sum(
+            item["resolution"] == "manual_review_required" for item in mentions
+        ),
         "numbering_mutation_authorized": False,
     }
 
@@ -794,7 +941,6 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
 def extract_docx_text_for_reference_graph(path: str | Path) -> str:
     """Compatibility text view; graph construction should use segment extraction."""
     return "\n".join(item["text"] for item in extract_docx_reference_segments(path))
-
 
 def renumber_reference_graph(graph: Mapping[str, Any],
                              number_map: Mapping[str, str],
