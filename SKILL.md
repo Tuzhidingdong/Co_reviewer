@@ -18,6 +18,46 @@ Co_Reviewer manages a revision round. It does not invent experiments, results, n
 5. **Incremental work:** A request to modify only one figure, paragraph, reviewer item or SI entry touches only relevant targets. Reuse prior inventory when source files are unchanged.
 6. **Auditable output:** Preserve inputs, write separate revised copies, and return a report linking each revision item to its targets.
 
+## V2.3.2 RC safety, blocked operations and risk tiers
+
+### Bounded Safe Span is only a structural candidate
+
+The structure classifier may return `ALLOW_CANDIDATE` for an exact target that maps to one contiguous sequence of ordinary Word Runs outside every paired bookmark range. This narrow path may permit ordinary text elsewhere in the same paragraph when a bookmark range is present. It must never modify, copy, delete, reorder or rebalance bookmark/comment markers.
+
+A Bounded Safe Span result is **not write authorization**. The operation must still pass the historical-revision gate, evidence-linked Authorized Change, Token Lock, Protected Content, mixed-format mapping, immutable Patch approval, native Track Changes Apply and exact Verify gates. The current automatic range adapter supports direct ordinary Runs and bookmark intervals only. Fields, Comment Ranges, hyperlinks, drawings, OMML, revision wrappers, malformed/unpaired markers, nested/unsupported structures and any target that cannot be uniquely mapped remain fail-closed.
+
+### Deterministic Risk Tiers
+
+Every prepared task receives a code-derived risk classification. Never copy a model-suggested tier or lower a tier manually:
+
+- `TIER_0`: ordinary, single-scope wording changes with confirmed target/evidence and no scientific/reference/formatting signals.
+- `TIER_1`: numeric/scientific tokens, units, citations, references, formatting changes, numbering, global or cross-document consistency, or multiple document roles. Keep these in a separate high-risk batch and show the exact operands and impact.
+- `TIER_2`: ambiguous/unresolved target or evidence, missing linked evidence, unresolved questions or a non-executable disposition. Do not create a Patch; obtain clarification or keep the item blocked.
+
+Automatic batch construction selects one non-Tier-2 risk tier at a time. Explicit task selection must also be homogeneous. The selected tier, policy version and deterministic reasons are part of the Workflow task scope fingerprint. Preparation recalculates the tier after exact PatchOperations are supplied, so a numeric or reference token in a `find/replace` operand can raise a previously low-risk task to Tier 1. Any later scope change invalidates preflight/approval fingerprints and requires renewed authorization.
+
+### Blocked-edit Manual Suggestions
+
+A structure-safety failure may produce an independent JSON artifact under the immutable batch's `manual_suggestions/` folder. It contains the source-document SHA-256, Word part, stable/location hint, exact source excerpt, context anchors, blocking reason, involved structures, missing evidence and (only when evidence is sufficient) a proposed edit.
+
+A Manual Suggestion is diagnostic only: `not_applied=true`, `docx_write_performed=false`. It is not a Patch, does not alter a DOCX, cannot be approved as an applied edit, and must never enter Marked/Clean or a ResponseUnit as completed work. If scientific evidence is missing, the suggestion must omit the proposed edit and ask for clarification rather than invent wording. Inspect the exact target in Word and create a new, user-approved scope after manual handling.
+
+For an external diagnostic JSON, the optional CLI is:
+
+```powershell
+python scripts/co_reviewer_cli.py create-manual-suggestion --input blocked_target.json --out manual_suggestion.json
+```
+
+The output must be a new path; an existing artifact is never overwritten.
+
+### Citation and native Word field handling
+
+The package reference graph recognizes static numeric citations (for example `[1]` and `[1, 2]`) and numbered reference-list entries, separately from Figure/Table/Equation/Scheme/Section references. Citation ranges such as `[1–3]` are retained as manual-review items rather than expanded by guesswork.
+
+Native Word `REF`, `PAGEREF`, `NOTEREF`, `SEQ`, `CITATION`, `ADDIN` and other unclassified field instructions are reported as native-field references, not static text. The current release candidate does not provide a general Field/Citation writing Adapter. Package-wide numbering propagation must stop when a potentially affected native field, unresolved mention or range cannot be uniquely mapped. Page metadata fields such as `PAGE` and `NUMPAGES` are recorded separately and do not by themselves block unrelated reference numbering.
+
+For renumbering, prefer a typed key such as `Manuscript::citation::1` or `Manuscript::figure::1`. The legacy `DOCUMENT::OLD_NUMBER` form is accepted only when it identifies exactly one reference kind. Never use an untyped key when Figure 1 and Citation 1 coexist.
+
 ## Workflow
 
 ### Stage 1 — Start a review round and inventory
