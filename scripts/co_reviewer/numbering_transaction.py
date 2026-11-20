@@ -89,14 +89,51 @@ def _validate_impact_plan(plan: Any) -> dict[str, Any]:
     source_documents = plan.get("source_documents")
     affected_roles = plan.get("affected_document_roles")
     proposed_graph = plan.get("proposed_graph")
+    source_graph_sha = plan.get("source_graph_sha256")
+    allowed_roles = {"Reviewers", "Manuscript", "SI"}
     if (
         not isinstance(source_documents, Mapping) or not source_documents
         or not isinstance(affected_roles, list) or not affected_roles
         or not isinstance(proposed_graph, Mapping)
+        or not isinstance(source_graph_sha, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", source_graph_sha)
     ):
-        raise NumberingTransactionError("Numbering impact plan is missing source documents, affected roles or proposed graph.")
-    if set(affected_roles) - set(source_documents):
-        raise NumberingTransactionError("Numbering impact plan contains affected roles absent from its source graph.")
+        raise NumberingTransactionError("Numbering impact plan is missing source documents, affected roles, source graph hash or proposed graph.")
+    proposed_roles = proposed_graph.get("documents")
+    if (
+        not isinstance(proposed_roles, list)
+        or set(proposed_roles) != set(source_documents)
+        or len(proposed_roles) != len(set(proposed_roles))
+        or set(source_documents) - allowed_roles
+    ):
+        raise NumberingTransactionError("Numbering impact plan document roles must exactly match supported Workflow roles.")
+    for role, source in source_documents.items():
+        if (
+            not isinstance(role, str) or not role
+            or not isinstance(source, Mapping)
+            or not isinstance(source.get("file"), str) or not source.get("file")
+            or not isinstance(source.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", source["sha256"])
+        ):
+            raise NumberingTransactionError(f"Numbering impact plan source record is invalid for role {role!r}.")
+    definition_updates = plan.get("definition_updates")
+    mention_updates = plan.get("mention_updates")
+    change_counts = plan.get("change_counts")
+    if not isinstance(definition_updates, list) or not isinstance(mention_updates, list) or not isinstance(change_counts, Mapping):
+        raise NumberingTransactionError("Numbering impact plan change lists or counts are malformed.")
+    actual_affected_roles = sorted({
+        row.get("document")
+        for row in [*definition_updates, *mention_updates]
+        if isinstance(row, Mapping) and isinstance(row.get("document"), str)
+    })
+    if (
+        affected_roles != actual_affected_roles
+        or set(affected_roles) - set(source_documents)
+        or change_counts.get("definitions") != len(definition_updates)
+        or change_counts.get("mentions") != len(mention_updates)
+        or change_counts.get("documents") != len(affected_roles)
+    ):
+        raise NumberingTransactionError("Numbering impact plan affected-role list or change counts do not match its exact update records.")
     return dict(plan)
 
 
@@ -142,8 +179,14 @@ def build_numbering_impact_plan(
     if not isinstance(graph, Mapping) or not isinstance(number_map, Mapping):
         raise NumberingTransactionError("Reference graph and typed number map must be JSON objects.")
     graph_roles = graph.get("documents")
-    if not isinstance(graph_roles, list) or not graph_roles:
-        raise NumberingTransactionError("Reference graph has no managed document roles.")
+    allowed_roles = {"Reviewers", "Manuscript", "SI"}
+    if (
+        not isinstance(graph_roles, list) or not graph_roles
+        or any(not isinstance(role, str) or not role.strip() for role in graph_roles)
+        or len(graph_roles) != len(set(graph_roles))
+        or set(graph_roles) - allowed_roles
+    ):
+        raise NumberingTransactionError("Reference graph document roles must be unique supported Workflow roles.")
     if not isinstance(source_documents, Mapping) or set(source_documents) != set(graph_roles):
         raise NumberingTransactionError(
             "Every graph document role must have exactly one source DOCX; omissions and extra documents are blocked."
@@ -547,6 +590,10 @@ def commit_numbering_package_transaction(
             raise NumberingTransactionError(f"Workflow has no active document pointer for graph role {role}.")
         source_file = Path(source["file"]).expanduser().resolve()
         source_sha = source["sha256"]
+        if not source_file.is_file() or sha256_file(source_file) != source_sha:
+            raise NumberingTransactionError(
+                f"Author-reviewed source DOCX for {role} is missing or no longer matches its approved SHA-256."
+            )
         if role in affected_roles:
             batch_record = intent_documents[role]
             if (
