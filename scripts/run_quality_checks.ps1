@@ -220,6 +220,10 @@ try {
     Invoke-QualityCheck -Name "Run unit tests" -PythonArgs @("-m", "unittest", "discover", "-s", "tests", "-v")
     $CoreWorkflowCliSmoke = "import argparse, sys; sys.path.insert(0, 'scripts'); import co_reviewer_cli as cli; parser = cli.build_parser(); action = next(item for item in parser._actions if isinstance(item, argparse._SubParsersAction)); names = ('approve-workflow-tasks', 'build-revision-ledger', 'export-revision-plan', 'sync-workflow-ledger', 'create-working-clean-views', 'confirm-response-units', 'map-response-locations', 'complete-response-units', 'render-response', 'render-response-docx', 'revision-baseline', 'targeted-revision-gate', 'resolve-historical-revisions', 'preview-omml-docx', 'build-package-reference-graph', 'renumber-package-graph', 'create-manual-suggestion', 'begin-qa-remediation', 'complete-qa-remediation'); missing = [name for name in names if name not in action.choices]; assert not missing, f'missing workflow CLI command(s): {missing}'; [action.choices[name].format_help() for name in names]; print(f'{len(names)} core workflow, reference-graph and safety CLI commands are available')"
     Invoke-QualityCheck -Name "Check core Workflow Ledger CLI commands" -PythonArgs @("-c", $CoreWorkflowCliSmoke)
+    Invoke-QualityCheck -Name "Check evidence tool entry point" -PythonArgs @("scripts/evidence_tools.py", "--help")
+    Invoke-QualityCheck -Name "Check PDF evidence inspection command" -PythonArgs @("scripts/evidence_tools.py", "pdf-inspect", "--help")
+    Invoke-QualityCheck -Name "Check structured evidence summary command" -PythonArgs @("scripts/evidence_tools.py", "structured-summary", "--help")
+    Invoke-QualityCheck -Name "Check CrossRef evidence index command" -PythonArgs @("scripts/evidence_tools.py", "crossref-index", "--help")
     Invoke-QualityCheck -Name "Check CLI entry point" -PythonArgs @("scripts/co_reviewer_cli.py", "--help")
     Invoke-QualityCheck -Name "Check cached review audit command" -PythonArgs @("scripts/co_reviewer_cli.py", "audit", "--help")
     Invoke-QualityCheck -Name "Check pending decision-plan validator" -PythonArgs @("scripts/validate_decision_plan.py", "--help")
