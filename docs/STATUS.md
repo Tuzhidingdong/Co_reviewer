@@ -9,7 +9,7 @@
 |---|---|
 | Repository | `Tuzhidingdong/Co_reviewer` |
 | Effective integration branch | `upgrade/v0.5.1-p1-rc-closeout-20261120` |
-| Last source/test-validated HEAD | `567d3061c86e17fe337e8e181459e6ebe2ef7d91` |
+| Last source/test-validated HEAD | `fff6712b2395f52d2c1ebb66b71aa801c70bf13a` |
 | Status snapshot commit | This documentation update; source files are unchanged from the validated HEAD |
 | Parent / frozen baseline | `8b77863329163d853c90bbfb5872fc313e2eaa76` |
 | Parent branch | `docs/freeze-global-user-task-plan-v2.3.2-20261120` |
@@ -36,6 +36,8 @@ Hashes below are SHA-256 over the exact file contents at the code snapshot HEAD,
 | `scripts/co_reviewer/safety_policy.py` | `03ac2531067ad587b7db1183a9ca346b1fbdb76f769a44af628cea14547b0123` |
 | `scripts/co_reviewer/manual_suggestion.py` | `e8e1db8ec67fbf2d7d91ec1651c9fe3d07870bd26adcb4e9afad5f5d21350095` |
 | `scripts/co_reviewer/working_view.py` | `dd8975de86d40c226c491a395562c4d3f2500dedd1c78672bb9728b293c036cb` |
+| `scripts/create_word_compatibility_fixture.py` | `e43c3773a79848fc0dacbae40c5ea5e385047e850453b074fb8674f257f046cb` |
+| `tests/test_word_pdf_acceptance.py` | `708faf650eefe8d3a8ec00f80bb86015c354fc51c9b6c525c50fa347bceab394` |
 | `tests/test_working_view.py` | `bf2a5a0265b4a7013765f4310e5d54094d228d7d1faf005c5b61374dc9342372` |
 | `docs/RC_LOCAL_ACCEPTANCE.md` | `12814b6d6b040d44e47d9dfab372fc85b26546802e4b7cb6c08accff7325de13` |
 | `schemas/workflow-ledger.schema.json` | `04403acc34d725ed6b9e78df0b1dd95e40a130677ea4299a11662eff98f1f77e` |
@@ -131,8 +133,8 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 
 ## 6. Current blockers and next acceptance actions
 
-1. **Completed on source HEAD `cc2490a`:** unified GitHub Actions run #1466 (`44666162940`, push) and PR run #1467 (`44666166342`) both completed successfully; each had four green jobs.
-2. **Completed for the validated source/test HEAD:** 406/406 unit tests passed on Python 3.10 and 406/406 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. The regression test proves compiler bytes and independently written Working Clean DOCX files are byte-identical. No unit, parser or quality-check failures remain in the recorded runs.
+1. **Completed on source/test HEAD `fff6712b2395f52d2c1ebb66b71aa801c70bf13a`:** push run #1484 (`44668163345`) and PR run #1485 (`44668170033`) both completed successfully; each had four green jobs.
+2. **Completed for the validated source/test HEAD:** 407/407 unit tests passed on Python 3.10 and 407/407 on Python 3.13; both Windows PowerShell 5.1 quality runs passed. Regressions cover deterministic Working Clean ZIP output and exact per-target token authorization in the synthetic Word compatibility fixture. No unit, parser or quality-check failures remain in the recorded runs.
 3. Complete AC-25..31 boundary/graph coverage and integrate complete numbering impact output with the existing package transaction before claiming those criteria complete.
 4. Implement and run AC-45 as one continuous synthetic round with two sequential published batches and downstream refresh.
 5. Review old PR/branch diffs and record an explicit convergence disposition.
@@ -144,7 +146,7 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 | Evidence | Exact code HEAD | Result |
 |---|---|---|
 | Historical GitHub Actions run | `4ee93a9c3d967f161ce70de51fcceb83f971549a` | 340/340 reported across four Python 3.10/3.13 + Windows PowerShell 5.1 jobs; historical only, not evidence for this RC branch |
-| Current RC branch unified CI | `cc2490a02ef5d6d4dfe85ff4512d89827cd2e7e0` | PASS — runs #1466 and #1467; 4/4 jobs green; 405 tests on each Python version; both Windows quality jobs passed |
+| Current RC branch unified CI | `fff6712b2395f52d2c1ebb66b71aa801c70bf13a` | PASS — push #1484 and PR #1485; each 4/4 jobs green; 407 tests on each Python version; Windows PowerShell 5.1 quality jobs passed for both Python versions |
 | Full synthetic two-batch round | Not run | NOT DONE |
 | Current-head Word COM/PDF acceptance | Not run | NOT DONE |
 | User Word GUI / real review round | Not run | USER ACCEPTANCE PENDING |
