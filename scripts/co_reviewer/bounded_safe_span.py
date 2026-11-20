@@ -199,6 +199,29 @@ def analyze_bounded_safe_span(
             })
         cursor = right
 
+    mapped_run_indices = sorted({
+        row["run_index_in_safe_block"] for row in run_map
+    })
+    run_property_signatures = set()
+    for run_index in mapped_run_indices:
+        rpr = runs[run_index].find("w:rPr", NS)
+        run_property_signatures.add(
+            ET.tostring(rpr, encoding="utf-8") if rpr is not None else b""
+        )
+    if len(run_property_signatures) > 1:
+        return {
+            "status": "BLOCKED",
+            "allowed": False,
+            "reason": (
+                "Target crosses ordinary Runs with different direct formatting; "
+                "the current bounded-span writer does not infer a mixed-format replacement map."
+            ),
+            "target_start": target_start,
+            "target_end": target_end,
+            "run_map": run_map,
+            "format_signature_count": len(run_property_signatures),
+        }
+
     return {
         "status": "ALLOW_CANDIDATE",
         "allowed": True,
