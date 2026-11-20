@@ -619,7 +619,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
     if "word/document.xml" not in original: raise ValueError("Missing word/document.xml.")
     from .structure_classifier import (
         StructureClassificationError,
-        assert_edit_target_supported,
+        assert_edit_target_supported_with_bounded_safe_span,
         classify_docx_package_members,
     )
     structure_inventory = classify_docx_package_members(
@@ -627,6 +627,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         source_name=str(source),
     )
+    from .manual_suggestion import ManualFallbackRequired, build_manual_suggestion
+
     revision_kinds = {
         "text_revision_wrapper", "format_revision", "paragraph_revision",
         "table_revision", "move_revision", "comment_anchor", "comment_definition",
@@ -704,9 +706,57 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "existing tracked changes; resolve the overlapping history explicitly in Word "
                     "and re-import before editing. " + "; ".join(conflicts[:8])
                 )
-            assert_edit_target_supported(
-                structure_inventory, part=part, paragraph_index=idx
-            )
+            try:
+                structure_safety = assert_edit_target_supported_with_bounded_safe_span(
+                    structure_inventory,
+                    part=part,
+                    paragraph_index=idx,
+                    paragraph=para,
+                    part_root=root,
+                    target_text=old,
+                )
+            except StructureClassificationError as exc:
+                paragraph_text = visible_text(para)
+                position = paragraph_text.find(old)
+                blocking_structures = [
+                    {
+                        "kind": item.get("kind"),
+                        "structure_id": item.get("structure_id"),
+                        "word_part": item.get("part"),
+                        "element_path": item.get("element_path"),
+                        "reason": item.get("reason"),
+                        "details": item.get("details", {}),
+                    }
+                    for item in structure_inventory.get("structures", [])
+                    if item.get("part") == part
+                    and (
+                        item.get("paragraph_index") == idx
+                        or idx in (item.get("paragraph_indices") or [])
+                    )
+                    and item.get("status") in {"BLOCKED", "GUARDED"}
+                ]
+                role = edit.get("document") if edit.get("document") in {"Manuscript", "SI", "Reviewers", "Reply"} else "Manuscript"
+                target_identity = {"paragraph_index": idx}
+                for key in ("object_id", "para_id", "target_ref"):
+                    if edit.get(key) is not None:
+                        target_identity[key] = edit[key]
+                suggestion = build_manual_suggestion({
+                    "document_role": role,
+                    "source_document_path": str(source),
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "word_part": part,
+                    "target": target_identity,
+                    "reviewer_comment_ids": [str(value) for value in edit.get("source_comment_ids", [])],
+                    "operation_id": edit.get("operation_id"),
+                    "source_excerpt": old,
+                    "before_context": paragraph_text[max(0, position - 160):position] if position >= 0 else "",
+                    "after_context": paragraph_text[position + len(old):position + len(old) + 160] if position >= 0 else "",
+                    "blocking_reason": str(exc),
+                    "blocking_structures": blocking_structures,
+                    "missing_evidence": list(edit.get("missing_evidence") or []),
+                    "proposed_edit": new,
+                })
+                raise ManualFallbackRequired(suggestion, str(exc)) from exc
             format_operations = edit.get("format_operations", [])
             format_authorization = edit.get("format_authorization")
             if not isinstance(format_operations, list):
@@ -852,6 +902,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "format_changes": format_change_results,
                 "format_authorization": copy.deepcopy(format_authorization),
                 "format_operations": copy.deepcopy(format_operations),
+                "structure_safety": copy.deepcopy(structure_safety),
                 "authorization_validation": {
                     "status": contract["status"],
                     "diff_algorithm": contract["diff_algorithm"],
