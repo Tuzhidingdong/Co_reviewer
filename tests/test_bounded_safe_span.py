@@ -91,6 +91,44 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertTrue(result["allowed"])
         self.assertEqual(len(result["run_map"]), 2)
 
+    def test_safe_span_maps_target_to_actual_run_and_text_nodes_in_xml_order(self):
+        root, paragraph = _document(
+            '<w:p>'
+            '<w:r><w:t>prefix target </w:t><w:t>middle</w:t></w:r>'
+            '<w:r><w:t> suffix</w:t></w:r>'
+            '</w:p>'
+        )
+        result = analyze_bounded_safe_span(
+            root, paragraph, "target middle suffix"
+        )
+        self.assertTrue(result["allowed"])
+        run_map = result["run_map"]
+        self.assertEqual(len(run_map), 2)
+        self.assertEqual(
+            [item["target_text"] for item in run_map],
+            ["target middle", " suffix"],
+        )
+        text_nodes = [
+            node for run in run_map for node in run["text_nodes"]
+        ]
+        self.assertEqual(
+            [node["target_text"] for node in text_nodes],
+            ["target ", "middle", " suffix"],
+        )
+        self.assertEqual(
+            [node["text_node_document_order"] for node in text_nodes],
+            sorted(node["text_node_document_order"] for node in text_nodes),
+        )
+        self.assertTrue(all(
+            isinstance(run["run_document_order"], int)
+            and isinstance(run["paragraph_document_order"], int)
+            for run in run_map
+        ))
+        self.assertEqual(
+            [(node["text_node_text_start"], node["text_node_text_end"]) for node in text_nodes],
+            [(7, 14), (0, 6), (0, 7)],
+        )
+
     def test_duplicate_target_text_is_not_assigned_a_guessed_offset(self):
         root, paragraph = _document(
             '<w:p>' + _run("repeat") + _run(" and repeat") + '</w:p>'

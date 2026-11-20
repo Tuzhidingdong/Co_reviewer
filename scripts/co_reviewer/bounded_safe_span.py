@@ -183,6 +183,10 @@ def analyze_bounded_safe_span(
 
     runs, joined, run_local_start = matches[0]
     run_map: list[dict[str, Any]] = []
+    xml_document_order = {node: index for index, node in enumerate(root.iter())}
+    paragraph_child_positions = {
+        child: index for index, child in enumerate(paragraph)
+    }
     cursor = 0
     for run_index, run in enumerate(runs):
         value = _run_text(run) or ""
@@ -190,12 +194,40 @@ def analyze_bounded_safe_span(
         overlap_start = max(run_local_start, left)
         overlap_end = min(run_local_start + len(target_text), right)
         if overlap_start < overlap_end:
+            run_start = overlap_start - left
+            run_end = overlap_end - left
+            text_nodes: list[dict[str, Any]] = []
+            text_cursor = 0
+            for child_index, child in enumerate(run):
+                if child.tag != _q("t"):
+                    continue
+                child_text = child.text or ""
+                child_start = text_cursor
+                child_end = child_start + len(child_text)
+                text_overlap_start = max(run_start, child_start)
+                text_overlap_end = min(run_end, child_end)
+                if text_overlap_start < text_overlap_end:
+                    text_nodes.append({
+                        "text_node_index_in_run": child_index,
+                        "text_node_document_order": xml_document_order[child],
+                        "text_node_text_start": text_overlap_start - child_start,
+                        "text_node_text_end": text_overlap_end - child_start,
+                        "run_text_start": child_start,
+                        "run_text_end": child_end,
+                        "target_text": child_text[
+                            text_overlap_start - child_start:text_overlap_end - child_start
+                        ],
+                    })
+                text_cursor = child_end
             run_map.append({
                 "run_index_in_safe_block": run_index,
-                "paragraph_child_index": list(paragraph).index(run),
-                "run_text_start": overlap_start - left,
-                "run_text_end": overlap_end - left,
-                "target_text": value[overlap_start - left:overlap_end - left],
+                "paragraph_child_index": paragraph_child_positions[run],
+                "run_document_order": xml_document_order[run],
+                "paragraph_document_order": xml_document_order[paragraph],
+                "run_text_start": run_start,
+                "run_text_end": run_end,
+                "target_text": value[run_start:run_end],
+                "text_nodes": text_nodes,
             })
         cursor = right
 
