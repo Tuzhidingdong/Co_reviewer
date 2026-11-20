@@ -1218,6 +1218,7 @@ def assert_edit_target_supported_with_bounded_safe_span(
     hyperlinks, drawings, unknown structures and package-level issues remain
     blocked by the original paragraph gate.
     """
+    gate_error: StructureClassificationError | None = None
     try:
         assert_edit_target_supported(
             inventory, part=part, paragraph_index=paragraph_index
@@ -1230,11 +1231,11 @@ def assert_edit_target_supported_with_bounded_safe_span(
                 "Structural permission only; all authorization and verification gates remain mandatory."
             ),
         }
-    except StructureClassificationError as original_error:
-        pass
+    except StructureClassificationError as exc:
+        gate_error = exc
 
     if inventory.get("package_status") != "READY":
-        raise original_error
+        raise gate_error
 
     relevant: list[Mapping[str, Any]] = []
     for item in inventory.get("structures", []):
