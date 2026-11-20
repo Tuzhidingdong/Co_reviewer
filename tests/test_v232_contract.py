@@ -350,6 +350,12 @@ class V232ContractTests(unittest.TestCase):
         resolved = next(m for m in updated["mentions"] if m["id"] == mention["id"])
         self.assertEqual(resolved["resolution"], "confirmed_by_user")
         self.assertEqual(resolved["number"], "3")
+        self.assertEqual(updated["ambiguous_count"], 0)
+        self.assertEqual(updated["unresolved_count"], 0)
+        response_edges = [edge for edge in updated["edges"] if edge["source_document"] == "Response"]
+        self.assertEqual(len(response_edges), 1)
+        self.assertEqual(response_edges[0]["target_document"], "Manuscript")
+        self.assertEqual(response_edges[0]["target_definition_id"], manuscript_definition["id"])
 
 
     def test_revision_id_lineage_collects_all_incremental_ids_by_hash(self):

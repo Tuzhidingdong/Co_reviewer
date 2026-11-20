@@ -1139,13 +1139,32 @@ def renumber_reference_graph(
             )
         final_numbers[(collision_key, new_number)] = str(definition_id)
         if key in normalized_map:
+            old_text = definition.get("text")
+            offset = definition.get("offset")
+            old_end_offset = definition.get("end_offset")
+            if (
+                not isinstance(old_text, str)
+                or not isinstance(offset, int) or isinstance(offset, bool)
+                or not isinstance(old_end_offset, int) or isinstance(old_end_offset, bool)
+            ):
+                raise ContractError("Reference graph definition has invalid text offsets")
+            new_text = old_text.replace(old_number, new_number, 1)
+            if new_text == old_text:
+                raise ContractError("Reference graph definition text does not contain its declared number")
             definition["number"] = new_number
-            definition["text"] = definition["text"].replace(old_number, new_number, 1)
+            definition["text"] = new_text
+            definition["end_offset"] = offset + len(new_text)
             definition_updates.append({
                 "document": document,
+                "part": definition.get("part"),
+                "paragraph_index": definition.get("paragraph_index"),
                 "definition_id": definition_id,
                 "kind": kind,
-                "offset": definition["offset"],
+                "offset": offset,
+                "old_end_offset": old_end_offset,
+                "new_end_offset": definition["end_offset"],
+                "old_text": old_text,
+                "new_text": new_text,
                 "old_number": old_number,
                 "new_number": new_number,
             })
@@ -1160,16 +1179,35 @@ def renumber_reference_graph(
             old_number = str(mention["number"])
             new_number = str(definition["number"])
             if old_number != new_number:
-                old_text = mention["text"]
+                old_text = mention.get("text")
+                offset = mention.get("offset")
+                old_end_offset = mention.get("end_offset")
+                if (
+                    not isinstance(old_text, str)
+                    or not isinstance(offset, int) or isinstance(offset, bool)
+                    or not isinstance(old_end_offset, int) or isinstance(old_end_offset, bool)
+                ):
+                    raise ContractError("Reference graph mention has invalid text offsets")
+                new_text = old_text.replace(old_number, new_number, 1)
+                if new_text == old_text:
+                    raise ContractError("Reference graph mention text does not contain its declared number")
                 mention["number"] = new_number
-                mention["text"] = old_text.replace(old_number, new_number, 1)
+                mention["text"] = new_text
+                mention["end_offset"] = offset + len(new_text)
                 update = {
                     "document": mention["document"],
+                    "part": mention.get("part"),
+                    "paragraph_index": mention.get("paragraph_index"),
                     "mention_id": mention["id"],
+                    "target_definition_ids": list(targets),
                     "kind": mention["kind"],
-                    "offset": mention["offset"],
+                    "offset": offset,
+                    "old_end_offset": old_end_offset,
+                    "new_end_offset": mention["end_offset"],
                     "old_text": old_text,
-                    "new_text": mention["text"],
+                    "new_text": new_text,
+                    "old_number": old_number,
+                    "new_number": new_number,
                 }
                 if mention.get("surface_text") is not None:
                     update["old_surface_text"] = mention["surface_text"]
@@ -1179,6 +1217,48 @@ def renumber_reference_graph(
                     mention["surface_text"] = update["new_surface_text"]
                 mention_updates.append(update)
 
+    # Rebuild the directed graph from the updated mention resolutions. A confirmed
+    # ambiguous mapping must not leave the old edge list or stale unresolved counts.
+    rebuilt_edges = []
+    for mention in mentions:
+        if not isinstance(mention, Mapping):
+            raise ContractError("Reference graph contains a malformed mention record")
+        target_ids = mention.get("target_definition_ids", [])
+        if not isinstance(target_ids, list):
+            raise ContractError("Reference graph mention target_definition_ids must be an array")
+        for target_id in target_ids:
+            if target_id not in by_id:
+                raise ContractError("Reference graph mention points to an unknown definition: " + str(target_id))
+        if mention.get("resolution") in {"resolved", "confirmed_by_user"}:
+            if len(target_ids) != 1:
+                raise ContractError("Resolved reference mention must point to exactly one definition")
+            target = by_id[target_ids[0]]
+            rebuilt_edges.append({
+                "source_document": mention["document"],
+                "source_part": mention["part"],
+                "source_paragraph_index": mention["paragraph_index"],
+                "mention_id": mention["id"],
+                "target_definition_id": target["id"],
+                "target_document": target["document"],
+                "target_part": target["part"],
+                "target_paragraph_index": target["paragraph_index"],
+            })
+        elif target_ids:
+            raise ContractError("Unresolved or ambiguous mention cannot retain a resolved target edge")
+
+    field_references = updated.get("field_references", [])
+    if not isinstance(field_references, list):
+        raise ContractError("Reference graph field_references must be an array")
+    updated["edges"] = rebuilt_edges
+    updated["unresolved_count"] = sum(
+        item.get("resolution") not in {"resolved", "confirmed_by_user"} for item in mentions
+    )
+    updated["ambiguous_count"] = sum(
+        item.get("resolution") == "ambiguous" for item in mentions
+    )
+    updated["manual_field_review_count"] = len(field_references) + sum(
+        item.get("resolution") == "manual_review_required" for item in mentions
+    )
     updated["definition_updates"] = definition_updates
     updated["mention_updates"] = mention_updates
     updated["numbering_mutation_authorized"] = True
