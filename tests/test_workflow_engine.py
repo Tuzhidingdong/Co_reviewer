@@ -651,6 +651,28 @@ class WorkflowEngineTests(unittest.TestCase):
         ledger["events"][0]["fingerprint"] = workflow_scope_fingerprint(task)
         self.assertEqual(validate_workflow_ledger(ledger), [])
 
+    def test_deterministic_risk_assessment_is_sealed_into_scope_fingerprint(self):
+        base = _task("A", [], "planned", ["document|p0"])
+        base["risk_tier"] = "TIER_0"
+        base["risk_policy_version"] = "1.0"
+        base["risk_reasons"] = ["single_scope_ordinary_language_or_non_mutating_task"]
+        before = workflow_scope_fingerprint(base)
+        changed = dict(base)
+        changed["risk_tier"] = "TIER_1"
+        self.assertNotEqual(before, workflow_scope_fingerprint(changed))
+
+    def test_workflow_rejects_forged_or_stale_risk_tier(self):
+        task = _task("A", [], "planned", ["document|p0"])
+        from co_reviewer.workflow_engine import workflow_tasks_from_decision_plan
+        adapted = workflow_tasks_from_decision_plan([task])
+        self.assertIn(adapted[0]["risk_tier"], {"TIER_0", "TIER_1", "TIER_2"})
+        forged = dict(adapted[0])
+        forged["risk_tier"] = "TIER_2" if adapted[0]["risk_tier"] != "TIER_2" else "TIER_0"
+        self.assertTrue(any(
+            "risk_tier does not match deterministic policy" in error
+            for error in validate_workflow_tasks([forged])
+        ))
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             _task("A", [], "planned", ["shared"]),
