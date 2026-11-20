@@ -81,6 +81,8 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids", "response_unit_specs",
     "risk_tier", "risk_policy_version", "risk_reasons",
+    "high_risk_review_confirmed", "high_risk_reviewed_by",
+    "high_risk_reviewed_at_utc", "high_risk_review_note",
 )
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
@@ -379,6 +381,17 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
                 errors.append(f"Task {task_id} risk_policy_version is stale or unsupported.")
             if task.get("risk_reasons") != expected_risk["risk_reasons"]:
                 errors.append(f"Task {task_id} risk_reasons do not match deterministic policy.")
+            if expected_risk["risk_tier"] == "TIER_1" and status in {
+                "ready", "preflighted", "approved", "applied", "verified", "completed"
+            }:
+                if task.get("high_risk_review_confirmed") is not True:
+                    errors.append(f"Tier 1 Task {task_id} requires explicit high_risk_review_confirmed=true.")
+                if not isinstance(task.get("high_risk_reviewed_by"), str) or not task["high_risk_reviewed_by"].strip():
+                    errors.append(f"Tier 1 Task {task_id} requires high_risk_reviewed_by.")
+                if not _is_aware_timestamp(task.get("high_risk_reviewed_at_utc")):
+                    errors.append(f"Tier 1 Task {task_id} requires timezone-aware high_risk_reviewed_at_utc.")
+                if not isinstance(task.get("high_risk_review_note"), str) or not task["high_risk_review_note"].strip():
+                    errors.append(f"Tier 1 Task {task_id} requires a non-empty high_risk_review_note.")
 
     for task_id, deps in dependencies.items():
         for dependency in deps:
@@ -674,6 +687,11 @@ def transition_task(
         updated["block_reason"] = reason.strip()
         return updated
     if new_status == "recheck_required":
+        for field in (
+            "high_risk_review_confirmed", "high_risk_reviewed_by",
+            "high_risk_reviewed_at_utc", "high_risk_review_note",
+        ):
+            updated.pop(field, None)
         updated["recheck_from"] = current
         updated["invalidation_reason"] = reason.strip()
         return updated
