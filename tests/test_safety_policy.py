@@ -68,6 +68,27 @@ class RiskPolicyTests(unittest.TestCase):
         self.assertEqual(assessment["risk_tier"], "TIER_2")
         self.assertTrue(any("not_confirmed" in reason for reason in assessment["risk_reasons"]))
 
+    def test_malformed_ai_action_and_evidence_types_fail_closed_without_crashing(self):
+        malformed_action = _task(targets=[{
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "action": {"unexpected": "mapping"},
+            "evidence_ids": ["E1"],
+        }])
+        self.assertEqual(assess_task_risk(malformed_action)["risk_tier"], "TIER_2")
+
+        malformed_evidence = _task(evidence=[{
+            "evidence_id": "E1",
+            "evidence_type": "paragraph",
+            "match_status": ["confirmed"],
+            "source_excerpt": "The target excerpt.",
+        }])
+        self.assertEqual(assess_task_risk(malformed_evidence)["risk_tier"], "TIER_2")
+
+        malformed_readiness = _task(unresolved_questions={"question": "unknown"})
+        self.assertEqual(assess_task_risk(malformed_readiness)["risk_tier"], "TIER_2")
+
     def test_mixed_risk_tiers_cannot_share_one_batch(self):
         with self.assertRaisesRegex(ValueError, "Mixed-risk batches"):
             validate_batch_risk_tiers([_task(), _task(
