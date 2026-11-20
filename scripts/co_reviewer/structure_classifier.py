@@ -1201,3 +1201,85 @@ def assert_edit_target_supported(
             f"Refusing edit in {part} P[{paragraph_index}] because the target scope intersects "
             "guarded/unsupported OOXML structure: " + "; ".join(blockers[:12])
         )
+
+def assert_edit_target_supported_with_bounded_safe_span(
+    inventory: Mapping[str, Any],
+    *,
+    part: str,
+    paragraph_index: int,
+    paragraph: ET._Element,
+    part_root: ET._Element,
+    target_text: str,
+) -> dict[str, Any]:
+    """Permit a precise ordinary-Run span outside bookmark ranges; keep all other gates.
+
+    The fallback is intentionally narrow: only valid paired bookmark_range
+    records may be reconsidered. Incomplete markers, Fields, comment ranges,
+    hyperlinks, drawings, unknown structures and package-level issues remain
+    blocked by the original paragraph gate.
+    """
+    try:
+        assert_edit_target_supported(
+            inventory, part=part, paragraph_index=paragraph_index
+        )
+        return {
+            "status": "ALLOW_CANDIDATE",
+            "allowed": True,
+            "method": "paragraph_scope",
+            "authorization_note": (
+                "Structural permission only; all authorization and verification gates remain mandatory."
+            ),
+        }
+    except StructureClassificationError as original_error:
+        pass
+
+    if inventory.get("package_status") != "READY":
+        raise original_error
+
+    relevant: list[Mapping[str, Any]] = []
+    for item in inventory.get("structures", []):
+        if item.get("status") not in _BLOCKING_STATUSES:
+            continue
+        item_part = item.get("part")
+        span = item.get("paragraph_indices") or []
+        target_match = (
+            item_part == part
+            and (item.get("paragraph_index") == paragraph_index or paragraph_index in span)
+        )
+        global_context_match = item_part in _GLOBAL_CONTEXT_PARTS and not span
+        if target_match or global_context_match:
+            relevant.append(item)
+
+    blocking_issues = []
+    for issue in inventory.get("issues", []):
+        issue_part = issue.get("part")
+        target_match = (
+            issue_part == part
+            and issue.get("severity") == BLOCKED
+            and issue.get("paragraph_index") in {None, paragraph_index}
+        )
+        global_context_match = (
+            issue_part in _GLOBAL_CONTEXT_PARTS
+            and issue.get("severity") == BLOCKED
+        )
+        if target_match or global_context_match:
+            blocking_issues.append(issue)
+
+    if blocking_issues or not relevant or any(
+        item.get("kind") != "bookmark_range" for item in relevant
+    ):
+        raise original_error
+
+    from .bounded_safe_span import analyze_bounded_safe_span
+
+    analysis = analyze_bounded_safe_span(part_root, paragraph, target_text)
+    if not analysis.get("allowed"):
+        raise StructureClassificationError(
+            f"Refusing edit in {part} P[{paragraph_index}]: bounded safe-span analysis blocked "
+            f"{target_text[:80]!r}: {analysis.get('reason', 'no safe span was proven')}."
+        )
+    analysis["intersecting_bookmark_structure_ids"] = [
+        item.get("structure_id") for item in relevant
+    ]
+    return analysis
+
