@@ -710,6 +710,31 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertNotIn("high_risk_review_confirmed", updated)
         self.assertNotIn("high_risk_review_note", updated)
 
+    def test_workflow_schema_requires_tier_one_review_evidence_after_authorization(self):
+        import jsonschema
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-ledger.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        task = _task("T1", [], "ready", [])
+        task["task_type"] = "cross_document_consistency"
+        task["target_documents"] = ["Manuscript", "SI"]
+        adapted = workflow_tasks_from_decision_plan([task])[0]
+        ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-tier1",
+            "documents": [],
+            "object_registry": [],
+            "tasks": [adapted],
+        }
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(ledger, schema)
+        adapted.update({
+            "high_risk_review_confirmed": True,
+            "high_risk_reviewed_by": "Human Author",
+            "high_risk_reviewed_at_utc": STAMP,
+            "high_risk_review_note": "Reviewed cross-document scope.",
+        })
+        jsonschema.validate(ledger, schema)
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             _task("A", [], "planned", ["shared"]),
