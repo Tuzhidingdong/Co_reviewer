@@ -730,30 +730,36 @@
         },
         {
           "if": {
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "enum": [
-                  "preflighted",
-                  "approved",
-                  "applied",
-                  "verified",
-                  "completed"
-                ]
+            "allOf": [
+              {
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "preflighted",
+                      "approved",
+                      "applied",
+                      "verified",
+                      "completed"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "task_type"
+                  ],
+                  "properties": {
+                    "task_type": {
+                      "const": "response_only"
+                    }
+                  }
+                }
               }
-            }
-          },
-          "not": {
-            "required": [
-              "task_type"
-            ],
-            "properties": {
-              "task_type": {
-                "const": "response_only"
-              }
-            }
+            ]
           },
           "then": {
             "required": [
@@ -766,29 +772,35 @@
         },
         {
           "if": {
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "enum": [
-                  "approved",
-                  "applied",
-                  "verified",
-                  "completed"
-                ]
+            "allOf": [
+              {
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "approved",
+                      "applied",
+                      "verified",
+                      "completed"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "task_type"
+                  ],
+                  "properties": {
+                    "task_type": {
+                      "const": "response_only"
+                    }
+                  }
+                }
               }
-            }
-          },
-          "not": {
-            "required": [
-              "task_type"
-            ],
-            "properties": {
-              "task_type": {
-                "const": "response_only"
-              }
-            }
+            ]
           },
           "then": {
             "required": [
@@ -806,28 +818,34 @@
         },
         {
           "if": {
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "enum": [
-                  "applied",
-                  "verified",
-                  "completed"
-                ]
+            "allOf": [
+              {
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "applied",
+                      "verified",
+                      "completed"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "task_type"
+                  ],
+                  "properties": {
+                    "task_type": {
+                      "const": "response_only"
+                    }
+                  }
+                }
               }
-            }
-          },
-          "not": {
-            "required": [
-              "task_type"
-            ],
-            "properties": {
-              "task_type": {
-                "const": "response_only"
-              }
-            }
+            ]
           },
           "then": {
             "required": [
@@ -839,27 +857,33 @@
         },
         {
           "if": {
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "enum": [
-                  "verified",
-                  "completed"
-                ]
+            "allOf": [
+              {
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "verified",
+                      "completed"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "task_type"
+                  ],
+                  "properties": {
+                    "task_type": {
+                      "const": "response_only"
+                    }
+                  }
+                }
               }
-            }
-          },
-          "not": {
-            "required": [
-              "task_type"
-            ],
-            "properties": {
-              "task_type": {
-                "const": "response_only"
-              }
-            }
+            ]
           },
           "then": {
             "required": [
