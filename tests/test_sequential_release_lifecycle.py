@@ -56,33 +56,32 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _write_minimal_pdf(path: Path, text: str) -> None:
     """Write a deterministic one-page PDF fixture without optional PDF libraries."""
-    safe_text = text.replace("\\\\", "\\\\\\\\").replace("(", "\\\\(").replace(")", "\\\\)")
+    safe_text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
     stream = f"BT /F1 12 Tf 72 720 Td ({safe_text}) Tj ET".encode("ascii")
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\\nstream\\n" + stream + b"\\nendstream",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
     ]
-    payload = bytearray(b"%PDF-1.4\\n")
+    payload = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for index, body in enumerate(objects, start=1):
         offsets.append(len(payload))
-        payload.extend(f"{index} 0 obj\\n".encode("ascii"))
+        payload.extend(f"{index} 0 obj\n".encode("ascii"))
         payload.extend(body)
-        payload.extend(b"\\nendobj\\n")
+        payload.extend(b"\nendobj\n")
     xref_offset = len(payload)
-    payload.extend(f"xref\\n0 {len(offsets)}\\n".encode("ascii"))
-    payload.extend(b"0000000000 65535 f \\n")
+    payload.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    payload.extend(b"0000000000 65535 f \n")
     for offset in offsets[1:]:
-        payload.extend(f"{offset:010d} 00000 n \\n".encode("ascii"))
+        payload.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
     payload.extend(
-        f"trailer\\n<< /Size {len(offsets)} /Root 1 0 R >>\\nstartxref\\n{xref_offset}\\n%%EOF\\n".encode("ascii")
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
-
 def _make_source_docx(path: Path, text: str) -> None:
     document = Document()
     document.add_paragraph(text)
