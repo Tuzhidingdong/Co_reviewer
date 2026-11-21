@@ -462,6 +462,13 @@ def prepare_workflow_execution(
                 raise WorkflowPreparationError(
                     f"Task {task_id} may carry package-numbering author provenance only as global_numbering."
                 )
+            invalidated_approvals = task.get(
+                "invalidated_package_numbering_approval_hashes", []
+            )
+            if task_author_ref["approval_sha256"] in invalidated_approvals:
+                raise WorkflowPreparationError(
+                    f"Task {task_id} author_decision_ref is a previously invalidated package-numbering approval and cannot be reused."
+                )
             task["author_decision_ref"] = copy.deepcopy(task_author_ref)
         targets = task.get("targets", [])
         if not isinstance(targets, list):

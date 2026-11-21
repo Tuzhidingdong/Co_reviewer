@@ -389,6 +389,10 @@ class WorkflowEngineTests(unittest.TestCase):
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-ledger.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         task_schema = schema["$defs"]["workflowTask"]
+        self.assertIn(
+            "invalidated_package_numbering_approval_hashes",
+            task_schema["properties"],
+        )
         self.assertIn("response_only", task_schema["properties"]["task_type"]["enum"])
         self.assertTrue(any(
             "approved" in condition.get("if", {}).get("properties", {}).get("status", {}).get("enum", [])
@@ -903,6 +907,10 @@ class WorkflowEngineTests(unittest.TestCase):
         )
         self.assertEqual(transitioned["status"], "recheck_required")
         self.assertNotIn("author_decision_ref", transitioned)
+        self.assertEqual(
+            transitioned["invalidated_package_numbering_approval_hashes"],
+            [approval["approval_sha256"]],
+        )
         self.assertEqual(transitioned["patch_operations"], [])
         self.assertEqual(direct["author_decision_ref"], approval)
         self.assertEqual(len(direct["patch_operations"]), 1)
@@ -919,6 +927,10 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertIn("GN-AFFECTED", affected_ids)
         self.assertEqual(affected_task["status"], "recheck_required")
         self.assertNotIn("author_decision_ref", affected_task)
+        self.assertEqual(
+            affected_task["invalidated_package_numbering_approval_hashes"],
+            [approval["approval_sha256"]],
+        )
         self.assertEqual(affected_task["patch_operations"], [])
 
         downstream = invalidate_downstream(
@@ -932,6 +944,10 @@ class WorkflowEngineTests(unittest.TestCase):
         downstream_task = next(row for row in downstream if row["task_id"] == "GN-DOWNSTREAM")
         self.assertEqual(downstream_task["status"], "recheck_required")
         self.assertNotIn("author_decision_ref", downstream_task)
+        self.assertEqual(
+            downstream_task["invalidated_package_numbering_approval_hashes"],
+            [approval["approval_sha256"]],
+        )
         self.assertEqual(downstream_task["patch_operations"], [])
 
     def test_workflow_schema_requires_tier_one_review_evidence_after_authorization(self):

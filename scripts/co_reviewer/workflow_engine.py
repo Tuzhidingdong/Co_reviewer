@@ -80,7 +80,8 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids", "response_unit_specs",
-    "author_decision_ref", "risk_tier", "risk_policy_version", "risk_reasons",
+    "author_decision_ref", "invalidated_package_numbering_approval_hashes",
+    "risk_tier", "risk_policy_version", "risk_reasons",
     "high_risk_review_confirmed", "high_risk_reviewed_by",
     "high_risk_reviewed_at_utc", "high_risk_review_note",
 )
@@ -319,6 +320,25 @@ def _clear_package_numbering_authorization(task: dict[str, Any]) -> None:
     """
     if task.get("task_type") != "global_numbering":
         return
+    invalidated = task.get("invalidated_package_numbering_approval_hashes", [])
+    if (
+        not isinstance(invalidated, list)
+        or any(not _is_sha256(value) for value in invalidated)
+        or len(invalidated) != len(set(invalidated))
+    ):
+        raise WorkflowValidationError(
+            "Task invalidated_package_numbering_approval_hashes must be a unique array of SHA-256 digests."
+        )
+    approval = task.get("author_decision_ref")
+    if approval is not None:
+        if not isinstance(approval, Mapping) or not _is_sha256(approval.get("approval_sha256")):
+            raise WorkflowValidationError(
+                "Cannot invalidate a global-numbering task with a malformed author_decision_ref."
+            )
+        approval_sha = str(approval["approval_sha256"])
+        if approval_sha not in invalidated:
+            invalidated.append(approval_sha)
+    task["invalidated_package_numbering_approval_hashes"] = invalidated
     task.pop("author_decision_ref", None)
     task["patch_operations"] = []
 
@@ -1308,6 +1328,15 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if not isinstance(task, Mapping):
             continue
         task_id = task.get("task_id", f"index {index}")
+        invalidated_approvals = task.get("invalidated_package_numbering_approval_hashes", [])
+        if (
+            not isinstance(invalidated_approvals, list)
+            or any(not _is_sha256(value) for value in invalidated_approvals)
+            or len(invalidated_approvals) != len(set(invalidated_approvals))
+        ):
+            errors.append(
+                f"Task {task_id} invalidated_package_numbering_approval_hashes must be a unique array of SHA-256 digests."
+            )
         task_source_versions = task.get("source_versions", [])
         if not isinstance(task_source_versions, list):
             errors.append(f"Task {task_id} source_versions must be an array.")

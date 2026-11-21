@@ -407,28 +407,49 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
 
     def test_recheck_requires_a_fresh_numbering_author_approval(self) -> None:
-        approval = {
-            "schema_version": "1.0",
-            "status": "authorized",
-            "decision_type": "package_numbering",
-            "impact_plan_sha256": "d" * 64,
-            "approved_by": "Human Author",
-            "approved_at_utc": "2026-11-20T12:00:00+00:00",
-        }
-        approval["approval_sha256"] = hashlib.sha256(
-            json.dumps(
-                approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-        ).hexdigest()
+        from co_reviewer.safety_policy import assess_task_risk
+        from co_reviewer.workflow_engine import transition_task
 
+        def make_approval(plan_sha: str) -> dict[str, str]:
+            value = {
+                "schema_version": "1.0",
+                "status": "authorized",
+                "decision_type": "package_numbering",
+                "impact_plan_sha256": plan_sha,
+                "approved_by": "Human Author",
+                "approved_at_utc": "2026-11-20T12:00:00+00:00",
+            }
+            value["approval_sha256"] = hashlib.sha256(
+                json.dumps(
+                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            return value
+
+        old_approval = make_approval("d" * 64)
         workflow = json.loads(json.dumps(self.workflow))
         task = workflow["tasks"][0]
         task["task_type"] = "global_numbering"
         task["targets"][0]["action"] = "renumber"
-        task["status"] = "recheck_required"
-        task["recheck_from"] = "completed"
-        task["invalidation_reason"] = "An upstream batch changed the package inputs."
-        task["author_decision_ref"] = approval
+        task["status"] = "ready"
+        task["author_decision_ref"] = old_approval
+        task["patch_operations"] = [{
+            "operation_id": "GN1-OLD-OP",
+            "author_decision_ref": old_approval,
+        }]
+        task = transition_task(
+            task,
+            "recheck_required",
+            reason="An upstream batch changed the package inputs.",
+        )
+        task.update(assess_task_risk(task))
+        workflow["tasks"][0] = task
+        self.assertEqual(
+            task["invalidated_package_numbering_approval_hashes"],
+            [old_approval["approval_sha256"]],
+        )
+        self.assertNotIn("author_decision_ref", task)
+        self.assertEqual(task["patch_operations"], [])
         workflow["active_documents"] = {
             "Reviewers": {
                 "file": str(self.reviewers),
@@ -446,9 +467,6 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
 
         scope = json.loads(json.dumps(self.scope))
-        scope["workflow_ledger_sha256"] = hashlib.sha256(
-            self.workflow_path.read_bytes()
-        ).hexdigest()
         scope_task = scope["tasks"][0]
         scope_task["evidence"] = [{
             "evidence_id": "E-MAN-REFRESH",
@@ -467,10 +485,6 @@ class WorkflowPreparationTests(unittest.TestCase):
             "evidence_ids": ["E-MAN-REFRESH"],
         }]
         scope_task["patch_operations"][0]["evidence_ids"] = ["E-MAN-REFRESH"]
-        self.scope_path.write_text(
-            json.dumps(scope, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
         inventory = json.loads(json.dumps(self.inventory))
         manuscript_inventory = next(
@@ -482,17 +496,49 @@ class WorkflowPreparationTests(unittest.TestCase):
             "text": "The selected sample is ZB-01.",
         }]
 
+        def prepare_current_scope():
+            scope["workflow_ledger_sha256"] = hashlib.sha256(
+                self.workflow_path.read_bytes()
+            ).hexdigest()
+            self.scope_path.write_text(
+                json.dumps(scope, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return prepare_workflow_execution(
+                json.loads(json.dumps(workflow)),
+                json.loads(json.dumps(scope)),
+                json.loads(json.dumps(inventory)),
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
         with self.assertRaisesRegex(
             WorkflowPreparationError,
             "requires a fresh package-numbering author approval after recheck",
         ):
-            prepare_workflow_execution(
-                workflow,
-                scope,
-                inventory,
-                workflow_path=self.workflow_path,
-                execution_scope_path=self.scope_path,
-            )
+            prepare_current_scope()
+
+        # A stale author approval left behind in an old Execution Scope must
+        # be rejected even though the Workflow task's live approval is cleared.
+        scope_task["author_decision_ref"] = old_approval
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "previously invalidated package-numbering approval",
+        ):
+            prepare_current_scope()
+
+        # A newly approved impact plan produces a different hash-bound approval
+        # and can proceed through the same refreshed preparation path.
+        fresh_approval = make_approval("e" * 64)
+        scope_task["author_decision_ref"] = fresh_approval
+        prepared, _, report = prepare_current_scope()
+        prepared_task = prepared["tasks"][0]
+        self.assertEqual(prepared_task["author_decision_ref"], fresh_approval)
+        self.assertEqual(
+            prepared_task["patch_operations"][0]["author_decision_ref"],
+            fresh_approval,
+        )
+        self.assertEqual(report["status"], "prepared_pending_author_approval")
 
     def test_workflow_execution_scope_schema_accepts_author_numbering_provenance(self) -> None:
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-execution-scope.schema.json"

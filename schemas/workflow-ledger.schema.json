@@ -676,6 +676,15 @@
         "author_decision_ref": {
           "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef",
           "description": "Hash-bound author approval for an exact package-wide numbering impact plan. Only global_numbering tasks may carry it."
+        },
+        "invalidated_package_numbering_approval_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "uniqueItems": true,
+          "description": "Append-only hashes of package-numbering approvals revoked after a source-package invalidation; these approvals cannot be replayed."
         }
       },
       "allOf": [
