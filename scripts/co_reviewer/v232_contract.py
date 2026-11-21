@@ -635,6 +635,14 @@ _CAPTION = re.compile(
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
 )
 _REFERENCE_GROUP_SEPARATOR = r"(?:[-–]\s*|[,;]\s*(?:and\s+)?|&\s*|\band\b\s*)"
+_MENTION_PANEL_RANGE = re.compile(
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(?P<label>Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
+    rf"\s*\(?\s*(?P<number>{_REFERENCE_NUMBER})"
+    rf"(?P<panel_range>\s*[-–]\s*[A-Za-z](?:\s*[-–]\s*[A-Za-z])?)"
+    rf"\s*\)?(?=$|[\s.;:)\]])",
+    re.I,
+)
 _MENTION_GROUP = re.compile(
     rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
     rf"(?P<label>Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
@@ -884,6 +892,36 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     })
 
             mention_group_spans: list[tuple[int, int]] = []
+            for match in _MENTION_PANEL_RANGE.finditer(text_value):
+                start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in caption_spans
+                ):
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(start_offset) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                mentions.append({
+                    "id": record_id, **base,
+                    "kind": _canonical_reference_kind(match.group("label")),
+                    "number": match.group("number"),
+                    "numbers": [match.group("number")],
+                    "panel_range": match.group("panel_range").strip(),
+                    "group_kind": "panel_range",
+                    "text": match.group(),
+                    "offset": start_offset,
+                    "end_offset": end_offset,
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": (
+                        "Panel-letter ranges require explicit figure/table relation confirmation; "
+                        "the graph does not infer a panel subrange from a base caption label."
+                    ),
+                })
+                mention_group_spans.append((start_offset, end_offset))
+
             for match in _MENTION_GROUP.finditer(text_value):
                 start_offset, end_offset = match.span()
                 if any(

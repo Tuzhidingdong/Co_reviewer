@@ -422,6 +422,33 @@ class V232ContractTests(unittest.TestCase):
                  if d["document"] == "Manuscript" and d["number"] == "2a"),
         )
 
+    def test_reference_graph_records_panel_letter_ranges_without_guessing_base_caption_edges(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 2. Main results."},
+                {"part": "word/document.xml", "paragraph_index": 1,
+                 "text": "See Fig. 2a–c and Fig. 2 for the full panel set."},
+            ],
+        })
+        panel = next(
+            row for row in graph["mentions"]
+            if row.get("group_kind") == "panel_range"
+        )
+        self.assertEqual(panel["kind"], "figure")
+        self.assertEqual(panel["number"], "2a")
+        self.assertEqual(panel["panel_range"], "–c")
+        self.assertEqual(panel["resolution"], "manual_review_required")
+        self.assertEqual(panel["target_definition_ids"], [])
+        base_reference = next(
+            row for row in graph["mentions"]
+            if row["text"] == "Fig. 2"
+        )
+        self.assertEqual(base_reference["resolution"], "resolved")
+        self.assertTrue(any(
+            edge["mention_id"] == base_reference["id"]
+            for edge in graph["edges"]
+        ))
+
     def test_reference_graph_records_grouped_and_ranged_mentions_as_manual_relations(self):
         graph = build_package_reference_graph({
             "Manuscript": [
