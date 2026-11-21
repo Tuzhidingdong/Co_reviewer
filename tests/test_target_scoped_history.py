@@ -148,7 +148,7 @@ class TargetScopedHistoricalRevisionTests(unittest.TestCase):
                 [{
                     "part": "word/document.xml",
                     "p_idx": 0,
-                    "start_offset": 2,
+                    "start_offset": 0,
                     "end_offset": 8,
                 }],
             )
