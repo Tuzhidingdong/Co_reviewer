@@ -231,6 +231,25 @@ class ReleasePackageTransactionTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleasePackageTransactionError, "hash/size mismatch"):
                 verify_release_package(fixture["release_dir"], expected_release_id=release_id)
 
+    def test_unlisted_package_artifact_blocks_committed_package_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self._fixture(Path(temporary))
+            result = commit_release_package(
+                fixture["release_dir"],
+                fixture["records"],
+                release_id="release-test-extra",
+                source_release_manifest_sha256=_sha(fixture["manifest_path"]),
+            )
+            rogue = Path(result["package_directory"]) / "unlisted.bin"
+            rogue.write_bytes(b"unlisted artifact")
+            with self.assertRaisesRegex(
+                ReleasePackageTransactionError,
+                "inventory differs from its Manifest",
+            ):
+                verify_release_package(
+                    fixture["release_dir"], expected_release_id="release-test-extra"
+                )
+
     def test_source_snapshot_change_blocks_package_commit_before_marker(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = self._fixture(Path(temporary))
