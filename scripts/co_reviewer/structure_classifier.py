@@ -827,7 +827,10 @@ def _build_structural_event_map(
             records_by_path[record["element_path"]].append(record)
 
     range_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    range_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
     field_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    field_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    order_by_path = {_path(node): order for node, order in xml_order.items()}
     for record in records:
         if record.get("part") != part:
             continue
@@ -851,6 +854,15 @@ def _build_structural_event_map(
             for marker_path in (start_path, end_path):
                 if isinstance(marker_path, str):
                     range_links[marker_path].append(link)
+            start_order = link.get("start_order")
+            end_order = link.get("end_order")
+            if (
+                isinstance(start_order, int) and not isinstance(start_order, bool)
+                and isinstance(end_order, int) and not isinstance(end_order, bool)
+                and start_order <= end_order
+            ):
+                for order in range(start_order, end_order + 1):
+                    range_links_by_order[order].append(link)
         elif kind == "complex_field":
             group = {
                 "field_id": details.get("field_id"),
@@ -870,6 +882,13 @@ def _build_structural_event_map(
             for marker_path in paths:
                 if isinstance(marker_path, str):
                     field_links[marker_path].append(group)
+            begin_order = order_by_path.get(details.get("begin_path"))
+            end_order = order_by_path.get(details.get("end_path"))
+            if isinstance(begin_order, int):
+                upper = end_order if isinstance(end_order, int) else len(nodes) - 1
+                if begin_order <= upper:
+                    for order in range(begin_order, upper + 1):
+                        field_links_by_order[order].append(group)
 
     events: list[dict[str, Any]] = []
     marker_locals = {
@@ -962,8 +981,12 @@ def _build_structural_event_map(
                 }
                 for record in attached_records
             ],
-            "paired_ranges": range_links.get(path, []),
-            "field_groups": field_links.get(path, []),
+            "paired_ranges": list(dict.fromkeys(
+                range_links.get(path, []) + range_links_by_order.get(xml_order[node], [])
+            )),
+            "field_groups": list(dict.fromkeys(
+                field_links.get(path, []) + field_links_by_order.get(xml_order[node], [])
+            )),
         }
         if namespace == W and local in text_locals:
             value = node.text or ""
