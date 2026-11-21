@@ -130,6 +130,87 @@ class WorkflowPreparationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_stable_identity_is_the_default_and_never_silently_falls_back_to_p_idx(self):
+        scope = json.loads(json.dumps(self.scope))
+        scope.pop("identity_mode", None)
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "has no stable TargetRef; set identity_mode=legacy_p_idx_explicit",
+        ):
+            prepare_workflow_execution(
+                self.workflow,
+                scope,
+                self.inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
+    def test_explicit_legacy_p_idx_migration_is_blocked_when_identity_registry_exists(self):
+        from docx import Document
+        from co_reviewer.docx_identity import build_document_identity_manifest
+
+        stable_source = self.root / "registered-Manuscript.docx"
+        document = Document()
+        document.add_paragraph("The selected sample is ZB-01.")
+        document.save(stable_source)
+        source_sha = hashlib.sha256(stable_source.read_bytes()).hexdigest()
+        identity_manifest, _ = build_document_identity_manifest([{
+            "role": "Manuscript",
+            "file": str(stable_source),
+            "source_sha256": source_sha,
+            "paragraphs": [],
+        }])
+
+        workflow = json.loads(json.dumps(self.workflow))
+        manuscript_source = {
+            "role": "Manuscript",
+            "file": str(stable_source.resolve()),
+            "sha256": source_sha,
+        }
+        workflow["source_files"] = [
+            row for row in workflow["source_files"]
+            if row["role"] != "Manuscript"
+        ] + [manuscript_source]
+        workflow["active_documents"]["Manuscript"] = {
+            "file": str(stable_source.resolve()),
+            "sha256": source_sha,
+            "batch_id": None,
+            "updated_at_utc": STAMP,
+        }
+        for task in workflow["tasks"]:
+            task["source_versions"] = [
+                row for row in task["source_versions"]
+                if row["role"] != "Manuscript"
+            ] + [manuscript_source]
+        workflow["documents"] = identity_manifest["documents"]
+        workflow["object_registry"] = identity_manifest["objects"]
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        inventory = json.loads(json.dumps(self.inventory))
+        manuscript_row = next(row for row in inventory if row["role"] == "Manuscript")
+        manuscript_row.update({
+            "file": str(stable_source.resolve()),
+            "source_sha256": source_sha,
+        })
+
+        # Even an explicitly marked migration cannot fall back to paragraph
+        # indices once a document identity / object registry is available.
+        legacy_scope = json.loads(json.dumps(self.scope))
+        legacy_scope["identity_mode"] = "legacy_p_idx_explicit"
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "missing its registered TargetRef; rebind the task identity manifest",
+        ):
+            prepare_workflow_execution(
+                workflow,
+                legacy_scope,
+                inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
     def test_prepare_cli_rejects_inventory_bytes_changed_after_manifest_binding(self) -> None:
         from argparse import Namespace
 
