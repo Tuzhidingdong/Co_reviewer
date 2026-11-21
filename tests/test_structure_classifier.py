@@ -373,6 +373,38 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertIn("ambiguous across hyperlink", reason)
 
+    def test_complex_word_field_crossing_paragraphs_maps_result_and_blocks_target(self):
+        body = (
+            '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>'
+            '<w:p><w:r><w:instrText xml:space="preserve"> REF _RefCross </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>'
+            '<w:p><w:r><w:t>cross paragraph field result</w:t></w:r></w:p>'
+            '<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        events = [
+            row for row in report["structural_events"]
+            if row["part"] == "word/document.xml"
+        ]
+        result_text = next(
+            row for row in events
+            if row.get("text_content") == "cross paragraph field result"
+        )
+        self.assertEqual(result_text["paragraph_index"], 2)
+        self.assertTrue(result_text["field_groups"])
+        self.assertTrue(result_text["field_groups"][0]["complete"])
+        field_id = result_text["field_groups"][0]["field_id"]
+        self.assertTrue(field_id)
+
+        for paragraph_index in (0, 1, 2, 3):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report,
+                    part="word/document.xml",
+                    paragraph_index=paragraph_index,
+                )
+
     def test_plain_paragraph_is_editable_but_special_structure_scopes_fail_closed(self):
         body = (
             '<w:p><w:r><w:t>ordinary text</w:t></w:r></w:p>'
