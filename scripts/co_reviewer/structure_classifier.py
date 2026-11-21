@@ -890,6 +890,17 @@ def _build_structural_event_map(
                     for order in range(begin_order, upper + 1):
                         field_links_by_order[order].append(group)
 
+    def unique_links(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for group in groups:
+            for item in group:
+                key = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if key not in seen:
+                    seen.add(key)
+                    output.append(item)
+        return output
+
     events: list[dict[str, Any]] = []
     marker_locals = {
         "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
@@ -981,12 +992,14 @@ def _build_structural_event_map(
                 }
                 for record in attached_records
             ],
-            "paired_ranges": list(dict.fromkeys(
-                range_links.get(path, []) + range_links_by_order.get(xml_order[node], [])
-            )),
-            "field_groups": list(dict.fromkeys(
-                field_links.get(path, []) + field_links_by_order.get(xml_order[node], [])
-            )),
+            "paired_ranges": unique_links(
+                range_links_by_order.get(xml_order[node], []),
+                range_links.get(path, []),
+            ),
+            "field_groups": unique_links(
+                field_links_by_order.get(xml_order[node], []),
+                field_links.get(path, []),
+            ),
         }
         if namespace == W and local in text_locals:
             value = node.text or ""
