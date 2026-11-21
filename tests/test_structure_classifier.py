@@ -164,6 +164,10 @@ class StructureClassifierTests(unittest.TestCase):
             '<w:permStart w:id="15" w:edGrp="everyone"/>'
             '<w:r><w:t>permitted content</w:t></w:r>'
             '<w:permEnd w:id="15"/>'
+            '<w:proofErr w:type="spellStart"/>'
+            '<w:r><w:t>proofed text</w:t></w:r>'
+            '<w:proofErr w:type="spellEnd"/>'
+            '<w:fldSimple w:instr="PAGE"><w:r><w:t>2</w:t></w:r></w:fldSimple>'
             '<w:r><w:drawing/></w:r>'
             '</w:p>'
         )
@@ -251,6 +255,16 @@ class StructureClassifierTests(unittest.TestCase):
         field_result = next(row for row in text_nodes if row.get("text_content") == "1")
         self.assertTrue(field_result["field_groups"])
         self.assertTrue(field_result["field_groups"][0]["complete"])
+        simple_field_result = next(row for row in text_nodes if row.get("text_content") == "2")
+        self.assertTrue(any(
+            row["field_kind"] == "simple" and row["complete"]
+            for row in simple_field_result["field_groups"]
+        ))
+        proofed_text = next(row for row in text_nodes if row.get("text_content") == "proofed text")
+        self.assertIn(
+            ("proofing_range", "spell"),
+            {(row["range_kind"], row["range_type"]) for row in proofed_text["paired_ranges"]},
+        )
         self.assertEqual(
             {row["attributes"].get("w:fldCharType") for row in field_events if row["element"] == "fldChar"},
             {"begin", "separate", "end"},
