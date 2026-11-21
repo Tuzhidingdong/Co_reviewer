@@ -661,6 +661,7 @@ _CITATION_DEFINITION = re.compile(r"(?im)^\s*\[\s*(\d+)\s*\](?=\s+\S)")
 _CITATION_GROUP = re.compile(r"(?<!\w)\[(?P<body>\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]")
 _CITATION_RANGE = re.compile(r"(?<!\w)\[\s*(\d+)\s*[-–]\s*(\d+)\s*\]")
 _NUMBERED_REFERENCE_DEFINITION = re.compile(r"(?im)^\s*(\d+)[.)](?=\s+\S)")
+_BRACKETED_REFERENCE_DEFINITION = re.compile(r"(?<!\\w)\\[\\s*(\\d+)\\s*\\]")
 _PAREN_CITATION_RANGE = re.compile(r"(?<!\w)\(\s*(\d+)\s*[-–]\s*(\d+)\s*\)")
 _PAREN_CITATION_GROUP = re.compile(r"(?<!\w)\((?P<body>\s*\d+(?:\s*[,;]\s*\d+)+\s*)\)")
 _PAREN_CITATION_SINGLE = re.compile(r"(?<!\w)\(\s*(\d+)\s*\)")
@@ -1013,6 +1014,37 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         "definition_style": "numbered_reference_list",
                     })
                     citation_definition_spans.append(span)
+
+                # Some author-year styled bibliographies append the numeric
+                # label after the entry text (e.g. "Smith (2020). [1] ...").
+                # Treat one unambiguous bracket label in a bibliography line
+                # as its definition; never emit that bibliography label as an
+                # in-text citation mention.
+                inline_labels = list(_BRACKETED_REFERENCE_DEFINITION.finditer(text_value))
+                if len(inline_labels) == 1:
+                    match = inline_labels[0]
+                    if not any(
+                        match.start() < right and match.end() > left
+                        for left, right in citation_definition_spans
+                    ):
+                        number = match.group(1)
+                        record_id = "def-" + hashlib.sha1(
+                            (doc_id + segment["part"] + str(segment["paragraph_index")
+                             + str(match.start()) + "citation-inline-reference" + number).encode("utf-8")
+                        ).hexdigest()[:16]
+                        definitions.append({
+                            "id": record_id, **base, "kind": "citation",
+                            "number": number, "text": number,
+                            "surface_text": match.group(),
+                            "offset": match.start(1), "end_offset": match.end(1),
+                            "reference_mechanism": (
+                                "manual_review_required"
+                                if mechanism == "mixed_with_word_field" else "static_text"
+                            ),
+                            "definition_style": "numbered_reference_list",
+                            "definition_label_position": "inline",
+                        })
+                        citation_definition_spans.append(match.span())
 
             for match in (_CITATION_RANGE.finditer(text_value) if segment.get("in_reference_section") is not True else []):
                 if any(match.start() >= left and match.end() <= right
