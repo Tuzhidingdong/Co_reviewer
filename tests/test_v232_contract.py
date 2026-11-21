@@ -809,20 +809,19 @@ class V232ContractTests(unittest.TestCase):
 
 
     def test_package_graph_uses_document_profile_for_parenthetical_and_numbered_reference_citations(self):
-        graph = build_package_reference_graph({
-            "Manuscript": [
-                {"part": "word/document.xml", "paragraph_index": 0, "text": "References",
-                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
-                {"part": "word/document.xml", "paragraph_index": 1, "text": "1. Smith et al. Reference one.",
-                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
-                {"part": "word/document.xml", "paragraph_index": 2, "text": "2. Jones et al. Reference two.",
-                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
-                {"part": "word/document.xml", "paragraph_index": 3, "text": "Prior work (1) and (2) supports this method.",
-                 "citation_profile_modes": ["numeric_parenthetical"]},
-                {"part": "word/document.xml", "paragraph_index": 4, "text": "Earlier studies (1, 2) agree.",
-                 "citation_profile_modes": ["numeric_parenthetical"]},
-            ],
-        })
+        segments = [
+            {"part": "word/document.xml", "paragraph_index": 0, "text": "References",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 1, "text": "1. Smith et al. Reference one.",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 2, "text": "2. Jones et al. Reference two.",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 3, "text": "Prior work (1) and (2) supports this method.",
+             "citation_profile_modes": ["numeric_parenthetical"]},
+            {"part": "word/document.xml", "paragraph_index": 4, "text": "Earlier studies (1, 2) agree.",
+             "citation_profile_modes": ["numeric_parenthetical"]},
+        ]
+        graph = build_package_reference_graph({"Manuscript": segments})
         definitions = [row for row in graph["definitions"] if row["kind"] == "citation"]
         mentions = [row for row in graph["mentions"] if row["kind"] == "citation"]
         self.assertEqual({row["number"] for row in definitions}, {"1", "2"})
@@ -832,8 +831,27 @@ class V232ContractTests(unittest.TestCase):
         grouped = next(row for row in mentions if row["paragraph_index"] == 4)
         self.assertEqual(grouped["numbers"], ["1", "2"])
         self.assertEqual(grouped["resolution"], "manual_review_required")
+
+        with self.assertRaisesRegex(
+            ContractError,
+            "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION",
+        ):
+            renumber_reference_graph(
+                graph,
+                {"Manuscript::citation::1": "4"},
+                explicit_authorization=True,
+            )
+
+        # Remove only the still-unresolved list item to prove that a unique
+        # single citation maps to its numbered bibliography entry and keeps
+        # both the numeric coordinate and visible parentheses in sync.
+        resolved_graph = build_package_reference_graph({
+            "Manuscript": segments[:-1]
+        })
         updated = renumber_reference_graph(
-            graph, {"Manuscript::citation::1": "4"}, explicit_authorization=True
+            resolved_graph,
+            {"Manuscript::citation::1": "4"},
+            explicit_authorization=True,
         )
         definition_update = next(
             row for row in updated["definition_updates"] if row["kind"] == "citation"
