@@ -1455,6 +1455,10 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
     }
     seen_event_ids: set[str] = set()
+    batch_events_by_type: dict[str, dict[str, list[tuple[int, Mapping[str, Any]]]]] = {
+        "batch_published": defaultdict(list),
+        "batch_rolled_back": defaultdict(list),
+    }
     for index, event in enumerate(events):
         prefix = f"Workflow ledger events[{index}]"
         if not isinstance(event, Mapping):
@@ -1481,6 +1485,8 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             batch_id = event.get("batch_id")
             if not isinstance(batch_id, str) or not batch_id.strip():
                 errors.append(f"{prefix}.batch_id must be a non-empty string for batch events.")
+            else:
+                batch_events_by_type[event_type][batch_id].append((index, event))
             documents = event.get("documents")
             if not isinstance(documents, Mapping) or not documents:
                 errors.append(f"{prefix}.documents must be a non-empty role-to-pointer object for batch events.")
@@ -1508,6 +1514,72 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                     errors.append(f"{pointer_prefix}.batch_id must be a non-empty string or null.")
                 if not _is_aware_timestamp(pointer.get("updated_at_utc")):
                     errors.append(f"{pointer_prefix}.updated_at_utc must be timezone-aware.")
+
+    def _batch_event_documents_projection(event: Mapping[str, Any]) -> tuple[Any, ...]:
+        documents = event.get("documents")
+        if not isinstance(documents, Mapping):
+            return ()
+        projected = []
+        for role, pointer in documents.items():
+            if not isinstance(pointer, Mapping):
+                projected.append((str(role), None, None, None, None))
+                continue
+            file_path = pointer.get("file")
+            projected.append((
+                str(role),
+                _canonical_workflow_file_path(file_path) if isinstance(file_path, str) else None,
+                pointer.get("sha256"),
+                pointer.get("batch_id"),
+                pointer.get("updated_at_utc"),
+            ))
+        return tuple(sorted(projected))
+
+    for batch_id, batch_rows in batch_events_by_type["batch_published"].items():
+        task_ids = [
+            row.get("task_id") for _, row in batch_rows
+            if isinstance(row.get("task_id"), str)
+        ]
+        if len(task_ids) != len(batch_rows) or len(task_ids) != len(set(task_ids)):
+            errors.append(
+                f"Workflow Ledger batch_published events for {batch_id} have duplicate or invalid task IDs."
+            )
+        projections = {
+            _batch_event_documents_projection(row)
+            for _, row in batch_rows
+        }
+        if len(projections) != 1:
+            errors.append(
+                f"Workflow Ledger batch_published events for {batch_id} disagree on document output pointers."
+            )
+
+    for batch_id, batch_rows in batch_events_by_type["batch_rolled_back"].items():
+        task_ids = [
+            row.get("task_id") for _, row in batch_rows
+            if isinstance(row.get("task_id"), str)
+        ]
+        if len(task_ids) != len(batch_rows) or len(task_ids) != len(set(task_ids)):
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} have duplicate or invalid task IDs."
+            )
+        projections = {
+            _batch_event_documents_projection(row)
+            for _, row in batch_rows
+        }
+        if len(projections) != 1:
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} disagree on restored document pointers."
+            )
+        published_rows = batch_events_by_type["batch_published"].get(batch_id, [])
+        if not published_rows:
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} have no preceding published batch."
+            )
+        elif min(position for position, _ in batch_rows) < max(
+            position for position, _ in published_rows
+        ):
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} occur before publication is complete."
+            )
 
     for task in tasks:
         if not isinstance(task, Mapping) or task.get("status") != "ready":

@@ -991,6 +991,71 @@ class WorkflowEngineTests(unittest.TestCase):
             for error in validate_workflow_ledger(duplicated_initial_role)
         ))
 
+    def test_published_batch_events_must_share_one_pointer_projection_and_unique_tasks(self):
+        ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-batch-event-atomicity",
+            "created_at_utc": STAMP,
+            "source_files": [{
+                "role": "Manuscript",
+                "file": "/round/input/Manuscript.docx",
+                "sha256": "1" * 64,
+            }],
+            "active_documents": {
+                "Manuscript": {
+                    "file": "/round/runs/batch-001/documents/Manuscript.marked.docx",
+                    "sha256": "2" * 64,
+                    "batch_id": "batch-001",
+                    "updated_at_utc": STAMP,
+                },
+            },
+            "documents": [],
+            "object_registry": [],
+            "tasks": [
+                _task("T1", [], "planned", [], 1),
+                _task("T2", ["T1"], "planned", [], 2),
+            ],
+            "events": [{
+                "event_id": "EV-BATCH-001-T1",
+                "task_id": "T1",
+                "timestamp_utc": STAMP,
+                "event_type": "batch_published",
+                "batch_id": "batch-001",
+                "documents": {
+                    "Manuscript": {
+                        "file": "/round/runs/batch-001/documents/Manuscript.marked.docx",
+                        "sha256": "2" * 64,
+                        "batch_id": "batch-001",
+                        "updated_at_utc": STAMP,
+                    },
+                },
+            }],
+        }
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+
+        inconsistent = json.loads(json.dumps(ledger))
+        second = json.loads(json.dumps(inconsistent["events"][0]))
+        second["event_id"] = "EV-BATCH-001-T2"
+        second["task_id"] = "T2"
+        second["documents"]["Manuscript"].update({
+            "file": "/round/runs/batch-001/documents/contradictory.docx",
+            "sha256": "3" * 64,
+        })
+        inconsistent["events"].append(second)
+        self.assertTrue(any(
+            "batch_published events for batch-001 disagree on document output pointers" in error
+            for error in validate_workflow_ledger(inconsistent)
+        ))
+
+        duplicated_task = json.loads(json.dumps(ledger))
+        second = json.loads(json.dumps(duplicated_task["events"][0]))
+        second["event_id"] = "EV-BATCH-001-DUPLICATE"
+        duplicated_task["events"].append(second)
+        self.assertTrue(any(
+            "batch_published events for batch-001 have duplicate or invalid task IDs" in error
+            for error in validate_workflow_ledger(duplicated_task)
+        ))
+
     def test_same_target_group_does_not_create_a_self_edge(self):
         tasks = [
             _task("A", [], "planned", ["shared"]),
