@@ -21,8 +21,8 @@ from typing import Any, Mapping, Sequence
 
 from lxml import etree as ET
 from .v232_contract import (
-    attach_format_change, effective_run_properties, narrow_revision,
-    targeted_revision_gate,
+    attach_format_change, build_revision_baseline_inventory,
+    effective_run_properties, narrow_revision, targeted_revision_gate,
 )
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -995,16 +995,10 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
     )
     from .manual_suggestion import ManualFallbackRequired, build_manual_suggestion
 
-    revision_kinds = {
-        "text_revision_wrapper", "format_revision", "paragraph_revision",
-        "table_revision", "move_revision", "comment_anchor", "comment_definition",
-    }
-    revision_inventory = {
-        "revisions": [
-            item for item in structure_inventory.get("structures", [])
-            if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))
-        ]
-    }
+    # Use the full target-scoped history inventory, including precise visible
+    # text intervals. A paragraph-only projection would incorrectly block a
+    # second independent edit elsewhere in the same paragraph.
+    revision_inventory = build_revision_baseline_inventory(source)
     if structure_inventory["package_status"] != "READY":
         blocking = [
             f"{item['code']}: {item['message']}"
