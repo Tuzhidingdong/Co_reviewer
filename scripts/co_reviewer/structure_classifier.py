@@ -1613,7 +1613,9 @@ def assert_edit_target_supported_with_bounded_safe_span(
             f"{target_text[:80]!r}: {analysis.get('reason', 'no safe span was proven')}."
         )
     analysis["intersecting_bookmark_structure_ids"] = [
-        item.get("structure_id") for item in relevant
+        item.get("structure_id")
+        for item in relevant
+        if item.get("kind") == "bookmark_range"
     ]
     return analysis
 
