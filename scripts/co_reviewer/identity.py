@@ -397,8 +397,19 @@ class TargetRef:
             or self.end_offset <= self.start_offset
         ):
             raise IdentityValidationError("TargetRef offsets must define a positive half-open range.")
-        if self.location_hint is not None and not isinstance(self.location_hint, Mapping):
-            raise IdentityValidationError("TargetRef location_hint must be an object or null.")
+        if self.location_hint is not None:
+            if not isinstance(self.location_hint, Mapping):
+                raise IdentityValidationError("TargetRef location_hint must be an object or null.")
+            if "p_idx" in self.location_hint:
+                p_idx = self.location_hint.get("p_idx")
+                if (
+                    not isinstance(p_idx, int)
+                    or isinstance(p_idx, bool)
+                    or p_idx < 0
+                ):
+                    raise IdentityValidationError(
+                        "TargetRef location_hint.p_idx must be a non-negative integer when supplied."
+                    )
 
     @classmethod
     def from_object(
