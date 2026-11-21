@@ -556,6 +556,52 @@ class StructureClassifierTests(unittest.TestCase):
                 report, part="word/document.xml", paragraph_index=editable_index
             )
 
+    def test_comment_range_crossing_paragraphs_blocks_exact_intersection(self):
+        body = (
+            '<w:p><w:r><w:t>before comment range</w:t></w:r></w:p>'
+            '<w:p><w:commentRangeStart w:id="28"/>'
+            '<w:r><w:t>comment range start paragraph</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>comment range end paragraph</w:t></w:r>'
+            '<w:commentRangeEnd w:id="28"/></w:p>'
+            '<w:p><w:r><w:t>after comment range</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        comment_range = next(
+            row for row in report["structures"] if row["kind"] == "comment_range"
+        )
+        self.assertEqual(comment_range["paragraph_indices"], [1, 2])
+        for paragraph_index in (1, 2):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=paragraph_index
+                )
+        for paragraph_index in (0, 3):
+            assert_edit_target_supported(
+                report, part="word/document.xml", paragraph_index=paragraph_index
+            )
+
+    def test_unmatched_body_level_comment_marker_remains_part_scoped_blocker(self):
+        body = (
+            '<w:p><w:r><w:t>before orphan comment marker</w:t></w:r></w:p>'
+            '<w:commentRangeStart w:id="29"/>'
+            '<w:p><w:r><w:t>after orphan comment marker</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        self.assertIn("UNPAIRED_COMMENT_RANGE", {row["code"] for row in report["issues"]})
+        incomplete = next(
+            row for row in report["structures"]
+            if row["kind"] == "incomplete_comment_range"
+        )
+        self.assertEqual(incomplete["paragraph_indices"], [])
+        self.assertEqual(incomplete["details"]["scope_policy"], "part_scope_no_paragraph_anchor")
+        for paragraph_index in (0, 1):
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported(
+                    report, part="word/document.xml", paragraph_index=paragraph_index
+                )
+
     def test_unmatched_body_level_bookmark_remains_part_scoped_blocker(self):
         body = (
             '<w:p><w:r><w:t>before orphan marker</w:t></w:r></w:p>'
