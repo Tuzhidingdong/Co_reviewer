@@ -838,7 +838,7 @@ def _build_structural_event_map(
         if not isinstance(details, Mapping):
             continue
         kind = record.get("kind")
-        if kind in {"bookmark_range", "comment_range"}:
+        if isinstance(kind, str) and kind.endswith("_range") and not kind.startswith("incomplete_"):
             start_path = details.get("start_path")
             end_path = details.get("end_path")
             link = {
@@ -1279,6 +1279,25 @@ def _classify_members(
             kind="comment_range", source_sha256=digest,
             paragraph_indices=paragraph_indices, records=records, issues=issues,
         )
+        # Revision moves, Custom XML change ranges and editing permissions
+        # also have explicit start/end marker identities. Pair them using
+        # the same part-wide XML order contract so their interior events
+        # carry a protected range ID instead of relying on node-local tags.
+        for start_local, end_local, range_kind in (
+            ("moveFromRangeStart", "moveFromRangeEnd", "move_from_range"),
+            ("moveToRangeStart", "moveToRangeEnd", "move_to_range"),
+            ("customXmlInsRangeStart", "customXmlInsRangeEnd", "custom_xml_insert_range"),
+            ("customXmlDelRangeStart", "customXmlDelRangeEnd", "custom_xml_delete_range"),
+            ("customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "custom_xml_move_from_range"),
+            ("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd", "custom_xml_move_to_range"),
+            ("permStart", "permEnd", "permission_range"),
+        ):
+            _pair_ranges(
+                part=part, root=root,
+                start_local=start_local, end_local=end_local,
+                kind=range_kind, source_sha256=digest,
+                paragraph_indices=paragraph_indices, records=records, issues=issues,
+            )
         _field_groups(
             part=part, root=root, source_sha256=digest,
             paragraph_indices=paragraph_indices, records=records, issues=issues,
