@@ -640,6 +640,22 @@ def commit_numbering_package_transaction(
     workflow_sha_before = sha256_file(workflow_path)
     workflow = _load_json_object(workflow_path, "Workflow Ledger")
     revision_sha_before = sha256_file(revision_path)
+    stored_revision = _load_json_object(revision_path, "RevisionLedger")
+    to_dict = getattr(revision_ledger, "to_dict", None)
+    validate_or_raise = getattr(revision_ledger, "validate_or_raise", None)
+    if not callable(to_dict) or not callable(validate_or_raise):
+        raise NumberingTransactionError(
+            "Numbering Package Transaction requires a validated RevisionLedger model loaded from its persisted file."
+        )
+    try:
+        validate_or_raise()
+        in_memory_revision = to_dict()
+    except Exception as exc:
+        raise NumberingTransactionError(f"In-memory RevisionLedger failed validation: {exc}") from exc
+    if not isinstance(in_memory_revision, Mapping) or dict(in_memory_revision) != stored_revision:
+        raise NumberingTransactionError(
+            "In-memory RevisionLedger does not match the exact persisted RevisionLedger snapshot."
+        )
     if sha256_file(workflow_path) != workflow_sha_before or sha256_file(revision_path) != revision_sha_before:
         raise NumberingTransactionError("Workflow or RevisionLedger changed while loading the transaction snapshot.")
 
