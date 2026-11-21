@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from docx import Document
 from lxml import etree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,7 @@ from co_reviewer.v232_contract import (
     remediation_transition, compile_clean_from_marked, qn, W,
     build_revision_baseline_inventory, targeted_revision_gate,
     collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
+    extract_docx_reference_segments,
     validate_committed_document_package,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
@@ -805,6 +807,111 @@ class V232ContractTests(unittest.TestCase):
                 create_omml_preview_docx("x^2", output)
             self.assertEqual(output.read_bytes(), b"keep")
 
+
+    def test_package_graph_uses_document_profile_for_parenthetical_and_numbered_reference_citations(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "References",
+                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "1. Smith et al. Reference one.",
+                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "2. Jones et al. Reference two.",
+                 "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+                {"part": "word/document.xml", "paragraph_index": 3, "text": "Prior work (1) and (2) supports this method.",
+                 "citation_profile_modes": ["numeric_parenthetical"]},
+                {"part": "word/document.xml", "paragraph_index": 4, "text": "Earlier studies (1, 2) agree.",
+                 "citation_profile_modes": ["numeric_parenthetical"]},
+            ],
+        })
+        definitions = [row for row in graph["definitions"] if row["kind"] == "citation"]
+        mentions = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual({row["number"] for row in definitions}, {"1", "2"})
+        singles = [row for row in mentions if row["paragraph_index"] == 3]
+        self.assertEqual({row["number"] for row in singles}, {"1", "2"})
+        self.assertTrue(all(row["resolution"] == "resolved" for row in singles))
+        grouped = next(row for row in mentions if row["paragraph_index"] == 4)
+        self.assertEqual(grouped["numbers"], ["1", "2"])
+        self.assertEqual(grouped["resolution"], "manual_review_required")
+        updated = renumber_reference_graph(
+            graph, {"Manuscript::citation::1": "4"}, explicit_authorization=True
+        )
+        self.assertTrue(any(
+            row["kind"] == "citation" and row["old_number"] == "1" and row["new_number"] == "4"
+            for row in updated["definition_updates"]
+        ))
+
+    def test_package_graph_resolves_superscript_citation_events_and_keeps_footnotes_manual(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "1. Smith et al. Reference one.",
+                 "citation_profile_modes": ["numeric_superscript"], "in_reference_section": True},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "The method follows earlier work.",
+                 "citation_profile_modes": ["numeric_superscript", "footnote"],
+                 "citation_marker_events": [{
+                     "kind": "numeric_superscript", "text": "1",
+                     "offset": 34, "end_offset": 35, "numbers": ["1"],
+                 }]},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "A note is attached here.",
+                 "citation_profile_modes": ["footnote"],
+                 "citation_marker_events": [{
+                     "kind": "footnote_reference", "text": "",
+                     "offset": 23, "end_offset": 23, "numbers": [], "footnote_id": "4",
+                 }]},
+            ],
+        })
+        superscript = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "numeric_superscript")
+        self.assertEqual(superscript["number"], "1")
+        self.assertEqual(superscript["resolution"], "resolved")
+        footnote = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "footnote_reference")
+        self.assertEqual(footnote["number"], "footnote:4")
+        self.assertEqual(footnote["resolution"], "manual_review_required")
+
+    def test_reference_graph_does_not_guess_parenthetical_numeric_citations_without_style_evidence(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Equation (1) was solved."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "This is a numbered list (1)."},
+            ]
+        })
+        self.assertFalse(any(row["kind"] == "citation" for row in graph["mentions"]))
+
+    def test_docx_reference_extractor_emits_superscript_and_bibliography_profile_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "citation-style.docx"
+            document = Document()
+            paragraph = document.add_paragraph("The method follows earlier work ")
+            paragraph.add_run("1")
+            document.add_paragraph("References")
+            document.add_paragraph("1. Smith et al. Reference one.")
+            document.save(path)
+            with zipfile.ZipFile(path, "r") as source:
+                members = {name: source.read(name) for name in source.namelist()}
+            root = ET.fromstring(members["word/document.xml"])
+            target_run = next(
+                run for run in root.findall(".//w:body/w:p[1]/w:r", {"w": W})
+                if "".join(node.text or "" for node in run.findall(".//w:t", {"w": W})) == "1"
+            )
+            rpr = target_run.find("w:rPr", {"w": W})
+            if rpr is None:
+                rpr = ET.Element(f"{{{W}}}rPr")
+                target_run.insert(0, rpr)
+            vertical = ET.SubElement(rpr, f"{{{W}}}vertAlign")
+            vertical.set(f"{{{W}}}val", "superscript")
+            members["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
+                for name, payload in members.items():
+                    target.writestr(name, payload)
+            segments = extract_docx_reference_segments(path)
+            body_marker = next(row for row in segments if row["part"] == "word/document.xml" and row["text"].startswith("The method follows"))
+            bibliography = next(row for row in segments if row["part"] == "word/document.xml" and row["text"].startswith("1. Smith"))
+            self.assertIn("numeric_superscript", body_marker["citation_profile_modes"])
+            self.assertEqual(body_marker["citation_marker_events"][0]["text"], "1")
+            self.assertTrue(bibliography["in_reference_section"])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            definition = next(row for row in graph["definitions"] if row["kind"] == "citation" and row["number"] == "1")
+            mention = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "numeric_superscript")
+            self.assertEqual(mention["resolution"], "resolved")
+            self.assertEqual(mention["target_definition_ids"], [definition["id"]])
 
     def test_package_graph_resolves_and_renumbers_static_numeric_citations(self):
         graph = build_package_reference_graph({

@@ -660,6 +660,13 @@ _MENTION = re.compile(
 _CITATION_DEFINITION = re.compile(r"(?im)^\s*\[\s*(\d+)\s*\](?=\s+\S)")
 _CITATION_GROUP = re.compile(r"(?<!\w)\[(?P<body>\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]")
 _CITATION_RANGE = re.compile(r"(?<!\w)\[\s*(\d+)\s*[-–]\s*(\d+)\s*\]")
+_NUMBERED_REFERENCE_DEFINITION = re.compile(r"(?im)^\s*(\d+)[.)](?=\s+\S)")
+_PAREN_CITATION_RANGE = re.compile(r"(?<!\w)\(\s*(\d+)\s*[-–]\s*(\d+)\s*\)")
+_PAREN_CITATION_GROUP = re.compile(r"(?<!\w)\((?P<body>\s*\d+(?:\s*[,;]\s*\d+)+\s*)\)")
+_PAREN_CITATION_SINGLE = re.compile(r"(?<!\w)\(\s*(\d+)\s*\)")
+_AUTHOR_YEAR_CITATION = re.compile(
+    r"\((?P<authors>[A-Z][A-Za-z'’\-]+(?:\s+et\s+al\.)?(?:\s+and\s+[A-Z][A-Za-z'’\-]+)?),?\s+(?P<year>(?:19|20)\d{2}[a-z]?)\)"
+)
 _WORD_FIELD_TYPE = re.compile(
     r"\b(REF|PAGEREF|NOTEREF|SEQ|CITATION|ADDIN|TOC|HYPERLINK|XE|TA|"
     r"PAGE|NUMPAGES|DATE|TIME|AUTHOR|FILENAME|FILESIZE|NUMWORDS|NUMCHARS|EDITTIME)\b",
@@ -678,6 +685,8 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
             {
                 "part": "text", "paragraph_index": index, "text": line,
                 "reference_mechanism": "static_text", "word_field_instructions": [],
+                "citation_profile_modes": [], "citation_marker_events": [],
+                "in_reference_section": False,
             }
             for index, line in enumerate(value.splitlines() or [value])
         ]
@@ -685,6 +694,10 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
         raise ContractError("Document reference content must be text or an array of paragraph segments")
     segments = []
     seen_locations = set()
+    allowed_modes = {
+        "numeric_superscript", "numeric_bracketed", "numeric_parenthetical",
+        "author_year", "footnote",
+    }
     for index, row in enumerate(value):
         if not isinstance(row, Mapping):
             raise ContractError("Reference paragraph segments must be objects")
@@ -694,8 +707,11 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
         mechanism = row.get("reference_mechanism", "static_text")
         instructions = row.get("word_field_instructions", [])
         field_markers_present = row.get("word_field_markers_present", False)
-        if not isinstance(field_markers_present, bool):
-            raise ContractError("word_field_markers_present must be boolean")
+        profile_modes = row.get("citation_profile_modes", [])
+        marker_events = row.get("citation_marker_events", [])
+        in_reference_section = row.get("in_reference_section", False)
+        if not isinstance(field_markers_present, bool) or not isinstance(in_reference_section, bool):
+            raise ContractError("Word field and reference-section indicators must be boolean")
         if not isinstance(part, str) or not part.strip():
             raise ContractError("Reference segment part must be a non-empty string")
         if not isinstance(paragraph_index, int) or isinstance(paragraph_index, bool) or paragraph_index < 0:
@@ -706,6 +722,42 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
             raise ContractError("Reference segment mechanism must be static_text or mixed_with_word_field")
         if not isinstance(instructions, list) or any(not isinstance(item, str) for item in instructions):
             raise ContractError("word_field_instructions must be an array of strings")
+        if (
+            not isinstance(profile_modes, list)
+            or any(not isinstance(item, str) or item not in allowed_modes for item in profile_modes)
+            or len(profile_modes) != len(set(profile_modes))
+        ):
+            raise ContractError("citation_profile_modes must contain unique supported citation-style labels")
+        if not isinstance(marker_events, list):
+            raise ContractError("citation_marker_events must be an array")
+        normalized_markers = []
+        for marker_index, marker in enumerate(marker_events):
+            if not isinstance(marker, Mapping):
+                raise ContractError(f"citation_marker_events[{marker_index}] must be an object")
+            kind = marker.get("kind")
+            offset, end_offset = marker.get("offset"), marker.get("end_offset")
+            marker_text = marker.get("text", "")
+            if kind not in {"numeric_superscript", "footnote_reference"}:
+                raise ContractError(f"citation_marker_events[{marker_index}] has an unsupported kind")
+            if (
+                not isinstance(offset, int) or isinstance(offset, bool)
+                or not isinstance(end_offset, int) or isinstance(end_offset, bool)
+                or offset < 0 or end_offset < offset or end_offset > len(text_value)
+            ):
+                raise ContractError(f"citation_marker_events[{marker_index}] has invalid text offsets")
+            if not isinstance(marker_text, str):
+                raise ContractError(f"citation_marker_events[{marker_index}].text must be a string")
+            numbers = marker.get("numbers", [])
+            if not isinstance(numbers, list) or any(
+                not isinstance(item, str) or not item.isdigit() for item in numbers
+            ):
+                raise ContractError(f"citation_marker_events[{marker_index}].numbers must contain digit strings")
+            normalized_markers.append({
+                "kind": kind, "text": marker_text,
+                "offset": offset, "end_offset": end_offset,
+                "numbers": list(numbers),
+                **({"footnote_id": str(marker.get("footnote_id", ""))} if kind == "footnote_reference" else {}),
+            })
         key = (part, paragraph_index)
         if key in seen_locations:
             raise ContractError("Duplicate reference segment location: " + repr(key))
@@ -715,58 +767,133 @@ def _reference_segments(value: Any) -> list[dict[str, Any]]:
             "reference_mechanism": mechanism,
             "word_field_instructions": list(instructions),
             "word_field_markers_present": field_markers_present,
+            "citation_profile_modes": list(profile_modes),
+            "citation_marker_events": normalized_markers,
+            "in_reference_section": in_reference_section,
         })
     return segments
 
-
 def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
-    """Extract paragraph text and separately identify native Word field instructions.
+    """Extract text, citation-style evidence, superscript anchors and native fields.
 
-    Paragraphs containing fields are marked mixed_with_word_field. Their displayed
-    text is not silently treated as ordinary static text for reference resolution.
-    The field instructions are retained as independent diagnostics for manual
-    mapping until a supported Field/Citation Adapter exists.
+    Numeric parenthetical citations are only interpreted when detected in the
+    source DOCX. Superscript runs retain exact text offsets. Grouped/ranged
+    markers and native footnote references remain explicit manual graph items.
     """
-    import zipfile
     source = Path(path)
     if not source.is_file() or source.suffix.casefold() != ".docx":
         raise ContractError("Reference graph input must be an existing DOCX")
     allowed = re.compile(r"^word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$")
-    segments = []
+    parsed_parts: dict[str, ET._Element] = {}
     with zipfile.ZipFile(source, "r") as archive:
         for name in sorted(set(archive.namelist())):
-            if not allowed.match(name):
-                continue
-            root = _xml(archive.read(name))
-            for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
-                value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
-                instructions = []
-                for node in paragraph.findall(".//w:fldSimple", NS):
-                    instruction = node.get(qn("instr"), "")
-                    if instruction.strip():
-                        instructions.append(instruction.strip())
-                for node in paragraph.findall(".//w:instrText", NS):
-                    instruction = node.text or ""
-                    if instruction.strip():
-                        instructions.append(instruction.strip())
-                has_field_markers = bool(
-                    instructions
-                    or paragraph.findall(".//w:fldChar", NS)
-                    or paragraph.findall(".//w:fldSimple", NS)
-                )
-                if value.strip() or has_field_markers:
-                    segments.append({
-                        "part": name,
-                        "paragraph_index": paragraph_index,
-                        "text": value,
-                        "reference_mechanism": (
-                            "mixed_with_word_field" if has_field_markers else "static_text"
-                        ),
-                        "word_field_instructions": list(dict.fromkeys(instructions)),
-                        "word_field_markers_present": has_field_markers,
-                    })
-    return segments
+            if allowed.match(name):
+                parsed_parts[name] = _xml(archive.read(name))
 
+    citation_modes: set[str] = set()
+    paragraph_rows: list[tuple[str, int, ET._Element, str]] = []
+    for part, root in parsed_parts.items():
+        for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
+            text_value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
+            paragraph_rows.append((part, paragraph_index, paragraph, text_value))
+            if part == "word/document.xml":
+                if re.search(r"\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]", text_value):
+                    citation_modes.add("numeric_bracketed")
+                if re.search(r"\(\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\)", text_value):
+                    citation_modes.add("numeric_parenthetical")
+                if _AUTHOR_YEAR_CITATION.search(text_value):
+                    citation_modes.add("author_year")
+                for run in paragraph.findall(".//w:r", NS):
+                    vertical = run.find("w:rPr/w:vertAlign", NS)
+                    run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+                    if (
+                        _attr(vertical, "val") == "superscript"
+                        and run_text
+                        and re.fullmatch(r"[\d,;–\-]+", run_text)
+                    ):
+                        citation_modes.add("numeric_superscript")
+            if paragraph.findall(".//w:footnoteReference", NS):
+                citation_modes.add("footnote")
+
+    selected_modes = sorted(citation_modes)
+    segments: list[dict[str, Any]] = []
+    for part, paragraph_index, paragraph, value in paragraph_rows:
+        instructions = []
+        for node in paragraph.findall(".//w:fldSimple", NS):
+            instruction = node.get(qn("instr"), "")
+            if instruction.strip():
+                instructions.append(instruction.strip())
+        for node in paragraph.findall(".//w:instrText", NS):
+            instruction = node.text or ""
+            if instruction.strip():
+                instructions.append(instruction.strip())
+        has_field_markers = bool(
+            instructions or paragraph.findall(".//w:fldChar", NS)
+            or paragraph.findall(".//w:fldSimple", NS)
+        )
+
+        text_offsets: dict[ET._Element, tuple[int, int]] = {}
+        footnote_offsets: dict[ET._Element, int] = {}
+        cursor = 0
+        for node in paragraph.iter():
+            if node.tag == qn("t"):
+                node_text = node.text or ""
+                text_offsets[node] = (cursor, cursor + len(node_text))
+                cursor += len(node_text)
+            elif node.tag == qn("footnoteReference"):
+                footnote_offsets[node] = cursor
+
+        marker_events: list[dict[str, Any]] = []
+        for run in paragraph.findall(".//w:r", NS):
+            vertical = run.find("w:rPr/w:vertAlign", NS)
+            run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+            if _attr(vertical, "val") != "superscript" or not run_text:
+                continue
+            if not re.fullmatch(r"[\d,;–\-]+", run_text):
+                continue
+            text_nodes = run.findall(".//w:t", NS)
+            if not text_nodes or any(node not in text_offsets for node in text_nodes):
+                continue
+            marker_events.append({
+                "kind": "numeric_superscript", "text": run_text,
+                "offset": text_offsets[text_nodes[0]][0],
+                "end_offset": text_offsets[text_nodes[-1]][1],
+                "numbers": re.findall(r"\d+", run_text),
+            })
+        for node, offset in footnote_offsets.items():
+            marker_events.append({
+                "kind": "footnote_reference", "text": "",
+                "offset": offset, "end_offset": offset,
+                "numbers": [], "footnote_id": node.get(qn("id"), ""),
+            })
+        marker_events.sort(key=lambda row: (row["offset"], row["end_offset"], row["kind"]))
+        segments.append({
+            "part": part,
+            "paragraph_index": paragraph_index,
+            "text": value,
+            "reference_mechanism": (
+                "mixed_with_word_field" if has_field_markers else "static_text"
+            ),
+            "word_field_instructions": list(dict.fromkeys(instructions)),
+            "word_field_markers_present": has_field_markers,
+            "citation_profile_modes": selected_modes,
+            "citation_marker_events": marker_events,
+            "in_reference_section": False,
+        })
+
+    in_reference_section = False
+    for segment in segments:
+        if segment["part"] == "word/document.xml":
+            heading = segment["text"].strip().casefold()
+            if heading in {
+                "references", "bibliography", "literature cited",
+                "引用文献", "参考文献",
+            }:
+                in_reference_section = True
+                segment["in_reference_section"] = True
+                continue
+        segment["in_reference_section"] = in_reference_section
+    return segments
 
 def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any]:
     """Build a package-wide graph of definitions, static mentions and native Word fields.
@@ -831,6 +958,8 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 })
                 caption_spans.append(match.span())
 
+            citation_profile_modes = set(segment.get("citation_profile_modes", []))
+            citation_marker_events = segment.get("citation_marker_events", [])
             citation_definition_spans = []
             for match in _CITATION_DEFINITION.finditer(text_value):
                 span = match.span()
@@ -847,6 +976,31 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     ),
                 })
                 citation_definition_spans.append(span)
+
+            if segment.get("in_reference_section") is True:
+                for match in _NUMBERED_REFERENCE_DEFINITION.finditer(text_value):
+                    if any(
+                        match.start() >= left and match.end() <= right
+                        for left, right in citation_definition_spans
+                    ):
+                        continue
+                    number = match.group(1)
+                    span = match.span()
+                    record_id = "def-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(match.start()) + "citation-numbered" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    definitions.append({
+                        "id": record_id, **base, "kind": "citation",
+                        "number": number, "text": match.group(),
+                        "offset": match.start(1), "end_offset": match.end(1),
+                        "reference_mechanism": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "static_text"
+                        ),
+                        "definition_style": "numbered_reference_list",
+                    })
+                    citation_definition_spans.append(span)
 
             for match in _CITATION_RANGE.finditer(text_value):
                 if any(match.start() >= left and match.end() <= right
@@ -889,6 +1043,139 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         **({
                             "resolution_reason": "The paragraph contains native Word fields; static and field-generated text cannot be separated safely."
                         } if mechanism == "mixed_with_word_field" else {}),
+                    })
+
+            citation_group_spans: list[tuple[int, int]] = []
+            if "numeric_parenthetical" in citation_profile_modes:
+                for match in _PAREN_CITATION_RANGE.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in caption_spans):
+                        continue
+                    numbers = [match.group(1), match.group(2)]
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(match.start()) + "parenthetical-range" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": numbers[0] + "-" + numbers[1],
+                        "numbers": numbers, "group_kind": "range",
+                        "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Parenthetical numeric citation ranges require explicit expansion before renumbering.",
+                    })
+                    citation_group_spans.append(match.span())
+                for match in _PAREN_CITATION_GROUP.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in caption_spans):
+                        continue
+                    if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
+                        continue
+                    numbers = re.findall(r"\d+", match.group("body"))
+                    if len(numbers) < 2:
+                        continue
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(match.start()) + "parenthetical-group" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": ",".join(numbers),
+                        "numbers": numbers, "group_kind": "list",
+                        "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Parenthetical numeric citation groups require explicit per-reference confirmation before renumbering.",
+                    })
+                    citation_group_spans.append(match.span())
+                for match in _PAREN_CITATION_SINGLE.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
+                        continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                        continue
+                    number = match.group(1)
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(match.start()) + "parenthetical-single" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": number,
+                        "text": match.group(), "offset": match.start(1), "end_offset": match.end(1),
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                    })
+
+            for marker in citation_marker_events:
+                if marker["kind"] == "numeric_superscript":
+                    marker_numbers = marker["numbers"]
+                    if not marker_numbers:
+                        continue
+                    grouped = len(marker_numbers) > 1 or bool(re.search(r"[-–]", marker["text"]))
+                    marker_number = (
+                        marker_numbers[0] + "-" + marker_numbers[-1]
+                        if grouped and re.search(r"[-–]", marker["text"])
+                        else ",".join(marker_numbers) if grouped else marker_numbers[0]
+                    )
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(marker["offset"]) + "superscript" + marker["text"]).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": marker_number,
+                        "numbers": marker_numbers,
+                        "group_kind": (
+                            "range" if grouped and re.search(r"[-–]", marker["text"])
+                            else "list" if grouped else None
+                        ),
+                        "text": marker["text"],
+                        "offset": marker["offset"], "end_offset": marker["end_offset"],
+                        "reference_mechanism": "numeric_superscript",
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if grouped or mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                        **({
+                            "resolution_reason": "Grouped superscript citation markers require explicit per-reference expansion."
+                        } if grouped else {}),
+                    })
+                elif marker["kind"] == "footnote_reference":
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(marker["offset"]) + "footnote" + marker.get("footnote_id", "")).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation",
+                        "number": "footnote:" + marker.get("footnote_id", ""),
+                        "text": "",
+                        "offset": marker["offset"], "end_offset": marker["end_offset"],
+                        "reference_mechanism": "footnote_reference",
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Native footnote references need a dedicated footnote citation adapter and explicit target mapping.",
+                    })
+
+            if "author_year" in citation_profile_modes:
+                for match in _AUTHOR_YEAR_CITATION.finditer(text_value):
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                         + str(match.start()) + "author-year" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation",
+                        "number": match.group("authors") + "," + match.group("year"),
+                        "text": match.group(),
+                        "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Author-year citation identity requires explicit bibliography-entry matching; no name/year edge is guessed.",
                     })
 
             mention_group_spans: list[tuple[int, int]] = []
@@ -1028,6 +1315,9 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 "part": item["part"],
                 "paragraph_index": item["paragraph_index"],
                 "reference_mechanism": item["reference_mechanism"],
+                "citation_profile_modes": list(item.get("citation_profile_modes", [])),
+                "citation_marker_events": copy.deepcopy(item.get("citation_marker_events", [])),
+                "in_reference_section": item.get("in_reference_section", False),
             } for item in segments]
             for doc_id, segments in sorted(normalized_documents.items())
         },
