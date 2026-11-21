@@ -634,10 +634,10 @@ _CAPTION = re.compile(
     rf"(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
 )
-_REFERENCE_GROUP_SEPARATOR = r"(?:[-–]\s*|[,;]\s*(?:and\\s+)?|&\\s*|\\band\\b\\s*)"
+_REFERENCE_GROUP_SEPARATOR = r"(?:[-–]\s*|[,;]\s*(?:and\s+)?|&\s*|\band\b\s*)"
 _MENTION_GROUP = re.compile(
     rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
-    rf"(?:Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
+    rf"(?P<label>Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
     rf"\s*\(?\s*(?P<references>{_REFERENCE_NUMBER}"
     rf"(?:\s*{_REFERENCE_GROUP_SEPARATOR}{_REFERENCE_NUMBER})+)"
     rf"\s*\)?(?=$|[\s.;:)\]])",
@@ -905,13 +905,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 )
                 mentions.append({
                     "id": record_id, **base,
-                    "kind": _canonical_reference_kind(
-                        re.match(
-                            r"(?i)(?:Extended\\s+Data|Supplementary|Supporting\\s+Information\\s+)?"
-                            r"(Figures?|Figs?\\.?|Tables?|Equations?|Eqs?\\.?|Eqns?\\.?|Schemes?|Sections?)",
-                            match.group(0),
-                        ).group(1)
-                    ),
+                    "kind": _canonical_reference_kind(match.group("label")),
                     "number": references,
                     "numbers": numbers,
                     "group_kind": group_kind,
