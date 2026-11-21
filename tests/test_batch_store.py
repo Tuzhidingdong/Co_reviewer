@@ -1156,15 +1156,32 @@ class BatchStoreTests(unittest.TestCase):
         output = Path(intent["documents"]["Manuscript"]["output_file"])
         output.write_bytes(b"published synthetic Marked DOCX")
         output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
-        published = json.loads(json.dumps(self.workflow))
-        published["active_documents"] = {
-            "Manuscript": {
-                "file": str(output.resolve()),
-                "sha256": output_sha,
-                "batch_id": "run-001",
-                "updated_at_utc": STAMP,
-            }
-        }
+        source_sha = hashlib.sha256(
+            Path(intent["documents"]["Manuscript"]["parent_file"]).read_bytes()
+        ).hexdigest()
+        patch = SimpleNamespace(
+            patch_id="P1",
+            task_id="T1",
+            status="verified",
+            operations=[SimpleNamespace(
+                document="Manuscript",
+                input_file=intent["documents"]["Manuscript"]["parent_file"],
+                output_file=str(output),
+                source_sha256=source_sha,
+            )],
+            verified_output_hashes=[{"path": str(output), "sha256": output_sha}],
+        )
+        published, publish_receipt = publish_active_pointers(
+            self.workflow,
+            self.workflow_path,
+            batch_dir,
+            SimpleNamespace(patches=[patch]),
+        )
+        self.assertEqual(publish_receipt["status"], "published")
+        self.assertEqual(
+            [event["event_type"] for event in published["events"]],
+            ["batch_published"],
+        )
         self.assertEqual(validate_workflow_ledger(published), [])
 
         updated, receipt = rollback_active_pointers(
