@@ -129,7 +129,18 @@ def _make_marked_docx(source: Path, output: Path, revisions: list[tuple[str, str
 
 
 def _complete_task(task: dict, task_id: str) -> dict:
-    """Complete a document task through the full evidence-bound state sequence."""
+    """Complete a document task through its risk and evidence-bound state sequence."""
+    from co_reviewer.safety_policy import assess_task_risk
+
+    risk = assess_task_risk(task)
+    task.update(risk)
+    if risk["risk_tier"] == "TIER_1":
+        task.update({
+            "high_risk_review_confirmed": True,
+            "high_risk_reviewed_by": "Human Author (test fixture)",
+            "high_risk_reviewed_at_utc": STAMP,
+            "high_risk_review_note": "Synthetic fixture explicitly confirms the exact reviewer-authorized scope before execution.",
+        })
     ready = transition_task(task, "ready")
     preflighted = transition_task(
         ready,
