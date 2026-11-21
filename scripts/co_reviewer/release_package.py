@@ -728,8 +728,15 @@ def _verify_package_directory_against_manifest(
             raise ReleasePackageTransactionError(f"Release Package manifest repeats artifact path: {relative}")
         declared.add(relative)
         target = package_dir.joinpath(*pure.parts)
-        if not target.is_file() or target.is_symlink():
-            raise ReleasePackageTransactionError(f"Staged Release Package artifact is missing or a symlink: {relative}")
+        probe = package_dir
+        for component in pure.parts:
+            probe = probe / component
+            if probe.is_symlink():
+                raise ReleasePackageTransactionError(
+                    f"Staged Release Package artifact path traverses a symlink: {relative}"
+                )
+        if not target.is_file():
+            raise ReleasePackageTransactionError(f"Staged Release Package artifact is missing: {relative}")
         payload = target.read_bytes()
         if (
             len(payload) != row.get("bytes")
@@ -741,11 +748,14 @@ def _verify_package_directory_against_manifest(
     manifest_path = package_dir / "package_manifest.json"
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise ReleasePackageTransactionError("Staged Release Package manifest is missing or a symlink.")
-    actual = {
-        candidate.relative_to(package_dir).as_posix()
-        for candidate in package_dir.rglob("*")
-        if candidate.is_file() and candidate != manifest_path
-    }
+    actual: set[str] = set()
+    for candidate in package_dir.rglob("*"):
+        if candidate.is_symlink():
+            raise ReleasePackageTransactionError(
+                f"Staged Release Package contains an unlisted symbolic link: {candidate}"
+            )
+        if candidate.is_file() and candidate != manifest_path:
+            actual.add(candidate.relative_to(package_dir).as_posix())
     if actual != declared:
         raise ReleasePackageTransactionError(
             "Staged Release Package inventory differs from its Manifest "
