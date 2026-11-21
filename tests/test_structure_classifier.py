@@ -148,6 +148,7 @@ class StructureClassifierTests(unittest.TestCase):
             '<w:commentRangeStart w:id="9"/>'
             '<w:r><w:t>commented</w:t></w:r>'
             '<w:commentRangeEnd w:id="9"/>'
+            '<w:r><w:commentReference w:id="9"/></w:r>'
             '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
             '<w:r><w:instrText xml:space="preserve"> REF _Ref1 </w:instrText></w:r>'
             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
@@ -244,6 +245,11 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertIn(
             "9",
             {row["range_id"] for row in commented_text["paired_ranges"]},
+        )
+        comment_reference = next(row for row in events if row["element"] == "commentReference")
+        self.assertIn(
+            "9",
+            {row["range_id"] for row in comment_reference["paired_ranges"]},
         )
 
         field_events = [
