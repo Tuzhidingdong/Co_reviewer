@@ -6027,6 +6027,17 @@ def cmd_create_release_package(args):
         "Response_to_Reviewers.quality.json": sha256_file(quality_path),
         "final_release_manifest.json": sha256_file(manifest_path),
     }
+    if sha256_file(workflow_path) != workflow_sha_snapshot:
+        raise ValueError(
+            "Workflow Ledger changed during Release Package generation. No completion receipt or commit marker was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+    if sha256_file(revision_path) != revision_sha_snapshot:
+        raise ValueError(
+            "RevisionLedger changed during Release Package generation. No completion receipt or commit marker was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+
     # Commit every managed DOCX and every referenced evidence artifact as one
     # immutable directory. The external commit marker is created only after the
     # staged package manifest and every copied byte have been revalidated.
