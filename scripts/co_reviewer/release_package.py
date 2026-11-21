@@ -91,6 +91,7 @@ def _validate_docx_bytes(payload: bytes, label: str) -> None:
             parser = ET.XMLParser(
                 resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False
             )
+            members = {}
             for name in names:
                 if name.endswith("/"):
                     continue
@@ -99,8 +100,16 @@ def _validate_docx_bytes(payload: bytes, label: str) -> None:
                     raise ReleasePackageTransactionError(
                         f"{label} contains an unsafe DOCX member path: {name}"
                     )
+                data = archive.read(name)
+                members[name] = data
                 if name.endswith((".xml", ".rels")):
-                    ET.fromstring(archive.read(name), parser=parser)
+                    ET.fromstring(data, parser=parser)
+            from .structure_classifier import classify_docx_package_members
+            structure_report = classify_docx_package_members(members, source_name=label)
+            if structure_report.get("package_status") != "READY":
+                raise ReleasePackageTransactionError(
+                    f"{label} failed DOCX structure validation: {structure_report.get('summary', {})}"
+                )
     except ReleasePackageTransactionError:
         raise
     except Exception as exc:
@@ -464,6 +473,9 @@ def verify_release_package(
         or not isinstance(package_manifest.get("artifacts"), list)
     ):
         raise ReleasePackageTransactionError("Release Package manifest identity or schema is invalid.")
+    manifest_core = {key: value for key, value in package_manifest.items() if key != "package_id"}
+    if _sha256_bytes(_canonical_json(manifest_core)) != package_id:
+        raise ReleasePackageTransactionError("Release Package ID is not the hash of its immutable manifest contents.")
     rows = package_manifest["artifacts"]
     if package_manifest.get("artifact_count") != len(rows) or len(rows) != marker.get("artifact_count"):
         raise ReleasePackageTransactionError("Release Package manifest artifact count does not match its commit marker.")
@@ -648,6 +660,12 @@ def _verify_package_directory_against_manifest(
     package_dir: Path,
     manifest: Mapping[str, Any],
 ) -> None:
+    manifest_core = {key: value for key, value in manifest.items() if key != "package_id"}
+    if (
+        not isinstance(manifest.get("package_id"), str)
+        or _sha256_bytes(_canonical_json(manifest_core)) != manifest.get("package_id")
+    ):
+        raise ReleasePackageTransactionError("Staged Release Package ID is not bound to its manifest contents.")
     rows = manifest.get("artifacts")
     if not isinstance(rows, list) or not rows:
         raise ReleasePackageTransactionError("Release Package manifest must list at least one artifact.")
