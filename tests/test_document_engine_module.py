@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+
+from docx import Document
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -18,7 +22,13 @@ from co_reviewer.document_engine import (
     safe_part,
     visible_text,
     map_target_text_to_xml_nodes,
+    apply_document,
 )
+from co_reviewer.docx_identity import (
+    build_document_identity_manifest,
+    build_target_refs_by_task,
+)
+from co_reviewer.identity import sha256_file
 
 NS = {"w": W}
 
@@ -131,6 +141,138 @@ class DocumentEngineModuleBoundaryTests(unittest.TestCase):
 
     def test_qn_uses_the_wordprocessingml_namespace(self):
         self.assertEqual(qn("p"), f"{{{W}}}p")
+
+
+    def test_registered_target_ref_reaches_native_docx_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root_dir = Path(temporary)
+            source = root_dir / "source.docx"
+            output = root_dir / "marked.docx"
+            document = Document()
+            document.add_paragraph("First paragraph stays unchanged.")
+            document.add_paragraph("Second stable phrase.")
+            document.save(source)
+            source_bytes = source.read_bytes()
+            source_sha256 = sha256_file(source)
+
+            inventory = [{
+                "role": "Manuscript",
+                "file": str(source),
+                "source_sha256": source_sha256,
+                "paragraphs": [],
+            }]
+            manifest, _ = build_document_identity_manifest(inventory)
+            task = {
+                "task_id": "T-STABLE-1",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "action": "replace",
+                }],
+            }
+            refs_by_task, identity_errors = build_target_refs_by_task(
+                [task], manifest
+            )
+            self.assertEqual(identity_errors, [])
+            self.assertEqual(len(refs_by_task["T-STABLE-1"]), 1)
+            target_ref = refs_by_task["T-STABLE-1"][0]
+
+            apply_document(
+                str(source),
+                str(output),
+                [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 1,
+                    "find": "Second stable phrase.",
+                    "replace": "Second revised phrase.",
+                    "source_sha256": source_sha256,
+                    "target_ref": target_ref,
+                    "target_identity_mode": "stable_target_ref",
+                }],
+                "Identity integration test",
+            )
+            self.assertEqual(source.read_bytes(), source_bytes)
+            with zipfile.ZipFile(output) as archive:
+                marked_root = parse_xml(archive.read("word/document.xml"))
+                paragraphs = marked_root.findall(".//w:body/w:p", NS)
+                self.assertEqual(len(paragraphs), 2)
+                self.assertEqual(
+                    visible_text(paragraphs[0]),
+                    "First paragraph stays unchanged.",
+                )
+                self.assertEqual(
+                    visible_text(paragraphs[1]),
+                    "Second revised phrase.",
+                )
+                deleted = "".join(
+                    node.text or ""
+                    for node in paragraphs[1].findall(
+                        ".//w:del//w:delText", NS
+                    )
+                )
+                inserted = "".join(
+                    node.text or ""
+                    for node in paragraphs[1].findall(".//w:ins//w:t", NS)
+                )
+                self.assertEqual(deleted, "Second stable phrase.")
+                self.assertEqual(inserted, "Second revised phrase.")
+
+            # A matching paragraph index and source excerpt must never rescue
+            # a TargetRef whose parser-backed object fingerprint is stale.
+            tampered_ref = dict(target_ref)
+            tampered_ref["object_fingerprint"] = "0" * 64
+            tampered_output = root_dir / "tampered-ref.docx"
+            with self.assertRaisesRegex(
+                ValueError,
+                "exactly one current DOCX object",
+            ):
+                apply_document(
+                    str(source),
+                    str(tampered_output),
+                    [{
+                        "document": "Manuscript",
+                        "part": "word/document.xml",
+                        "p_idx": 1,
+                        "find": "Second stable phrase.",
+                        "replace": "Unsafe fallback.",
+                        "source_sha256": source_sha256,
+                        "target_ref": tampered_ref,
+                        "target_identity_mode": "stable_target_ref",
+                    }],
+                    "Identity integration test",
+                )
+            self.assertFalse(tampered_output.exists())
+
+            # TargetRefs are revision-bound: changing the DOCX invalidates the
+            # old reference even when its paragraph hint and visible text remain.
+            changed_source = root_dir / "changed-source.docx"
+            changed_document = Document(source)
+            changed_document.add_paragraph("Unrelated later addition.")
+            changed_document.save(changed_source)
+            stale_output = root_dir / "stale-ref.docx"
+            with self.assertRaisesRegex(
+                ValueError,
+                "revision_id does not match the exact source DOCX version",
+            ):
+                apply_document(
+                    str(changed_source),
+                    str(stale_output),
+                    [{
+                        "document": "Manuscript",
+                        "part": "word/document.xml",
+                        "p_idx": 1,
+                        "find": "Second stable phrase.",
+                        "replace": "Stale reference must block.",
+                        "source_sha256": sha256_file(changed_source),
+                        "target_ref": target_ref,
+                        "target_identity_mode": "stable_target_ref",
+                    }],
+                    "Identity integration test",
+                )
+            self.assertFalse(stale_output.exists())
+
 
 
 if __name__ == "__main__":
