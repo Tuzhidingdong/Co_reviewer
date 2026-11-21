@@ -981,6 +981,43 @@ class V232ContractTests(unittest.TestCase):
             self.assertEqual(mention["resolution"], "resolved")
             self.assertEqual(mention["target_definition_ids"], [definition["id"]])
 
+    def test_docx_reference_extractor_does_not_infer_citation_style_from_bibliography_or_equation_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bibliography-only.docx"
+            document = Document()
+            document.add_paragraph("The result follows Eq. (2).")
+            document.add_paragraph("References")
+            document.add_paragraph("Smith (2020). [1] A numbered bibliography entry.")
+            document.save(path)
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("The result follows")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Smith")
+            )
+            self.assertEqual(body["citation_profile_modes"], [])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            self.assertTrue(bibliography["in_reference_section"])
+            self.assertEqual(bibliography["citation_marker_events"], [])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("reference_mechanism") == "author_year"
+                for row in graph["mentions"]
+            ))
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("surface_text") == "[1]"
+                for row in graph["mentions"]
+            ))
+            self.assertTrue(any(
+                row["kind"] == "citation" and row.get("definition_style") == "numbered_reference_list"
+                for row in graph["definitions"]
+            ))
+
     def test_package_graph_resolves_and_renumbers_static_numeric_citations(self):
         graph = build_package_reference_graph({
             "Manuscript": [

@@ -791,33 +791,54 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                 parsed_parts[name] = _xml(archive.read(name))
 
     citation_modes: set[str] = set()
-    paragraph_rows: list[tuple[str, int, ET._Element, str]] = []
+    paragraph_rows: list[tuple[str, int, ET._Element, str, bool]] = []
+    in_reference_section = False
+    reference_headings = {
+        "references", "bibliography", "literature cited",
+        "引用文献", "参考文献",
+    }
     for part, root in parsed_parts.items():
         for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
             text_value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
-            paragraph_rows.append((part, paragraph_index, paragraph, text_value))
+            in_reference_paragraph = False
             if part == "word/document.xml":
-                if re.search(r"\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]", text_value):
-                    citation_modes.add("numeric_bracketed")
-                if re.search(r"\(\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\)", text_value):
-                    citation_modes.add("numeric_parenthetical")
-                if _AUTHOR_YEAR_CITATION.search(text_value):
-                    citation_modes.add("author_year")
-                for run in paragraph.findall(".//w:r", NS):
-                    vertical = run.find("w:rPr/w:vertAlign", NS)
-                    run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
-                    if (
-                        (vertical.get(qn("val")) if vertical is not None else None) == "superscript"
-                        and run_text
-                        and re.fullmatch(r"[\d,;–\-]+", run_text)
-                    ):
-                        citation_modes.add("numeric_superscript")
-            if paragraph.findall(".//w:footnoteReference", NS):
-                citation_modes.add("footnote")
+                heading = text_value.strip().casefold()
+                if heading in reference_headings:
+                    in_reference_section = True
+                in_reference_paragraph = in_reference_section
+                if not in_reference_paragraph:
+                    if re.search(r"\\[\\s*\\d+(?:\\s*[,;\\-–]\\s*\\d+)*\\s*\\]", text_value):
+                        citation_modes.add("numeric_bracketed")
+                    for match in _PAREN_CITATION_RANGE.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    for match in _PAREN_CITATION_GROUP.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    for match in _PAREN_CITATION_SINGLE.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    if _AUTHOR_YEAR_CITATION.search(text_value):
+                        citation_modes.add("author_year")
+                    for run in paragraph.findall(".//w:r", NS):
+                        vertical = run.find("w:rPr/w:vertAlign", NS)
+                        run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+                        if (
+                            (vertical.get(qn("val")) if vertical is not None else None) == "superscript"
+                            and run_text
+                            and re.fullmatch(r"[\\d,;–\\-]+", run_text)
+                        ):
+                            citation_modes.add("numeric_superscript")
+                    if paragraph.findall(".//w:footnoteReference", NS):
+                        citation_modes.add("footnote")
+            paragraph_rows.append((part, paragraph_index, paragraph, text_value, in_reference_paragraph))
 
     selected_modes = sorted(citation_modes)
     segments: list[dict[str, Any]] = []
-    for part, paragraph_index, paragraph, value in paragraph_rows:
+    for part, paragraph_index, paragraph, value, in_reference_paragraph in paragraph_rows:
         instructions = []
         for node in paragraph.findall(".//w:fldSimple", NS):
             instruction = node.get(qn("instr"), "")
@@ -844,28 +865,29 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                 footnote_offsets[node] = cursor
 
         marker_events: list[dict[str, Any]] = []
-        for run in paragraph.findall(".//w:r", NS):
-            vertical = run.find("w:rPr/w:vertAlign", NS)
-            run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
-            if (vertical.get(qn("val")) if vertical is not None else None) != "superscript" or not run_text:
-                continue
-            if not re.fullmatch(r"[\d,;–\-]+", run_text):
-                continue
-            text_nodes = run.findall(".//w:t", NS)
-            if not text_nodes or any(node not in text_offsets for node in text_nodes):
-                continue
-            marker_events.append({
-                "kind": "numeric_superscript", "text": run_text,
-                "offset": text_offsets[text_nodes[0]][0],
-                "end_offset": text_offsets[text_nodes[-1]][1],
-                "numbers": re.findall(r"\d+", run_text),
-            })
-        for node, offset in footnote_offsets.items():
-            marker_events.append({
-                "kind": "footnote_reference", "text": "",
-                "offset": offset, "end_offset": offset,
-                "numbers": [], "footnote_id": node.get(qn("id"), ""),
-            })
+        if part == "word/document.xml" and not in_reference_paragraph:
+            for run in paragraph.findall(".//w:r", NS):
+                vertical = run.find("w:rPr/w:vertAlign", NS)
+                run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+                if (vertical.get(qn("val")) if vertical is not None else None) != "superscript" or not run_text:
+                    continue
+                if not re.fullmatch(r"[\\d,;–\\-]+", run_text):
+                    continue
+                text_nodes = run.findall(".//w:t", NS)
+                if not text_nodes or any(node not in text_offsets for node in text_nodes):
+                    continue
+                marker_events.append({
+                    "kind": "numeric_superscript", "text": run_text,
+                    "offset": text_offsets[text_nodes[0]][0],
+                    "end_offset": text_offsets[text_nodes[-1]][1],
+                    "numbers": re.findall(r"\\d+", run_text),
+                })
+            for node, offset in footnote_offsets.items():
+                marker_events.append({
+                    "kind": "footnote_reference", "text": "",
+                    "offset": offset, "end_offset": offset,
+                    "numbers": [], "footnote_id": node.get(qn("id"), ""),
+                })
         marker_events.sort(key=lambda row: (row["offset"], row["end_offset"], row["kind"]))
         segments.append({
             "part": part,
@@ -876,25 +898,11 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
             ),
             "word_field_instructions": list(dict.fromkeys(instructions)),
             "word_field_markers_present": has_field_markers,
-            "citation_profile_modes": selected_modes,
+            "citation_profile_modes": selected_modes if part == "word/document.xml" and not in_reference_paragraph else [],
             "citation_marker_events": marker_events,
-            "in_reference_section": False,
+            "in_reference_section": in_reference_paragraph,
         })
 
-    in_reference_section = False
-    for segment in segments:
-        if segment["part"] != "word/document.xml":
-            segment["in_reference_section"] = False
-            continue
-        heading = segment["text"].strip().casefold()
-        if heading in {
-            "references", "bibliography", "literature cited",
-            "引用文献", "参考文献",
-        }:
-            in_reference_section = True
-            segment["in_reference_section"] = True
-            continue
-        segment["in_reference_section"] = in_reference_section
     return segments
 
 def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any]:
@@ -1006,7 +1014,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     })
                     citation_definition_spans.append(span)
 
-            for match in _CITATION_RANGE.finditer(text_value):
+            for match in (_CITATION_RANGE.finditer(text_value) if segment.get("in_reference_section") is not True else []):
                 if any(match.start() >= left and match.end() <= right
                        for left, right in citation_definition_spans):
                     continue
@@ -1023,7 +1031,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     "resolution_reason": "Citation ranges require an explicit expansion/mapping before renumbering.",
                 })
 
-            for match in _CITATION_GROUP.finditer(text_value):
+            for match in (_CITATION_GROUP.finditer(text_value) if segment.get("in_reference_section") is not True else []):
                 if any(match.start() >= left and match.end() <= right
                        for left, right in citation_definition_spans):
                     continue
