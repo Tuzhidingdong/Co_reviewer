@@ -1204,8 +1204,14 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     raise ValueError(
                         f"FormatChange target {format_find[:80]!r} is not unique in paragraph P[{idx}]."
                     )
+                format_history_target = {"part": part, "p_idx": idx}
+                format_paragraph_text = visible_text(para)
+                format_offset = format_paragraph_text.find(format_find)
+                if format_offset >= 0 and format_paragraph_text.count(format_find) == 1:
+                    format_history_target["start_offset"] = format_offset
+                    format_history_target["end_offset"] = format_offset + len(format_find)
                 format_gate = targeted_revision_gate(
-                    revision_inventory, [{"part": part, "p_idx": idx}]
+                    revision_inventory, [format_history_target]
                 )
                 if format_gate["status"] != "PASS":
                     raise ValueError(
