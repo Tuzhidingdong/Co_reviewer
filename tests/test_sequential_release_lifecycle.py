@@ -129,14 +129,53 @@ def _make_marked_docx(source: Path, output: Path, revisions: list[tuple[str, str
 
 
 def _complete_task(task: dict, task_id: str) -> dict:
+    """Complete a document task through the full evidence-bound state sequence."""
     ready = transition_task(task, "ready")
-    fingerprint = hashlib.sha256(f"completion:{task_id}".encode("utf-8")).hexdigest()
-    return transition_task(
+    preflighted = transition_task(
         ready,
+        "preflighted",
+        evidence={
+            "input_fingerprint": hashlib.sha256(f"input:{task_id}".encode("utf-8")).hexdigest(),
+            "preflight_report_id": f"PREFLIGHT-{task_id}",
+            "preflighted_at_utc": STAMP,
+        },
+    )
+    approved = transition_task(
+        preflighted,
+        "approved",
+        evidence={
+            "human_approval_confirmed": True,
+            "approved_by": "Human Author (test fixture)",
+            "approved_at_utc": STAMP,
+        },
+    )
+    applied = transition_task(
+        approved,
+        "applied",
+        evidence={
+            "output_fingerprint": hashlib.sha256(f"output:{task_id}".encode("utf-8")).hexdigest(),
+            "execution_report_id": f"APPLY-{task_id}",
+            "applied_at_utc": STAMP,
+        },
+    )
+    verified = transition_task(
+        applied,
+        "verified",
+        evidence={
+            "semantic_review_confirmed": True,
+            "verified_by": "Human Reviewer (test fixture)",
+            "verified_at_utc": STAMP,
+            "verification_report_id": f"VERIFY-{task_id}",
+        },
+    )
+    return transition_task(
+        verified,
         "completed",
         evidence={
             "completion_record_id": f"COMPLETE-{task_id}",
-            "completion_record_fingerprint": fingerprint,
+            "completion_record_fingerprint": hashlib.sha256(
+                f"completion:{task_id}".encode("utf-8")
+            ).hexdigest(),
             "completed_at_utc": STAMP,
         },
     )
@@ -462,16 +501,7 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
         self.assertTrue(_refresh_task_evidence(
             task_two, refresh_spec, inventory_by_role, current_pointers
         ))
-        task_two = transition_task(task_two, "ready")
-        task_two = transition_task(
-            task_two,
-            "completed",
-            evidence={
-                "completion_record_id": "COMPLETE-T2-REFRESHED",
-                "completion_record_fingerprint": hashlib.sha256(b"COMPLETE-T2-REFRESHED").hexdigest(),
-                "completed_at_utc": STAMP,
-            },
-        )
+        task_two = _complete_task(task_two, "T2-REFRESHED")
         workflow["tasks"] = [
             task_two if row["task_id"] == "T2" else row for row in workflow["tasks"]
         ]
