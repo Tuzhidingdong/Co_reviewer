@@ -1093,8 +1093,21 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 why = "not found" if not found else "ambiguous across paragraphs"
                 raise ValueError(f"Target {old[:80]!r} {why} in {part}; no output was written.")
             idx, para = found[0]
+            history_target = {"part": part, "p_idx": idx}
+            paragraph_text_for_history = visible_text(para)
+            target_positions = []
+            cursor = 0
+            while True:
+                match_position = paragraph_text_for_history.find(old, cursor)
+                if match_position < 0:
+                    break
+                target_positions.append(match_position)
+                cursor = match_position + max(1, len(old))
+            if len(target_positions) == 1:
+                history_target["start_offset"] = target_positions[0]
+                history_target["end_offset"] = target_positions[0] + len(old)
             history_gate = targeted_revision_gate(
-                revision_inventory, [{"part": part, "p_idx": idx}]
+                revision_inventory, [history_target]
             )
             if history_gate["status"] != "PASS":
                 conflicts = [
