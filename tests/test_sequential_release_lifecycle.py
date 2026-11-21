@@ -4,7 +4,6 @@ import contextlib
 import hashlib
 import io
 import json
-import shutil
 import sys
 import tempfile
 import unittest
@@ -14,7 +13,6 @@ from types import SimpleNamespace
 
 from docx import Document
 from lxml import etree
-from reportlab.pdfgen import canvas
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -54,6 +52,36 @@ def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+
+
+def _write_minimal_pdf(path: Path, text: str) -> None:
+    """Write a deterministic one-page PDF fixture without optional PDF libraries."""
+    safe_text = text.replace("\\\\", "\\\\\\\\").replace("(", "\\\\(").replace(")", "\\\\)")
+    stream = f"BT /F1 12 Tf 72 720 Td ({safe_text}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\\nstream\\n" + stream + b"\\nendstream",
+    ]
+    payload = bytearray(b"%PDF-1.4\\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(payload))
+        payload.extend(f"{index} 0 obj\\n".encode("ascii"))
+        payload.extend(body)
+        payload.extend(b"\\nendobj\\n")
+    xref_offset = len(payload)
+    payload.extend(f"xref\\n0 {len(offsets)}\\n".encode("ascii"))
+    payload.extend(b"0000000000 65535 f \\n")
+    for offset in offsets[1:]:
+        payload.extend(f"{offset:010d} 00000 n \\n".encode("ascii"))
+    payload.extend(
+        f"trailer\\n<< /Size {len(offsets)} /Root 1 0 R >>\\nstartxref\\n{xref_offset}\\n%%EOF\\n".encode("ascii")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
 
 def _make_source_docx(path: Path, text: str) -> None:
     document = Document()
@@ -538,10 +566,7 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
         clean = self.root / "final" / "Manuscript.working_clean.docx"
         _make_source_docx(clean, "Sample ID: ZB-03.")
         pdf_path = self.root / "final" / "Manuscript.pdf"
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_canvas = canvas.Canvas(str(pdf_path), pagesize=(612, 792))
-        pdf_canvas.drawString(72, 720, "Sample ID: ZB-03.")
-        pdf_canvas.save()
+        _write_minimal_pdf(pdf_path, "Sample ID: ZB-03.")
         clean_sha, pdf_sha = _sha(clean), _sha(pdf_path)
         quality_path = self.root / "final" / "Manuscript.quality.json"
         quality = audit_docx_quality(
