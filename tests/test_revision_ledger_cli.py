@@ -1205,6 +1205,8 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "input_file": str(source),
             "output_file": str(r1),
             "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "find": "old",
             "replace": "verified",
             "source_sha256": sha256_file(source),
