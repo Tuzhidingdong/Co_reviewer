@@ -6,6 +6,7 @@ from pathlib import Path
 
 from jsonschema.exceptions import ValidationError
 from jsonschema.validators import validator_for
+from referencing import Registry, Resource
 
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
@@ -96,6 +97,15 @@ class JsonSchemaContractTests(unittest.TestCase):
             self.assertIn("format_authorization", schema["properties"])
             self.assertIn("format_operations", schema["properties"])
             self.assertFalse(schema["additionalProperties"])
+        identity_schema = json.loads(
+            (SCHEMA_DIR / "document-identity.schema.json").read_text(encoding="utf-8")
+        )
+        identity_registry = Registry().with_resource(
+            "document-identity.schema.json",
+            Resource.from_contents(identity_schema),
+        )
+        ledger_validator = validator_for(ledger_schema)(ledger_schema, registry=identity_registry)
+
         operation = {
             "operation_id": "OP-FORMAT",
             "document": "Manuscript",
@@ -114,7 +124,7 @@ class JsonSchemaContractTests(unittest.TestCase):
                 {"replacement_start": 0, "replacement_end": 12, "source_offset": 0}
             ],
         }
-        validator_for(ledger_schema)(ledger_schema).validate({
+        ledger_validator.validate({
             "schema_version": "0.5.1",
             "revision_round_id": "round-schema-format",
             "documents": [],
@@ -133,7 +143,6 @@ class JsonSchemaContractTests(unittest.TestCase):
             "events": [],
         })
 
-        ledger_validator = validator_for(ledger_schema)(ledger_schema)
         valid_ledger = {
             "schema_version": "0.5.1",
             "revision_round_id": "round-schema-format",
