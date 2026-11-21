@@ -14,6 +14,7 @@ from docx import Document
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import co_reviewer_cli as cli
 from co_reviewer.revision_models import PatchOperation, RevisionModelError, validate_author_decision_ref
 from co_reviewer.numbering_transaction import (
     NumberingTransactionError,
@@ -67,6 +68,57 @@ class NumberingTransactionTests(unittest.TestCase):
             sources,
         )
         return plan, sources
+
+    def test_numbering_impact_plan_and_authorization_cli_commands_are_connected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph, sources = self._source_fixture(root)
+            graph_path = root / "reference_graph.json"
+            map_path = root / "number_map.json"
+            plan_path = root / "impact_plan.json"
+            approval_path = root / "author_approval.json"
+            graph_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
+            map_path.write_text(
+                json.dumps({"Manuscript::figure::1": "2"}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                graph=str(graph_path),
+                number_map=str(map_path),
+                confirm_ambiguous_map=None,
+                document=[f"{role}={path}" for role, path in sources.items()],
+                out=str(plan_path),
+            )
+            self.assertEqual(cli.cmd_create_numbering_impact_plan(args), 0)
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            self.assertEqual(plan["status"], "awaiting_authorization")
+            self.assertFalse(plan["numbering_mutation_authorized"])
+            self.assertEqual(set(plan["source_documents"]), set(sources))
+
+            approval_args = SimpleNamespace(
+                plan=str(plan_path),
+                approved_plan_sha256=plan["impact_plan_sha256"],
+                approved_by="Human Author",
+                out=str(approval_path),
+            )
+            self.assertEqual(cli.cmd_authorize_numbering_impact_plan(approval_args), 0)
+            approval = json.loads(approval_path.read_text(encoding="utf-8"))
+            self.assertEqual(approval["impact_plan_sha256"], plan["impact_plan_sha256"])
+            self.assertEqual(validate_author_decision_ref(approval), approval)
+
+            stale_args = SimpleNamespace(
+                plan=str(plan_path),
+                approved_plan_sha256="0" * 64,
+                approved_by="Human Author",
+                out=str(root / "stale_approval.json"),
+            )
+            with self.assertRaisesRegex(NumberingTransactionError, "must exactly match"):
+                cli.cmd_authorize_numbering_impact_plan(stale_args)
+            self.assertFalse(Path(stale_args.out).exists())
+
+    def test_legacy_boolean_numbering_cli_is_disabled(self):
+        with self.assertRaisesRegex(ValueError, "Direct boolean-authorized graph mutation is disabled"):
+            cli.cmd_renumber_package_graph(SimpleNamespace())
 
     def test_impact_plan_is_complete_non_authorizing_and_hash_bound(self):
         with tempfile.TemporaryDirectory() as temporary:
