@@ -25,6 +25,7 @@ from co_reviewer.structure_classifier import (
     SUPPORTED,
     StructureClassificationError,
     assert_edit_target_supported,
+    assert_edit_target_supported_with_bounded_safe_span,
     classify_docx_structure,
     _PRESERVED_SETTINGS_ROOT_ELEMENTS,
     _PRESERVED_SETTINGS_CHILDREN,
@@ -243,6 +244,79 @@ class StructureClassifierTests(unittest.TestCase):
         })
         self.assertEqual(report["summary"]["structural_events"], len(report["structural_events"]))
         self.assertIn("text_node", report["summary"]["structural_events_by_kind"])
+
+    def test_bounded_safe_span_cannot_bypass_comment_field_or_drawing_boundaries(self):
+        fixtures = [
+            (
+                "comment range",
+                '<w:p><w:commentRangeStart w:id="8"/>'
+                '<w:r><w:t>target wording</w:t></w:r>'
+                '<w:commentRangeEnd w:id="8"/></w:p>',
+            ),
+            (
+                "complex field",
+                '<w:p>'
+                '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                '<w:r><w:instrText xml:space="preserve"> REF _Ref1 </w:instrText></w:r>'
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                '<w:r><w:t>target wording</w:t></w:r>'
+                '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+                '</w:p>',
+            ),
+            (
+                "embedded drawing",
+                '<w:p><w:r><w:drawing/></w:r>'
+                '<w:r><w:t>target wording</w:t></w:r></w:p>',
+            ),
+        ]
+        for label, body in fixtures:
+            with self.subTest(structure=label):
+                _write_docx(self.docx, _document(body))
+                report = classify_docx_structure(self.docx)
+                with zipfile.ZipFile(self.docx, "r") as archive:
+                    part_root = parse_xml(archive.read("word/document.xml"))
+                paragraph = part_root.find(".//w:p", {"w": W})
+                self.assertIsNotNone(paragraph)
+                with self.assertRaises(StructureClassificationError):
+                    assert_edit_target_supported_with_bounded_safe_span(
+                        report,
+                        part="word/document.xml",
+                        paragraph_index=0,
+                        paragraph=paragraph,
+                        part_root=part_root,
+                        target_text="target wording",
+                    )
+
+    def test_single_hyperlink_adapter_preserves_relationship_and_rejects_ambiguity(self):
+        paragraph = parse_xml(
+            f'<w:p xmlns:w="{W}" xmlns:r="{R}">'
+            '<w:hyperlink r:id="rIdLink" w:history="1">'
+            '<w:r><w:t>target wording</w:t></w:r>'
+            '</w:hyperlink></w:p>'
+        )
+        changed, next_id, reason = replace_in_paragraph(
+            paragraph, "target wording", "revised wording",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertTrue(changed, reason)
+        hyperlink = paragraph.find("w:hyperlink", {"w": W})
+        self.assertIsNotNone(hyperlink)
+        self.assertEqual(hyperlink.get(f"{{{R}}}id"), "rIdLink")
+        self.assertEqual(hyperlink.get(f"{{{W}}}history"), "1")
+        self.assertIn("revised wording", "".join(paragraph.itertext()))
+
+        ambiguous = parse_xml(
+            f'<w:p xmlns:w="{W}" xmlns:r="{R}">'
+            '<w:hyperlink r:id="rIdOne"><w:r><w:t>target wording</w:t></w:r></w:hyperlink>'
+            '<w:hyperlink r:id="rIdTwo"><w:r><w:t>target wording</w:t></w:r></w:hyperlink>'
+            '</w:p>'
+        )
+        changed, _, reason = replace_in_paragraph(
+            ambiguous, "target wording", "revised wording",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertFalse(changed)
+        self.assertIn("ambiguous across hyperlink", reason)
 
     def test_plain_paragraph_is_editable_but_special_structure_scopes_fail_closed(self):
         body = (
