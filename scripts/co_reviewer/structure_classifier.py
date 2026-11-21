@@ -966,6 +966,58 @@ def _build_structural_event_map(
                     output.append(item)
         return output
 
+    # Preserve the full enclosing table path, including nested tables. The
+    # indices are hints only; table/row/cell element paths plus XML order remain
+    # the structural coordinates used by downstream adapters.
+    table_nodes = list(root.iter(f"{{{W}}}tbl"))
+    table_indices = {table: index for index, table in enumerate(table_nodes)}
+
+    def direct_child_index(parent: ET._Element, child: ET._Element, local_name: str) -> int | None:
+        matches = [item for item in parent if item.tag == f"{{{W}}}{local_name}"]
+        try:
+            return matches.index(child)
+        except ValueError:
+            return None
+
+    def table_context_for(node: ET._Element) -> list[dict[str, Any]]:
+        ancestry = list(node.iterancestors())[::-1] + [node]
+        table_positions = [
+            index for index, item in enumerate(ancestry)
+            if item.tag == f"{{{W}}}tbl"
+        ]
+        contexts: list[dict[str, Any]] = []
+        for table_number, position in enumerate(table_positions):
+            table = ancestry[position]
+            stop = (
+                table_positions[table_number + 1]
+                if table_number + 1 < len(table_positions)
+                else len(ancestry)
+            )
+            segment = ancestry[position + 1:stop]
+            row = next((item for item in segment if item.tag == f"{{{W}}}tr"), None)
+            cell = None
+            if row is not None:
+                row_position = segment.index(row)
+                cell = next(
+                    (item for item in segment[row_position + 1:] if item.tag == f"{{{W}}}tc"),
+                    None,
+                )
+            contexts.append({
+                "table_index": table_indices[table],
+                "table_depth": table_number + 1,
+                "table_path": _path(table),
+                "row_index": (
+                    direct_child_index(table, row, "tr") if row is not None else None
+                ),
+                "row_path": _path(row) if row is not None else None,
+                "cell_index": (
+                    direct_child_index(row, cell, "tc")
+                    if row is not None and cell is not None else None
+                ),
+                "cell_path": _path(cell) if cell is not None else None,
+            })
+        return contexts
+
     events: list[dict[str, Any]] = []
     marker_locals = {
         "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
@@ -1047,6 +1099,27 @@ def _build_structural_event_map(
             ),
             "attributes": attributes,
             "relationship_refs": relationship_refs,
+            "table_context": table_context_for(node),
+            "run_text": (
+                "".join(
+                    item.text or ""
+                    for item in run.iter()
+                    if isinstance(item.tag, str)
+                    and _qname(item.tag).namespace == W
+                    and _qname(item.tag).localname in text_locals
+                )
+                if run is not None and node is run else None
+            ),
+            "run_text_length": (
+                len("".join(
+                    item.text or ""
+                    for item in run.iter()
+                    if isinstance(item.tag, str)
+                    and _qname(item.tag).namespace == W
+                    and _qname(item.tag).localname in text_locals
+                ))
+                if run is not None and node is run else None
+            ),
             "structure_records": [
                 {
                     "structure_id": record.get("structure_id"),

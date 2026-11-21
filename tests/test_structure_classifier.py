@@ -300,6 +300,67 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertEqual(report["summary"]["structural_events"], len(report["structural_events"]))
         self.assertIn("text_node", report["summary"]["structural_events_by_kind"])
 
+    def test_structural_event_map_records_nested_table_context_and_run_text(self):
+        body = (
+            '<w:p><w:r><w:t>before table</w:t></w:r></w:p>'
+            '<w:tbl><w:tr><w:tc>'
+            '<w:p><w:r><w:t>outer cell text</w:t></w:r></w:p>'
+            '<w:tbl><w:tr><w:tc>'
+            '<w:p><w:r><w:t>nested cell text</w:t></w:r></w:p>'
+            '</w:tc></w:tr></w:tbl>'
+            '</w:tc><w:tc><w:p><w:r><w:t>second outer cell</w:t></w:r></w:p>'
+            '</w:tc></w:tr></w:tbl>'
+            '<w:p><w:r><w:t>after table</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        events = [
+            row for row in report["structural_events"]
+            if row["part"] == "word/document.xml"
+        ]
+
+        table_events = [row for row in events if row["element"] == "tbl"]
+        self.assertEqual(len(table_events), 2)
+        self.assertEqual(
+            [row["table_context"][-1]["table_depth"] for row in table_events],
+            [1, 2],
+        )
+
+        nested_text = next(
+            row for row in events
+            if row.get("text_content") == "nested cell text"
+        )
+        self.assertEqual(len(nested_text["table_context"]), 2)
+        outer_context, inner_context = nested_text["table_context"]
+        self.assertEqual(outer_context["table_depth"], 1)
+        self.assertEqual((outer_context["row_index"], outer_context["cell_index"]), (0, 0))
+        self.assertEqual(inner_context["table_depth"], 2)
+        self.assertEqual((inner_context["row_index"], inner_context["cell_index"]), (0, 0))
+
+        outer_text = next(
+            row for row in events
+            if row.get("text_content") == "outer cell text"
+        )
+        self.assertEqual(len(outer_text["table_context"]), 1)
+        self.assertEqual(
+            (outer_text["table_context"][0]["table_index"],
+             outer_text["table_context"][0]["row_index"],
+             outer_text["table_context"][0]["cell_index"]),
+            (0, 0, 0),
+        )
+
+        run_event = next(
+            row for row in events
+            if row["element"] == "r"
+            and row.get("paragraph_index") == nested_text["paragraph_index"]
+            and row.get("table_context") == nested_text["table_context"]
+        )
+        self.assertEqual(run_event["run_text"], "nested cell text")
+        self.assertEqual(run_event["run_text_length"], len("nested cell text"))
+        orders = [row["xml_order"] for row in events]
+        self.assertEqual(orders, sorted(orders))
+        self.assertEqual(len(orders), len(set(orders)))
+
     def test_bounded_safe_span_cannot_bypass_comment_field_or_drawing_boundaries(self):
         fixtures = [
             (
