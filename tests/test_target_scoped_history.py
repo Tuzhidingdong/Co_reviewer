@@ -32,6 +32,12 @@ def _write_pretracked_docx(path: Path) -> None:
                 paragraph = root.find(".//{%s}p" % W)
                 for child in list(paragraph):
                     paragraph.remove(child)
+                deletion = ET.SubElement(paragraph, "{%s}del" % W)
+                deletion.set("{%s}id" % W, "6")
+                deletion.set("{%s}author" % W, "Synthetic Reviewer")
+                deleted_run = ET.SubElement(deletion, "{%s}r" % W)
+                deleted_text = ET.SubElement(deleted_run, "{%s}delText" % W)
+                deleted_text.text = "old phrase"
                 insert = ET.SubElement(paragraph, "{%s}ins" % W)
                 insert.set("{%s}id" % W, "7")
                 insert.set("{%s}author" % W, "Synthetic Reviewer")
@@ -57,13 +63,17 @@ class TargetScopedHistoricalRevisionTests(unittest.TestCase):
                 row for row in inventory["revisions"]
                 if row.get("kind") == "text_revision_wrapper"
             ]
-            self.assertEqual(len(wrappers), 1)
-            wrapper = wrappers[0]
-            self.assertEqual(wrapper["text_range_precision"], "exact_visible_text")
-            self.assertEqual(
-                wrapper["text_ranges"],
-                [{"paragraph_index": 0, "start_offset": 0, "end_offset": len("tracked phrase")}],
-            )
+            self.assertEqual(len(wrappers), 2)
+            deletion = next(row for row in wrappers if row["element"] == "del")
+            insertion = next(row for row in wrappers if row["element"] == "ins")
+            self.assertEqual(deletion["text_range_precision"], "exact_visible_text")
+            self.assertEqual(deletion["text_ranges"], [
+                {"paragraph_index": 0, "start_offset": 0, "end_offset": 0}
+            ])
+            self.assertEqual(insertion["text_range_precision"], "exact_visible_text")
+            self.assertEqual(insertion["text_ranges"], [
+                {"paragraph_index": 0, "start_offset": 0, "end_offset": len("tracked phrase")}
+            ])
 
             visible_text = "tracked phrase and independent target"
             target_start = visible_text.index("independent target")
@@ -78,7 +88,7 @@ class TargetScopedHistoricalRevisionTests(unittest.TestCase):
                 }],
             )
             self.assertEqual(disjoint["status"], "PASS")
-            self.assertEqual(len(disjoint["unrelated_revisions_preserved"]), 1)
+            self.assertEqual(len(disjoint["unrelated_revisions_preserved"]), 2)
             self.assertEqual(disjoint["overlapping_revisions"], [])
 
             overlapping = targeted_revision_gate(
@@ -91,7 +101,7 @@ class TargetScopedHistoricalRevisionTests(unittest.TestCase):
                 }],
             )
             self.assertEqual(overlapping["status"], "USER_DECISION_REQUIRED")
-            self.assertEqual(len(overlapping["overlapping_revisions"]), 1)
+            self.assertEqual(len(overlapping["overlapping_revisions"]), 2)
             self.assertTrue(overlapping["must_resolve_before_discovery_or_write"])
 
 
