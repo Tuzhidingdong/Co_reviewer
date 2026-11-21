@@ -807,7 +807,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                     vertical = run.find("w:rPr/w:vertAlign", NS)
                     run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
                     if (
-                        _attr(vertical, "val") == "superscript"
+                        (vertical.get(qn("val")) if vertical is not None else None) == "superscript"
                         and run_text
                         and re.fullmatch(r"[\d,;–\-]+", run_text)
                     ):
@@ -847,7 +847,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
         for run in paragraph.findall(".//w:r", NS):
             vertical = run.find("w:rPr/w:vertAlign", NS)
             run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
-            if _attr(vertical, "val") != "superscript" or not run_text:
+            if (vertical.get(qn("val")) if vertical is not None else None) != "superscript" or not run_text:
                 continue
             if not re.fullmatch(r"[\d,;–\-]+", run_text):
                 continue

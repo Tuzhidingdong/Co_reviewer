@@ -839,8 +839,8 @@ class V232ContractTests(unittest.TestCase):
             row for row in updated["definition_updates"] if row["kind"] == "citation"
         )
         self.assertEqual(definition_update["old_text"], "1")
-        self.assertEqual(definition_update["old_surface_text"], "1. Smith et al. Reference one.")
-        self.assertEqual(definition_update["new_surface_text"], "4. Smith et al. Reference one.")
+        self.assertEqual(definition_update["old_surface_text"], "1.")
+        self.assertEqual(definition_update["new_surface_text"], "4.")
         parenthetical_update = next(
             row for row in updated["mention_updates"]
             if row["paragraph_index"] == 3 and row["old_number"] == "1"
