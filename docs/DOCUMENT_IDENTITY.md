@@ -44,7 +44,7 @@ python scripts/validate_decision_plan.py `
   --workflow-ledger-out workflow_ledger.json
 ```
 
-The validator binds manifest source hashes to the decision plan, resolves each mutating target by its current part/paragraph hint and (when supplied) native paraId, then persists document identities, object registry and TargetRefs. The Workflow Engine schedules by `document_id|object_id`; `p_idx` is retained only as a hint. Without `--identity-manifest`, the legacy p_idx-based compatibility path remains available.
+The validator binds manifest source hashes to the decision plan, resolves each mutating target by its current part/paragraph hint and (when supplied) native paraId, then persists document identities, object registry and TargetRefs. The Workflow Engine schedules by `document_id|object_id`; `p_idx` is retained only as an advisory location hint. A missing identity manifest does not enable a positional fallback by default: preparation blocks a mutating target unless a deliberate migration scope explicitly selects `identity_mode=legacy_p_idx_explicit`. Each resulting PatchOperation must itself carry `target_identity_mode=legacy_p_idx_explicit` and an exact non-negative `p_idx`; it is migration-only metadata, never a stable object identity. A registered `TargetRef` must explicitly carry `target_identity_mode=stable_target_ref`. The data model and JSON Schemas reject missing or contradictory identity modes.
 
 ## Scope and limits
 
