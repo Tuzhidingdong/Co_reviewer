@@ -24,7 +24,7 @@ def _run(text):
     return run
 
 
-def _bookmark_docx(path):
+def _bookmark_docx(path, safe_text="safe wording"):
     document = Document()
     document.add_paragraph("placeholder")
     document.save(path)
@@ -39,7 +39,7 @@ def _bookmark_docx(path):
     end_a = ET.Element(f"{{{W}}}bookmarkEnd", {f"{{{W}}}id": "1"})
     start_b = ET.Element(f"{{{W}}}bookmarkStart", {f"{{{W}}}id": "2", f"{{{W}}}name": "b"})
     end_b = ET.Element(f"{{{W}}}bookmarkEnd", {f"{{{W}}}id": "2"})
-    paragraph.extend([start_a, _run("protected one"), end_a, _run("safe wording"), start_b, _run("protected two"), end_b])
+    paragraph.extend([start_a, _run("protected one"), end_a, _run(safe_text), start_b, _run("protected two"), end_b])
     members["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
         for name, payload in members.items():
@@ -70,6 +70,68 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
             self.assertEqual("".join(node.text or "" for node in revised.findall(".//w:ins//w:t", NS)), "revised wording")
             self.assertEqual(len(revised.findall(".//w:bookmarkStart", NS)), 2)
             self.assertEqual(len(revised.findall(".//w:bookmarkEnd", NS)), 2)
+
+    def test_bounded_safe_span_does_not_bypass_token_protected_span_or_format_authorization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            token_source = root / "token-source.docx"
+            token_output = root / "token-output.docx"
+            _bookmark_docx(token_source, "capacity 125.0 mAh")
+            token_before = token_source.read_bytes()
+            with self.assertRaisesRegex(ValueError, "UNPROTECTED_TOKEN_TOUCHED"):
+                prepare_document(
+                    str(token_source), str(token_output),
+                    [{
+                        "part": "word/document.xml", "p_idx": 0,
+                        "find": "125.0 mAh", "replace": "125 mAh",
+                        "document": "Manuscript",
+                    }],
+                    "Test Author",
+                )
+            self.assertEqual(token_source.read_bytes(), token_before)
+            self.assertFalse(token_output.exists())
+
+            protected_source = root / "protected-source.docx"
+            protected_output = root / "protected-output.docx"
+            _bookmark_docx(protected_source)
+            protected_before = protected_source.read_bytes()
+            with self.assertRaisesRegex(ValueError, "UNPROTECTED_TOKEN_TOUCHED"):
+                prepare_document(
+                    str(protected_source), str(protected_output),
+                    [{
+                        "part": "word/document.xml", "p_idx": 0,
+                        "find": "safe wording", "replace": "revised wording",
+                        "document": "Manuscript",
+                        "protected_spans": [{"start": 0, "end": 4}],
+                    }],
+                    "Test Author",
+                )
+            self.assertEqual(protected_source.read_bytes(), protected_before)
+            self.assertFalse(protected_output.exists())
+
+            format_source = root / "format-source.docx"
+            format_output = root / "format-output.docx"
+            _bookmark_docx(format_source)
+            format_before = format_source.read_bytes()
+            with self.assertRaisesRegex(
+                ValueError, "FORMAT_CHANGE_AUTHORIZATION_REQUIRED"
+            ):
+                prepare_document(
+                    str(format_source), str(format_output),
+                    [{
+                        "part": "word/document.xml", "p_idx": 0,
+                        "find": "safe wording", "replace": "safe wording",
+                        "document": "Manuscript",
+                        "format_operations": [{
+                            "find": "safe wording",
+                            "properties": {"bold": True},
+                        }],
+                    }],
+                    "Test Author",
+                )
+            self.assertEqual(format_source.read_bytes(), format_before)
+            self.assertFalse(format_output.exists())
 
     def test_prepare_document_returns_unapplied_manual_suggestion_for_text_inside_bookmark(self):
         with tempfile.TemporaryDirectory() as temp:
