@@ -54,6 +54,58 @@ def _write_pretracked_docx(path: Path) -> None:
 
 
 class TargetScopedHistoricalRevisionTests(unittest.TestCase):
+    def test_uncertain_cross_paragraph_ranges_and_part_scope_remain_fail_closed(self):
+        cross_paragraph_inventory = {
+            "revisions": [{
+                "kind": "comment_range",
+                "part": "word/document.xml",
+                "paragraph_index": 1,
+                "paragraph_indices": [1, 2],
+                "text_ranges": [],
+                "text_range_precision": "paragraph_fallback",
+            }]
+        }
+        middle_paragraph_target = targeted_revision_gate(
+            cross_paragraph_inventory,
+            [{
+                "part": "word/document.xml",
+                "p_idx": 2,
+                "start_offset": 4,
+                "end_offset": 9,
+            }],
+        )
+        self.assertEqual(middle_paragraph_target["status"], "USER_DECISION_REQUIRED")
+        outside_paragraph_target = targeted_revision_gate(
+            cross_paragraph_inventory,
+            [{
+                "part": "word/document.xml",
+                "p_idx": 3,
+                "start_offset": 4,
+                "end_offset": 9,
+            }],
+        )
+        self.assertEqual(outside_paragraph_target["status"], "PASS")
+
+        part_inventory = {
+            "revisions": [{
+                "kind": "incomplete_comment_range",
+                "part": "word/document.xml",
+                "paragraph_index": None,
+                "paragraph_indices": [],
+                "text_ranges": [],
+                "text_range_precision": "part_scope",
+                "details": {"scope_policy": "part_scope_no_paragraph_anchor"},
+            }]
+        }
+        for paragraph_index in (0, 5, 50):
+            with self.subTest(paragraph_index=paragraph_index):
+                result = targeted_revision_gate(
+                    part_inventory,
+                    [{"part": "word/document.xml", "p_idx": paragraph_index,
+                      "start_offset": 0, "end_offset": 1}],
+                )
+                self.assertEqual(result["status"], "USER_DECISION_REQUIRED")
+
     def test_disjoint_text_in_same_paragraph_is_not_blocked_by_historical_insertion(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "source.docx"
