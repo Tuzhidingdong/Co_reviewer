@@ -69,3 +69,28 @@ Stages A–D have been demonstrated by actual execution. Stage E fails, so the c
 ## 6. Honest boundary
 
 This report does not claim a formal RC, does not modify the frozen plan, and does not convert Word COM into Word GUI acceptance. No source, test, schema or Skill change was made by the diagnostic run.
+
+## 7. Post-failure lifecycle fix and current-head evidence — 2026-11-21
+
+The failure described in Sections 2–5 is the result of the historical full Word COM run at HEAD `db3dcd406ac36fa9924ca56a1dc97546eb0b7a62`. It remains the latest full Word COM execution and must remain recorded as **AC-45 FAIL**.
+
+A later focused regression on the integration line now covers the source-version lifecycle defect without mutating approved inputs:
+
+- Test: `tests/test_sequential_release_lifecycle.py::SequentialReleaseLifecycleIntegrationTests::test_two_publications_refresh_downstream_source_then_create_ready_release_package`.
+- It executes two real `cmd_publish_batch` transactions, then formally re-prepares downstream T2 with `prepare_workflow_execution()` against batch 1's published active DOCX and refreshed evidence/source SHA-256.
+- It preserves the unique initial `source_files` inventory and append-only intermediate `source_versions`, then creates a READY Manifest/Release Package with a complete receipt and commit marker and passes `verify_release_package()`.
+- This focused lifecycle fixture uses explicit manual locators. It isolates and validates the corrected release/source-version semantics, but does **not** run Word COM/PDF pagination or prove a full AC-45 chain.
+
+The same current source/test HEAD adds `tests/test_document_engine_module.py::DocumentEngineModuleBoundaryTests::test_registered_target_ref_reaches_native_docx_writer`, which exercises parser-backed identity manifest generation → registered TargetRef → native DOCX Track Changes writer. It verifies source-byte immutability and rejects forged object fingerprints and stale document revisions even when paragraph hints match.
+
+Current source/test HEAD: `3f6e4a173a0e58490eb1950b0ed27c288b32c94c`.
+
+Current GitHub Actions run: [44921598581](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44921598581) — **4/4 jobs passed**; **499/499 tests** on Python 3.10 and Python 3.13; Windows PowerShell 5.1 quality checks passed on both Python versions.
+
+### Updated acceptance interpretation
+
+- The historical Word COM Release Package failure is not erased or rewritten.
+- The source-version/initial-source separation now has a passing post-fix focused two-publication package regression.
+- AC-45 remains **FAIL / NOT ACCEPTED** until one current-head execution runs the complete chain with real Word COM: two sequential publications, formal downstream refresh/re-authorization, Word COM/PDF mapping, Response Letter, READY Release Package, and final package verification.
+- M2 Word GUI, Save/Close/Reopen, real scientific review and explicit user Release acceptance remain separate user-acceptance requirements.
+
