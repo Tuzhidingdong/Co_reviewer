@@ -283,14 +283,6 @@ class StructureClassifierTests(unittest.TestCase):
         hyperlink = next(row for row in events if row["element"] == "hyperlink")
         self.assertEqual(hyperlink["event_kind"], "relationship_container")
         self.assertEqual(hyperlink["relationship_refs"][0]["relationship_id"], "rIdLink")
-        table_events = [
-            row for row in events
-            if row["element"] in {"tbl", "tr", "tc"}
-        ]
-        self.assertEqual(
-            {row["element"]: row["event_kind"] for row in table_events},
-            {"tbl": "table", "tr": "table_row", "tc": "table_cell"},
-        )
         proofed_text = next(row for row in text_nodes if row.get("text_content") == "proofed text")
         self.assertIn(
             ("proofing_range", "spell"),
@@ -343,6 +335,15 @@ class StructureClassifierTests(unittest.TestCase):
             row for row in report["structural_events"]
             if row["part"] == "word/document.xml"
         ]
+
+        table_events = [
+            row for row in events
+            if row["element"] in {"tbl", "tr", "tc"}
+        ]
+        self.assertEqual(
+            {row["element"]: row["event_kind"] for row in table_events},
+            {"tbl": "table", "tr": "table_row", "tc": "table_cell"},
+        )
 
         table_events = [row for row in events if row["element"] == "tbl"]
         self.assertEqual(len(table_events), 2)

@@ -1060,7 +1060,7 @@ def _build_structural_event_map(
             else "range_or_field_marker" if namespace == W and local in marker_locals
             else "xml_element"
         )
-        if attached_records:
+        if attached_records and event_kind == "xml_element":
             event_kind = attached_records[0].get("kind", event_kind)
 
         attributes: dict[str, str] = {}
