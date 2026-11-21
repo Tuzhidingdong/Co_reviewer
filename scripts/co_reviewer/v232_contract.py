@@ -883,15 +883,17 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
 
     in_reference_section = False
     for segment in segments:
-        if segment["part"] == "word/document.xml":
-            heading = segment["text"].strip().casefold()
-            if heading in {
-                "references", "bibliography", "literature cited",
-                "引用文献", "参考文献",
-            }:
-                in_reference_section = True
-                segment["in_reference_section"] = True
-                continue
+        if segment["part"] != "word/document.xml":
+            segment["in_reference_section"] = False
+            continue
+        heading = segment["text"].strip().casefold()
+        if heading in {
+            "references", "bibliography", "literature cited",
+            "引用文献", "参考文献",
+        }:
+            in_reference_section = True
+            segment["in_reference_section"] = True
+            continue
         segment["in_reference_section"] = in_reference_section
     return segments
 
@@ -987,7 +989,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     number = match.group(1)
                     span = match.span()
                     record_id = "def-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(match.start()) + "citation-numbered" + number).encode("utf-8")
                     ).hexdigest()[:16]
                     definitions.append({
@@ -1052,7 +1054,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         continue
                     numbers = [match.group(1), match.group(2)]
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(match.start()) + "parenthetical-range" + match.group()).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({
@@ -1074,7 +1076,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     if len(numbers) < 2:
                         continue
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(match.start()) + "parenthetical-group" + match.group()).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({
@@ -1095,7 +1097,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         continue
                     number = match.group(1)
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(match.start()) + "parenthetical-single" + number).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({
@@ -1121,7 +1123,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         else ",".join(marker_numbers) if grouped else marker_numbers[0]
                     )
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(marker["offset"]) + "superscript" + marker["text"]).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({
@@ -1146,7 +1148,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     })
                 elif marker["kind"] == "footnote_reference":
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(marker["offset"]) + "footnote" + marker.get("footnote_id", "")).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({
@@ -1164,7 +1166,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
             if "author_year" in citation_profile_modes:
                 for match in _AUTHOR_YEAR_CITATION.finditer(text_value):
                     record_id = "men-" + hashlib.sha1(
-                        (doc_id + segment["part"] + str(segment["paragraph_index")
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
                          + str(match.start()) + "author-year" + match.group()).encode("utf-8")
                     ).hexdigest()[:16]
                     mentions.append({

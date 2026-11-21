@@ -849,7 +849,7 @@ class V232ContractTests(unittest.TestCase):
                  "citation_profile_modes": ["numeric_superscript", "footnote"],
                  "citation_marker_events": [{
                      "kind": "numeric_superscript", "text": "1",
-                     "offset": 34, "end_offset": 35, "numbers": ["1"],
+                     "offset": 33, "end_offset": 34, "numbers": ["1"],
                  }]},
                 {"part": "word/document.xml", "paragraph_index": 2, "text": "A note is attached here.",
                  "citation_profile_modes": ["footnote"],
