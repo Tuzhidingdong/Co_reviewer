@@ -42,7 +42,7 @@ class ReleasePackageTransactionTests(unittest.TestCase):
         documents_dir = batch_dir / "documents"
         documents_dir.mkdir(parents=True)
 
-        initial = sources / "Manuscript.original.docx"
+        initial = sources / "论文初稿.docx"
         marked = documents_dir / "Manuscript.marked.docx"
         working_clean = runs / "Manuscript.working-clean.docx"
         final_clean = runs / "Manuscript.final-clean.docx"
