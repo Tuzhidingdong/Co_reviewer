@@ -157,6 +157,12 @@ class JsonSchemaContractTests(unittest.TestCase):
         }
         stable_target["target_identity_mode"] = "stable_target_ref"
         plan_validator.validate(stable_plan_target)
+        for invalid_hint in ("0", -1, True):
+            invalid_location = json.loads(json.dumps(stable_plan_target))
+            invalid_location["revision_items"][0]["targets"][0]["target_ref"]["location_hint"]["p_idx"] = invalid_hint
+            with self.subTest(location_hint_p_idx=invalid_hint):
+                with self.assertRaises(ValidationError):
+                    plan_validator.validate(invalid_location)
 
         operation = {
             "operation_id": "OP-FORMAT",
