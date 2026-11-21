@@ -1048,6 +1048,10 @@ class BatchStoreTests(unittest.TestCase):
         workflow = copy.deepcopy(self.workflow)
         initial_source = dict(workflow["source_files"][0])
         workflow["tasks"][0]["source_versions"] = [dict(initial_source)]
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         published_versions = []
 
         for index in (1, 2):
