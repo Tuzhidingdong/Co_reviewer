@@ -821,7 +821,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
         )
         self.assertEqual(
             {row["role"] for row in workflow["tasks"][0]["source_versions"]},
-            {"Manuscript", "Reviewers"},
+            {"Reviewers"},
         )
         workflow["tasks"][0] = transition_task(
             workflow["tasks"][0], "ready"
