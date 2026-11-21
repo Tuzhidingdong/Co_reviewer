@@ -406,6 +406,81 @@ class WorkflowEngineTests(unittest.TestCase):
             for condition in task_schema["allOf"]
         ))
 
+    def test_global_numbering_workflow_binds_the_same_approval_to_each_operation(self):
+        import hashlib
+        import json
+
+        approval = {
+            "schema_version": "1.0",
+            "status": "authorized",
+            "decision_type": "package_numbering",
+            "impact_plan_sha256": "d" * 64,
+            "approved_by": "Human Author",
+            "approved_at_utc": STAMP,
+        }
+        approval["approval_sha256"] = hashlib.sha256(
+            json.dumps(approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        decision_plan = {
+            "source_files": [{"role": "Manuscript", "file": "Manuscript.docx", "sha256": INPUT_HASH}],
+            "tasks": [{
+                "task_id": "GN1",
+                "sequence": 1,
+                "task_type": "global_numbering",
+                "title": "Apply package-wide numbering",
+                "source_comment_ids": [],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E-GN1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "Figure 1. Original caption.",
+                    "evidence_type": "audit_finding",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Apply the approved package-wide Figure 1 to Figure 2 change.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "action": "renumber",
+                    "evidence_ids": ["E-GN1"],
+                }],
+                "patch_operations": [{
+                    "operation_id": "GN1-OP1",
+                    "document": "Manuscript",
+                    "input_file": "Manuscript.docx",
+                    "output_file": "Manuscript.numbered.docx",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "find": "Figure 1",
+                    "replace": "Figure 2",
+                    "evidence_ids": ["E-GN1"],
+                    "source_comment_ids": [],
+                    "target_identity_mode": "legacy_p_idx_explicit",
+                }],
+                "author_decision_ref": approval,
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 1.0,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        ledger = build_workflow_ledger(decision_plan, "round-numbering-author", STAMP)
+        operation = ledger["tasks"][0]["patch_operations"][0]
+        self.assertEqual(operation["author_decision_ref"], approval)
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+
+        tampered = json.loads(json.dumps(ledger))
+        tampered["tasks"][0]["patch_operations"][0]["author_decision_ref"]["approved_by"] = "Other Author"
+        self.assertTrue(any(
+            "approval SHA-256" in error
+            for error in validate_workflow_ledger(tampered)
+        ))
+
     def test_persistent_workflow_ledger_builds_and_validates(self):
         decision_plan = {
             "source_files": [{

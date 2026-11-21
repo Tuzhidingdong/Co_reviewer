@@ -80,7 +80,7 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids", "response_unit_specs",
-    "risk_tier", "risk_policy_version", "risk_reasons",
+    "author_decision_ref", "risk_tier", "risk_policy_version", "risk_reasons",
     "high_risk_review_confirmed", "high_risk_reviewed_by",
     "high_risk_reviewed_at_utc", "high_risk_review_note",
 )
@@ -1006,6 +1006,23 @@ def workflow_tasks_from_decision_plan(tasks: Any, target_refs_by_task: Mapping[s
         # The workflow ledger is the common layer; DOCX-only revision_items are
         # generated later from mutating tasks, not from response-only tasks.
         record = copy.deepcopy(dict(task))
+        author_decision_ref = record.get("author_decision_ref")
+        raw_patch_operations = record.get("patch_operations", [])
+        if author_decision_ref is not None and isinstance(raw_patch_operations, list):
+            bound_operations = []
+            for operation in raw_patch_operations:
+                if not isinstance(operation, Mapping):
+                    bound_operations.append(operation)
+                    continue
+                operation_record = copy.deepcopy(dict(operation))
+                existing_author_ref = operation_record.get("author_decision_ref")
+                if existing_author_ref is not None and existing_author_ref != author_decision_ref:
+                    raise WorkflowValidationError(
+                        f"Task {task_id.strip()} PatchOperation author_decision_ref differs from its task-level decision."
+                    )
+                operation_record["author_decision_ref"] = copy.deepcopy(author_decision_ref)
+                bound_operations.append(operation_record)
+            record["patch_operations"] = bound_operations
         record.update({
             "task_id": task_id.strip(),
             "sequence": task.get("sequence", 0),
@@ -1087,6 +1104,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
     """Validate the persisted review-round ledger and all of its task records."""
     if not isinstance(ledger, Mapping):
         return ["Workflow ledger must be an object."]
+    from .revision_models import RevisionModelError, validate_author_decision_ref
     errors: list[str] = []
     if ledger.get("schema_version") != "0.5.1":
         errors.append("Workflow ledger schema_version must be '0.5.1'.")
@@ -1359,10 +1377,25 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if not isinstance(raw_patch_operations, list):
             errors.append(f"Task {task_id} patch_operations must be an array.")
             raw_patch_operations = []
+        task_author_decision_ref = None
+        raw_author_decision_ref = task.get("author_decision_ref")
+        if raw_author_decision_ref is not None:
+            try:
+                task_author_decision_ref = validate_author_decision_ref(raw_author_decision_ref)
+                if task_type != "global_numbering":
+                    errors.append(
+                        f"Task {task_id} may use package-numbering author provenance only with task_type=global_numbering."
+                    )
+            except (RevisionModelError, TypeError, ValueError) as exc:
+                errors.append(f"Task {task_id} author_decision_ref is invalid: {exc}")
         if task_type == "response_only" and raw_patch_operations:
             errors.append(f"Response-only task {task_id} cannot contain DOCX patch operations.")
+        if raw_patch_operations and task_type == "global_numbering" and task_author_decision_ref is None:
+            errors.append(
+                f"Global-numbering task {task_id} requires a hash-bound author_decision_ref before it can contain PatchOperations."
+            )
         if raw_patch_operations:
-            from .revision_models import PatchOperation, RevisionModelError
+            from .revision_models import PatchOperation
             operation_ids: set[str] = set()
             for operation_index, raw_operation in enumerate(raw_patch_operations):
                 prefix = f"Task {task_id} patch_operations[{operation_index}]"
@@ -1381,6 +1414,19 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                     }:
                         errors.append(
                             f"{prefix} document role is not represented in the task's evidence-linked targets."
+                        )
+                    if operation.author_decision_ref is not None:
+                        if (
+                            task_type != "global_numbering"
+                            or task_author_decision_ref is None
+                            or dict(operation.author_decision_ref) != task_author_decision_ref
+                        ):
+                            errors.append(
+                                f"{prefix} author_decision_ref does not match its Workflow global-numbering task."
+                            )
+                    elif task_type == "global_numbering":
+                        errors.append(
+                            f"{prefix} is missing the exact author_decision_ref required by its global-numbering task."
                         )
                     if operation.evidence_ids:
                         known_evidence_ids = {

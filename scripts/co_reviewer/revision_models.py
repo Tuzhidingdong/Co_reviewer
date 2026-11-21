@@ -60,6 +60,37 @@ def _aware_timestamp(value: Any, field_name: str) -> str:
     return value
 
 
+def validate_author_decision_ref(value: Any) -> dict[str, Any]:
+    """Validate an author decision artifact bound to an exact package-numbering plan."""
+    expected_fields = {
+        "schema_version", "status", "decision_type", "impact_plan_sha256",
+        "approved_by", "approved_at_utc", "approval_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
+        raise RevisionModelError(
+            "author_decision_ref must be the complete package-numbering approval artifact."
+        )
+    if (
+        value.get("schema_version") != "1.0"
+        or value.get("status") != "authorized"
+        or value.get("decision_type") != "package_numbering"
+    ):
+        raise RevisionModelError(
+            "author_decision_ref must explicitly authorize a package_numbering decision."
+        )
+    _sha256(value.get("impact_plan_sha256"), "author_decision_ref.impact_plan_sha256")
+    _sha256(value.get("approval_sha256"), "author_decision_ref.approval_sha256")
+    _text(value.get("approved_by"), "author_decision_ref.approved_by")
+    _aware_timestamp(value.get("approved_at_utc"), "author_decision_ref.approved_at_utc")
+    unsigned = {key: item for key, item in value.items() if key != "approval_sha256"}
+    expected_digest = _fingerprint(unsigned)
+    if value.get("approval_sha256") != expected_digest:
+        raise RevisionModelError(
+            "author_decision_ref approval SHA-256 does not match its exact contents."
+        )
+    return copy.deepcopy(dict(value))
+
+
 def _fingerprint(payload: Any) -> str:
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -94,6 +125,7 @@ class PatchOperation:
     source_sha256: str | None = None
     evidence_ids: tuple[str, ...] = ()
     source_comment_ids: tuple[str, ...] = ()
+    author_decision_ref: Mapping[str, Any] | None = None
     location_phrase: str | None = None
     target_ref: Mapping[str, Any] | None = None
     target_identity_mode: str | None = None
@@ -124,8 +156,12 @@ class PatchOperation:
             raise RevisionModelError("evidence_ids must contain non-empty strings.")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise RevisionModelError("evidence_ids must be unique.")
-        if not self.source_comment_ids:
-            raise RevisionModelError("PatchOperation requires at least one exact source_comment_id.")
+        if self.author_decision_ref is not None:
+            validate_author_decision_ref(self.author_decision_ref)
+        if not self.source_comment_ids and self.author_decision_ref is None:
+            raise RevisionModelError(
+                "PatchOperation requires exact source_comment_ids or a hash-bound author_decision_ref."
+            )
         if any(not isinstance(item, str) or not item.strip() for item in self.source_comment_ids):
             raise RevisionModelError("source_comment_ids must contain non-empty comment IDs.")
         if len(self.source_comment_ids) != len(set(self.source_comment_ids)):
@@ -238,6 +274,7 @@ class PatchOperation:
             source_sha256=data.get("source_sha256"),
             evidence_ids=tuple(data.get("evidence_ids", [])),
             source_comment_ids=tuple(raw_source_comment_ids),
+            author_decision_ref=data.get("author_decision_ref"),
             location_phrase=data.get("location_phrase"),
             target_ref=data.get("target_ref"),
             target_identity_mode=data.get("target_identity_mode"),
@@ -262,6 +299,9 @@ class PatchOperation:
             "source_sha256": self.source_sha256,
             "evidence_ids": list(self.evidence_ids),
             "source_comment_ids": list(self.source_comment_ids),
+            "author_decision_ref": (
+                dict(self.author_decision_ref) if self.author_decision_ref is not None else None
+            ),
             "location_phrase": self.location_phrase,
             "target_ref": dict(self.target_ref) if self.target_ref is not None else None,
             "target_identity_mode": self.target_identity_mode,
@@ -293,6 +333,8 @@ class PatchOperation:
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
+        if self.author_decision_ref is not None:
+            target["author_decision_ref"] = dict(self.author_decision_ref)
         if self.target_ref is not None:
             target["target_ref"] = dict(self.target_ref)
         if self.target_identity_mode is not None:
@@ -1608,7 +1650,7 @@ class RevisionLedger:
             fields = (
                 "document", "input_file", "output_file", "part", "p_idx", "find",
                 "replace", "location", "operation_id", "source_comment_ids",
-                "location_phrase", "target_ref", "target_identity_mode", "authorized_change", "protected_spans",
+                "author_decision_ref", "location_phrase", "target_ref", "target_identity_mode", "authorized_change", "protected_spans",
                 "replacement_format_map", "format_authorization", "format_operations",
             )
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
@@ -1912,6 +1954,18 @@ class RevisionLedger:
                     raise RevisionModelError(f"Preflight operation ID mismatch for Patch {patch_id}.")
                 if list(target.get("source_comment_ids", [])) != list(operation.source_comment_ids):
                     raise RevisionModelError(f"Preflight source_comment_ids changed for PatchOperation {operation.operation_id}.")
+                if target.get("author_decision_ref") != (
+                    dict(operation.author_decision_ref) if operation.author_decision_ref is not None else None
+                ):
+                    raise RevisionModelError(
+                        f"Preflight author_decision_ref changed for PatchOperation {operation.operation_id}."
+                    )
+                if target.get("author_decision_ref") != (
+                    dict(operation.author_decision_ref) if operation.author_decision_ref is not None else None
+                ):
+                    raise RevisionModelError(
+                        f"Preflight author_decision_ref changed for PatchOperation {operation.operation_id}."
+                    )
                 phrase = target.get("location_phrase")
                 operation_units = [
                     unit for unit in self.response_units
@@ -2737,6 +2791,16 @@ def build_revision_ledger(
             raise RevisionModelError("Workflow task entries must be objects.")
         task_id = _text(task.get("task_id"), "task_id")
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
+        task_type = task.get("task_type")
+        raw_author_decision_ref = task.get("author_decision_ref")
+        task_author_decision_ref = (
+            validate_author_decision_ref(raw_author_decision_ref)
+            if raw_author_decision_ref is not None else None
+        )
+        if task_author_decision_ref is not None and task_type != "global_numbering":
+            raise RevisionModelError(
+                f"Task {task_id} carries package-numbering author provenance but is not global_numbering."
+            )
         reviewer_spec = reviewer_by_task.get(task_id, "Reviewer")
         comment_reviewers: dict[str, str] = {}
         default_reviewer: str | None = None
@@ -2799,6 +2863,9 @@ def build_revision_ledger(
             raise RevisionModelError(
                 f"reviewer_map[{task_id}] must be a reviewer label or an object."
             )
+        if task_type == "global_numbering" and not comment_ids and task_author_decision_ref is not None:
+            reviewer = f"Author: {task_author_decision_ref['approved_by']}"
+            default_reviewer = reviewer
         evidence = task.get("evidence", [])
         comment_texts = []
         for comment_id in comment_ids:
@@ -2813,6 +2880,17 @@ def build_revision_ledger(
                 and row.get("source_excerpt")
             ]
         comment_text = "\n".join(dict.fromkeys(comment_texts)).strip()
+        if (
+            not comment_text
+            and task_type == "global_numbering"
+            and not comment_ids
+            and task_author_decision_ref is not None
+        ):
+            comment_text = (
+                "Author-approved package numbering impact plan "
+                f"{task_author_decision_ref['impact_plan_sha256']}; "
+                f"approval SHA-256 {task_author_decision_ref['approval_sha256']}."
+            )
 
         raw_operations = task.get("patch_operations", [])
         if not isinstance(raw_operations, list):
@@ -2837,6 +2915,8 @@ def build_revision_ledger(
             document = raw.get("document")
             paths = document_paths.get(document, {}) if isinstance(document, str) else {}
             data = dict(raw)
+            if data.get("author_decision_ref") is None and task_author_decision_ref is not None:
+                data["author_decision_ref"] = copy.deepcopy(task_author_decision_ref)
             data.setdefault("input_file", paths.get("input_file"))
             data.setdefault("output_file", paths.get("output_file"))
             data.setdefault("document", document)
@@ -2886,8 +2966,21 @@ def build_revision_ledger(
                 data, fallback_id=f"{task_id}-OP{index + 1:03d}"
             )
             if not operation.source_comment_ids:
+                if (
+                    task_type != "global_numbering"
+                    or task_author_decision_ref is None
+                    or dict(operation.author_decision_ref or {}) != task_author_decision_ref
+                ):
+                    raise RevisionModelError(
+                        f"Task {task_id} PatchOperation {operation.operation_id} needs exact reviewer comment IDs "
+                        "or the task's hash-bound global-numbering author decision."
+                    )
+            elif operation.author_decision_ref is not None and (
+                task_author_decision_ref is None
+                or dict(operation.author_decision_ref) != task_author_decision_ref
+            ):
                 raise RevisionModelError(
-                    f"Task {task_id} PatchOperation {operation.operation_id} must declare source_comment_ids at authoring time."
+                    f"PatchOperation {operation.operation_id} author decision differs from Task {task_id}."
                 )
             unknown_sources = set(operation.source_comment_ids) - set(comment_ids)
             if unknown_sources:

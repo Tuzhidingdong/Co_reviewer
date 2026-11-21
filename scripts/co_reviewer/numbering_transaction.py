@@ -159,6 +159,7 @@ def validate_numbering_impact_approval(
         raise NumberingTransactionError("Numbering approval hash is missing or invalid.")
     if (
         approval.get("status") != "authorized"
+        or approval.get("decision_type") != "package_numbering"
         or approval.get("impact_plan_sha256") != plan_sha
         or not isinstance(approval.get("approved_by"), str)
         or not approval.get("approved_by", "").strip()
@@ -282,6 +283,7 @@ def authorize_numbering_impact_plan(
     approval: dict[str, Any] = {
         "schema_version": "1.0",
         "status": "authorized",
+        "decision_type": "package_numbering",
         "impact_plan_sha256": approved_plan_sha256,
         "approved_by": approved_by.strip(),
         "approved_at_utc": timestamp,
@@ -354,12 +356,62 @@ def _graph_projection(graph: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rebuild_approved_numbering_proposal(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Re-derive the proposal from exact source DOCX snapshots; never trust a self-hashed proposed graph."""
+    number_map = plan.get("number_map")
+    confirmed = plan.get("confirmed_ambiguous_mappings")
+    if not isinstance(number_map, Mapping) or not isinstance(confirmed, Mapping):
+        raise NumberingTransactionError(
+            "Approved numbering plan must retain its typed number map and ambiguity confirmations."
+        )
+
+    source_documents = plan["source_documents"]
+    extracted: dict[str, list[dict[str, Any]]] = {}
+    for role in sorted(source_documents):
+        source = source_documents[role]
+        path = _assert_no_symlink_path(source["file"], f"Approved source DOCX for {role}")
+        if (
+            not path.is_file()
+            or path.suffix.casefold() != ".docx"
+            or sha256_file(path) != source["sha256"]
+        ):
+            raise NumberingTransactionError(
+                f"Approved source DOCX for {role} is missing, not a DOCX, or no longer matches its approved SHA-256."
+            )
+        extracted[role] = extract_docx_reference_segments(path)
+
+    source_graph = build_package_reference_graph(extracted)
+    rebuilt_source_sha = _canonical_sha256(source_graph)
+    if rebuilt_source_sha != plan.get("source_graph_sha256"):
+        raise NumberingTransactionError(
+            "Approved source DOCX snapshots no longer rebuild the exact source Reference Graph."
+        )
+    try:
+        recomputed = renumber_reference_graph(
+            source_graph,
+            number_map,
+            explicit_authorization=True,
+            confirmed_ambiguous_mappings=confirmed,
+        )
+    except ContractError as exc:
+        raise NumberingTransactionError(
+            f"Approved numbering proposal cannot be reproduced from its source graph: {exc}"
+        ) from exc
+    recomputed["numbering_mutation_authorized"] = False
+    if _canonical_sha256(recomputed) != _canonical_sha256(plan["proposed_graph"]):
+        raise NumberingTransactionError(
+            "Numbering impact plan proposed_graph is not the deterministic result of its exact source snapshots and mappings."
+        )
+    return recomputed
+
+
 def verify_numbering_package_outputs(
     plan: Mapping[str, Any],
     output_documents: Mapping[str, str | Path],
 ) -> dict[str, Any]:
     """Rebuild the complete graph from final DOCX files and compare it with the approved proposal."""
     actual_plan = _validate_impact_plan(plan)
+    _rebuild_approved_numbering_proposal(actual_plan)
     expected_roles = set(actual_plan["source_documents"])
     if not isinstance(output_documents, Mapping) or set(output_documents) != expected_roles:
         raise NumberingTransactionError(
@@ -404,6 +456,87 @@ def verify_numbering_package_outputs(
             "ambiguous": final_graph.get("ambiguous_count"),
             "native_fields_for_manual_review": final_graph.get("manual_field_review_count"),
         },
+    }
+
+
+def validate_numbering_patch_operation_coverage(
+    plan: Mapping[str, Any],
+    workflow_tasks: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Require normal PatchOperations to cover exactly every changed reference paragraph."""
+    expected: set[tuple[str, str, int]] = set()
+    for field in ("definition_updates", "mention_updates"):
+        rows = plan.get(field)
+        if not isinstance(rows, list):
+            raise NumberingTransactionError(f"Numbering impact plan {field} must be an array.")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise NumberingTransactionError(f"Numbering impact plan {field} contains a malformed update.")
+            role, part, p_idx = (
+                row.get("document"), row.get("part"), row.get("paragraph_index")
+            )
+            if (
+                not isinstance(role, str) or not role
+                or not isinstance(part, str) or not part.startswith("word/")
+                or not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0
+            ):
+                raise NumberingTransactionError(
+                    f"Numbering impact plan {field} contains an update without an exact role/part/paragraph target."
+                )
+            expected.add((role, part, p_idx))
+    if not expected:
+        raise NumberingTransactionError("Numbering impact plan contains no target paragraph updates.")
+
+    actual: set[tuple[str, str, int]] = set()
+    for task in workflow_tasks:
+        operations = task.get("patch_operations")
+        if not isinstance(operations, list) or not operations:
+            raise NumberingTransactionError(
+                f"Global-numbering task {task.get('task_id')} must contain one or more PatchOperations."
+            )
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                raise NumberingTransactionError("Global-numbering task contains a malformed PatchOperation.")
+            role, part = operation.get("document"), operation.get("part")
+            p_idx = operation.get("p_idx")
+            target_ref = operation.get("target_ref")
+            if isinstance(target_ref, Mapping):
+                if target_ref.get("part") != part:
+                    raise NumberingTransactionError(
+                        f"PatchOperation {operation.get('operation_id')} TargetRef part differs from its operation part."
+                    )
+                hint = target_ref.get("location_hint")
+                if isinstance(hint, Mapping):
+                    ref_p_idx = hint.get("p_idx")
+                    if p_idx is not None and p_idx != ref_p_idx:
+                        raise NumberingTransactionError(
+                            f"PatchOperation {operation.get('operation_id')} p_idx differs from its stable TargetRef hint."
+                        )
+                    p_idx = ref_p_idx
+            if (
+                not isinstance(role, str) or not role
+                or not isinstance(part, str) or not part.startswith("word/")
+                or not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0
+            ):
+                raise NumberingTransactionError(
+                    f"PatchOperation {operation.get('operation_id')} has no exact role/part/paragraph target."
+                )
+            actual.add((role, part, p_idx))
+
+    if expected != actual:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise NumberingTransactionError(
+            "Global-numbering PatchOperations do not cover exactly the approved Reference Graph update paragraphs. "
+            f"Missing={missing!r}; unexpected={unexpected!r}."
+        )
+    return {
+        "status": "PASS",
+        "target_paragraphs": [
+            {"document": role, "part": part, "paragraph_index": p_idx}
+            for role, part, p_idx in sorted(expected)
+        ],
+        "target_paragraph_count": len(expected),
     }
 
 
@@ -575,6 +708,51 @@ def commit_numbering_package_transaction(
         raise NumberingTransactionError(
             "Every task in the numbering publication batch must be an explicit global_numbering Workflow task."
         )
+    from .revision_models import validate_author_decision_ref
+    operation_roles: set[str] = set()
+    for task_id in task_ids:
+        task = tasks[task_id]
+        try:
+            task_approval = validate_author_decision_ref(task.get("author_decision_ref"))
+        except Exception as exc:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} has no valid hash-bound author approval: {exc}"
+            ) from exc
+        if task_approval != actual_approval:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} is not bound to this exact approved impact plan and approval artifact."
+            )
+        operations = task.get("patch_operations", [])
+        if not isinstance(operations, list) or not operations:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} has no executable PatchOperations."
+            )
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                raise NumberingTransactionError(
+                    f"Global-numbering Workflow task {task_id} contains a malformed PatchOperation."
+                )
+            try:
+                operation_approval = validate_author_decision_ref(operation.get("author_decision_ref"))
+            except Exception as exc:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation.get('operation_id')} has no valid author decision: {exc}"
+                ) from exc
+            if operation_approval != actual_approval:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation.get('operation_id')} is bound to another author decision."
+                )
+            role = operation.get("document")
+            if not isinstance(role, str) or not role:
+                raise NumberingTransactionError("Global-numbering PatchOperation has no document role.")
+            operation_roles.add(role)
+    if operation_roles != set(actual_plan["affected_document_roles"]):
+        raise NumberingTransactionError(
+            "Global-numbering PatchOperations must cover every and only document role in the approved impact plan."
+        )
+    coverage = validate_numbering_patch_operation_coverage(
+        actual_plan, [tasks[task_id] for task_id in task_ids]
+    )
 
     source_documents = actual_plan["source_documents"]
     active_documents = workflow.get("active_documents")
@@ -670,7 +848,13 @@ def commit_numbering_package_transaction(
             package_path = f"{role}/{path.name}"
             if package_path in package_outputs:
                 raise NumberingTransactionError("Numbering package contains a duplicate role/path output.")
-            package_outputs[package_path] = path.read_bytes()
+            payload = path.read_bytes()
+            expected_output_sha = verification["output_documents"][role]["sha256"]
+            if hashlib.sha256(payload).hexdigest() != expected_output_sha:
+                raise NumberingTransactionError(
+                    f"Final DOCX for {role} changed after graph verification; refusing a time-of-check/time-of-use package commit."
+                )
+            package_outputs[package_path] = payload
         transaction_metadata = {
             "transaction_type": "package_wide_numbering",
             "impact_plan_sha256": actual_plan["impact_plan_sha256"],
@@ -687,6 +871,7 @@ def commit_numbering_package_transaction(
             "final_graph_sha256": verification["final_graph_sha256"],
             "final_graph": verification["final_graph"],
             "change_counts": actual_plan["change_counts"],
+            "patch_operation_coverage": coverage,
             "output_documents": verification["output_documents"],
         }
         try:
@@ -727,6 +912,7 @@ def commit_numbering_package_transaction(
         "final_graph_sha256": verification["final_graph_sha256"],
         "output_documents": verification["output_documents"],
         "graph_counts": verification["graph_counts"],
+        "patch_operation_coverage": coverage,
     }
     _write_receipt_new(receipt_path, receipt)
     return receipt

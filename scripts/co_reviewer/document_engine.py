@@ -1148,6 +1148,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "word_part": part,
                     "target": target_identity,
                     "reviewer_comment_ids": [str(value) for value in (edit.get("source_comment_ids") or [])],
+                    "author_decision_ref": copy.deepcopy(edit.get("author_decision_ref")),
                     "operation_id": edit.get("operation_id"),
                     "source_excerpt": old,
                     "before_context": paragraph_text[max(0, position - 160):position] if position >= 0 else "",
@@ -1314,7 +1315,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "token_lock": contract["token_lock"],
                 }
             }
-            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "location_phrase"):
+            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "author_decision_ref", "location_phrase"):
                 if metadata_key in edit:
                     edit_result[metadata_key] = edit[metadata_key]
             edit_results.append(edit_result)

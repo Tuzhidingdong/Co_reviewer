@@ -147,7 +147,10 @@
                   "$ref": "document-identity.schema.json#/$defs/targetRef"
                 },
                 "target_identity_mode": {
-                  "enum": ["stable_target_ref", "legacy_p_idx_explicit"],
+                  "enum": [
+                    "stable_target_ref",
+                    "legacy_p_idx_explicit"
+                  ],
                   "description": "Explicitly labels stable identity or migration-only paragraph-index compatibility."
                 },
                 "source_sha256": {
@@ -440,9 +443,45 @@
                     },
                     "additionalProperties": false
                   }
+                },
+                "source_comment_ids": {
+                  "type": "array",
+                  "minItems": 0,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "Exact reviewer comment IDs when the operation responds to reviewer feedback; empty only when a hash-bound author_decision_ref is supplied."
+                },
+                "author_decision_ref": {
+                  "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "source_comment_ids"
+                  ],
+                  "properties": {
+                    "source_comment_ids": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "author_decision_ref"
+                  ],
+                  "properties": {
+                    "author_decision_ref": {
+                      "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                    }
+                  }
+                }
+              ]
             }
           }
         },

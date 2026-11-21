@@ -234,6 +234,103 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
         self.assertEqual(self.reviewers.read_bytes(), b"synthetic reviewers source")
 
+    def test_global_numbering_scope_uses_author_approval_without_fabricating_reviewer_comments(self) -> None:
+        approval = {
+            "schema_version": "1.0",
+            "status": "authorized",
+            "decision_type": "package_numbering",
+            "impact_plan_sha256": "d" * 64,
+            "approved_by": "Human Author",
+            "approved_at_utc": "2026-11-20T12:00:00+00:00",
+        }
+        approval["approval_sha256"] = hashlib.sha256(
+            json.dumps(approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        plan = {
+            "source_files": [
+                {"role": "Reviewers", "file": str(self.reviewers), "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest()},
+                {"role": "Manuscript", "file": str(self.manuscript), "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest()},
+            ],
+            "tasks": [{
+                "task_id": "GN1",
+                "sequence": 1,
+                "task_type": "global_numbering",
+                "title": "Renumber a package-wide figure reference",
+                "source_comment_ids": [],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E-GN1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "The selected sample is ZB-01.",
+                    "evidence_type": "audit_finding",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Renumber the caption and all cross-document mentions through one approved package batch.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "action": "renumber",
+                    "evidence_ids": ["E-GN1"],
+                }],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 1.0,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        workflow = build_workflow_ledger(plan, "round-author-numbering", STAMP)
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        scope = {
+            "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
+            "revision_round_id": "round-author-numbering",
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "tasks": [{
+                "task_id": "GN1",
+                "patch_id": "P-GN1",
+                "author_decision_ref": approval,
+                "patch_operations": [{
+                    "operation_id": "GN1-OP1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "find": "ZB-01",
+                    "replace": "ZB-02",
+                    "location": "The selected sample is ZB-01.",
+                    "evidence_ids": ["E-GN1"],
+                    "source_comment_ids": [],
+                }],
+            }],
+        }
+        prepared, _, report = prepare_workflow_execution(
+            workflow, scope, self.inventory,
+            workflow_path=self.workflow_path, execution_scope_path=self.scope_path,
+        )
+        task = prepared["tasks"][0]
+        operation = task["patch_operations"][0]
+        self.assertEqual(task["author_decision_ref"], approval)
+        self.assertEqual(operation["author_decision_ref"], approval)
+        self.assertEqual(operation["source_comment_ids"], [])
+        self.assertEqual(report["status"], "prepared_pending_author_approval")
+        self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
+
+    def test_workflow_execution_scope_schema_accepts_author_numbering_provenance(self) -> None:
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-execution-scope.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        task_schema = schema["properties"]["tasks"]["items"]
+        operation_schema = task_schema["properties"]["patch_operations"]["items"]
+        self.assertIn("author_decision_ref", task_schema["properties"])
+        self.assertIn("author_decision_ref", operation_schema["properties"])
+        self.assertNotIn("source_comment_ids", operation_schema["required"])
+        self.assertTrue(task_schema.get("allOf"))
+
     def test_recheck_task_refreshes_evidence_and_source_version_from_current_active_docx(self) -> None:
         current_manuscript = self.root / "Manuscript.after-T1.docx"
         current_manuscript.write_bytes(b"synthetic manuscript after T1")

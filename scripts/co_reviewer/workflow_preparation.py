@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from .batch_store import load_active_document_pointers
 from .identity import sha256_file
-from .revision_models import PatchOperation, RevisionModelError
+from .revision_models import PatchOperation, RevisionModelError, validate_author_decision_ref
 from .workflow_engine import validate_workflow_ledger
 
 
@@ -20,11 +20,12 @@ class WorkflowPreparationError(ValueError):
 _MUTATING = {"replace", "add", "remove", "renumber", "reference_update"}
 _OPERATION_FIELDS = {
     "operation_id", "document", "part", "p_idx", "find", "replace",
-    "location", "evidence_ids", "source_comment_ids", "location_phrase", "target_ref",
+    "location", "evidence_ids", "source_comment_ids", "author_decision_ref", "location_phrase", "target_ref",
 }
 _TASK_FIELDS = {
     "task_id", "patch_id", "proposed_response", "patch_operations",
     "response_unit_specs", "supersedes_patch_id", "evidence", "targets", "target_refs",
+    "author_decision_ref",
 }
 _DISPOSITIONS = {"revised", "reply_only", "no_change", "clarification_needed"}
 _LOCATION_REQUIREMENTS = {"required", "existing_anchor_required", "not_required", "manual_required"}
@@ -425,6 +426,30 @@ def prepare_workflow_execution(
                 f"Task {task_id} must be rebound to current active evidence before renewed author approval."
             )
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
+        raw_scope_author_ref = spec.get("author_decision_ref")
+        workflow_author_ref = task.get("author_decision_ref")
+        if (
+            raw_scope_author_ref is not None
+            and workflow_author_ref is not None
+            and raw_scope_author_ref != workflow_author_ref
+        ):
+            raise WorkflowPreparationError(
+                f"Task {task_id} execution-scope author_decision_ref differs from the Workflow Ledger."
+            )
+        raw_author_ref = raw_scope_author_ref if raw_scope_author_ref is not None else workflow_author_ref
+        task_author_ref = None
+        if raw_author_ref is not None:
+            try:
+                task_author_ref = validate_author_decision_ref(raw_author_ref)
+            except (RevisionModelError, TypeError, ValueError) as exc:
+                raise WorkflowPreparationError(
+                    f"Task {task_id} author_decision_ref is invalid: {exc}"
+                ) from exc
+            if task.get("task_type") != "global_numbering":
+                raise WorkflowPreparationError(
+                    f"Task {task_id} may carry package-numbering author provenance only as global_numbering."
+                )
+            task["author_decision_ref"] = copy.deepcopy(task_author_ref)
         targets = task.get("targets", [])
         if not isinstance(targets, list):
             raise WorkflowPreparationError(f"Task {task_id} targets must be an array.")
@@ -439,6 +464,10 @@ def prepare_workflow_execution(
             )
         if task.get("task_type") == "response_only" and raw_ops:
             raise WorkflowPreparationError(f"Response-only task {task_id} cannot contain PatchOperations.")
+        if task.get("task_type") == "global_numbering" and raw_ops and task_author_ref is None:
+            raise WorkflowPreparationError(
+                f"Global-numbering task {task_id} requires a hash-bound author_decision_ref before PatchOperations can be prepared."
+            )
 
         operations: list[dict[str, Any]] = []
         matched_targets: set[int] = set()
@@ -447,6 +476,17 @@ def prepare_workflow_execution(
             if not isinstance(raw, Mapping) or set(raw) - _OPERATION_FIELDS:
                 raise WorkflowPreparationError(f"Task {task_id} PatchOperation {op_index} has invalid fields.")
             operation = dict(raw)
+            raw_operation_author_ref = operation.get("author_decision_ref")
+            if task_author_ref is not None:
+                if raw_operation_author_ref is not None and raw_operation_author_ref != task_author_ref:
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {operation.get('operation_id')} author_decision_ref differs from Task {task_id}."
+                    )
+                operation["author_decision_ref"] = copy.deepcopy(task_author_ref)
+            elif raw_operation_author_ref is not None:
+                raise WorkflowPreparationError(
+                    f"PatchOperation {operation.get('operation_id')} has author_decision_ref but Task {task_id} has no matching task-level approval."
+                )
             op_id = operation.get("operation_id")
             if not isinstance(op_id, str) or not op_id.strip() or op_id in operation_ids:
                 raise WorkflowPreparationError(f"PatchOperation {task_id}/{op_index} needs a globally unique operation_id.")
@@ -563,10 +603,14 @@ def prepare_workflow_execution(
                     )
                 operation["target_identity_mode"] = "legacy_p_idx_explicit"
 
-            sources = operation.get("source_comment_ids")
-            if not isinstance(sources, list) or not sources:
-                raise WorkflowPreparationError(f"PatchOperation {op_id} requires source_comment_ids.")
+            sources = operation.get("source_comment_ids", [])
+            if not isinstance(sources, list):
+                raise WorkflowPreparationError(f"PatchOperation {op_id} source_comment_ids must be an array.")
             source_ids = [str(value) for value in sources]
+            if not source_ids and task_author_ref is None:
+                raise WorkflowPreparationError(
+                    f"PatchOperation {op_id} requires reviewer comment IDs or a hash-bound global-numbering author decision."
+                )
             if len(source_ids) != len(set(source_ids)) or not set(source_ids).issubset(set(comment_ids)):
                 raise WorkflowPreparationError(f"PatchOperation {op_id} has duplicate/out-of-scope source_comment_ids.")
             linked_comments.update(source_ids)
