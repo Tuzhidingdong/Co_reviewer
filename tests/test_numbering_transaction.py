@@ -26,9 +26,11 @@ from co_reviewer.numbering_transaction import (
     verify_numbering_package_outputs,
 )
 from co_reviewer.v232_contract import (
+    ContractError,
     build_package_reference_graph,
     commit_document_package,
     extract_docx_reference_segments,
+    renumber_reference_graph,
 )
 
 
@@ -523,6 +525,138 @@ class NumberingTransactionTests(unittest.TestCase):
                     approval_sha=approval["approval_sha256"],
                     batch_id="batch-numbering-001",
                 )
+
+    def test_reference_graph_covers_static_object_kinds_and_numeric_citations(self):
+        paragraphs = [
+            "Figure 1. Workflow overview.",
+            "Table 1. Summary of conditions.",
+            "Equation 2. Governing relation.",
+            "Scheme S1. Reaction route.",
+            "Section 2.1. Experimental methods.",
+            "[1] Example reference record.",
+            "Figure 1 and Table 1 are discussed with Eq. 2, Scheme S1, Section 2.1 and citation [1].",
+        ]
+        segments = [
+            {
+                "part": "word/document.xml",
+                "paragraph_index": index,
+                "text": value,
+                "reference_mechanism": "static_text",
+                "word_field_instructions": [],
+                "word_field_markers_present": False,
+            }
+            for index, value in enumerate(paragraphs)
+        ]
+        graph = build_package_reference_graph({"Manuscript": segments})
+        definitions = {
+            (row["kind"], str(row["number"]))
+            for row in graph["definitions"]
+        }
+        self.assertEqual(definitions, {
+            ("figure", "1"),
+            ("table", "1"),
+            ("equation", "2"),
+            ("scheme", "S1"),
+            ("section", "2.1"),
+            ("citation", "1"),
+        })
+        self.assertTrue(graph["mentions"])
+        self.assertTrue(all(row["resolution"] == "resolved" for row in graph["mentions"]))
+        self.assertEqual(len(graph["edges"]), len(graph["mentions"]))
+        self.assertEqual(graph["unresolved_count"], 0)
+        self.assertEqual(graph["ambiguous_count"], 0)
+
+        updated = renumber_reference_graph(
+            graph,
+            {
+                "Manuscript::figure::1": "2",
+                "Manuscript::table::1": "2",
+                "Manuscript::equation::2": "3",
+                "Manuscript::scheme::S1": "S2",
+                "Manuscript::section::2.1": "2.2",
+                "Manuscript::citation::1": "2",
+            },
+            explicit_authorization=True,
+        )
+        self.assertEqual(updated["change_counts"]["definitions"], 6)
+        self.assertEqual(updated["unresolved_count"], 0)
+        self.assertEqual(
+            {(row["kind"], str(row["number"])) for row in updated["definitions"]},
+            {
+                ("figure", "2"),
+                ("table", "2"),
+                ("equation", "3"),
+                ("scheme", "S2"),
+                ("section", "2.2"),
+                ("citation", "2"),
+            },
+        )
+
+    def test_reference_graph_exposes_ambiguous_unresolved_ranges_and_native_fields(self):
+        documents = {
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main figure."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[1] Example citation."},
+            ],
+            "SI": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Supplementary figure."},
+            ],
+            "Response": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "See Figure 1 and Figure 99."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "The cited sources are [1-3]."},
+            ],
+            "FieldHost": [
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 0,
+                    "text": "Figure 1. Field-generated caption.",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": ["SEQ Figure \\* ARABIC"],
+                    "word_field_markers_present": True,
+                },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 1,
+                    "text": "See Figure 1.",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": ["REF _Ref123"],
+                    "word_field_markers_present": True,
+                },
+            ],
+        }
+        graph = build_package_reference_graph(documents)
+        response_mentions = [
+            row for row in graph["mentions"] if row["document"] == "Response"
+        ]
+        ambiguous = next(row for row in response_mentions if row["number"] == "1" and row["kind"] == "figure")
+        unresolved = next(row for row in response_mentions if row["number"] == "99")
+        citation_range = next(row for row in response_mentions if row["kind"] == "citation")
+        self.assertEqual(ambiguous["resolution"], "ambiguous")
+        self.assertEqual(len(ambiguous["candidate_definition_ids"]), 2)
+        self.assertEqual(unresolved["resolution"], "unresolved")
+        self.assertEqual(citation_range["resolution"], "manual_review_required")
+        self.assertEqual(graph["ambiguous_count"], 1)
+        self.assertGreaterEqual(graph["unresolved_count"], 3)
+
+        self.assertEqual(len(graph["field_references"]), 2)
+        self.assertEqual(
+            {row["field_type"] for row in graph["field_references"]},
+            {"SEQ", "REF"},
+        )
+        self.assertTrue(all(
+            row["resolution"] == "manual_review_required"
+            for row in graph["field_references"]
+        ))
+        self.assertGreaterEqual(graph["manual_field_review_count"], 3)
+        with self.assertRaisesRegex(
+            ContractError,
+            "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING",
+        ):
+            renumber_reference_graph(
+                graph,
+                {"Manuscript::figure::1": "2"},
+                explicit_authorization=True,
+            )
 
     def test_impact_plan_rejects_stale_graph_source_and_omitted_roles(self):
         with tempfile.TemporaryDirectory() as temporary:
