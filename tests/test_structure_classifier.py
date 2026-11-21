@@ -469,7 +469,7 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertEqual(safe["status"], "ALLOW_CANDIDATE")
         self.assertIn("comment_range", safe["bounded_structure_kinds"])
         self.assertIn("permission_range", safe["bounded_structure_kinds"])
-        self.assertEqual(len(safe["intersecting_protected_structure_ids"]), 3)
+        self.assertEqual(len(safe["intersecting_protected_structure_ids"]), 6)
 
         for protected_text in ("comment protected", "permission protected"):
             with self.subTest(target=protected_text):

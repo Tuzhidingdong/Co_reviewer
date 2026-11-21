@@ -154,7 +154,7 @@ def analyze_bounded_safe_span(
     paragraph: ET._Element,
     target_text: str,
 ) -> dict[str, Any]:
-    """Locate one target in a single ordinary Run block and prove it avoids bookmarks."""
+    """Locate one target in a single ordinary Run block and prove it avoids protected intervals."""
     if not isinstance(root, ET._Element) or not isinstance(paragraph, ET._Element):
         raise TypeError("root and paragraph must be lxml elements.")
     if not isinstance(target_text, str) or not target_text or any(ch in target_text for ch in "\t\r\n"):
