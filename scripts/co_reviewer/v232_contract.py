@@ -1456,10 +1456,22 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
         paragraph_index = revision.get("paragraph_index")
         paragraph_span = revision.get("paragraph_indices") or []
         revision_ranges = revision.get("text_ranges")
+        details = revision.get("details")
+        scope_policy = details.get("scope_policy") if isinstance(details, Mapping) else None
+        part_scope = (
+            revision.get("text_range_precision") == "part_scope"
+            or scope_policy == "part_scope_no_paragraph_anchor"
+        )
         hit = False
         for target in target_rows:
             if target["part"] != part:
                 continue
+            # Some malformed or incomplete range markers have no trustworthy
+            # paragraph anchor. Their only safe scope is the entire Word part:
+            # every edit in that part must wait for an explicit history decision.
+            if part_scope:
+                hit = True
+                break
             target_paragraphs = {target["paragraph_index"]} if target["paragraph_index"] is not None else set()
             target_paragraphs.update(
                 idx for idx in paragraph_span
