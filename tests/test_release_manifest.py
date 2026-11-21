@@ -218,6 +218,11 @@ class ReleaseManifestGateTests(unittest.TestCase):
         receipt = json.loads((release_dir / "release_package_receipt.json").read_text(encoding="utf-8"))
         manifest = json.loads((release_dir / "final_release_manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(receipt["schema_version"], "2.0")
+        receipt_schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "release-package-receipt.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        Draft202012Validator(receipt_schema, format_checker=FormatChecker()).validate(receipt)
         self.assertEqual(receipt["status"], "complete")
         self.assertEqual(receipt["artifacts"]["final_release_manifest.json"], hashes["final_release_manifest.json"])
         self.assertEqual(manifest["release_status"], "READY")
