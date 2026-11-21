@@ -13,13 +13,18 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from co_reviewer.revision_models import PatchOperation, RevisionModelError, validate_author_decision_ref
 from co_reviewer.numbering_transaction import (
     NumberingTransactionError,
+    _existing_numbering_package_receipt,
     authorize_numbering_impact_plan,
     build_numbering_impact_plan,
     validate_numbering_impact_approval,
     validate_numbering_patch_operation_coverage,
     verify_numbering_package_outputs,
 )
-from co_reviewer.v232_contract import build_package_reference_graph, extract_docx_reference_segments
+from co_reviewer.v232_contract import (
+    build_package_reference_graph,
+    commit_document_package,
+    extract_docx_reference_segments,
+)
 
 
 class NumberingTransactionTests(unittest.TestCase):
@@ -289,6 +294,42 @@ class NumberingTransactionTests(unittest.TestCase):
                     "source_comment_ids": [],
                     "target_identity_mode": "legacy_p_idx_explicit",
                 })
+
+    def test_existing_numbering_package_receipt_rejects_tampered_docx(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan, sources = self._impact_plan(root)
+            approval = authorize_numbering_impact_plan(
+                plan, plan["impact_plan_sha256"], "Human Author",
+                approved_at_utc="2026-11-20T12:00:00+00:00",
+            )
+            package_root = root / "numbering-transaction" / "package"
+            result = commit_document_package(
+                {"Manuscript/Manuscript.docx": sources["Manuscript"].read_bytes()},
+                package_root,
+                metadata={"numbering_transaction": {
+                    "impact_plan_sha256": plan["impact_plan_sha256"],
+                    "approval_sha256": approval["approval_sha256"],
+                    "batch_id": "batch-numbering-001",
+                }},
+            )
+            prior = _existing_numbering_package_receipt(
+                package_root,
+                plan_sha=plan["impact_plan_sha256"],
+                approval_sha=approval["approval_sha256"],
+                batch_id="batch-numbering-001",
+            )
+            self.assertEqual(prior["package_id"], result["package_id"])
+
+            packaged_docx = Path(result["directory"]) / "Manuscript" / "Manuscript.docx"
+            packaged_docx.write_bytes(packaged_docx.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(NumberingTransactionError, "integrity validation"):
+                _existing_numbering_package_receipt(
+                    package_root,
+                    plan_sha=plan["impact_plan_sha256"],
+                    approval_sha=approval["approval_sha256"],
+                    batch_id="batch-numbering-001",
+                )
 
     def test_impact_plan_rejects_stale_graph_source_and_omitted_roles(self):
         with tempfile.TemporaryDirectory() as temporary:
