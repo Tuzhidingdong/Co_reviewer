@@ -63,6 +63,41 @@ class RevisionEngineTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_replacement_preserves_run_format_and_package_members(self):
+        original = make_docx(self.input, [[
+            ("The ", False), ("old ", True), ("phrase", False), (" remains.", False)
+        ]])
+        format_map = [
+            {"replacement_start": 0, "replacement_end": 4, "source_offset": 0},
+            {"replacement_start": 4, "replacement_end": 11, "source_offset": 4},
+        ]
+        report = cli.apply_document(str(self.input), str(self.output), [{
+            "p_idx": 0,
+            "find": "old phrase",
+            "replace": "new wording",
+            "replacement_format_map": format_map,
+        }], "Test Author")
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:p", cli.NS)
+            self.assertEqual(cli.visible_text(paragraph), "The new wording remains.")
+            deleted = "".join(x.text or "" for x in paragraph.findall(".//w:delText", cli.NS))
+            insertion = paragraph.find(".//w:ins", cli.NS)
+            inserted_runs = insertion.findall(".//w:r", cli.NS)
+            inserted = ["".join(x.text or "" for x in run.findall("w:t", cli.NS)) for run in inserted_runs]
+            self.assertEqual(deleted, "old phrase")
+            self.assertEqual(inserted, ["new ", "wording"])
+            self.assertIsNotNone(inserted_runs[0].find("w:rPr/w:b", cli.NS))
+            self.assertIsNone(inserted_runs[1].find("w:rPr/w:b", cli.NS))
+            self.assertEqual(archive.read("word/media/image1.png"), original["word/media/image1.png"])
+            self.assertEqual(set(archive.namelist()), set(original))
+            self.assertEqual(
+                "".join(x.text or "" for x in paragraph.findall("./w:r/w:t", cli.NS)),
+                "The  remains.",
+            )
+        self.assertEqual(report["validation"]["untouched_parts"], "byte-identical")
+        self.assertEqual(report["results"][0]["replacement_format_map"], format_map)
+
     def test_replacement_refuses_to_flatten_mixed_run_formatting(self):
         make_docx(self.input, [[
             ("The ", False), ("old ", True), ("phrase", False), (" remains.", False)

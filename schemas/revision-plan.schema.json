@@ -143,6 +143,16 @@
                 "replace": {
                   "type": "string"
                 },
+                "target_ref": {
+                  "$ref": "document-identity.schema.json#/$defs/targetRef"
+                },
+                "target_identity_mode": {
+                  "enum": [
+                    "stable_target_ref",
+                    "legacy_p_idx_explicit"
+                  ],
+                  "description": "Explicitly labels stable identity or migration-only paragraph-index compatibility."
+                },
                 "source_sha256": {
                   "type": "string",
                   "pattern": "^[a-f0-9]{64}$",
@@ -433,9 +443,107 @@
                     },
                     "additionalProperties": false
                   }
+                },
+                "source_comment_ids": {
+                  "type": "array",
+                  "minItems": 0,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "Exact reviewer comment IDs when the operation responds to reviewer feedback; empty only when a hash-bound author_decision_ref is supplied."
+                },
+                "author_decision_ref": {
+                  "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "source_comment_ids"
+                  ],
+                  "properties": {
+                    "source_comment_ids": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "author_decision_ref"
+                  ],
+                  "properties": {
+                    "author_decision_ref": {
+                      "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                    }
+                  }
+                }
+              ],
+              "allOf": [
+                {
+                  "if": {
+                    "required": [
+                      "target_ref"
+                    ],
+                    "properties": {
+                      "target_ref": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "target_identity_mode"
+                    ],
+                    "properties": {
+                      "target_identity_mode": {
+                        "const": "stable_target_ref"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "anyOf": [
+                      {
+                        "not": {
+                          "required": [
+                            "target_ref"
+                          ]
+                        }
+                      },
+                      {
+                        "required": [
+                          "target_ref"
+                        ],
+                        "properties": {
+                          "target_ref": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "target_identity_mode",
+                      "p_idx"
+                    ],
+                    "properties": {
+                      "target_identity_mode": {
+                        "const": "legacy_p_idx_explicit"
+                      },
+                      "p_idx": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         },

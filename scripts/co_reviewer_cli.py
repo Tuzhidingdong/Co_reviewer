@@ -69,6 +69,12 @@ from co_reviewer.v232_contract import (
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
 from co_reviewer.omml_converter import create_omml_preview_docx
+from co_reviewer.numbering_transaction import (
+    NumberingTransactionError,
+    authorize_numbering_impact_plan,
+    build_numbering_impact_plan,
+    commit_numbering_package_transaction,
+)
 
 ET.register_namespace("w", W)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -639,8 +645,12 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "document": target["document"], "location": target.get("location", ""),
                 "operation_id": target.get("operation_id"),
                 "source_comment_ids": list(target.get("source_comment_ids", [])),
+                "author_decision_ref": target.get("author_decision_ref"),
                 "authorized_change": target.get("authorized_change"),
                 "protected_spans": list(target.get("protected_spans", [])),
+                "target_ref": target.get("target_ref"),
+                "target_identity_mode": target.get("target_identity_mode"),
+                "source_sha256": target.get("source_sha256") or sha256_file(target["input_file"]),
             }
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
@@ -818,6 +828,7 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "document": target["document"], "location": target.get("location", ""),
                 "operation_id": target.get("operation_id"),
                 "source_comment_ids": list(target.get("source_comment_ids", [])),
+                "author_decision_ref": target.get("author_decision_ref"),
                 "location_phrase": target.get("location_phrase"),
                 "authorized_change": target.get("authorized_change"),
                 "protected_spans": list(target.get("protected_spans", [])),
@@ -825,6 +836,9 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                     if target.get("replacement_format_map") is not None else None,
                 "format_authorization": target.get("format_authorization"),
                 "format_operations": list(target.get("format_operations", [])),
+                "target_ref": target.get("target_ref"),
+                "target_identity_mode": target.get("target_identity_mode"),
+                "source_sha256": target.get("source_sha256"),
             }
             if "p_idx" in target: edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
@@ -2198,6 +2212,25 @@ def cmd_authorize_workflow_tasks(args):
         raise ValueError("Unknown Workflow task ID(s): " + ", ".join(unknown))
 
     now = datetime.now(timezone.utc).isoformat()
+    tier1_ids = [
+        task_id for task_id in requested
+        if by_id[task_id].get("risk_tier") == "TIER_1"
+    ]
+    if tier1_ids:
+        if getattr(args, "high_risk_review_confirmed", False) is not True:
+            raise ValueError(
+                "Tier 1 task(s) require explicit --high-risk-review-confirmed after reviewing "
+                "the highlighted scientific/reference/format/cross-document changes: "
+                + ", ".join(tier1_ids)
+            )
+        risk_note = getattr(args, "high_risk_review_note", None)
+        if not isinstance(risk_note, str) or not risk_note.strip():
+            raise ValueError(
+                "Tier 1 approval requires --high-risk-review-note describing the high-risk scope reviewed."
+            )
+    else:
+        risk_note = None
+
     for task_id in requested:
         task = by_id[task_id]
         if task.get("status") not in {"planned", "blocked", "recheck_required"}:
@@ -2227,6 +2260,11 @@ def cmd_authorize_workflow_tasks(args):
                 + ", ".join(pending_dependencies)
             )
         previous_status = task["status"]
+        if task.get("risk_tier") == "TIER_1":
+            task["high_risk_review_confirmed"] = True
+            task["high_risk_reviewed_by"] = args.actor
+            task["high_risk_reviewed_at_utc"] = now
+            task["high_risk_review_note"] = risk_note.strip()
         updated = transition_task(task, "ready")
         task.clear()
         task.update(updated)
@@ -2250,6 +2288,9 @@ def cmd_authorize_workflow_tasks(args):
     ready_batch = select_ready_tasks(workflow["tasks"])
     write_json_atomic(workflow_path, workflow)
     print(f"[APPROVED] {len(requested)} task(s): {', '.join(requested)}")
+    if tier1_ids:
+        print("[TIER 1 REVIEW CONFIRMED] " + ", ".join(tier1_ids))
+        print("[TIER 1 REVIEW NOTE] " + risk_note.strip())
     print(
         "[READY BATCH] "
         + (", ".join(ready_batch) if ready_batch else "No conflict-free task currently executable.")
@@ -3215,7 +3256,65 @@ def cmd_build_revision_ledger(args):
             + "\n- ".join(workflow_errors)
         )
     scheduler_batch = select_ready_tasks(workflow.get("tasks", []))
-    selected_task_ids = list(dict.fromkeys(getattr(args, "task_ids", None) or scheduler_batch))
+    workflow_tasks_by_id = {
+        task.get("task_id"): task
+        for task in workflow.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("task_id"), str)
+    }
+    from co_reviewer.safety_policy import assess_task_risk, validate_batch_risk_tiers
+
+    requested_task_ids = getattr(args, "task_ids", None)
+    if requested_task_ids:
+        selected_task_ids = list(dict.fromkeys(requested_task_ids))
+        selected_rows = [
+            workflow_tasks_by_id[task_id]
+            for task_id in selected_task_ids
+            if task_id in workflow_tasks_by_id
+        ]
+        risk_assessment = validate_batch_risk_tiers(selected_rows)
+    else:
+        # Auto-select one homogeneous risk tier at a time. Tier 2 remains
+        # visible for clarification and is never silently put into a Patch.
+        assessed = {
+            task_id: assess_task_risk(workflow_tasks_by_id[task_id])
+            for task_id in scheduler_batch
+            if task_id in workflow_tasks_by_id
+        }
+        first_safe_tier = next(
+            (assessed[task_id]["risk_tier"] for task_id in scheduler_batch
+             if task_id in assessed and assessed[task_id]["risk_tier"] != "TIER_2"),
+            None,
+        )
+        if first_safe_tier is None:
+            blocked = ", ".join(
+                f"{task_id} ({', '.join(assessed[task_id]['risk_reasons'])})"
+                for task_id in scheduler_batch if task_id in assessed
+            )
+            raise ValueError(
+                "No executable risk-homogeneous batch is available. Tier 2 task(s) need clarification: "
+                + blocked
+            )
+        selected_task_ids = [
+            task_id for task_id in scheduler_batch
+            if task_id in assessed and assessed[task_id]["risk_tier"] == first_safe_tier
+        ]
+        selected_rows = [workflow_tasks_by_id[task_id] for task_id in selected_task_ids]
+        risk_assessment = validate_batch_risk_tiers(selected_rows)
+        tier2_ids = [
+            task_id for task_id in scheduler_batch
+            if task_id in assessed and assessed[task_id]["risk_tier"] == "TIER_2"
+        ]
+        if tier2_ids:
+            print(
+                "[RISK] Tier 2 task(s) held out for clarification: "
+                + ", ".join(tier2_ids)
+            )
+    print(
+        f"[RISK] {risk_assessment['risk_tier']} batch; "
+        + ("explicit Tier 1 author review is recorded and this batch remains isolated."
+           if risk_assessment["high_risk_review_required"]
+           else "eligible for a reviewed low-risk batch.")
+    )
     unavailable = set(selected_task_ids) - set(scheduler_batch)
     if unavailable:
         raise ValueError(
@@ -3880,6 +3979,74 @@ def cmd_confirm_response_units(args):
     return 0
 
 
+def cmd_attach_document_identities(args):
+    """Bind a parser-backed identity manifest to a new Workflow Ledger."""
+    from co_reviewer.docx_identity import build_target_refs_by_task, validate_manifest_sources
+    from co_reviewer.workflow_engine import validate_workflow_ledger, workflow_tasks_from_decision_plan
+    from co_reviewer.batch_store import write_json_new
+
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    manifest_path = Path(args.identity_manifest).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if len({workflow_path, manifest_path, output_path}) != 3:
+        raise ValueError("Workflow Ledger, identity manifest and output must use distinct paths.")
+    if output_path.exists():
+        raise FileExistsError(f"Refusing to overwrite Workflow Ledger output: {output_path}")
+    workflow_sha = sha256_file(workflow_path)
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    manifest_sha = sha256_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if sha256_file(manifest_path) != manifest_sha:
+        raise ValueError("Document identity manifest changed while it was being read; retry binding.")
+    workflow_errors = validate_workflow_ledger(workflow)
+    if workflow_errors:
+        raise ValueError("Input Workflow Ledger is invalid:\n- " + "\n- ".join(workflow_errors))
+    manifest_errors = validate_manifest_sources(manifest, workflow)
+    if manifest_errors:
+        raise ValueError("Document identity manifest does not match this Workflow Ledger:\n- " + "\n- ".join(manifest_errors))
+    refs_by_task, ref_errors = build_target_refs_by_task(workflow.get("tasks", []), manifest)
+    if ref_errors:
+        raise ValueError("Stable TargetRef registration failed:\n- " + "\n- ".join(ref_errors))
+    for task in workflow.get("tasks", []):
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("task_id")
+        expected_count = sum(
+            1 for target in task.get("targets", [])
+            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update"}
+        )
+        actual_count = len(refs_by_task.get(task_id, []))
+        if actual_count != expected_count:
+            raise ValueError(
+                f"Task {task_id} has {expected_count} mutating targets but {actual_count} stable TargetRefs; no paragraph-index fallback is permitted."
+            )
+    adapted = workflow_tasks_from_decision_plan(
+        workflow.get("tasks", []), target_refs_by_task=refs_by_task
+    )
+    adapted_by_id = {row["task_id"]: row for row in adapted}
+    prepared = json.loads(json.dumps(workflow, ensure_ascii=False))
+    prepared["documents"] = json.loads(json.dumps(manifest.get("documents", []), ensure_ascii=False))
+    prepared["object_registry"] = json.loads(json.dumps(manifest.get("objects", []), ensure_ascii=False))
+    prepared["identity_manifest"] = {"file": str(manifest_path), "sha256": manifest_sha}
+    for task in prepared.get("tasks", []):
+        identity_task = adapted_by_id.get(task.get("task_id"))
+        if identity_task is None:
+            raise ValueError(f"Identity adapter omitted workflow task {task.get('task_id')}.")
+        task["target_refs"] = identity_task.get("target_refs", [])
+        task["target_groups"] = identity_task.get("target_groups", [])
+    errors = validate_workflow_ledger(prepared)
+    if errors:
+        raise ValueError("Identity-bound Workflow Ledger is invalid:\n- " + "\n- ".join(errors))
+    if sha256_file(manifest_path) != manifest_sha or sha256_file(workflow_path) != workflow_sha:
+        raise ValueError("Workflow or identity manifest changed during binding; refusing to publish the bound ledger.")
+    output_sha = write_json_new(output_path, prepared)
+    target_count = sum(len(row.get("target_refs", [])) for row in prepared.get("tasks", []) if isinstance(row, Mapping))
+    print(f"[IDENTITY BOUND] {len(prepared['documents'])} document(s); {len(prepared['object_registry'])} object(s); {target_count} stable TargetRef(s).")
+    print(f"[WORKFLOW LEDGER] {output_path} | SHA-256 {output_sha}")
+    print("[NEXT] Create the Execution Scope against this new Workflow Ledger SHA-256; stable TargetRefs will be bound automatically during preparation.")
+    return 0
+
+
 def cmd_build_document_identity(args):
     from co_reviewer.docx_identity import build_document_identity_manifest
 
@@ -4448,7 +4615,24 @@ def cmd_apply(args):
         if any(not isinstance(entry, dict) for entry in report_history):
             raise ValueError("Existing apply report contains an invalid entry; refusing to overwrite it.")
 
-    reports = apply_plan(plan, args.author)
+    from co_reviewer.manual_suggestion import ManualFallbackRequired
+    try:
+        reports = apply_plan(plan, args.author)
+    except ManualFallbackRequired as exc:
+        from co_reviewer.batch_store import write_json_new
+        suggestion = exc.suggestion
+        suggestion_root = batch_dir if batch_dir is not None else plan_path.parent
+        suggestion_dir = suggestion_root / "manual_suggestions"
+        suggestion_path = suggestion_dir / f"{suggestion['suggestion_id']}.json"
+        if suggestion_path.exists():
+            suggestion_path = suggestion_dir / (
+                f"{suggestion['suggestion_id']}-{uuid.uuid4().hex[:8]}.json"
+            )
+        digest = write_json_new(suggestion_path, suggestion)
+        print(f"[MANUAL SUGGESTION] {suggestion_path}")
+        print(f"[MANUAL SUGGESTION SHA256] {digest}")
+        print("[NOT APPLIED] No DOCX write was authorized by this diagnostic.")
+        raise
     report_history.extend(reports)
     applied_ids = {
         edit.get("revision_item_id")
@@ -5234,6 +5418,48 @@ def cmd_publish_batch(args):
             "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
             + ", ".join(unverified)
         )
+
+    numbering_gate = None
+    numbering_task_ids = [
+        task_id for task_id in batch_task_ids
+        if workflow_tasks.get(task_id, {}).get("task_type") == "global_numbering"
+    ]
+    numbering_plan_path = getattr(args, "numbering_plan", None)
+    numbering_approval_path = getattr(args, "numbering_approval", None)
+    if numbering_task_ids:
+        if len(numbering_task_ids) != len(batch_task_ids):
+            raise ValueError(
+                "A package-wide numbering publication batch may contain only global_numbering tasks."
+            )
+        if not numbering_plan_path or not numbering_approval_path:
+            raise ValueError(
+                "Global-numbering publication is blocked before active-pointer mutation. "
+                "Supply --numbering-plan and --numbering-approval so the complete approved graph "
+                "can be verified against every candidate DOCX before publication."
+            )
+        numbering_plan = _read_json_object(numbering_plan_path, "Numbering impact plan")
+        numbering_approval = _read_json_object(numbering_approval_path, "Numbering author approval")
+        from co_reviewer.numbering_transaction import (
+            verify_numbering_batch_candidate_before_publication,
+            assert_numbering_candidate_hashes_unchanged,
+        )
+        numbering_gate = verify_numbering_batch_candidate_before_publication(
+            numbering_plan, numbering_approval, workflow, intent, scope
+        )
+        print(
+            "[PRE-PUBLICATION NUMBERING GRAPH] PASS | "
+            f"definitions={numbering_gate['graph_counts']['definitions']}; "
+            f"mentions={numbering_gate['graph_counts']['mentions']}; "
+            f"edges={numbering_gate['graph_counts']['edges']}; "
+            f"unresolved={numbering_gate['graph_counts']['unresolved']}; "
+            f"ambiguous={numbering_gate['graph_counts']['ambiguous']}"
+        )
+        print(f"[APPROVED IMPACT PLAN SHA256] {numbering_gate['impact_plan_sha256']}")
+    elif numbering_plan_path or numbering_approval_path:
+        raise ValueError(
+            "--numbering-plan/--numbering-approval are valid only for a global_numbering batch."
+        )
+
     # Final ResponseUnit completion and final Word/PDF locations are round-level
     # release gates. They are intentionally deferred until every batch is published,
     # because a later batch can shift pagination for an entire document role.
@@ -5296,6 +5522,11 @@ def cmd_publish_batch(args):
                 "Workflow Ledger changed during publication; the active pointer update was not committed. "
                 "Reload workflow state and retry this same batch."
             )
+    if numbering_gate is not None:
+        # Re-hash every DOCX that contributed to the approved final graph after
+        # all other publication checks and immediately before pointer mutation.
+        assert_numbering_candidate_hashes_unchanged(numbering_gate)
+    if not pointers_already_committed:
         write_json_atomic(workflow_path, updated)
     write_json_new(batch_dir / "batch_published.json", receipt)
     print(f"[PUBLISHED] Batch {intent['batch_id']}")
@@ -5462,7 +5693,7 @@ def _verify_completed_release_package(
     }
     if (
         intent.get("schema_version") != "1.0"
-        or receipt.get("schema_version") != "1.0"
+        or receipt.get("schema_version") != "2.0"
         or receipt.get("status") != "complete"
         or receipt.get("release_id") != intent.get("release_id")
         or not isinstance(intent.get("release_id"), str)
@@ -5510,6 +5741,27 @@ def _verify_completed_release_package(
         docx_path=str(release_dir / "Response_to_Reviewers.docx"),
         docx_sha256=sha256_file(release_dir / "Response_to_Reviewers.docx"),
     )
+    from co_reviewer.release_package import verify_release_package
+    committed_manifest = verify_release_package(
+        release_dir, expected_release_id=str(intent.get("release_id"))
+    )
+    package_directory = Path(receipt.get("package_directory", "")).expanduser().resolve()
+    package_manifest_path = Path(receipt.get("package_manifest_file", "")).expanduser().resolve()
+    commit_marker_path = Path(receipt.get("commit_marker_file", "")).expanduser().resolve()
+    if (
+        receipt.get("package_id") != committed_manifest.get("package_id")
+        or receipt.get("package_directory") != str(package_directory)
+        or package_manifest_path != package_directory / "package_manifest.json"
+        or not package_manifest_path.is_file()
+        or sha256_file(package_manifest_path) != receipt.get("package_manifest_sha256")
+        or commit_marker_path != release_dir / "release_package_commit.json"
+        or not commit_marker_path.is_file()
+        or sha256_file(commit_marker_path) != receipt.get("commit_marker_sha256")
+        or receipt.get("package_artifact_count") != committed_manifest.get("artifact_count")
+        or committed_manifest.get("source_release_manifest_sha256")
+            != receipt.get("artifacts", {}).get("final_release_manifest.json")
+    ):
+        raise ValueError("Completed Release Package receipt does not match its committed package manifest/marker.")
 
 
 def cmd_create_release_package(args):
@@ -5584,7 +5836,8 @@ def cmd_create_release_package(args):
     docx_path = release_dir / "Response_to_Reviewers.docx"
     quality_path = release_dir / "Response_to_Reviewers.quality.json"
 
-    for canonical_path in (intent_path, receipt_path, manifest_path, md_path, docx_path, quality_path):
+    commit_marker_path = release_dir / "release_package_commit.json"
+    for canonical_path in (intent_path, receipt_path, manifest_path, md_path, docx_path, quality_path, commit_marker_path):
         if canonical_path.is_symlink():
             raise ValueError(f"Release Package canonical artifact must not be a symbolic link: {canonical_path}")
 
@@ -5821,8 +6074,43 @@ def cmd_create_release_package(args):
         "Response_to_Reviewers.quality.json": sha256_file(quality_path),
         "final_release_manifest.json": sha256_file(manifest_path),
     }
+    if sha256_file(workflow_path) != workflow_sha_snapshot:
+        raise ValueError(
+            "Workflow Ledger changed during Release Package generation. No completion receipt or commit marker was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+    if sha256_file(revision_path) != revision_sha_snapshot:
+        raise ValueError(
+            "RevisionLedger changed during Release Package generation. No completion receipt or commit marker was written; "
+            "preserve this partial package and use a new release directory for the new Ledger snapshot."
+        )
+
+    # Commit every managed DOCX and every referenced evidence artifact as one
+    # immutable directory. The external commit marker is created only after the
+    # staged package manifest and every copied byte have been revalidated.
+    from co_reviewer.release_package import (
+        collect_release_package_artifacts,
+        commit_release_package,
+    )
+    package_records = collect_release_package_artifacts(
+        manifest,
+        release_manifest_path=manifest_path,
+        release_intent_path=intent_path,
+        workflow_ledger=workflow,
+    )
+    package_commit = commit_release_package(
+        release_dir,
+        package_records,
+        release_id=intent["release_id"],
+        source_release_manifest_sha256=artifacts["final_release_manifest.json"],
+        source_snapshot_hashes={
+            str(workflow_path): workflow_sha_snapshot,
+            str(revision_path): revision_sha_snapshot,
+        },
+    )
+
     receipt = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "status": "complete",
         "release_id": intent["release_id"],
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -5833,6 +6121,13 @@ def cmd_create_release_package(args):
         "intent_file": str(intent_path),
         "intent_sha256": sha256_file(intent_path),
         "artifacts": artifacts,
+        "package_id": package_commit["package_id"],
+        "package_directory": package_commit["package_directory"],
+        "package_manifest_file": package_commit["package_manifest_file"],
+        "package_manifest_sha256": package_commit["package_manifest_sha256"],
+        "commit_marker_file": package_commit["commit_marker_file"],
+        "commit_marker_sha256": package_commit["commit_marker_sha256"],
+        "package_artifact_count": package_commit["artifact_count"],
     }
     if receipt_path.exists():
         raise ValueError("Release completion receipt appeared during finalization; inspect the concurrent run.")
@@ -5859,6 +6154,10 @@ def cmd_create_release_package(args):
     print(f"[QUALITY REPORT] {quality_path} | {response_quality['status']}")
     print(f"[FINAL RELEASE MANIFEST] {manifest_path}")
     print(f"[RELEASE RECEIPT] {receipt_path}")
+    print(f"[COMMITTED PACKAGE] {package_commit['package_directory']}")
+    print(f"[PACKAGE MANIFEST] {package_commit['package_manifest_file']} | SHA-256 {package_commit['package_manifest_sha256']}")
+    print(f"[PACKAGE COMMIT MARKER] {package_commit['commit_marker_file']} | SHA-256 {package_commit['commit_marker_sha256']}")
+    print(f"[PACKAGED ARTIFACTS] {package_commit['artifact_count']}")
     print(f"[MANIFEST SHA-256] {artifacts['final_release_manifest.json']}")
     print("[GATE] Active pointers, verified PatchOperations, completed ResponseUnits, final Word/PDF hashes, SEQ audit and exact Response Letter excerpts were rechecked.")
     return 0
@@ -6032,23 +6331,78 @@ def cmd_build_package_reference_graph(args):
           f"{len(report['mentions'])} mention(s), {report['unresolved_count']} unresolved/ambiguous")
     return 0
 
-def cmd_renumber_package_graph(args):
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
-    mapping = json.loads(Path(args.number_map).read_text(encoding="utf-8"))
-    if not isinstance(mapping, dict):
-        raise ValueError("Number map must be a JSON object keyed as DOCUMENT::OLD_NUMBER")
-    confirmed = json.loads(Path(args.confirm_ambiguous_map).read_text(encoding="utf-8")) if args.confirm_ambiguous_map else {}
-    if not isinstance(confirmed, dict):
-        raise ValueError("Confirmed ambiguous map must be a JSON object mapping mention IDs to definition IDs")
-    updated = renumber_reference_graph(
-        graph, mapping, explicit_authorization=args.authorized,
-        confirmed_ambiguous_mappings=confirmed,
+def _parse_role_path_arguments(items, label):
+    records = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"{label} entries must use ROLE=PATH")
+        role, filename = item.split("=", 1)
+        if not role or not filename or role in records:
+            raise ValueError(f"{label} roles and paths must be non-empty and roles unique")
+        records[role] = filename
+    return records
+
+
+def cmd_create_numbering_impact_plan(args):
+    graph = _read_json_object(args.graph, "Reference Graph")
+    number_map = _read_json_object(args.number_map, "Number map")
+    confirmed = _read_json_object(args.confirm_ambiguous_map, "Confirmed ambiguous mapping") if args.confirm_ambiguous_map else {}
+    documents = _parse_role_path_arguments(args.document, "Source DOCX")
+    plan = build_numbering_impact_plan(
+        graph, number_map, documents, confirmed_ambiguous_mappings=confirmed
     )
-    if args.out:
-        write_json_atomic(Path(args.out), updated)
-        print(f"[REFERENCE GRAPH UPDATED] {Path(args.out).resolve()}")
-    print(f"[REFERENCE UPDATES] definitions={len(updated['definition_updates'])}; mentions={len(updated['mention_updates'])}")
+    write_json_atomic(Path(args.out).expanduser().resolve(), plan)
+    print(f"[NUMBERING IMPACT PLAN] {Path(args.out).expanduser().resolve()}")
+    print(f"[IMPACT PLAN SHA256] {plan['impact_plan_sha256']}")
+    print(f"[CHANGES] definitions={plan['change_counts']['definitions']}; mentions={plan['change_counts']['mentions']}; documents={plan['change_counts']['documents']}")
+    print("[AUTHORIZATION] Awaiting author approval of this exact SHA-256; no DOCX has been changed.")
     return 0
+
+
+def cmd_authorize_numbering_impact_plan(args):
+    plan = _read_json_object(args.plan, "Numbering impact plan")
+    approval = authorize_numbering_impact_plan(
+        plan, args.approved_plan_sha256, args.approved_by
+    )
+    write_json_atomic(Path(args.out).expanduser().resolve(), approval)
+    print(f"[NUMBERING APPROVAL] {Path(args.out).expanduser().resolve()}")
+    print(f"[APPROVAL SHA256] {approval['approval_sha256']}")
+    print(f"[AUTHORIZED PLAN SHA256] {approval['impact_plan_sha256']}")
+    return 0
+
+
+def cmd_commit_numbering_package(args):
+    plan = _read_json_object(args.plan, "Numbering impact plan")
+    approval = _read_json_object(args.approval, "Numbering author approval")
+    workflow_path = Path(args.workflow_ledger).expanduser().resolve()
+    revision_path = Path(args.revision_ledger).expanduser().resolve()
+    if workflow_path == revision_path:
+        raise ValueError("Workflow Ledger and RevisionLedger must be separate files.")
+    revision_ledger = _load_revision_ledger(revision_path)
+    receipt = commit_numbering_package_transaction(
+        plan, approval,
+        batch_dir=_resolve_batch_dir_argument(args.batch_dir),
+        workflow_ledger_path=workflow_path,
+        revision_ledger_path=revision_path,
+        revision_ledger=revision_ledger,
+        release_root=args.release_root,
+    )
+    print(f"[NUMBERING PACKAGE COMMITTED] {receipt['package_id']}")
+    print(f"[IMPACT PLAN SHA256] {receipt['impact_plan_sha256']}")
+    print(f"[APPROVAL SHA256] {receipt['approval_sha256']}")
+    print(f"[BATCH] {receipt['batch_id']}")
+    print(f"[PACKAGE DIRECTORY] {receipt['package_directory']}")
+    print(f"[FINAL GRAPH SHA256] {receipt['final_graph_sha256']}")
+    print(f"[TRANSACTION RECEIPT] {Path(args.release_root).expanduser().resolve() / ('numbering-' + receipt['batch_id'] + '-' + receipt['impact_plan_sha256'][:16]) / 'numbering_transaction_receipt.json'}")
+    return 0
+
+
+def cmd_renumber_package_graph(args):
+    raise ValueError(
+        "Direct boolean-authorized graph mutation is disabled. Use create-numbering-impact-plan, "
+        "authorize-numbering-impact-plan with the exact displayed SHA-256, then the normal "
+        "Patch/Apply/Verify/Publish workflow and commit-numbering-package."
+    )
 
 def _read_json_object(path_value: str | Path, label: str) -> dict[str, Any]:
     path = Path(path_value).expanduser().resolve()
@@ -6568,6 +6922,38 @@ def cmd_commit_document_package(args):
     print(f"[COMMIT MARKER] {result['commit_marker']}")
     return 0
 
+def cmd_create_manual_suggestion(args):
+    from co_reviewer.manual_suggestion import build_manual_suggestion
+    from co_reviewer.batch_store import write_json_new
+
+    input_path = Path(args.input).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if input_path == output_path:
+        raise ValueError("Manual suggestion output must not overwrite its input diagnostic.")
+    if output_path.exists():
+        raise FileExistsError(f"Manual suggestion output already exists; refusing to overwrite: {output_path}")
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    source_value = payload.get("source_document_path") if isinstance(payload, dict) else None
+    source_requested = Path(str(source_value or "")).expanduser()
+    if source_requested.is_symlink():
+        raise ValueError("Manual suggestion source DOCX must not be a symbolic link.")
+    source_path = source_requested.resolve()
+    if not source_path.is_file() or source_path.suffix.casefold() != ".docx":
+        raise FileNotFoundError(f"Manual suggestion source DOCX does not exist or is not a DOCX: {source_path}")
+    source_sha256 = payload.get("source_sha256")
+    if not isinstance(source_sha256, str) or sha256_file(source_path) != source_sha256:
+        raise ValueError(
+            "Manual suggestion source DOCX SHA-256 does not match its recorded hash; rebuild the diagnostic."
+        )
+    payload["source_document_path"] = str(source_path)
+    suggestion = build_manual_suggestion(payload)
+    digest = write_json_new(output_path, suggestion)
+    print(f"[MANUAL SUGGESTION] {output_path}")
+    print(f"[MANUAL SUGGESTION SHA256] {digest}")
+    print("[NOT APPLIED] This artifact is diagnostic only; it does not modify or authorize a DOCX edit.")
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Co_Reviewer safe Word revision toolkit.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -6620,11 +7006,32 @@ def build_parser():
     rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
     rg.set_defaults(func=cmd_build_package_reference_graph)
-    rn = sub.add_parser("renumber-package-graph", help="Generate authorized, resolved definition/mention renumbering updates.")
+    np = sub.add_parser("create-numbering-impact-plan", help="Create a complete non-authorizing, source-hash-bound package numbering impact plan.")
+    np.add_argument("--graph", required=True)
+    np.add_argument("--number-map", required=True)
+    np.add_argument("--document", nargs="+", required=True, help="Every graph source DOCX as ROLE=PATH.")
+    np.add_argument("--confirm-ambiguous-map", help="JSON mapping ambiguous mention IDs to user-confirmed definition IDs.")
+    np.add_argument("--out", required=True)
+    np.set_defaults(func=cmd_create_numbering_impact_plan)
+    na = sub.add_parser("authorize-numbering-impact-plan", help="Authorize only the exact SHA-256 of a reviewed numbering impact plan.")
+    na.add_argument("--plan", required=True)
+    na.add_argument("--approved-plan-sha256", required=True)
+    na.add_argument("--approved-by", required=True)
+    na.add_argument("--out", required=True)
+    na.set_defaults(func=cmd_authorize_numbering_impact_plan)
+    nc = sub.add_parser("commit-numbering-package", help="Commit an author-approved numbering package only after its complete verified Workflow batch is published.")
+    nc.add_argument("--plan", required=True)
+    nc.add_argument("--approval", required=True)
+    nc.add_argument("--batch-dir", required=True)
+    nc.add_argument("--workflow-ledger", required=True)
+    nc.add_argument("--revision-ledger", required=True)
+    nc.add_argument("--release-root", required=True)
+    nc.set_defaults(func=cmd_commit_numbering_package)
+    rn = sub.add_parser("renumber-package-graph", help="Deprecated unsafe shortcut; use the hash-bound numbering transaction commands.")
     rn.add_argument("--graph", required=True)
     rn.add_argument("--number-map", required=True)
-    rn.add_argument("--authorized", action="store_true", help="Explicit package-wide authorization supplied by the user.")
-    rn.add_argument("--confirm-ambiguous-map", help="JSON mapping of ambiguous mention IDs to user-confirmed definition IDs.")
+    rn.add_argument("--authorized", action="store_true")
+    rn.add_argument("--confirm-ambiguous-map")
     rn.add_argument("--out", required=True)
     rn.set_defaults(func=cmd_renumber_package_graph)
     cc = sub.add_parser("compile-clean-from-marked", help="Create a deterministic accepted-changes Clean derivative from Marked.")
@@ -6772,6 +7179,15 @@ def build_parser():
     awt.add_argument("--ids", nargs="+", required=True)
     awt.add_argument("--actor", default="Human Author")
     awt.add_argument("--plan-approved", action="store_true", required=True)
+    awt.add_argument(
+        "--high-risk-review-confirmed",
+        action="store_true",
+        help="Explicitly confirm the separately highlighted Tier 1 scientific/reference/format/cross-document scope was reviewed.",
+    )
+    awt.add_argument(
+        "--high-risk-review-note",
+        help="Required for Tier 1 tasks: concise description of the elevated-risk scope reviewed by the author.",
+    )
     awt.set_defaults(func=cmd_authorize_workflow_tasks)
     bl = sub.add_parser("build-revision-ledger", help="Build typed Patches from the current conflict-free ready batch and merge them into the round ledger.")
     bl.add_argument("--workflow-ledger", required=True)
@@ -6802,6 +7218,14 @@ def build_parser():
     pub.add_argument("--workflow-ledger", required=True)
     pub.add_argument("--revision-ledger", required=True)
     pub.add_argument("--batch-dir", required=True)
+    pub.add_argument(
+        "--numbering-plan",
+        help="Required for global_numbering batches: exact source-hash-bound package impact plan.",
+    )
+    pub.add_argument(
+        "--numbering-approval",
+        help="Required for global_numbering batches: author approval bound to the displayed impact-plan SHA-256.",
+    )
     pub.set_defaults(func=cmd_publish_batch)
     rb = sub.add_parser("rollback-batch", help="Restore the parent active document pointers without deleting any committed output.")
     rb.add_argument("--workflow-ledger", required=True)
@@ -6837,6 +7261,11 @@ def build_parser():
     ident.add_argument("--previous-manifest", help="Optional prior identity manifest used for conservative object-ID reuse.")
     ident.add_argument("--out", default="document_identity_manifest.json")
     ident.set_defaults(func=cmd_build_document_identity)
+    bind_ident = sub.add_parser("attach-document-identities", help="Bind a parser-backed identity manifest to a new Workflow Ledger and register stable TargetRefs.")
+    bind_ident.add_argument("--workflow-ledger", required=True)
+    bind_ident.add_argument("--identity-manifest", required=True)
+    bind_ident.add_argument("--out", required=True, help="New Workflow Ledger path; input files are preserved.")
+    bind_ident.set_defaults(func=cmd_attach_document_identities)
     mloc = sub.add_parser("map-response-locations", help="Use Microsoft Word COM to paginate final Clean DOCX files, export PDFs and map verified Patch text to final page/line locations.")
     mloc.add_argument("--ledger", required=True)
     mloc.add_argument("--out-dir", required=True, help="New or empty directory for Word-final Clean DOCX and PDF artifacts.")
@@ -6882,6 +7311,13 @@ def build_parser():
     dq.add_argument("--expected-font", help="Optional required Normal-style font name.")
     dq.add_argument("--out", help="Optional JSON report path.")
     dq.set_defaults(func=cmd_audit_docx_quality)
+    ms = sub.add_parser(
+        "create-manual-suggestion",
+        help="Create a hash-bound, explicitly unapplied manual suggestion from a blocked-target diagnostic.",
+    )
+    ms.add_argument("--input", required=True, help="JSON diagnostic with exact source excerpt, target, blocker and source hash.")
+    ms.add_argument("--out", required=True, help="New JSON artifact path; existing files are never overwritten.")
+    ms.set_defaults(func=cmd_create_manual_suggestion)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)

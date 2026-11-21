@@ -102,6 +102,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         ]
         self.scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -128,6 +129,90 @@ class WorkflowPreparationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_stable_identity_is_the_default_and_never_silently_falls_back_to_p_idx(self):
+        scope = json.loads(json.dumps(self.scope))
+        scope.pop("identity_mode", None)
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "has no stable TargetRef; set identity_mode=legacy_p_idx_explicit",
+        ):
+            prepare_workflow_execution(
+                self.workflow,
+                scope,
+                self.inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
+    def test_explicit_legacy_p_idx_migration_is_blocked_when_identity_registry_exists(self):
+        from docx import Document
+        from co_reviewer.docx_identity import build_document_identity_manifest
+
+        stable_source = self.root / "registered-Manuscript.docx"
+        document = Document()
+        document.add_paragraph("The selected sample is ZB-01.")
+        document.save(stable_source)
+        source_sha = hashlib.sha256(stable_source.read_bytes()).hexdigest()
+        identity_manifest, _ = build_document_identity_manifest([{
+            "role": "Manuscript",
+            "file": str(stable_source),
+            "source_sha256": source_sha,
+            "paragraphs": [],
+        }])
+
+        workflow = json.loads(json.dumps(self.workflow))
+        manuscript_source = {
+            "role": "Manuscript",
+            "file": str(stable_source.resolve()),
+            "sha256": source_sha,
+        }
+        workflow["source_files"] = [
+            row for row in workflow["source_files"]
+            if row["role"] != "Manuscript"
+        ] + [manuscript_source]
+        workflow["active_documents"]["Manuscript"] = {
+            "file": str(stable_source.resolve()),
+            "sha256": source_sha,
+            "batch_id": None,
+            "updated_at_utc": STAMP,
+        }
+        for task in workflow["tasks"]:
+            task["source_versions"] = [
+                row for row in task["source_versions"]
+                if row["role"] != "Manuscript"
+            ] + [manuscript_source]
+        workflow["documents"] = identity_manifest["documents"]
+        workflow["object_registry"] = identity_manifest["objects"]
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        inventory = json.loads(json.dumps(self.inventory))
+        manuscript_row = next(row for row in inventory if row["role"] == "Manuscript")
+        manuscript_row.update({
+            "file": str(stable_source.resolve()),
+            "source_sha256": source_sha,
+        })
+
+        # Even an explicitly marked migration cannot fall back to paragraph
+        # indices once a document identity / object registry is available.
+        legacy_scope = json.loads(json.dumps(self.scope))
+        legacy_scope["identity_mode"] = "legacy_p_idx_explicit"
+        legacy_scope["workflow_ledger_sha256"] = hashlib.sha256(
+            self.workflow_path.read_bytes()
+        ).hexdigest()
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "missing its registered TargetRef; rebind the task identity manifest",
+        ):
+            prepare_workflow_execution(
+                workflow,
+                legacy_scope,
+                inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
 
     def test_prepare_cli_rejects_inventory_bytes_changed_after_manifest_binding(self) -> None:
         from argparse import Namespace
@@ -220,6 +305,8 @@ class WorkflowPreparationTests(unittest.TestCase):
         operation = task["patch_operations"][0]
 
         self.assertEqual(task["status"], "planned")
+        self.assertEqual(task["risk_tier"], "TIER_1")
+        self.assertEqual(task["risk_policy_version"], "1.0")
         self.assertTrue(task["requires_user_approval"])
         self.assertNotIn("human_approval_confirmed", task)
         self.assertEqual(task["patch_id"], "P-T1")
@@ -230,6 +317,238 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(report["status"], "prepared_pending_author_approval")
         self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
         self.assertEqual(self.reviewers.read_bytes(), b"synthetic reviewers source")
+
+    def test_global_numbering_scope_uses_author_approval_without_fabricating_reviewer_comments(self) -> None:
+        approval = {
+            "schema_version": "1.0",
+            "status": "authorized",
+            "decision_type": "package_numbering",
+            "impact_plan_sha256": "d" * 64,
+            "approved_by": "Human Author",
+            "approved_at_utc": "2026-11-20T12:00:00+00:00",
+        }
+        approval["approval_sha256"] = hashlib.sha256(
+            json.dumps(approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        plan = {
+            "source_files": [
+                {"role": "Reviewers", "file": str(self.reviewers), "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest()},
+                {"role": "Manuscript", "file": str(self.manuscript), "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest()},
+            ],
+            "tasks": [{
+                "task_id": "GN1",
+                "sequence": 1,
+                "task_type": "global_numbering",
+                "title": "Renumber a package-wide figure reference",
+                "source_comment_ids": [],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E-GN1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "The selected sample is ZB-01.",
+                    "evidence_type": "audit_finding",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Renumber the caption and all cross-document mentions through one approved package batch.",
+                "targets": [{
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "action": "renumber",
+                    "evidence_ids": ["E-GN1"],
+                }],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 1.0,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        workflow = build_workflow_ledger(plan, "round-author-numbering", STAMP)
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        scope = {
+            "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
+            "revision_round_id": "round-author-numbering",
+            "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
+            "tasks": [{
+                "task_id": "GN1",
+                "patch_id": "P-GN1",
+                "proposed_response": "We have updated the package-wide figure numbering under the approved numbering plan.",
+                "author_decision_ref": approval,
+                "patch_operations": [{
+                    "operation_id": "GN1-OP1",
+                    "document": "Manuscript",
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "find": "ZB-01",
+                    "replace": "ZB-02",
+                    "location": "The selected sample is ZB-01.",
+                    "evidence_ids": ["E-GN1"],
+                    "source_comment_ids": [],
+                }],
+            }],
+        }
+        prepared, _, report = prepare_workflow_execution(
+            workflow, scope, self.inventory,
+            workflow_path=self.workflow_path, execution_scope_path=self.scope_path,
+        )
+        task = prepared["tasks"][0]
+        operation = task["patch_operations"][0]
+        self.assertEqual(task["author_decision_ref"], approval)
+        self.assertEqual(operation["author_decision_ref"], approval)
+        self.assertEqual(operation["source_comment_ids"], [])
+        self.assertEqual(report["status"], "prepared_pending_author_approval")
+        self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
+
+    def test_recheck_requires_a_fresh_numbering_author_approval(self) -> None:
+        from co_reviewer.safety_policy import assess_task_risk
+        from co_reviewer.workflow_engine import transition_task
+
+        def make_approval(plan_sha: str) -> dict[str, str]:
+            value = {
+                "schema_version": "1.0",
+                "status": "authorized",
+                "decision_type": "package_numbering",
+                "impact_plan_sha256": plan_sha,
+                "approved_by": "Human Author",
+                "approved_at_utc": "2026-11-20T12:00:00+00:00",
+            }
+            value["approval_sha256"] = hashlib.sha256(
+                json.dumps(
+                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            return value
+
+        old_approval = make_approval("d" * 64)
+        workflow = json.loads(json.dumps(self.workflow))
+        task = workflow["tasks"][0]
+        task["task_type"] = "global_numbering"
+        task["targets"][0]["action"] = "renumber"
+        task["status"] = "ready"
+        task["author_decision_ref"] = old_approval
+        task["patch_operations"] = [{
+            "operation_id": "GN1-OLD-OP",
+            "author_decision_ref": old_approval,
+        }]
+        task = transition_task(
+            task,
+            "recheck_required",
+            reason="An upstream batch changed the package inputs.",
+        )
+        task.update(assess_task_risk(task))
+        workflow["tasks"][0] = task
+        self.assertEqual(
+            task["invalidated_package_numbering_approval_hashes"],
+            [old_approval["approval_sha256"]],
+        )
+        self.assertNotIn("author_decision_ref", task)
+        self.assertEqual(task["patch_operations"], [])
+        workflow["active_documents"] = {
+            "Reviewers": {
+                "file": str(self.reviewers),
+                "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+            "Manuscript": {
+                "file": str(self.manuscript),
+                "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+        }
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        scope = json.loads(json.dumps(self.scope))
+        scope_task = scope["tasks"][0]
+        scope_task["evidence"] = [{
+            "evidence_id": "E-MAN-REFRESH",
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "source_excerpt": "The selected sample is ZB-01.",
+            "evidence_type": "audit_finding",
+            "match_status": "confirmed",
+        }]
+        scope_task["targets"] = [{
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "action": "renumber",
+            "evidence_ids": ["E-MAN-REFRESH"],
+        }]
+        scope_task["patch_operations"][0]["evidence_ids"] = ["E-MAN-REFRESH"]
+
+        inventory = json.loads(json.dumps(self.inventory))
+        manuscript_inventory = next(
+            row for row in inventory if row["role"] == "Manuscript"
+        )
+        manuscript_inventory["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "text": "The selected sample is ZB-01.",
+        }]
+
+        def prepare_current_scope():
+            scope["workflow_ledger_sha256"] = hashlib.sha256(
+                self.workflow_path.read_bytes()
+            ).hexdigest()
+            self.scope_path.write_text(
+                json.dumps(scope, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return prepare_workflow_execution(
+                json.loads(json.dumps(workflow)),
+                json.loads(json.dumps(scope)),
+                json.loads(json.dumps(inventory)),
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "requires a fresh package-numbering author approval after recheck",
+        ):
+            prepare_current_scope()
+
+        # A stale author approval left behind in an old Execution Scope must
+        # be rejected even though the Workflow task's live approval is cleared.
+        scope_task["author_decision_ref"] = old_approval
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "previously invalidated package-numbering approval",
+        ):
+            prepare_current_scope()
+
+        # A newly approved impact plan produces a different hash-bound approval
+        # and can proceed through the same refreshed preparation path.
+        fresh_approval = make_approval("e" * 64)
+        scope_task["author_decision_ref"] = fresh_approval
+        prepared, _, report = prepare_current_scope()
+        prepared_task = prepared["tasks"][0]
+        self.assertEqual(prepared_task["author_decision_ref"], fresh_approval)
+        self.assertEqual(
+            prepared_task["patch_operations"][0]["author_decision_ref"],
+            fresh_approval,
+        )
+        self.assertEqual(report["status"], "prepared_pending_author_approval")
+
+    def test_workflow_execution_scope_schema_accepts_author_numbering_provenance(self) -> None:
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-execution-scope.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        task_schema = schema["properties"]["tasks"]["items"]
+        operation_schema = task_schema["properties"]["patch_operations"]["items"]
+        self.assertIn("author_decision_ref", task_schema["properties"])
+        self.assertIn("author_decision_ref", operation_schema["properties"])
+        self.assertNotIn("source_comment_ids", operation_schema["required"])
+        self.assertTrue(task_schema.get("allOf"))
 
     def test_recheck_task_refreshes_evidence_and_source_version_from_current_active_docx(self) -> None:
         current_manuscript = self.root / "Manuscript.after-T1.docx"
@@ -258,6 +577,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         refreshed_scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -360,6 +680,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         stale_scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{
@@ -438,6 +759,7 @@ class WorkflowPreparationTests(unittest.TestCase):
         )
         scope = {
             "schema_version": "1.0",
+            "identity_mode": "legacy_p_idx_explicit",
             "revision_round_id": "round-workflow-preparation",
             "workflow_ledger_sha256": hashlib.sha256(self.workflow_path.read_bytes()).hexdigest(),
             "tasks": [{

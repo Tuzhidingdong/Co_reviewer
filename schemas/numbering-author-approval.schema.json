@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/numbering-author-approval.schema.json",
+  "title": "Co_Reviewer Package-wide Numbering Author Approval",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "decision_type",
+    "impact_plan_sha256",
+    "approved_by",
+    "approved_at_utc",
+    "approval_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": { "const": "authorized" },
+    "decision_type": { "const": "package_numbering" },
+    "impact_plan_sha256": { "$ref": "#/$defs/sha256" },
+    "approved_by": { "type": "string", "minLength": 1 },
+    "approved_at_utc": { "type": "string", "format": "date-time" },
+    "approval_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  },
+  "additionalProperties": false
+}

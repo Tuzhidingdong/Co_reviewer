@@ -293,6 +293,38 @@ The command writes the selected release directory containing `Response_to_Review
 The Response Letter automatically quotes actual replacement/deleted text from each exact linked PatchOperation and places it below the author's response argument with its verified final document location. No model call is made to rewrite or repeat the manuscript body text. Draft/location-pending labels remain visible before final completion. Never invent response wording or page/line locations.
 
 
+## V2.3.2 RC safety and author-facing fallback
+
+### Exact-range structural gate
+
+The existing paragraph-level structure classifier remains the first gate. If a paragraph is blocked solely because it contains paired bookmark ranges, the RC closeout adapter may prove an exact Bounded Safe Span only when the requested text is unique and maps to one contiguous ordinary Run sequence outside every bookmark interval. This returns `ALLOW_CANDIDATE`, not authorization. The historical revision, evidence, Token Lock, Protected Content, format, immutable Patch approval, Track Changes Apply and Verify gates remain mandatory. No bookmark or other Word structure may be moved or altered to manufacture an editable range.
+
+All unsupported or uncertain structures remain blocked. Current automatic span support is deliberately narrow; Fields, Comment Ranges, hyperlinks, drawings, OMML, revision wrappers, malformed bookmarks, nested structures and targets crossing a protected boundary must use manual handling or clarification.
+
+### Risk tiers and batch selection
+
+The Workflow Ledger stores deterministic `risk_tier`, `risk_policy_version` and `risk_reasons`. These fields enter the task scope fingerprint:
+
+- `TIER_0`: confirmed ordinary wording work in one document scope.
+- `TIER_1`: science/numeric/unit/citation/reference/formatting changes, cross-document work or numbering. Prepare a separate high-risk batch and show it distinctly for author review.
+- `TIER_2`: unresolved or ambiguous target/evidence, missing evidence or clarification required. Do not generate a Patch.
+
+Batch construction never mixes tiers. The default route selects one safe tier at a time and holds Tier 2 out; explicit `--task-ids` must also be risk-homogeneous. Risk is recalculated after exact PatchOperations are added to the prepared Workflow Ledger. A change to risk classification changes the scope fingerprint and invalidates stale authorization.
+
+For Tier 1 tasks, the author must make a separate explicit high-risk review acknowledgement when approving the Workflow task. Use both `--high-risk-review-confirmed` and `--high-risk-review-note` with `approve-workflow-tasks`. The CLI records reviewer identity/time and the note inside the Workflow task fingerprint. A recheck clears this evidence; renewed scope requires renewed Tier 1 review. This is in addition to Patch Approval and Semantic Review.
+
+### Manual Suggestion artifacts
+
+When Apply encounters a blocked structure, it writes a new, source-hash-bound JSON artifact to `<batch>/manual_suggestions/` (or beside a non-batch plan). The CLI prints the artifact path and SHA-256, then stops; Apply remains failed/blocked and does not continue to publication. The artifact is explicitly `not_applied=true` and `docx_write_performed=false`; it is not a Patch and cannot be mistaken for revised manuscript text.
+
+The suggestion includes exact source text, document role/Word part, location hint, adjacent context, blocking structures/reason, missing evidence and a proposal only when evidence is sufficient. A missing scientific result removes the proposed edit and requires clarification. Manual intervention must be followed by a fresh, author-approved execution scope and the normal Patch lifecycle. The optional standalone command `create-manual-suggestion --input <diagnostic.json> --out <new.json>` follows the same no-overwrite rule.
+
+### Citation and Word-field reference graph
+
+The graph now distinguishes static numeric citation definitions/mentions from native Word field instructions. Static `[n]` citations may resolve only to a unique numbered reference-list definition. Citation ranges (for example `[1-3]`) and paragraphs mixing ordinary text with Word fields remain manual-review records. Native `REF`, `PAGEREF`, `SEQ`, `CITATION` and `ADDIN` fields are not misrepresented as static references; unresolved native-field references block package-wide numbering propagation. `PAGE`/`NUMPAGES` metadata fields are recorded but do not independently block unrelated numbering.
+
+Prefer typed number-map keys `DOCUMENT::KIND::OLD_NUMBER`, such as `Manuscript::citation::1` or `Manuscript::figure::1`. The legacy `DOCUMENT::OLD_NUMBER` key is valid only when the graph contains exactly one reference kind with that number. Ambiguous, unresolved or duplicate resulting references block the whole propagation plan.
+
 ## Local automated checks on Windows
 
 These commands are reserved for the unified acceptance stage after the end-to-end workflow implementation is complete. From Windows PowerShell 5.1, change to the repository root and run:

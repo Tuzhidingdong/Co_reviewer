@@ -88,6 +88,7 @@ def build_word_pdf_acceptance_ledger(
         "output_file": str(marked),
         "part": "word/document.xml",
         "p_idx": 0,
+        "target_identity_mode": "legacy_p_idx_explicit",
         "find": "0.5 M",
         "replace": "1.0 M",
         "location": "Synthetic body paragraph 1",

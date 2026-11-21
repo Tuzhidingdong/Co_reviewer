@@ -84,6 +84,24 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _write_deterministic_docx_archive(
+    output_path: str | Path,
+    package: dict[str, bytes],
+) -> None:
+    """Write stable DOCX ZIP bytes so identical Marked inputs yield identical Clean hashes.
+
+    ZipFile.writestr(name, data) stamps each member with the current local time.
+    Two equivalent Clean projections made on opposite sides of a two-second ZIP
+    timestamp boundary would then have different SHA-256 values. Fixed metadata
+    removes that false mismatch without weakening the content/hash verification.
+    """
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in package.items():
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
+
+
 def _xml_parser() -> ET.XMLParser:
     return ET.XMLParser(
         resolve_entities=False,
@@ -644,9 +662,7 @@ def create_working_clean_view(
     os.close(fd)
     temp_path = Path(temp_name)
     try:
-        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, data in package.items():
-                archive.writestr(name, data)
+        _write_deterministic_docx_archive(temp_path, package)
         with zipfile.ZipFile(temp_path, "r") as archive:
             bad_member = archive.testzip()
             if bad_member:

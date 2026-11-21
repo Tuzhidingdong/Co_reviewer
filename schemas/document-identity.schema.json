@@ -25,24 +25,50 @@
             "unknown"
           ]
         },
-        "style_name": { "type": ["string", "null"] },
+        "style_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "numbering_scope": {
-          "enum": ["document", "section", "chapter", "none", "unknown"]
+          "enum": [
+            "document",
+            "section",
+            "chapter",
+            "none",
+            "unknown"
+          ]
         },
         "marker_examples": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "reference_labels": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "detection_method": { "type": "string", "minLength": 1 },
+        "detection_method": {
+          "type": "string",
+          "minLength": 1
+        },
         "evidence_fingerprint": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
-        "profile_version": { "type": "string", "minLength": 1 }
+        "profile_version": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
@@ -58,11 +84,25 @@
         "citation_profile"
       ],
       "properties": {
-        "identity_version": { "const": "0.5.1" },
-        "document_id": { "type": "string", "minLength": 1 },
-        "revision_id": { "type": "string", "minLength": 1 },
-        "role": { "type": "string", "minLength": 1 },
-        "source_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "identity_version": {
+          "const": "0.5.1"
+        },
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "dimensions": {
           "type": "object",
           "required": [
@@ -72,14 +112,28 @@
             "citation_sha256"
           ],
           "properties": {
-            "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-            "structure_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-            "formatting_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-            "citation_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            "content_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "structure_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "formatting_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "citation_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
           },
           "additionalProperties": false
         },
-        "citation_profile": { "$ref": "#/$defs/citationProfile" }
+        "citation_profile": {
+          "$ref": "#/$defs/citationProfile"
+        }
       },
       "additionalProperties": false
     },
@@ -94,15 +148,45 @@
         "object_fingerprint"
       ],
       "properties": {
-        "object_id": { "type": "string", "minLength": 1 },
-        "document_id": { "type": "string", "minLength": 1 },
-        "revision_id": { "type": "string", "minLength": 1 },
-        "object_type": { "type": "string", "minLength": 1 },
-        "part": { "type": "string", "minLength": 1 },
-        "object_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "native_id": { "type": ["string", "null"] },
-        "parent_object_id": { "type": ["string", "null"] },
-        "location_hint": { "type": "object" }
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "part": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "native_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent_object_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location_hint": {
+          "type": "object"
+        }
       },
       "additionalProperties": false
     },
@@ -117,40 +201,104 @@
         "object_fingerprint"
       ],
       "properties": {
-        "document_id": { "type": "string", "minLength": 1 },
-        "revision_id": { "type": "string", "minLength": 1 },
-        "object_id": { "type": "string", "minLength": 1 },
-        "object_type": { "type": "string", "minLength": 1 },
-        "part": { "type": "string", "minLength": 1 },
-        "object_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "start_offset": { "type": ["integer", "null"], "minimum": 0 },
-        "end_offset": { "type": ["integer", "null"], "minimum": 1 },
-        "location_hint": { "type": "object" }
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "part": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "start_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "end_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "location_hint": {
+          "type": "object",
+          "properties": {
+            "p_idx": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
       },
       "allOf": [
         {
-          "if": { "required": ["start_offset"] },
-          "then": { "required": ["end_offset"] }
+          "if": {
+            "required": [
+              "start_offset"
+            ]
+          },
+          "then": {
+            "required": [
+              "end_offset"
+            ]
+          }
         },
         {
-          "if": { "required": ["end_offset"] },
-          "then": { "required": ["start_offset"] }
+          "if": {
+            "required": [
+              "end_offset"
+            ]
+          },
+          "then": {
+            "required": [
+              "start_offset"
+            ]
+          }
         }
       ],
       "additionalProperties": false
     }
   },
   "type": "object",
-  "required": ["schema_version", "documents", "objects"],
+  "required": [
+    "schema_version",
+    "documents",
+    "objects"
+  ],
   "properties": {
-    "schema_version": { "const": "0.5.1" },
+    "schema_version": {
+      "const": "0.5.1"
+    },
     "documents": {
       "type": "array",
-      "items": { "$ref": "#/$defs/documentIdentity" }
+      "items": {
+        "$ref": "#/$defs/documentIdentity"
+      }
     },
     "objects": {
       "type": "array",
-      "items": { "$ref": "#/$defs/documentObjectIdentity" }
+      "items": {
+        "$ref": "#/$defs/documentObjectIdentity"
+      }
     }
   },
   "additionalProperties": false

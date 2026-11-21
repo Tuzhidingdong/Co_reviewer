@@ -91,6 +91,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "location": "Results paragraph 1",
             "evidence_ids": ["E1"],
             "source_comment_ids": ["C1"],
+            "target_identity_mode": "legacy_p_idx_explicit",
         })
         patch = Patch(
             patch_id="T1",
@@ -288,6 +289,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": "new phrase",
                     "evidence_ids": ["E2"],
                     "source_comment_ids": ["C2", "C3"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }],
         }
@@ -494,6 +496,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "output_file": str(replacement_output),
                 "part": "word/document.xml",
                 "p_idx": 0,
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "find": "old phrase",
                 "replace": "more precise phrase",
                 "evidence_ids": ["E1"],
@@ -639,6 +642,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": f"new text {task_id}",
                     "evidence_ids": [f"E-{task_id}"],
                     "source_comment_ids": [f"C-{task_id}"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }
 
@@ -1014,6 +1018,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                     "replace": "new target wording",
                     "evidence_ids": ["E1"],
                     "source_comment_ids": ["C1"],
+                    "target_identity_mode": "legacy_p_idx_explicit",
                 }],
             }
 
@@ -1200,6 +1205,8 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
             "input_file": str(source),
             "output_file": str(r1),
             "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "find": "old",
             "replace": "verified",
             "source_sha256": sha256_file(source),

@@ -305,6 +305,10 @@
           "sequence": {
             "type": "integer",
             "minimum": 1
+          },
+          "author_decision_ref": {
+            "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef",
+            "description": "Hash-bound author approval for an exact package-wide numbering impact plan."
           }
         },
         "additionalProperties": false

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from docx import Document
 from lxml import etree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,8 @@ from co_reviewer.v232_contract import (
     remediation_transition, compile_clean_from_marked, qn, W,
     build_revision_baseline_inventory, targeted_revision_gate,
     collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
+    extract_docx_reference_segments,
+    validate_committed_document_package,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
 from co_reviewer.omml_converter import (
@@ -111,7 +114,7 @@ class V232ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "PARAGRAPH_PROPERTIES"):
             assert_safe_paragraph_merge(styled_left, styled_right)
 
-    def test_package_transaction_publishes_manifest_commit_marker(self):
+    def test_package_transaction_publishes_manifest_commit_marker_and_revalidates_docx_bytes(self):
         payload = io.BytesIO()
         with zipfile.ZipFile(payload, "w") as z:
             z.writestr("[Content_Types].xml", f'<Types xmlns="{ "http://schemas.openxmlformats.org/package/2006/content-types" }"/>')
@@ -121,6 +124,18 @@ class V232ContractTests(unittest.TestCase):
             self.assertEqual(result["status"], "COMMITTED")
             self.assertTrue(Path(result["commit_marker"]).is_file())
             self.assertTrue((Path(result["directory"]) / "package_manifest.json").is_file())
+            verified = validate_committed_document_package(
+                result["directory"], result["commit_marker"]
+            )
+            self.assertEqual(verified["package_id"], result["package_id"])
+            self.assertEqual(verified["documents"][0]["path"], "manuscript/Marked.docx")
+
+            packaged_docx = Path(result["directory"]) / "manuscript" / "Marked.docx"
+            packaged_docx.write_bytes(packaged_docx.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(ContractError, "size/SHA-256 mismatch"):
+                validate_committed_document_package(
+                    result["directory"], result["commit_marker"]
+                )
 
     def test_remediation_has_exactly_one_marked_reentry(self):
         patch = {"target_artifact": "Marked", "operation_id": "OP1", "find": "a", "replace": "b", "reason": "fix"}
@@ -350,6 +365,12 @@ class V232ContractTests(unittest.TestCase):
         resolved = next(m for m in updated["mentions"] if m["id"] == mention["id"])
         self.assertEqual(resolved["resolution"], "confirmed_by_user")
         self.assertEqual(resolved["number"], "3")
+        self.assertEqual(updated["ambiguous_count"], 0)
+        self.assertEqual(updated["unresolved_count"], 0)
+        response_edges = [edge for edge in updated["edges"] if edge["source_document"] == "Response"]
+        self.assertEqual(len(response_edges), 1)
+        self.assertEqual(response_edges[0]["target_document"], "Manuscript")
+        self.assertEqual(response_edges[0]["target_definition_id"], manuscript_definition["id"])
 
 
     def test_revision_id_lineage_collects_all_incremental_ids_by_hash(self):
@@ -401,6 +422,121 @@ class V232ContractTests(unittest.TestCase):
             figure_mention["target_definition_ids"][0],
             next(d["id"] for d in graph["definitions"]
                  if d["document"] == "Manuscript" and d["number"] == "2a"),
+        )
+
+    def test_reference_graph_records_panel_letter_ranges_without_guessing_base_caption_edges(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 2. Main results."},
+                {"part": "word/document.xml", "paragraph_index": 1,
+                 "text": "See Fig. 2a–c and Fig. 2 for the full panel set."},
+            ],
+        })
+        panel = next(
+            row for row in graph["mentions"]
+            if row.get("group_kind") == "panel_range"
+        )
+        self.assertEqual(panel["kind"], "figure")
+        self.assertEqual(panel["number"], "2a")
+        self.assertEqual(panel["panel_range"], "–c")
+        self.assertEqual(panel["resolution"], "manual_review_required")
+        self.assertEqual(panel["target_definition_ids"], [])
+        base_reference = next(
+            row for row in graph["mentions"]
+            if row["text"] == "Fig. 2"
+        )
+        self.assertEqual(base_reference["resolution"], "resolved")
+        self.assertTrue(any(
+            edge["mention_id"] == base_reference["id"]
+            for edge in graph["edges"]
+        ))
+
+    def test_reference_graph_records_grouped_and_ranged_mentions_as_manual_relations(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. First result."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "Figure 2. Second result."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "Figure 3. Third result."},
+                {"part": "word/document.xml", "paragraph_index": 3, "text": "Table 1. First table."},
+                {"part": "word/document.xml", "paragraph_index": 4, "text": "Table 2. Second table."},
+                {"part": "word/document.xml", "paragraph_index": 5, "text": "Table 3. Third table."},
+                {"part": "word/document.xml", "paragraph_index": 6,
+                 "text": "See Figs. 1–3 and Tables 1, 2 and 3; also see Fig. 2."},
+            ],
+        })
+        grouped = [
+            row for row in graph["mentions"]
+            if row.get("group_kind") in {"range", "list"}
+        ]
+        self.assertEqual(len(grouped), 2)
+        figure_range = next(row for row in grouped if row["kind"] == "figure")
+        table_list = next(row for row in grouped if row["kind"] == "table")
+        self.assertEqual(figure_range["numbers"], ["1", "3"])
+        self.assertEqual(figure_range["group_kind"], "range")
+        self.assertEqual(table_list["numbers"], ["1", "2", "3"])
+        self.assertEqual(table_list["group_kind"], "list")
+        self.assertEqual(
+            {row["resolution"] for row in grouped},
+            {"manual_review_required"},
+        )
+        self.assertTrue(all(not row["target_definition_ids"] for row in grouped))
+        single = next(
+            row for row in graph["mentions"]
+            if row["document"] == "Manuscript" and row["text"] == "Fig. 2"
+        )
+        self.assertEqual(single["resolution"], "resolved")
+        self.assertEqual(
+            {edge["mention_id"] for edge in graph["edges"]},
+            {single["id"]},
+            "Grouped relations must not be silently expanded into guessed graph edges.",
+        )
+
+    def test_reference_graph_recognizes_supplementary_and_extended_data_labels(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 1,
+                    "text": "Extended Data Figure 1. Additional control experiments.",
+                },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 2,
+                    "text": "Supplementary Table S2. Composition details.",
+                },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 3,
+                    "text": (
+                        "See Extended Data Fig. 1, Supplementary Table S2, "
+                        "and Supporting Information Figure S3."
+                    ),
+                },
+            ],
+            "SI": [
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 1,
+                    "text": "Supporting Information Figure S3. Extended results.",
+                },
+            ],
+        })
+        definition_keys = {
+            (row["kind"], row["number"])
+            for row in graph["definitions"]
+        }
+        self.assertIn(("figure", "1"), definition_keys)
+        self.assertIn(("table", "S2"), definition_keys)
+        self.assertIn(("figure", "S3"), definition_keys)
+        manuscript_mentions = [
+            row for row in graph["mentions"]
+            if row["document"] == "Manuscript"
+        ]
+        self.assertEqual(len(manuscript_mentions), 3)
+        self.assertTrue(all(row["resolution"] == "resolved" for row in manuscript_mentions))
+        self.assertEqual(
+            {(row["kind"], row["number"]) for row in manuscript_mentions},
+            {("figure", "1"), ("table", "S2"), ("figure", "S3")},
         )
 
     def test_reference_graph_prefers_local_numbering_and_preserves_ambiguity(self):
@@ -670,6 +806,398 @@ class V232ContractTests(unittest.TestCase):
             with self.assertRaisesRegex(OmmlConversionError, "refuses to overwrite"):
                 create_omml_preview_docx("x^2", output)
             self.assertEqual(output.read_bytes(), b"keep")
+
+
+    def test_package_graph_uses_document_profile_for_parenthetical_and_numbered_reference_citations(self):
+        segments = [
+            {"part": "word/document.xml", "paragraph_index": 0, "text": "References",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 1, "text": "1. Smith et al. Reference one.",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 2, "text": "2. Jones et al. Reference two.",
+             "citation_profile_modes": ["numeric_parenthetical"], "in_reference_section": True},
+            {"part": "word/document.xml", "paragraph_index": 3, "text": "Prior work (1) and (2) supports this method.",
+             "citation_profile_modes": ["numeric_parenthetical"]},
+            {"part": "word/document.xml", "paragraph_index": 4, "text": "Earlier studies (1, 2) agree.",
+             "citation_profile_modes": ["numeric_parenthetical"]},
+        ]
+        graph = build_package_reference_graph({"Manuscript": segments})
+        definitions = [row for row in graph["definitions"] if row["kind"] == "citation"]
+        mentions = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual({row["number"] for row in definitions}, {"1", "2"})
+        singles = [row for row in mentions if row["paragraph_index"] == 3]
+        self.assertEqual({row["number"] for row in singles}, {"1", "2"})
+        self.assertTrue(all(row["resolution"] == "resolved" for row in singles))
+        grouped = next(row for row in mentions if row["paragraph_index"] == 4)
+        self.assertEqual(grouped["numbers"], ["1", "2"])
+        self.assertEqual(grouped["resolution"], "manual_review_required")
+
+        with self.assertRaisesRegex(
+            ContractError,
+            "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION",
+        ):
+            renumber_reference_graph(
+                graph,
+                {"Manuscript::citation::1": "4"},
+                explicit_authorization=True,
+            )
+
+        # Remove only the still-unresolved list item to prove that a unique
+        # single citation maps to its numbered bibliography entry and keeps
+        # both the numeric coordinate and visible parentheses in sync.
+        resolved_graph = build_package_reference_graph({
+            "Manuscript": segments[:-1]
+        })
+        updated = renumber_reference_graph(
+            resolved_graph,
+            {"Manuscript::citation::1": "4"},
+            explicit_authorization=True,
+        )
+        definition_update = next(
+            row for row in updated["definition_updates"] if row["kind"] == "citation"
+        )
+        self.assertEqual(definition_update["old_text"], "1")
+        self.assertEqual(definition_update["old_surface_text"], "1.")
+        self.assertEqual(definition_update["new_surface_text"], "4.")
+        parenthetical_update = next(
+            row for row in updated["mention_updates"]
+            if row["paragraph_index"] == 3 and row["old_number"] == "1"
+        )
+        self.assertEqual(parenthetical_update["old_text"], "1")
+        self.assertEqual(parenthetical_update["old_surface_text"], "(1)")
+        self.assertEqual(parenthetical_update["new_surface_text"], "(4)")
+
+    def test_package_graph_resolves_superscript_citation_events_and_keeps_footnotes_manual(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "1. Smith et al. Reference one.",
+                 "citation_profile_modes": ["numeric_superscript"], "in_reference_section": True},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "The method follows earlier work 1",
+                 "citation_profile_modes": ["numeric_superscript", "footnote"],
+                 "citation_marker_events": [{
+                     "kind": "numeric_superscript", "text": "1",
+                     "offset": 32, "end_offset": 33, "numbers": ["1"],
+                 }]},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "A note is attached here.",
+                 "citation_profile_modes": ["footnote"],
+                 "citation_marker_events": [{
+                     "kind": "footnote_reference", "text": "",
+                     "offset": 23, "end_offset": 23, "numbers": [], "footnote_id": "4",
+                 }]},
+            ],
+        })
+        superscript = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "numeric_superscript")
+        self.assertEqual(superscript["number"], "1")
+        self.assertEqual(superscript["resolution"], "resolved")
+        footnote = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "footnote_reference")
+        self.assertEqual(footnote["number"], "footnote:4")
+        self.assertEqual(footnote["resolution"], "manual_review_required")
+
+    def test_parenthetical_citation_profile_does_not_reclassify_equation_numbers(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [{
+                "part": "word/document.xml",
+                "paragraph_index": 0,
+                "text": "See Eq. (2) and prior work (1).",
+                "citation_profile_modes": ["numeric_parenthetical"],
+            }],
+        })
+        citations = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual([row["number"] for row in citations], ["1"])
+        self.assertFalse(any(row.get("text") == "(2)" for row in citations))
+
+    def test_unresolved_grouped_citation_blocks_renumbering_of_any_group_member(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0,
+                 "text": "[1] Smith. One."},
+                {"part": "word/document.xml", "paragraph_index": 1,
+                 "text": "[2] Jones. Two."},
+                {"part": "word/document.xml", "paragraph_index": 2,
+                 "text": "Prior work (1, 2) supports the method.",
+                 "citation_profile_modes": ["numeric_parenthetical"]},
+            ],
+        })
+        grouped = next(
+            row for row in graph["mentions"]
+            if row.get("group_kind") == "list"
+        )
+        self.assertEqual(grouped["numbers"], ["1", "2"])
+        self.assertEqual(grouped["resolution"], "manual_review_required")
+        with self.assertRaisesRegex(
+            ContractError,
+            "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION",
+        ):
+            renumber_reference_graph(
+                graph,
+                {"Manuscript::citation::1": "3"},
+                explicit_authorization=True,
+            )
+
+    def test_reference_graph_does_not_guess_parenthetical_numeric_citations_without_style_evidence(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Equation (1) was solved."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "This is a numbered list (1)."},
+            ]
+        })
+        self.assertFalse(any(row["kind"] == "citation" for row in graph["mentions"]))
+
+    def test_docx_reference_extractor_emits_superscript_and_bibliography_profile_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "citation-style.docx"
+            document = Document()
+            paragraph = document.add_paragraph("The method follows earlier work ")
+            paragraph.add_run("1")
+            document.add_paragraph("References")
+            document.add_paragraph("1. Smith et al. Reference one.")
+            document.save(path)
+            with zipfile.ZipFile(path, "r") as source:
+                members = {name: source.read(name) for name in source.namelist()}
+            root = ET.fromstring(members["word/document.xml"])
+            target_run = next(
+                run for run in root.findall(".//w:body/w:p[1]/w:r", {"w": W})
+                if "".join(node.text or "" for node in run.findall(".//w:t", {"w": W})) == "1"
+            )
+            rpr = target_run.find("w:rPr", {"w": W})
+            if rpr is None:
+                rpr = ET.Element(f"{{{W}}}rPr")
+                target_run.insert(0, rpr)
+            vertical = ET.SubElement(rpr, f"{{{W}}}vertAlign")
+            vertical.set(f"{{{W}}}val", "superscript")
+            members["word/document.xml"] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
+                for name, payload in members.items():
+                    target.writestr(name, payload)
+            segments = extract_docx_reference_segments(path)
+            body_marker = next(row for row in segments if row["part"] == "word/document.xml" and row["text"].startswith("The method follows"))
+            bibliography = next(row for row in segments if row["part"] == "word/document.xml" and row["text"].startswith("1. Smith"))
+            self.assertIn("numeric_superscript", body_marker["citation_profile_modes"])
+            self.assertEqual(body_marker["citation_marker_events"][0]["text"], "1")
+            self.assertTrue(bibliography["in_reference_section"])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            definition = next(row for row in graph["definitions"] if row["kind"] == "citation" and row["number"] == "1")
+            mention = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "numeric_superscript")
+            self.assertEqual(mention["resolution"], "resolved")
+            self.assertEqual(mention["target_definition_ids"], [definition["id"]])
+
+    def test_docx_reference_extractor_detects_parenthetical_citations_only_from_body_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "parenthetical-citations.docx"
+            document = Document()
+            document.add_paragraph("Prior work (1) supports the method.")
+            document.add_paragraph("Equation (2) is evaluated separately.")
+            document.add_paragraph("References")
+            document.add_paragraph("1. Smith et al. Reference one.")
+            document.save(path)
+
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Prior work")
+            )
+            equation = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Equation")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("1. Smith")
+            )
+            self.assertIn("numeric_parenthetical", body["citation_profile_modes"])
+            self.assertIn("numeric_parenthetical", equation["citation_profile_modes"])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            self.assertTrue(bibliography["in_reference_section"])
+
+            graph = build_package_reference_graph({"Manuscript": segments})
+            citation_mentions = [
+                row for row in graph["mentions"] if row["kind"] == "citation"
+            ]
+            self.assertEqual(len(citation_mentions), 1)
+            self.assertEqual(citation_mentions[0]["number"], "1")
+            self.assertEqual(citation_mentions[0]["resolution"], "resolved")
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("text") == "(2)"
+                for row in graph["mentions"]
+            ))
+
+    def test_docx_reference_extractor_keeps_author_year_edges_manual_until_bibliography_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "author-year-citations.docx"
+            document = Document()
+            document.add_paragraph("Prior work (Smith et al., 2020) supports this method.")
+            document.add_paragraph("References")
+            document.add_paragraph("Smith et al. (2020). Reference entry.")
+            document.save(path)
+
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Prior work")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Smith")
+            )
+            self.assertIn("author_year", body["citation_profile_modes"])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            author_year = [
+                row for row in graph["mentions"]
+                if row.get("reference_mechanism") == "static_text"
+                and row["kind"] == "citation"
+            ]
+            self.assertEqual(len(author_year), 1)
+            self.assertEqual(author_year[0]["resolution"], "manual_review_required")
+            self.assertEqual(author_year[0]["number"], "Smith et al.,2020")
+            self.assertFalse(graph["edges"])
+
+    def test_docx_reference_extractor_does_not_infer_citation_style_from_bibliography_or_equation_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bibliography-only.docx"
+            document = Document()
+            document.add_paragraph("The result follows Eq. (2).")
+            document.add_paragraph("References")
+            document.add_paragraph("Smith (2020). [1] A numbered bibliography entry.")
+            document.save(path)
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("The result follows")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Smith")
+            )
+            self.assertEqual(body["citation_profile_modes"], [])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            self.assertTrue(bibliography["in_reference_section"])
+            self.assertEqual(bibliography["citation_marker_events"], [])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("reference_mechanism") == "author_year"
+                for row in graph["mentions"]
+            ))
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("surface_text") == "[1]"
+                for row in graph["mentions"]
+            ))
+            self.assertTrue(any(
+                row["kind"] == "citation" and row.get("definition_style") == "numbered_reference_list"
+                for row in graph["definitions"]
+            ))
+
+    def test_package_graph_resolves_and_renumbers_static_numeric_citations(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "[1] Smith et al. Reference one."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[2] Jones et al. Reference two."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "The method follows prior work [1, 2]."},
+            ]
+        })
+        definitions = [row for row in graph["definitions"] if row["kind"] == "citation"]
+        mentions = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual({row["number"] for row in definitions}, {"1", "2"})
+        self.assertEqual({row["number"] for row in mentions}, {"1", "2"})
+        self.assertTrue(all(row["resolution"] == "resolved" for row in mentions))
+        updated = renumber_reference_graph(
+            graph,
+            {"Manuscript::citation::1": "4"},
+            explicit_authorization=True,
+        )
+        self.assertTrue(any(
+            row["kind"] == "citation" and row["old_number"] == "1" and row["new_number"] == "4"
+            for row in updated["definition_updates"]
+        ))
+        self.assertTrue(any(
+            row["kind"] == "citation" and row["old_text"] == "1" and row["new_text"] == "4"
+            for row in updated["mention_updates"]
+        ))
+
+    def test_legacy_reference_number_key_rejects_cross_kind_collision(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[1] Smith et al. Reference one."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "See Fig. 1 and [1]."},
+            ]
+        })
+        with self.assertRaisesRegex(ContractError, "UNIQUE_REFERENCE_KIND_REQUIRED"):
+            renumber_reference_graph(
+                graph, {"Manuscript::1": "2"}, explicit_authorization=True
+            )
+
+    def test_native_word_reference_fields_are_separate_and_block_number_propagation(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {
+                    "part": "word/document.xml", "paragraph_index": 1,
+                    "text": "See Figure 1 and [1].",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": [" REF _Ref123 \\h "],
+                    "word_field_markers_present": True,
+                },
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "[1] Smith et al. Reference one."},
+            ]
+        })
+        self.assertEqual(len(graph["field_references"]), 1)
+        self.assertEqual(graph["field_references"][0]["field_type"], "REF")
+        mixed_mentions = [
+            row for row in graph["mentions"]
+            if row["paragraph_index"] == 1
+        ]
+        self.assertTrue(mixed_mentions)
+        self.assertTrue(all(row["resolution"] == "manual_review_required" for row in mixed_mentions))
+        with self.assertRaisesRegex(ContractError, "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING"):
+            renumber_reference_graph(
+                graph, {"Manuscript::figure::1": "2"}, explicit_authorization=True
+            )
+
+    def test_page_number_fields_do_not_block_unrelated_reference_renumbering(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. Main result."},
+                {
+                    "part": "word/document.xml", "paragraph_index": 1,
+                    "text": "Page 1",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": [" PAGE "],
+                    "word_field_markers_present": True,
+                },
+            ]
+        })
+        self.assertEqual(graph["field_references"][0]["field_type"], "PAGE")
+        updated = renumber_reference_graph(
+            graph, {"Manuscript::figure::1": "2"}, explicit_authorization=True
+        )
+        self.assertEqual(updated["definition_updates"][0]["new_number"], "2")
+
+    def test_citation_ranges_require_manual_mapping_before_numbering(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "[1] Smith. One."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "[2] Jones. Two."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "[3] Lee. Three."},
+                {"part": "word/document.xml", "paragraph_index": 3, "text": "See prior work [1-3]."},
+            ]
+        })
+        range_mention = next(
+            row for row in graph["mentions"]
+            if row["kind"] == "citation" and row["number"] == "1-3"
+        )
+        self.assertEqual(range_mention["resolution"], "manual_review_required")
+        with self.assertRaisesRegex(ContractError, "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION"):
+            renumber_reference_graph(
+                graph, {"Manuscript::citation::1": "4"}, explicit_authorization=True
+            )
 
 
 

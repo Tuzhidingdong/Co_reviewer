@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 from co_reviewer.revision_models import revision_ledger_from_mapping
+from co_reviewer.v232_contract import narrow_revision
 from co_reviewer.word_pdf_acceptance import build_word_pdf_acceptance_ledger
+from create_word_compatibility_fixture import build_fixture
 
 
 class WordPdfAcceptanceFixtureTests(unittest.TestCase):
@@ -37,6 +39,26 @@ class WordPdfAcceptanceFixtureTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_compatibility_fixture_authorizes_each_exact_protected_token_pair(self) -> None:
+        fixture_dir = self.root / "synthetic_word_compatibility"
+        paths = build_fixture(fixture_dir)
+        payload = json.loads(paths["plan"].read_text(encoding="utf-8"))
+        targets = payload["revision_items"][0]["targets"]
+        self.assertEqual(len(targets), 5)
+        for target in targets:
+            with self.subTest(location=target["location"]):
+                authorization = target.get("authorized_change")
+                self.assertIsInstance(authorization, dict)
+                self.assertTrue(authorization.get("intent"))
+                self.assertEqual(len(authorization.get("explicitly_authorized_tokens", [])), 1)
+                report = narrow_revision(
+                    target["find"],
+                    target["replace"],
+                    authorized_change=authorization,
+                )
+                self.assertEqual(report["status"], "PASS")
+                self.assertTrue(report["edits"])
 
     def test_builds_valid_hash_bound_mapping_ledger_from_post_word_fixture(self) -> None:
         source_bytes = self.source.read_bytes()

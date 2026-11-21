@@ -626,15 +626,51 @@ _REFERENCE_LABELS = {
     "equation": "equation", "eq": "equation", "eq.": "equation", "equations": "equation", "eqs": "equation",
     "scheme": "scheme", "schemes": "scheme",
     "section": "section", "sections": "section",
+    "citation": "citation", "citations": "citation",
 }
 _REFERENCE_NUMBER = r"(S?\d+(?:\.\d+)*(?:[A-Za-z])?)"
 _CAPTION = re.compile(
-    rf"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
+    rf"(?im)^\s*(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
 )
+_REFERENCE_GROUP_SEPARATOR = r"(?:[-–]\s*|[,;]\s*(?:and\s+)?|&\s*|\band\b\s*)"
+_MENTION_PANEL_RANGE = re.compile(
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(?P<label>Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
+    rf"\s*\(?\s*(?P<number>{_REFERENCE_NUMBER})"
+    rf"(?P<panel_range>\s*[-–]\s*[A-Za-z](?:\s*[-–]\s*[A-Za-z])?)"
+    rf"\s*\)?(?=$|[\s.;:)\]])",
+    re.I,
+)
+_MENTION_GROUP = re.compile(
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(?P<label>Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
+    rf"\s*\(?\s*(?P<references>{_REFERENCE_NUMBER}"
+    rf"(?:\s*{_REFERENCE_GROUP_SEPARATOR}{_REFERENCE_NUMBER})+)"
+    rf"\s*\)?(?=$|[\s.;:)\]])",
+    re.I,
+)
 _MENTION = re.compile(
-    rf"\b(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=$|[\s,.;:)\]])",
+    re.I,
+)
+_CITATION_DEFINITION = re.compile(r"(?im)^\s*\[\s*(\d+)\s*\](?=\s+\S)")
+_CITATION_GROUP = re.compile(r"(?<!\w)\[(?P<body>\s*\d+(?:\s*[,;]\s*\d+)*\s*)\]")
+_CITATION_RANGE = re.compile(r"(?<!\w)\[\s*(\d+)\s*[-–]\s*(\d+)\s*\]")
+_NUMBERED_REFERENCE_DEFINITION = re.compile(r"(?im)^\s*(\d+)[.)](?=\s+\S)")
+_BRACKETED_REFERENCE_DEFINITION = re.compile(r"(?<!\w)\[\s*(\d+)\s*\]")
+_PAREN_CITATION_RANGE = re.compile(r"(?<!\w)\(\s*(\d+)\s*[-–]\s*(\d+)\s*\)")
+_PAREN_CITATION_GROUP = re.compile(r"(?<!\w)\((?P<body>\s*\d+(?:\s*[,;]\s*\d+)+\s*)\)")
+_PAREN_CITATION_SINGLE = re.compile(r"(?<!\w)\(\s*(\d+)\s*\)")
+_AUTHOR_YEAR_CITATION = re.compile(
+    r"\((?P<authors>[A-Z][A-Za-z'’\-]+(?:\s+et\s+al\.)?(?:\s+and\s+[A-Z][A-Za-z'’\-]+)?),?\s+(?P<year>(?:19|20)\d{2}[a-z]?)\)"
+)
+_WORD_FIELD_TYPE = re.compile(
+    r"\b(REF|PAGEREF|NOTEREF|SEQ|CITATION|ADDIN|TOC|HYPERLINK|XE|TA|"
+    r"PAGE|NUMPAGES|DATE|TIME|AUTHOR|FILENAME|FILESIZE|NUMWORDS|NUMCHARS|EDITTIME)\b",
     re.I,
 )
 
@@ -647,64 +683,241 @@ def _canonical_reference_kind(value: str) -> str:
 def _reference_segments(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str):
         return [
-            {"part": "text", "paragraph_index": index, "text": line}
+            {
+                "part": "text", "paragraph_index": index, "text": line,
+                "reference_mechanism": "static_text", "word_field_instructions": [],
+                "citation_profile_modes": [], "citation_marker_events": [],
+                "in_reference_section": False,
+            }
             for index, line in enumerate(value.splitlines() or [value])
         ]
     if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
         raise ContractError("Document reference content must be text or an array of paragraph segments")
     segments = []
     seen_locations = set()
+    allowed_modes = {
+        "numeric_superscript", "numeric_bracketed", "numeric_parenthetical",
+        "author_year", "footnote",
+    }
     for index, row in enumerate(value):
         if not isinstance(row, Mapping):
             raise ContractError("Reference paragraph segments must be objects")
         part = row.get("part", "word/document.xml")
         paragraph_index = row.get("paragraph_index", index)
         text_value = row.get("text")
+        mechanism = row.get("reference_mechanism", "static_text")
+        instructions = row.get("word_field_instructions", [])
+        field_markers_present = row.get("word_field_markers_present", False)
+        profile_modes = row.get("citation_profile_modes", [])
+        marker_events = row.get("citation_marker_events", [])
+        in_reference_section = row.get("in_reference_section", False)
+        if not isinstance(field_markers_present, bool) or not isinstance(in_reference_section, bool):
+            raise ContractError("Word field and reference-section indicators must be boolean")
         if not isinstance(part, str) or not part.strip():
             raise ContractError("Reference segment part must be a non-empty string")
         if not isinstance(paragraph_index, int) or isinstance(paragraph_index, bool) or paragraph_index < 0:
             raise ContractError("Reference segment paragraph_index must be a non-negative integer")
         if not isinstance(text_value, str):
             raise ContractError("Reference segment text must be a string")
+        if mechanism not in {"static_text", "mixed_with_word_field"}:
+            raise ContractError("Reference segment mechanism must be static_text or mixed_with_word_field")
+        if not isinstance(instructions, list) or any(not isinstance(item, str) for item in instructions):
+            raise ContractError("word_field_instructions must be an array of strings")
+        if (
+            not isinstance(profile_modes, list)
+            or any(not isinstance(item, str) or item not in allowed_modes for item in profile_modes)
+            or len(profile_modes) != len(set(profile_modes))
+        ):
+            raise ContractError("citation_profile_modes must contain unique supported citation-style labels")
+        if not isinstance(marker_events, list):
+            raise ContractError("citation_marker_events must be an array")
+        normalized_markers = []
+        for marker_index, marker in enumerate(marker_events):
+            if not isinstance(marker, Mapping):
+                raise ContractError(f"citation_marker_events[{marker_index}] must be an object")
+            kind = marker.get("kind")
+            offset, end_offset = marker.get("offset"), marker.get("end_offset")
+            marker_text = marker.get("text", "")
+            if kind not in {"numeric_superscript", "footnote_reference"}:
+                raise ContractError(f"citation_marker_events[{marker_index}] has an unsupported kind")
+            if (
+                not isinstance(offset, int) or isinstance(offset, bool)
+                or not isinstance(end_offset, int) or isinstance(end_offset, bool)
+                or offset < 0 or end_offset < offset or end_offset > len(text_value)
+            ):
+                raise ContractError(f"citation_marker_events[{marker_index}] has invalid text offsets")
+            if not isinstance(marker_text, str):
+                raise ContractError(f"citation_marker_events[{marker_index}].text must be a string")
+            numbers = marker.get("numbers", [])
+            if not isinstance(numbers, list) or any(
+                not isinstance(item, str) or not item.isdigit() for item in numbers
+            ):
+                raise ContractError(f"citation_marker_events[{marker_index}].numbers must contain digit strings")
+            normalized_markers.append({
+                "kind": kind, "text": marker_text,
+                "offset": offset, "end_offset": end_offset,
+                "numbers": list(numbers),
+                **({"footnote_id": str(marker.get("footnote_id", ""))} if kind == "footnote_reference" else {}),
+            })
         key = (part, paragraph_index)
         if key in seen_locations:
             raise ContractError("Duplicate reference segment location: " + repr(key))
         seen_locations.add(key)
-        segments.append({"part": part, "paragraph_index": paragraph_index, "text": text_value})
+        segments.append({
+            "part": part, "paragraph_index": paragraph_index, "text": text_value,
+            "reference_mechanism": mechanism,
+            "word_field_instructions": list(instructions),
+            "word_field_markers_present": field_markers_present,
+            "citation_profile_modes": list(profile_modes),
+            "citation_marker_events": normalized_markers,
+            "in_reference_section": in_reference_section,
+        })
     return segments
 
-
 def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
-    """Extract text with exact Word part and paragraph anchors for graph construction."""
-    import zipfile
+    """Extract text, citation-style evidence, superscript anchors and native fields.
+
+    Numeric parenthetical citations are only interpreted when detected in the
+    source DOCX. Superscript runs retain exact text offsets. Grouped/ranged
+    markers and native footnote references remain explicit manual graph items.
+    """
     source = Path(path)
     if not source.is_file() or source.suffix.casefold() != ".docx":
         raise ContractError("Reference graph input must be an existing DOCX")
     allowed = re.compile(r"^word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$")
-    segments = []
+    parsed_parts: dict[str, ET._Element] = {}
     with zipfile.ZipFile(source, "r") as archive:
         for name in sorted(set(archive.namelist())):
-            if not allowed.match(name):
-                continue
-            root = _xml(archive.read(name))
-            for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
-                value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
-                if value.strip():
-                    segments.append({"part": name, "paragraph_index": paragraph_index, "text": value})
+            if allowed.match(name):
+                parsed_parts[name] = _xml(archive.read(name))
+
+    citation_modes: set[str] = set()
+    paragraph_rows: list[tuple[str, int, ET._Element, str, bool]] = []
+    in_reference_section = False
+    reference_headings = {
+        "references", "bibliography", "literature cited",
+        "引用文献", "参考文献",
+    }
+    for part, root in parsed_parts.items():
+        for paragraph_index, paragraph in enumerate(root.findall(".//w:p", NS)):
+            text_value = "".join(node.text or "" for node in paragraph.findall(".//w:t", NS))
+            in_reference_paragraph = False
+            if part == "word/document.xml":
+                heading = text_value.strip().casefold()
+                if heading in reference_headings:
+                    in_reference_section = True
+                in_reference_paragraph = in_reference_section
+                if not in_reference_paragraph:
+                    if re.search(r"\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]", text_value):
+                        citation_modes.add("numeric_bracketed")
+                    for match in _PAREN_CITATION_RANGE.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    for match in _PAREN_CITATION_GROUP.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    for match in _PAREN_CITATION_SINGLE.finditer(text_value):
+                        prefix = text_value[max(0, match.start() - 24):match.start()]
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                            citation_modes.add("numeric_parenthetical")
+                    if _AUTHOR_YEAR_CITATION.search(text_value):
+                        citation_modes.add("author_year")
+                    for run in paragraph.findall(".//w:r", NS):
+                        vertical = run.find("w:rPr/w:vertAlign", NS)
+                        run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+                        if (
+                            (vertical.get(qn("val")) if vertical is not None else None) == "superscript"
+                            and run_text
+                            and re.fullmatch(r"[\d,;–\-]+", run_text)
+                        ):
+                            citation_modes.add("numeric_superscript")
+                    if paragraph.findall(".//w:footnoteReference", NS):
+                        citation_modes.add("footnote")
+            paragraph_rows.append((part, paragraph_index, paragraph, text_value, in_reference_paragraph))
+
+    selected_modes = sorted(citation_modes)
+    segments: list[dict[str, Any]] = []
+    for part, paragraph_index, paragraph, value, in_reference_paragraph in paragraph_rows:
+        instructions = []
+        for node in paragraph.findall(".//w:fldSimple", NS):
+            instruction = node.get(qn("instr"), "")
+            if instruction.strip():
+                instructions.append(instruction.strip())
+        for node in paragraph.findall(".//w:instrText", NS):
+            instruction = node.text or ""
+            if instruction.strip():
+                instructions.append(instruction.strip())
+        has_field_markers = bool(
+            instructions or paragraph.findall(".//w:fldChar", NS)
+            or paragraph.findall(".//w:fldSimple", NS)
+        )
+
+        text_offsets: dict[ET._Element, tuple[int, int]] = {}
+        footnote_offsets: dict[ET._Element, int] = {}
+        cursor = 0
+        for node in paragraph.iter():
+            if node.tag == qn("t"):
+                node_text = node.text or ""
+                text_offsets[node] = (cursor, cursor + len(node_text))
+                cursor += len(node_text)
+            elif node.tag == qn("footnoteReference"):
+                footnote_offsets[node] = cursor
+
+        marker_events: list[dict[str, Any]] = []
+        if part == "word/document.xml" and not in_reference_paragraph:
+            for run in paragraph.findall(".//w:r", NS):
+                vertical = run.find("w:rPr/w:vertAlign", NS)
+                run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
+                if (vertical.get(qn("val")) if vertical is not None else None) != "superscript" or not run_text:
+                    continue
+                if not re.fullmatch(r"[\d,;–\-]+", run_text):
+                    continue
+                text_nodes = run.findall(".//w:t", NS)
+                if not text_nodes or any(node not in text_offsets for node in text_nodes):
+                    continue
+                marker_events.append({
+                    "kind": "numeric_superscript", "text": run_text,
+                    "offset": text_offsets[text_nodes[0]][0],
+                    "end_offset": text_offsets[text_nodes[-1]][1],
+                    "numbers": re.findall(r"\d+", run_text),
+                })
+            for node, offset in footnote_offsets.items():
+                marker_events.append({
+                    "kind": "footnote_reference", "text": "",
+                    "offset": offset, "end_offset": offset,
+                    "numbers": [], "footnote_id": node.get(qn("id"), ""),
+                })
+        marker_events.sort(key=lambda row: (row["offset"], row["end_offset"], row["kind"]))
+        segments.append({
+            "part": part,
+            "paragraph_index": paragraph_index,
+            "text": value,
+            "reference_mechanism": (
+                "mixed_with_word_field" if has_field_markers else "static_text"
+            ),
+            "word_field_instructions": list(dict.fromkeys(instructions)),
+            "word_field_markers_present": has_field_markers,
+            "citation_profile_modes": selected_modes if part == "word/document.xml" and not in_reference_paragraph else [],
+            "citation_marker_events": marker_events,
+            "in_reference_section": in_reference_paragraph,
+        })
+
     return segments
 
-
 def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any]:
-    """Build a package-wide graph with Word part/paragraph anchors.
+    """Build a package-wide graph of definitions, static mentions and native Word fields.
 
-    Local definitions are preferred for same-document references. Cross-document
-    resolution is allowed only when exactly one package definition matches;
-    multiple candidates remain ambiguous and require explicit user mapping.
+    Static text references are resolved only when exactly one definition is found.
+    Native Word fields and mixed paragraphs are represented separately and remain
+    manual-review items; they are never misreported as ordinary static citations.
     """
     if not isinstance(documents, Mapping) or not documents:
         raise ContractError("Package graph requires at least one named document")
     definitions: list[dict[str, Any]] = []
     mentions: list[dict[str, Any]] = []
+    field_references: list[dict[str, Any]] = []
     normalized_documents: dict[str, list[dict[str, Any]]] = {}
     for doc_id, raw_content in documents.items():
         if not isinstance(doc_id, str) or not doc_id.strip():
@@ -713,11 +926,32 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
         normalized_documents[doc_id] = segments
         for segment in segments:
             text_value = segment["text"]
+            mechanism = segment["reference_mechanism"]
             base = {
                 "document": doc_id,
                 "part": segment["part"],
                 "paragraph_index": segment["paragraph_index"],
+                "reference_mechanism": mechanism,
             }
+            instructions = segment.get("word_field_instructions", [])
+            field_rows = list(instructions)
+            if mechanism == "mixed_with_word_field" and not field_rows:
+                field_rows = [""]
+            for field_index, instruction in enumerate(field_rows):
+                field_match = _WORD_FIELD_TYPE.search(instruction)
+                field_type = field_match.group(1).upper() if field_match else "UNKNOWN"
+                record_id = "field-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(field_index) + instruction).encode("utf-8")
+                ).hexdigest()[:16]
+                field_references.append({
+                    "id": record_id, **base,
+                    "reference_mechanism": "native_word_field",
+                    "field_type": field_type,
+                    "instruction": instruction,
+                    "display_text": text_value,
+                    "resolution": "manual_review_required",
+                })
             caption_spans = []
             for match in _CAPTION.finditer(text_value):
                 kind = _canonical_reference_kind(match.group(1))
@@ -729,10 +963,353 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 definitions.append({
                     "id": record_id, **base, "kind": kind, "number": number,
                     "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                    "reference_mechanism": (
+                        "manual_review_required" if mechanism == "mixed_with_word_field" else mechanism
+                    ),
                 })
                 caption_spans.append(match.span())
+
+            citation_profile_modes = set(segment.get("citation_profile_modes", []))
+            citation_marker_events = segment.get("citation_marker_events", [])
+            citation_definition_spans = []
+            for match in _CITATION_DEFINITION.finditer(text_value):
+                span = match.span()
+                record_id = "def-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(match.start()) + "citation" + match.group(1)).encode("utf-8")
+                ).hexdigest()[:16]
+                definitions.append({
+                    "id": record_id, **base, "kind": "citation",
+                    "number": match.group(1), "text": match.group(1),
+                    "surface_text": match.group(),
+                    "offset": match.start(1), "end_offset": match.end(1),
+                    "reference_mechanism": (
+                        "manual_review_required" if mechanism == "mixed_with_word_field" else mechanism
+                    ),
+                })
+                citation_definition_spans.append(span)
+
+            if segment.get("in_reference_section") is True:
+                for match in _NUMBERED_REFERENCE_DEFINITION.finditer(text_value):
+                    if any(
+                        match.start() >= left and match.end() <= right
+                        for left, right in citation_definition_spans
+                    ):
+                        continue
+                    number = match.group(1)
+                    span = match.span()
+                    record_id = "def-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(match.start()) + "citation-numbered" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    definitions.append({
+                        "id": record_id, **base, "kind": "citation",
+                        "number": number, "text": number,
+                        "surface_text": match.group(),
+                        "offset": match.start(1), "end_offset": match.end(1),
+                        "reference_mechanism": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "static_text"
+                        ),
+                        "definition_style": "numbered_reference_list",
+                    })
+                    citation_definition_spans.append(span)
+
+                # Some author-year styled bibliographies append the numeric
+                # label after the entry text (e.g. "Smith (2020). [1] ...").
+                # Treat one unambiguous bracket label in a bibliography line
+                # as its definition; never emit that bibliography label as an
+                # in-text citation mention.
+                inline_labels = list(_BRACKETED_REFERENCE_DEFINITION.finditer(text_value))
+                if len(inline_labels) == 1:
+                    match = inline_labels[0]
+                    if not any(
+                        match.start() < right and match.end() > left
+                        for left, right in citation_definition_spans
+                    ):
+                        number = match.group(1)
+                        record_id = "def-" + hashlib.sha1(
+                            (doc_id + segment["part"] + str(segment["paragraph_index"])
+                             + str(match.start()) + "citation-inline-reference" + number).encode("utf-8")
+                        ).hexdigest()[:16]
+                        definitions.append({
+                            "id": record_id, **base, "kind": "citation",
+                            "number": number, "text": number,
+                            "surface_text": match.group(),
+                            "offset": match.start(1), "end_offset": match.end(1),
+                            "reference_mechanism": (
+                                "manual_review_required"
+                                if mechanism == "mixed_with_word_field" else "static_text"
+                            ),
+                            "definition_style": "numbered_reference_list",
+                            "definition_label_position": "inline",
+                        })
+                        citation_definition_spans.append(match.span())
+
+            for match in (_CITATION_RANGE.finditer(text_value) if segment.get("in_reference_section") is not True else []):
+                if any(match.start() >= left and match.end() <= right
+                       for left, right in citation_definition_spans):
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(match.start()) + "citation-range" + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                mentions.append({
+                    "id": record_id, **base, "kind": "citation",
+                    "number": match.group(1) + "-" + match.group(2),
+                    "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": "Citation ranges require an explicit expansion/mapping before renumbering.",
+                })
+
+            for match in (_CITATION_GROUP.finditer(text_value) if segment.get("in_reference_section") is not True else []):
+                if any(match.start() >= left and match.end() <= right
+                       for left, right in citation_definition_spans):
+                    continue
+                for number_match in re.finditer(r"\d+", match.group("body")):
+                    number = number_match.group()
+                    offset = match.start("body") + number_match.start()
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(offset) + "citation" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base, "kind": "citation",
+                        "number": number, "text": number,
+                        "surface_text": match.group(), "offset": offset,
+                        "end_offset": offset + len(number),
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                        **({
+                            "resolution_reason": "The paragraph contains native Word fields; static and field-generated text cannot be separated safely."
+                        } if mechanism == "mixed_with_word_field" else {}),
+                    })
+
+            citation_group_spans: list[tuple[int, int]] = []
+            if (
+                "numeric_parenthetical" in citation_profile_modes
+                and segment.get("in_reference_section") is not True
+            ):
+                for match in _PAREN_CITATION_RANGE.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in caption_spans):
+                        continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                        continue
+                    numbers = [match.group(1), match.group(2)]
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(match.start()) + "parenthetical-range" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": numbers[0] + "-" + numbers[1],
+                        "numbers": numbers, "group_kind": "range",
+                        "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Parenthetical numeric citation ranges require explicit expansion before renumbering.",
+                    })
+                    citation_group_spans.append(match.span())
+                for match in _PAREN_CITATION_GROUP.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in caption_spans):
+                        continue
+                    if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
+                        continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                        continue
+                    numbers = re.findall(r"\d+", match.group("body"))
+                    if len(numbers) < 2:
+                        continue
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(match.start()) + "parenthetical-group" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": ",".join(numbers),
+                        "numbers": numbers, "group_kind": "list",
+                        "text": match.group(), "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Parenthetical numeric citation groups require explicit per-reference confirmation before renumbering.",
+                    })
+                    citation_group_spans.append(match.span())
+                for match in _PAREN_CITATION_SINGLE.finditer(text_value):
+                    if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
+                        continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
+                        continue
+                    number = match.group(1)
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(match.start()) + "parenthetical-single" + number).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": number,
+                        "text": number, "surface_text": match.group(),
+                        "offset": match.start(1), "end_offset": match.end(1),
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                    })
+
+            for marker in citation_marker_events:
+                if marker["kind"] == "numeric_superscript":
+                    marker_numbers = marker["numbers"]
+                    if not marker_numbers:
+                        continue
+                    grouped = len(marker_numbers) > 1 or bool(re.search(r"[-–]", marker["text"]))
+                    marker_number = (
+                        marker_numbers[0] + "-" + marker_numbers[-1]
+                        if grouped and re.search(r"[-–]", marker["text"])
+                        else ",".join(marker_numbers) if grouped else marker_numbers[0]
+                    )
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(marker["offset"]) + "superscript" + marker["text"]).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation", "number": marker_number,
+                        "numbers": marker_numbers,
+                        "group_kind": (
+                            "range" if grouped and re.search(r"[-–]", marker["text"])
+                            else "list" if grouped else None
+                        ),
+                        "text": marker["text"],
+                        "offset": marker["offset"], "end_offset": marker["end_offset"],
+                        "reference_mechanism": "numeric_superscript",
+                        "target_definition_ids": [],
+                        "resolution": (
+                            "manual_review_required"
+                            if grouped or mechanism == "mixed_with_word_field" else "unresolved"
+                        ),
+                        **({
+                            "resolution_reason": "Grouped superscript citation markers require explicit per-reference expansion."
+                        } if grouped else {}),
+                    })
+                elif marker["kind"] == "footnote_reference":
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(marker["offset"]) + "footnote" + marker.get("footnote_id", "")).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation",
+                        "number": "footnote:" + marker.get("footnote_id", ""),
+                        "text": "",
+                        "offset": marker["offset"], "end_offset": marker["end_offset"],
+                        "reference_mechanism": "footnote_reference",
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Native footnote references need a dedicated footnote citation adapter and explicit target mapping.",
+                    })
+
+            if (
+                "author_year" in citation_profile_modes
+                and segment.get("in_reference_section") is not True
+            ):
+                for match in _AUTHOR_YEAR_CITATION.finditer(text_value):
+                    record_id = "men-" + hashlib.sha1(
+                        (doc_id + segment["part"] + str(segment["paragraph_index"])
+                         + str(match.start()) + "author-year" + match.group()).encode("utf-8")
+                    ).hexdigest()[:16]
+                    mentions.append({
+                        "id": record_id, **base,
+                        "kind": "citation",
+                        "number": match.group("authors") + "," + match.group("year"),
+                        "text": match.group(),
+                        "offset": match.start(), "end_offset": match.end(),
+                        "target_definition_ids": [],
+                        "resolution": "manual_review_required",
+                        "resolution_reason": "Author-year citation identity requires explicit bibliography-entry matching; no name/year edge is guessed.",
+                    })
+
+            mention_group_spans: list[tuple[int, int]] = []
+            for match in _MENTION_PANEL_RANGE.finditer(text_value):
+                start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in caption_spans
+                ):
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(start_offset) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                mentions.append({
+                    "id": record_id, **base,
+                    "kind": _canonical_reference_kind(match.group("label")),
+                    "number": match.group("number"),
+                    "numbers": [match.group("number")],
+                    "panel_range": match.group("panel_range").strip(),
+                    "group_kind": "panel_range",
+                    "text": match.group(),
+                    "offset": start_offset,
+                    "end_offset": end_offset,
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": (
+                        "Panel-letter ranges require explicit figure/table relation confirmation; "
+                        "the graph does not infer a panel subrange from a base caption label."
+                    ),
+                })
+                mention_group_spans.append((start_offset, end_offset))
+
+            for match in _MENTION_GROUP.finditer(text_value):
+                start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in caption_spans
+                ):
+                    continue
+                references = match.group("references")
+                numbers = re.findall(_REFERENCE_NUMBER, references)
+                if len(numbers) < 2:
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(start_offset) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                group_kind = (
+                    "range" if re.search(r"[-–]", references)
+                    else "list"
+                )
+                mentions.append({
+                    "id": record_id, **base,
+                    "kind": _canonical_reference_kind(match.group("label")),
+                    "number": references,
+                    "numbers": numbers,
+                    "group_kind": group_kind,
+                    "text": match.group(),
+                    "offset": start_offset,
+                    "end_offset": end_offset,
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": (
+                        "Grouped or ranged cross-references require explicit per-target expansion; "
+                        "the graph does not infer one-to-many edges or numeric ranges."
+                    ),
+                })
+                mention_group_spans.append((start_offset, end_offset))
+
             for match in _MENTION.finditer(text_value):
                 start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in mention_group_spans
+                ):
+                    continue
                 if any(start_offset >= left and end_offset <= right for left, right in caption_spans):
                     continue
                 kind = _canonical_reference_kind(match.group(1))
@@ -744,13 +1321,25 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 mentions.append({
                     "id": record_id, **base, "kind": kind, "number": number,
                     "text": match.group(), "offset": start_offset, "end_offset": end_offset,
-                    "target_definition_ids": [], "resolution": "unresolved",
+                    "target_definition_ids": [],
+                    "resolution": (
+                        "manual_review_required"
+                        if mechanism == "mixed_with_word_field" else "unresolved"
+                    ),
+                    **({
+                        "resolution_reason": "The paragraph contains native Word fields; static and field-generated text cannot be separated safely."
+                    } if mechanism == "mixed_with_word_field" else {}),
                 })
+
     definitions_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for definition in definitions:
+        if definition.get("reference_mechanism") == "manual_review_required":
+            continue
         key = (definition["kind"], definition["number"].casefold())
         definitions_by_key.setdefault(key, []).append(definition)
     for mention in mentions:
+        if mention.get("resolution") == "manual_review_required":
+            continue
         key = (mention["kind"], mention["number"].casefold())
         candidates = definitions_by_key.get(key, [])
         local_candidates = [item for item in candidates if item["document"] == mention["document"]]
@@ -776,17 +1365,28 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
         "target_paragraph_index": definitions_by_id[definition_id]["paragraph_index"],
     } for mention in mentions for definition_id in mention["target_definition_ids"]]
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "documents": sorted(normalized_documents),
         "document_segments": {
-            doc_id: [{"part": item["part"], "paragraph_index": item["paragraph_index"]} for item in segments]
+            doc_id: [{
+                "part": item["part"],
+                "paragraph_index": item["paragraph_index"],
+                "reference_mechanism": item["reference_mechanism"],
+                "citation_profile_modes": list(item.get("citation_profile_modes", [])),
+                "citation_marker_events": copy.deepcopy(item.get("citation_marker_events", [])),
+                "in_reference_section": item.get("in_reference_section", False),
+            } for item in segments]
             for doc_id, segments in sorted(normalized_documents.items())
         },
         "definitions": definitions,
         "mentions": mentions,
+        "field_references": field_references,
         "edges": edges,
-        "unresolved_count": sum(item["resolution"] != "resolved" for item in mentions),
+        "unresolved_count": sum(item["resolution"] not in {"resolved", "confirmed_by_user"} for item in mentions),
         "ambiguous_count": sum(item["resolution"] == "ambiguous" for item in mentions),
+        "manual_field_review_count": len(field_references) + sum(
+            item["resolution"] == "manual_review_required" for item in mentions
+        ),
         "numbering_mutation_authorized": False,
     }
 
@@ -795,36 +1395,161 @@ def extract_docx_text_for_reference_graph(path: str | Path) -> str:
     """Compatibility text view; graph construction should use segment extraction."""
     return "\n".join(item["text"] for item in extract_docx_reference_segments(path))
 
-
-def renumber_reference_graph(graph: Mapping[str, Any],
-                             number_map: Mapping[str, str],
-                             *, explicit_authorization: bool,
-                             confirmed_ambiguous_mappings: Mapping[str, str] | None = None) -> dict[str, Any]:
+def renumber_reference_graph(
+    graph: Mapping[str, Any],
+    number_map: Mapping[str, str],
+    *,
+    explicit_authorization: bool,
+    confirmed_ambiguous_mappings: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     if explicit_authorization is not True:
         raise ContractError("Cross-file renumbering requires explicit package-wide authorization")
-    if not isinstance(number_map, Mapping) or any(
-        not isinstance(k, str) or "::" not in k or not isinstance(v, str) or not v.strip()
-        for k, v in number_map.items()
-    ):
-        raise ContractError("number_map must map DOCUMENT::OLD_NUMBER keys to non-empty new numbers")
+    if not isinstance(number_map, Mapping):
+        raise ContractError("number_map must be an object keyed by DOCUMENT::OLD_NUMBER or DOCUMENT::KIND::OLD_NUMBER")
     confirmed = dict(confirmed_ambiguous_mappings or {})
     if any(not isinstance(k, str) or not isinstance(v, str) for k, v in confirmed.items()):
         raise ContractError("Confirmed ambiguous mappings must map mention IDs to definition IDs")
     updated = copy.deepcopy(dict(graph))
-    by_id = {d["id"]: d for d in updated.get("definitions", [])}
-    changed_definition_ids = {
-        d["id"] for d in updated.get("definitions", [])
-        if d["document"] + "::" + d["number"] in number_map
+    definitions = updated.get("definitions", [])
+    mentions = updated.get("mentions", [])
+    if not isinstance(definitions, list) or not isinstance(mentions, list):
+        raise ContractError("Reference graph definitions and mentions must be arrays")
+
+    normalized_map: dict[tuple[str, str, str], str] = {}
+    for raw_key, new_number in number_map.items():
+        if (
+            not isinstance(raw_key, str)
+            or not isinstance(new_number, str)
+            or not new_number.strip()
+        ):
+            raise ContractError("Every number_map entry must have a string key and non-empty replacement number")
+        parts = raw_key.split("::")
+        if len(parts) == 2:
+            document, old_number = parts
+            matching_kinds = {
+                item.get("kind") for item in definitions
+                if isinstance(item, Mapping)
+                and item.get("document") == document
+                and str(item.get("number")) == old_number
+            }
+            if len(matching_kinds) != 1:
+                raise ContractError(
+                    "UNIQUE_REFERENCE_KIND_REQUIRED: legacy DOCUMENT::OLD_NUMBER key "
+                    + repr(raw_key)
+                    + " does not identify exactly one reference kind; use DOCUMENT::KIND::OLD_NUMBER."
+                )
+            kind = next(iter(matching_kinds))
+        elif len(parts) == 3:
+            document, raw_kind, old_number = parts
+            kind = _canonical_reference_kind(raw_kind)
+        else:
+            raise ContractError(
+                "number_map keys must use DOCUMENT::OLD_NUMBER or DOCUMENT::KIND::OLD_NUMBER."
+            )
+        if not document.strip() or not old_number.strip() or not isinstance(kind, str) or not kind:
+            raise ContractError("number_map contains an empty document, kind or old number")
+        if kind not in set(_REFERENCE_LABELS.values()):
+            raise ContractError("Unsupported reference kind in number_map: " + str(kind))
+        key = (document, kind, old_number)
+        if key in normalized_map:
+            raise ContractError("number_map contains duplicate typed definition keys: " + repr(key))
+        normalized_map[key] = new_number.strip()
+
+    if not normalized_map:
+        raise ContractError("number_map must contain at least one definition change")
+
+    # A package-wide edit cannot safely proceed while native Word fields remain
+    # unmapped: REF/PAGEREF/SEQ/CITATION/ADDIN instructions are not static text
+    # and no writing Field Adapter is enabled in this release candidate.
+    field_references = updated.get("field_references", [])
+    non_reference_fields = {
+        "PAGE", "NUMPAGES", "DATE", "TIME", "AUTHOR", "FILENAME",
+        "FILESIZE", "NUMWORDS", "NUMCHARS", "EDITTIME",
     }
-    mentions_by_id = {m["id"]: m for m in updated.get("mentions", [])}
+    unresolved_reference_fields = [
+        row for row in field_references
+        if not isinstance(row, Mapping)
+        or row.get("field_type") not in non_reference_fields
+    ]
+    if unresolved_reference_fields:
+        raise ContractError(
+            "NATIVE_WORD_FIELD_REFERENCE_REQUIRES_MANUAL_MAPPING: package-wide numbering "
+            "propagation is blocked while REF/SEQ/CITATION/ADDIN or unclassified Word fields remain unresolved."
+        )
+
+    changed_definition_ids = {
+        item.get("id")
+        for item in definitions
+        if isinstance(item, Mapping)
+        and (item.get("document"), item.get("kind"), str(item.get("number"))) in normalized_map
+    }
+    if not changed_definition_ids:
+        raise ContractError("number_map did not identify any definition in the supplied graph")
+
+    # Fail closed if a potentially affected static mention is not uniquely
+    # resolved, including citation ranges and field-mixed paragraphs.
+    for mention in mentions:
+        if not isinstance(mention, Mapping):
+            raise ContractError("Reference graph contains a malformed mention record")
+        kind = mention.get("kind")
+        document = mention.get("document")
+        number = str(mention.get("number", ""))
+        resolution = mention.get("resolution")
+        candidates = (
+            mention.get("candidate_definition_ids", [])
+            if resolution == "ambiguous"
+            else mention.get("target_definition_ids", [])
+        )
+        direct_change = (document, kind, number) in normalized_map
+        grouped_member_change = any(
+            isinstance(member, str)
+            and (document, kind, member) in normalized_map
+            for member in mention.get("numbers", [])
+        )
+        range_change = False
+        if kind == "citation" and re.fullmatch(r"\d+[-–]\d+", number):
+            left, right = re.split(r"[-–]", number)
+            low, high = sorted((int(left), int(right)))
+            range_change = any(
+                map_document == document
+                and map_kind == "citation"
+                and low <= int(map_number) <= high
+                for map_document, map_kind, map_number in normalized_map
+                if map_number.isdigit()
+            )
+        affected = (
+            direct_change
+            or grouped_member_change
+            or bool(set(candidates) & changed_definition_ids)
+            or range_change
+        )
+        if affected and resolution not in {"resolved", "confirmed_by_user", "ambiguous"}:
+            raise ContractError(
+                "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION: "
+                + str(mention.get("id", "<unknown>"))
+            )
+
+    mentions_by_id = {
+        item["id"]: item for item in mentions
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
     unknown_mentions = set(confirmed) - set(mentions_by_id)
     if unknown_mentions:
-        raise ContractError("Ambiguous mapping references unknown mention IDs: " + ", ".join(sorted(unknown_mentions)))
+        raise ContractError(
+            "Ambiguous mapping references unknown mention IDs: "
+            + ", ".join(sorted(unknown_mentions))
+        )
     for mention_id, definition_id in confirmed.items():
         mention = mentions_by_id[mention_id]
-        if mention.get("resolution") != "ambiguous" or definition_id not in mention.get("candidate_definition_ids", []):
-            raise ContractError("Confirmed mapping must select one candidate for an ambiguous mention: " + mention_id)
-    for mention in updated.get("mentions", []):
+        if (
+            mention.get("resolution") != "ambiguous"
+            or definition_id not in mention.get("candidate_definition_ids", [])
+        ):
+            raise ContractError(
+                "Confirmed mapping must select one candidate for an ambiguous mention: "
+                + mention_id
+            )
+    for mention in mentions:
         candidates = (
             mention.get("candidate_definition_ids", [])
             if mention.get("resolution") == "ambiguous"
@@ -837,33 +1562,159 @@ def renumber_reference_graph(graph: Mapping[str, Any],
                     "AMBIGUOUS_REFERENCE_MAPPING_REQUIRES_CONFIRMATION: " + mention["id"]
                 )
             if chosen not in candidates:
-                raise ContractError("Confirmed definition is not a candidate for mention " + mention["id"])
+                raise ContractError(
+                    "Confirmed definition is not a candidate for mention " + mention["id"]
+                )
             mention["target_definition_ids"] = [chosen]
             mention["resolution"] = "confirmed_by_user"
-    by_id = {d["id"]: d for d in updated.get("definitions", [])}
+
+    final_numbers: dict[tuple[str, str], str] = {}
     definition_updates = []
-    for definition in updated.get("definitions", []):
-        old_number = definition["number"]
-        key = definition["document"] + "::" + old_number
-        if key in number_map:
-            definition["number"] = number_map[key]
-            definition["text"] = definition["text"].replace(old_number, definition["number"], 1)
-            definition_updates.append({"document": definition["document"], "definition_id": definition["id"],
-                                      "offset": definition["offset"], "old_number": old_number,
-                                      "new_number": definition["number"]})
+    by_id: dict[str, dict[str, Any]] = {}
+    for definition in definitions:
+        if not isinstance(definition, dict):
+            raise ContractError("Reference graph contains a malformed definition record")
+        definition_id = definition.get("id")
+        document = definition.get("document")
+        kind = definition.get("kind")
+        old_number = str(definition.get("number"))
+        key = (document, kind, old_number)
+        new_number = normalized_map.get(key, old_number)
+        collision_key = (document, kind)
+        if (collision_key, new_number) in final_numbers:
+            raise ContractError(
+                "DUPLICATE_REFERENCE_NUMBER_AFTER_PROPAGATION: "
+                + str(document) + "::" + str(kind) + "::" + new_number
+            )
+        final_numbers[(collision_key, new_number)] = str(definition_id)
+        if key in normalized_map:
+            old_text = definition.get("text")
+            offset = definition.get("offset")
+            old_end_offset = definition.get("end_offset")
+            if (
+                not isinstance(old_text, str)
+                or not isinstance(offset, int) or isinstance(offset, bool)
+                or not isinstance(old_end_offset, int) or isinstance(old_end_offset, bool)
+            ):
+                raise ContractError("Reference graph definition has invalid text offsets")
+            new_text = old_text.replace(old_number, new_number, 1)
+            if new_text == old_text:
+                raise ContractError("Reference graph definition text does not contain its declared number")
+            definition["number"] = new_number
+            definition["text"] = new_text
+            definition["end_offset"] = offset + len(new_text)
+            definition_update = {
+                "document": document,
+                "part": definition.get("part"),
+                "paragraph_index": definition.get("paragraph_index"),
+                "definition_id": definition_id,
+                "kind": kind,
+                "offset": offset,
+                "old_end_offset": old_end_offset,
+                "new_end_offset": definition["end_offset"],
+                "old_text": old_text,
+                "new_text": new_text,
+                "old_number": old_number,
+                "new_number": new_number,
+            }
+            if definition.get("surface_text") is not None:
+                old_surface = definition["surface_text"]
+                new_surface = old_surface.replace(old_number, new_number, 1)
+                definition["surface_text"] = new_surface
+                definition_update["old_surface_text"] = old_surface
+                definition_update["new_surface_text"] = new_surface
+            definition_updates.append(definition_update)
+        if isinstance(definition_id, str):
+            by_id[definition_id] = definition
+
     mention_updates = []
-    for mention in updated.get("mentions", []):
+    for mention in mentions:
         targets = mention.get("target_definition_ids", [])
         if len(targets) == 1 and targets[0] in by_id:
             definition = by_id[targets[0]]
-            old_number = mention["number"]
-            if old_number != definition["number"]:
-                old_text = mention["text"]
-                mention["number"] = definition["number"]
-                mention["text"] = old_text.replace(old_number, mention["number"], 1)
-                mention_updates.append({"document": mention["document"], "mention_id": mention["id"],
-                                        "offset": mention["offset"], "old_text": old_text,
-                                        "new_text": mention["text"]})
+            old_number = str(mention["number"])
+            new_number = str(definition["number"])
+            if old_number != new_number:
+                old_text = mention.get("text")
+                offset = mention.get("offset")
+                old_end_offset = mention.get("end_offset")
+                if (
+                    not isinstance(old_text, str)
+                    or not isinstance(offset, int) or isinstance(offset, bool)
+                    or not isinstance(old_end_offset, int) or isinstance(old_end_offset, bool)
+                ):
+                    raise ContractError("Reference graph mention has invalid text offsets")
+                new_text = old_text.replace(old_number, new_number, 1)
+                if new_text == old_text:
+                    raise ContractError("Reference graph mention text does not contain its declared number")
+                mention["number"] = new_number
+                mention["text"] = new_text
+                mention["end_offset"] = offset + len(new_text)
+                update = {
+                    "document": mention["document"],
+                    "part": mention.get("part"),
+                    "paragraph_index": mention.get("paragraph_index"),
+                    "mention_id": mention["id"],
+                    "target_definition_ids": list(targets),
+                    "kind": mention["kind"],
+                    "offset": offset,
+                    "old_end_offset": old_end_offset,
+                    "new_end_offset": mention["end_offset"],
+                    "old_text": old_text,
+                    "new_text": new_text,
+                    "old_number": old_number,
+                    "new_number": new_number,
+                }
+                if mention.get("surface_text") is not None:
+                    update["old_surface_text"] = mention["surface_text"]
+                    update["new_surface_text"] = mention["surface_text"].replace(
+                        old_number, new_number, 1
+                    )
+                    mention["surface_text"] = update["new_surface_text"]
+                mention_updates.append(update)
+
+    # Rebuild the directed graph from the updated mention resolutions. A confirmed
+    # ambiguous mapping must not leave the old edge list or stale unresolved counts.
+    rebuilt_edges = []
+    for mention in mentions:
+        if not isinstance(mention, Mapping):
+            raise ContractError("Reference graph contains a malformed mention record")
+        target_ids = mention.get("target_definition_ids", [])
+        if not isinstance(target_ids, list):
+            raise ContractError("Reference graph mention target_definition_ids must be an array")
+        for target_id in target_ids:
+            if target_id not in by_id:
+                raise ContractError("Reference graph mention points to an unknown definition: " + str(target_id))
+        if mention.get("resolution") in {"resolved", "confirmed_by_user"}:
+            if len(target_ids) != 1:
+                raise ContractError("Resolved reference mention must point to exactly one definition")
+            target = by_id[target_ids[0]]
+            rebuilt_edges.append({
+                "source_document": mention["document"],
+                "source_part": mention["part"],
+                "source_paragraph_index": mention["paragraph_index"],
+                "mention_id": mention["id"],
+                "target_definition_id": target["id"],
+                "target_document": target["document"],
+                "target_part": target["part"],
+                "target_paragraph_index": target["paragraph_index"],
+            })
+        elif target_ids:
+            raise ContractError("Unresolved or ambiguous mention cannot retain a resolved target edge")
+
+    field_references = updated.get("field_references", [])
+    if not isinstance(field_references, list):
+        raise ContractError("Reference graph field_references must be an array")
+    updated["edges"] = rebuilt_edges
+    updated["unresolved_count"] = sum(
+        item.get("resolution") not in {"resolved", "confirmed_by_user"} for item in mentions
+    )
+    updated["ambiguous_count"] = sum(
+        item.get("resolution") == "ambiguous" for item in mentions
+    )
+    updated["manual_field_review_count"] = len(field_references) + sum(
+        item.get("resolution") == "manual_review_required" for item in mentions
+    )
     updated["definition_updates"] = definition_updates
     updated["mention_updates"] = mention_updates
     updated["numbering_mutation_authorized"] = True
@@ -915,6 +1766,144 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
             raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
     return {"pPr_source": "left", "numPr": left_num, "right_pPr_discarded": True}
 
+def _annotate_revision_visible_text_ranges(
+    source: str | Path | bytes,
+    records: list[dict[str, Any]],
+) -> None:
+    """Attach exact visible-text intervals to revisions when their scope is measurable."""
+    import io
+    import zipfile
+
+    raw = source if isinstance(source, bytes) else Path(source).read_bytes()
+    with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+        available = set(archive.namelist())
+        by_part: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            part = record.get("part")
+            if isinstance(part, str) and part in available and part.startswith("word/") and part.endswith(".xml"):
+                by_part.setdefault(part, []).append(record)
+
+        for part, part_records in by_part.items():
+            root = _xml(archive.read(part))
+            paragraphs = list(root.iter(qn("p")))
+            paragraph_positions: dict[ET._Element, dict[ET._Element, tuple[int, int]]] = {}
+            paragraph_indexes: dict[ET._Element, int] = {}
+            for paragraph_index, paragraph in enumerate(paragraphs):
+                paragraph_indexes[paragraph] = paragraph_index
+                positions: dict[ET._Element, tuple[int, int]] = {}
+                cursor = 0
+                for node in paragraph.iter():
+                    if node.tag == qn("t"):
+                        value = node.text or ""
+                        positions[node] = (cursor, cursor + len(value))
+                        cursor += len(value)
+                    elif node.tag == qn("delText"):
+                        # Deleted text is not in the current visible projection.
+                        # Preserve its exact zero-width anchor instead of treating
+                        # the entire paragraph as historically conflicting.
+                        positions[node] = (cursor, cursor)
+                    elif node.tag in {qn("tab"), qn("br"), qn("cr")}:
+                        positions[node] = (cursor, cursor + 1)
+                        cursor += 1
+                paragraph_positions[paragraph] = positions
+
+            node_order = {node: index for index, node in enumerate(root.iter())}
+            for record in part_records:
+                path = record.get("element_path")
+                if not isinstance(path, str) or not path:
+                    continue
+                try:
+                    matches = root.xpath(path, namespaces={"w": W, "r": R})
+                except ET.XPathError as exc:
+                    raise ContractError("INVALID_HISTORICAL_REVISION_PATH:" + path) from exc
+                if len(matches) != 1:
+                    raise ContractError("HISTORICAL_REVISION_PATH_NOT_UNIQUE:" + path)
+                node = matches[0]
+
+                # Comment ranges are real paragraph/part-wide intervals. Bind
+                # every paragraph slice to exact visible-text coordinates so
+                # edits outside the comment can proceed, while edits inside
+                # remain blocked by the historical-revision gate.
+                if record.get("kind") == "comment_range":
+                    details = record.get("details")
+                    start_path = details.get("start_path") if isinstance(details, Mapping) else None
+                    end_path = details.get("end_path") if isinstance(details, Mapping) else None
+                    if isinstance(start_path, str) and isinstance(end_path, str):
+                        try:
+                            start_nodes = root.xpath(start_path, namespaces={"w": W, "r": R})
+                            end_nodes = root.xpath(end_path, namespaces={"w": W, "r": R})
+                        except ET.XPathError as exc:
+                            raise ContractError("INVALID_COMMENT_RANGE_PATH") from exc
+                        if len(start_nodes) == 1 and len(end_nodes) == 1:
+                            start_order = node_order[start_nodes[0]]
+                            end_order = node_order[end_nodes[0]]
+                            if start_order < end_order:
+                                ranges = []
+                                for paragraph_index, paragraph_node in enumerate(paragraphs):
+                                    positions = paragraph_positions[paragraph_node]
+                                    selected_nodes = [
+                                        child for child in positions
+                                        if child.tag in {qn("t"), qn("tab"), qn("br"), qn("cr")}
+                                        and start_order < node_order[child] < end_order
+                                    ]
+                                    if not selected_nodes:
+                                        continue
+                                    ranges.append({
+                                        "paragraph_index": paragraph_index,
+                                        "start_offset": min(positions[child][0] for child in selected_nodes),
+                                        "end_offset": max(positions[child][1] for child in selected_nodes),
+                                    })
+                                record["text_ranges"] = ranges
+                                record["text_range_precision"] = (
+                                    "exact_visible_text" if ranges else "exact_visible_text_empty"
+                                )
+                                continue
+
+                paragraph = node
+                while paragraph is not None and paragraph.tag != qn("p"):
+                    paragraph = paragraph.getparent()
+                if paragraph is None:
+                    record["text_ranges"] = []
+                    record["text_range_precision"] = "part_scope"
+                    continue
+                positions = paragraph_positions[paragraph]
+                visible_nodes = [
+                    child for child in node.iter()
+                    if child in positions
+                ]
+                if visible_nodes:
+                    starts = [positions[child][0] for child in visible_nodes]
+                    ends = [positions[child][1] for child in visible_nodes]
+                    record["text_ranges"] = [{
+                        "paragraph_index": paragraph_indexes[paragraph],
+                        "start_offset": min(starts),
+                        "end_offset": max(ends),
+                    }]
+                    record["text_range_precision"] = "exact_visible_text"
+                    continue
+
+                # Property-change snapshots have no visible text of their own.
+                # Bind a run-level range when the revision belongs to a Run;
+                # otherwise remain paragraph-scoped and fail closed.
+                run = node
+                while run is not None and run.tag != qn("r"):
+                    run = run.getparent()
+                if run is not None:
+                    run_nodes = [child for child in run.iter() if child in positions]
+                    if run_nodes:
+                        starts = [positions[child][0] for child in run_nodes]
+                        ends = [positions[child][1] for child in run_nodes]
+                        record["text_ranges"] = [{
+                            "paragraph_index": paragraph_indexes[paragraph],
+                            "start_offset": min(starts),
+                            "end_offset": max(ends),
+                        }]
+                        record["text_range_precision"] = "run_visible_text"
+                        continue
+                record["text_ranges"] = []
+                record["text_range_precision"] = "paragraph_fallback"
+
+
 def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, Any]:
     """Zero-model-call inventory of pre-existing native revisions and comments."""
     from .structure_classifier import classify_docx_structure
@@ -922,30 +1911,97 @@ def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, A
     revision_kinds = {
         "text_revision_wrapper", "format_revision", "paragraph_revision",
         "paragraph_mark_deletion", "table_structure_revision", "move_range_marker",
-        "comment_anchor", "comment_definition", "comment_range", "comment_range_marker",
-        "comment_reference", "incomplete_comment_range",
+        "comment_anchor", "comment_definition", "comment_range",
+        "incomplete_comment_range",
     }
     records = [dict(item) for item in report.get("structures", [])
                if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))]
+    _annotate_revision_visible_text_ranges(source, records)
     return {"schema_version": "1.0", "source_sha256": report.get("source_sha256"),
             "package_status": report.get("package_status"), "existing_revision_count": len(records),
             "revisions": records, "inventory": report}
+
 
 def targeted_revision_gate(inventory: Mapping[str, Any],
                            targets: Sequence[Mapping[str, Any]],
                            *, resolution_policy: str | None = None,
                            selectively_resolved_ids: Sequence[str] = ()) -> dict[str, Any]:
-    """Classify history conflicts; this gate never accepts or rejects Word revisions."""
+    """Classify target-overlapping history; uncertain scopes remain fail-closed."""
     if resolution_policy not in {None, "ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"}:
         raise ContractError("Unknown historical revision resolution policy")
     overlaps, unrelated = [], []
-    target_keys = {(str(t.get("part", "word/document.xml")), t.get("paragraph_index", t.get("p_idx")))
-                   for t in targets}
     selected = set(selectively_resolved_ids)
+    target_rows = []
+    for target in targets:
+        part = str(target.get("part", "word/document.xml"))
+        paragraph_index = target.get("paragraph_index", target.get("p_idx"))
+        start = target.get("start_offset")
+        end = target.get("end_offset")
+        if start is not None or end is not None:
+            if (
+                not isinstance(start, int) or isinstance(start, bool) or start < 0
+                or not isinstance(end, int) or isinstance(end, bool) or end <= start
+            ):
+                raise ContractError("Historical revision target offsets must be an exact non-empty non-negative interval.")
+        target_rows.append({
+            "part": part, "paragraph_index": paragraph_index,
+            "start_offset": start, "end_offset": end,
+        })
+
     for revision in inventory.get("revisions", []):
-        key = (str(revision.get("part")), revision.get("paragraph_index"))
-        span = revision.get("paragraph_indices") or []
-        hit = key in target_keys or any((str(revision.get("part")), idx) in target_keys for idx in span)
+        part = str(revision.get("part"))
+        paragraph_index = revision.get("paragraph_index")
+        paragraph_span = revision.get("paragraph_indices") or []
+        revision_ranges = revision.get("text_ranges")
+        details = revision.get("details")
+        scope_policy = details.get("scope_policy") if isinstance(details, Mapping) else None
+        part_scope = (
+            revision.get("text_range_precision") == "part_scope"
+            or scope_policy == "part_scope_no_paragraph_anchor"
+        )
+        hit = False
+        for target in target_rows:
+            if target["part"] != part:
+                continue
+            # Some malformed or incomplete range markers have no trustworthy
+            # paragraph anchor. Their only safe scope is the entire Word part:
+            # every edit in that part must wait for an explicit history decision.
+            if part_scope:
+                hit = True
+                break
+            target_paragraphs = {target["paragraph_index"]} if target["paragraph_index"] is not None else set()
+            target_paragraphs.update(
+                idx for idx in paragraph_span
+                if target["paragraph_index"] is not None and idx == target["paragraph_index"]
+            )
+            if not target_paragraphs:
+                continue
+            if isinstance(revision_ranges, list) and revision_ranges and target["start_offset"] is not None:
+                for revision_range in revision_ranges:
+                    range_start = revision_range.get("start_offset", -1)
+                    range_end = revision_range.get("end_offset", -1)
+                    if revision_range.get("paragraph_index") != target["paragraph_index"]:
+                        continue
+                    if range_start == range_end:
+                        intersects = target["start_offset"] <= range_start < target["end_offset"]
+                    else:
+                        intersects = (
+                            target["start_offset"] < range_end
+                            and range_start < target["end_offset"]
+                        )
+                    if intersects:
+                        hit = True
+                        break
+                if hit:
+                    break
+                # A precise revision span in this paragraph is disjoint from the
+                # requested target; do not broaden it to the entire paragraph.
+                continue
+            if paragraph_index == target["paragraph_index"] or any(
+                idx == target["paragraph_index"] for idx in paragraph_span
+            ):
+                hit = True
+                break
         (overlaps if hit else unrelated).append(revision)
     unresolved = []
     for item in overlaps:
@@ -1071,6 +2127,120 @@ def commit_document_package(outputs: Mapping[str, bytes], release_root: str | Pa
             shutil.rmtree(staging, ignore_errors=True)
         raise
 
+
+
+def validate_committed_document_package(
+    package_directory: str | Path,
+    commit_marker: str | Path,
+) -> dict[str, Any]:
+    """Revalidate the marker, manifest and every packaged DOCX before reuse."""
+    requested_root = Path(package_directory).expanduser()
+    requested_marker = Path(commit_marker).expanduser()
+    for requested, label in (
+        (requested_root, "Committed package directory"),
+        (requested_marker, "Package commit marker"),
+    ):
+        probe = Path(os.path.abspath(str(requested)))
+        while True:
+            if probe.is_symlink():
+                raise ContractError(f"{label} must not traverse a symbolic link: {probe}")
+            if probe.parent == probe:
+                break
+            probe = probe.parent
+
+    root = requested_root.resolve()
+    marker_path = requested_marker.resolve()
+    if not root.is_dir() or marker_path.parent != root.parent or not marker_path.is_file():
+        raise ContractError("Committed package directory and sibling commit marker must both exist.")
+    if marker_path.is_symlink():
+        raise ContractError("Package commit marker must not be a symbolic link.")
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractError(f"Package commit marker is unreadable: {exc}") from exc
+    package_id = marker.get("package_id") if isinstance(marker, Mapping) else None
+    if (
+        not isinstance(package_id, str)
+        or not re.fullmatch(r"[a-f0-9]{32}", package_id)
+        or root.name != f"package-{package_id}"
+        or marker_path.name != f"COMMITTED-{package_id}.json"
+    ):
+        raise ContractError("Package directory and commit marker identify different or malformed package IDs.")
+
+    manifest_path = root / "package_manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ContractError("Committed package manifest is missing or is a symbolic link.")
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"Committed package manifest is unreadable: {exc}") from exc
+    manifest_sha = _sha(manifest_bytes)
+    if marker.get("manifest_sha256") != manifest_sha:
+        raise ContractError("Committed package manifest SHA-256 does not match its commit marker.")
+    if (
+        not isinstance(manifest, Mapping)
+        or manifest.get("schema_version") != "1.0"
+        or manifest.get("package_id") != package_id
+    ):
+        raise ContractError("Committed package manifest has an invalid schema version or package ID.")
+
+    rows = manifest.get("documents")
+    if not isinstance(rows, list) or not rows:
+        raise ContractError("Committed package manifest must list at least one DOCX.")
+    declared_paths: set[str] = set()
+    declared_casefold: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ContractError(f"Committed package manifest documents[{index}] must be an object.")
+        name = row.get("path")
+        digest = row.get("sha256")
+        size = row.get("size")
+        if (
+            not isinstance(name, str) or not name.strip()
+            or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or not isinstance(size, int) or isinstance(size, bool) or size < 0
+        ):
+            raise ContractError(f"Committed package manifest documents[{index}] has invalid path/hash/size metadata.")
+        safe = PurePosixPath(name)
+        windows_safe = PureWindowsPath(name)
+        if (
+            safe.is_absolute() or windows_safe.is_absolute() or windows_safe.drive
+            or "\\" in name or ".." in safe.parts or safe.suffix.casefold() != ".docx"
+            or not safe.parts
+        ):
+            raise ContractError(f"Committed package manifest contains an unsafe DOCX path: {name}")
+        normalized = safe.as_posix()
+        folded = normalized.casefold()
+        if folded in declared_casefold:
+            raise ContractError(f"Committed package manifest contains duplicate or case-colliding path: {name}")
+        declared_paths.add(normalized)
+        declared_casefold.add(folded)
+
+        target = root.joinpath(*safe.parts)
+        probe = root
+        for part in safe.parts:
+            probe = probe / part
+            if probe.is_symlink():
+                raise ContractError(f"Committed package DOCX path traverses a symbolic link: {probe}")
+        if not target.is_file():
+            raise ContractError(f"Committed package DOCX is missing: {normalized}")
+        payload = target.read_bytes()
+        if len(payload) != size or _sha(payload) != digest:
+            raise ContractError(f"Committed package DOCX size/SHA-256 mismatch: {normalized}")
+
+    actual_paths: set[str] = set()
+    for candidate in root.rglob("*"):
+        if candidate.is_symlink():
+            raise ContractError(f"Committed package contains a symbolic link: {candidate}")
+        if candidate.is_file() and candidate.suffix.casefold() == ".docx":
+            actual_paths.add(candidate.relative_to(root).as_posix())
+    if actual_paths != declared_paths:
+        raise ContractError(
+            "Committed package DOCX inventory differs from its manifest "
+            f"(unlisted={sorted(actual_paths - declared_paths)}, missing={sorted(declared_paths - actual_paths)})."
+        )
+    return dict(manifest)
 
 def validate_qa_remediation_eligibility(
     qa_report: Mapping[str, Any],

@@ -46,8 +46,14 @@ from co_reviewer.revision_models import (
     RevisionLedger,
     response_units_to_legacy_plan,
 )
-from co_reviewer.workflow_engine import build_workflow_ledger, transition_task
+from co_reviewer.workflow_engine import (
+    build_workflow_ledger,
+    transition_task,
+    validate_workflow_ledger,
+    workflow_tasks_from_decision_plan,
+)
 from co_reviewer.v232_contract import ContractError, validate_qa_remediation_eligibility
+from co_reviewer.release_package import verify_release_package
 from response_letter_docx import render_response_docx
 
 
@@ -59,7 +65,9 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.source = self.root / "Manuscript.docx"
-        self.source.write_bytes(b"synthetic source document")
+        source_document = Document()
+        source_document.add_paragraph("Synthetic immutable manuscript source.")
+        source_document.save(self.source)
         self.workflow = build_workflow_ledger(
             {
                 "source_files": [{
@@ -209,9 +217,21 @@ class ReleaseManifestGateTests(unittest.TestCase):
         }
         receipt = json.loads((release_dir / "release_package_receipt.json").read_text(encoding="utf-8"))
         manifest = json.loads((release_dir / "final_release_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["schema_version"], "2.0")
+        receipt_schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "release-package-receipt.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        Draft202012Validator(receipt_schema, format_checker=FormatChecker()).validate(receipt)
         self.assertEqual(receipt["status"], "complete")
         self.assertEqual(receipt["artifacts"]["final_release_manifest.json"], hashes["final_release_manifest.json"])
         self.assertEqual(manifest["release_status"], "READY")
+        self.assertTrue(Path(receipt["package_manifest_file"]).is_file())
+        self.assertTrue(Path(receipt["commit_marker_file"]).is_file())
+        committed = verify_release_package(release_dir, expected_release_id=receipt["release_id"])
+        self.assertEqual(committed["package_id"], receipt["package_id"])
+        self.assertEqual(committed["artifact_count"], receipt["package_artifact_count"])
+        self.assertGreaterEqual(receipt["package_artifact_count"], 6)
 
         # A lost success response is idempotent: a rerun verifies the receipt and
         # all package hashes without changing the committed artifacts.
@@ -742,10 +762,120 @@ class ReleaseManifestGateTests(unittest.TestCase):
                 workflow_task_ids={"T1", "T2"},
             )
 
+    def test_create_release_package_consumes_deduplicated_initial_source_inventory(self):
+        reviewer_source = self.root / "Reviewers.docx"
+        reviewer_document = Document()
+        reviewer_document.add_paragraph("Synthetic reviewer source.")
+        reviewer_document.save(reviewer_source)
+
+        manuscript_record = {
+            "role": "Manuscript",
+            "file": str(self.source),
+            "sha256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+        }
+        reviewers_record = {
+            "role": "Reviewers",
+            "file": str(reviewer_source),
+            "sha256": hashlib.sha256(reviewer_source.read_bytes()).hexdigest(),
+        }
+        decision_plan = {
+            "source_files": [
+                dict(manuscript_record),
+                dict(manuscript_record),
+                {**reviewers_record, "role": "Reply"},
+                dict(reviewers_record),
+            ],
+            "tasks": [{
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "response_only",
+                "title": "Respond to reviewer comment",
+                "source_comment_ids": ["C1"],
+                "target_documents": [],
+                "evidence": [{
+                    "evidence_id": "E-C1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "Please clarify this statement.",
+                    "evidence_type": "reviewer_comment",
+                    "source_comment_id": "C1",
+                    "match_status": "confirmed",
+                }],
+                "proposed_action": "Provide an explanatory response.",
+                "targets": [],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 1.0,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+        workflow = build_workflow_ledger(
+            decision_plan, "round-deduplicated-release", STAMP
+        )
+        self.assertEqual(
+            [row["role"] for row in workflow["source_files"]],
+            ["Manuscript", "Reviewers"],
+        )
+        self.assertEqual(
+            {row["role"] for row in workflow["tasks"][0]["source_versions"]},
+            {"Reviewers"},
+        )
+        workflow["tasks"][0] = transition_task(
+            workflow["tasks"][0], "ready"
+        )
+        workflow["tasks"][0] = transition_task(
+            workflow["tasks"][0],
+            "completed",
+            evidence={
+                "completion_record_id": "source-dedup-release-completion",
+                "completion_record_fingerprint": hashlib.sha256(
+                    b"source-dedup-release-completion"
+                ).hexdigest(),
+                "completed_at_utc": STAMP,
+            },
+        )
+
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        revision = RevisionLedger(
+            revision_round_id="round-deduplicated-release",
+            response_units=[self._unit(status="completed")],
+        )
+        self.revision_path.write_text(
+            json.dumps(revision.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        release_dir = self.root / "runs" / "release-deduplicated-sources"
+        args = SimpleNamespace(
+            workflow_ledger=str(self.workflow_path),
+            revision_ledger=str(self.revision_path),
+            out_dir=str(release_dir),
+            manuscript_title="Synthetic source-inventory manuscript",
+            author="Synthetic Author",
+        )
+
+        self.assertEqual(cli.cmd_create_release_package(args), 0)
+        package_manifest = verify_release_package(release_dir)
+        self.assertGreater(package_manifest["artifact_count"], 0)
+        self.assertTrue((release_dir / "final_release_manifest.json").is_file())
+        self.assertTrue((release_dir / "release_package_receipt.json").is_file())
+        self.assertEqual(validate_workflow_ledger(workflow), [])
+        self.assertEqual(
+            [row["role"] for row in workflow["source_files"]],
+            ["Manuscript", "Reviewers"],
+            "Release generation must not re-flatten history or recreate Reply aliases as initial sources.",
+        )
+
     def test_release_manifest_retains_historical_published_and_rolled_back_batches(self):
         source_sha = hashlib.sha256(self.source.read_bytes()).hexdigest()
         revision = SimpleNamespace(revision_round_id="round-release-tests", patches=[])
         workflow_events = []
+        published_versions = {}
         active_pointer = None
 
         def add_batch(batch_id, task_id, patch_id, rolled_back):
@@ -839,7 +969,13 @@ class ReleaseManifestGateTests(unittest.TestCase):
             (batch_dir / "batch_published.json").write_text(
                 json.dumps(publish_receipt, ensure_ascii=False), encoding="utf-8"
             )
+            published_versions[batch_id] = {
+                "role": "Manuscript",
+                "file": str(output_path.resolve()),
+                "sha256": output_sha,
+            }
             workflow_events.append({
+                "event_id": f"EV-{batch_id}-PUBLISH",
                 "task_id": task_id,
                 "event_type": "batch_published",
                 "timestamp_utc": STAMP,
@@ -881,6 +1017,7 @@ class ReleaseManifestGateTests(unittest.TestCase):
                     json.dumps(rollback_receipt, ensure_ascii=False), encoding="utf-8"
                 )
                 workflow_events.append({
+                    "event_id": f"EV-{batch_id}-ROLLBACK",
                     "task_id": task_id,
                     "event_type": "batch_rolled_back",
                     "timestamp_utc": STAMP,
@@ -894,15 +1031,94 @@ class ReleaseManifestGateTests(unittest.TestCase):
         add_batch("batch-old-001", "T1", "P1", rolled_back=True)
         add_batch("batch-current-002", "T2", "P2", rolled_back=False)
         add_batch("batch-next-003", "T3", "P3", rolled_back=False)
+        initial_source = {
+            "role": "Manuscript",
+            "file": str(self.source.resolve()),
+            "sha256": source_sha,
+        }
+        task_specs = [
+            {
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "local_revision",
+                "title": "Publish first revision",
+                "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the first approved document revision.",
+                "targets": [],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    initial_source,
+                    published_versions["batch-old-001"],
+                ],
+            },
+            {
+                "task_id": "T2",
+                "sequence": 2,
+                "task_type": "local_revision",
+                "title": "Publish second revision",
+                "source_comment_ids": ["C2"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the second approved document revision.",
+                "targets": [],
+                "dependencies": ["T1"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    initial_source,
+                    published_versions["batch-current-002"],
+                ],
+            },
+            {
+                "task_id": "T3",
+                "sequence": 3,
+                "task_type": "local_revision",
+                "title": "Publish third revision",
+                "source_comment_ids": ["C3"],
+                "target_documents": ["Manuscript"],
+                "evidence": [],
+                "proposed_action": "Apply the third approved document revision.",
+                "targets": [],
+                "dependencies": ["T2"],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.95,
+                "status": "pending",
+                "requires_user_approval": True,
+                "source_versions": [
+                    published_versions["batch-current-002"],
+                    published_versions["batch-next-003"],
+                ],
+            },
+        ]
         workflow_ledger = {
-            "source_files": [{
-                "role": "Manuscript",
-                "file": str(self.source),
-                "sha256": source_sha,
-            }],
-            "tasks": [{"task_id": "T1"}, {"task_id": "T2"}, {"task_id": "T3"}],
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-release-tests",
+            "created_at_utc": STAMP,
+            "source_files": [initial_source],
+            "active_documents": {"Manuscript": active_pointer},
+            "documents": [],
+            "object_registry": [],
+            "tasks": workflow_tasks_from_decision_plan(task_specs),
             "events": workflow_events,
         }
+        self.assertEqual(validate_workflow_ledger(workflow_ledger), [])
+        self.assertEqual(len(workflow_ledger["source_files"]), 1)
+        self.assertEqual(
+            workflow_ledger["source_files"][0],
+            initial_source,
+            "Published and rolled-back versions must remain in append-only batch events, not initial source_files.",
+        )
         records = _collect_release_batch_history(
             workflow_ledger,
             {"Manuscript": active_pointer},

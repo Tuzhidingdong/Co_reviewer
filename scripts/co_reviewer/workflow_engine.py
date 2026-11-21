@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .identity import CitationProfile, DocumentIdentity, DocumentObjectIdentity, TargetRef
+from .safety_policy import assess_task_risk
 
 WORKFLOW_STATUSES = frozenset({
     "identified",
@@ -79,6 +80,10 @@ _SCOPE_FINGERPRINT_FIELDS = (
     "unresolved_questions", "confidence", "requires_user_approval",
     "patch_id", "patch_operations", "supersedes_patch_id", "proposed_response",
     "response_unit_ids", "response_unit_specs",
+    "author_decision_ref", "invalidated_package_numbering_approval_hashes",
+    "risk_tier", "risk_policy_version", "risk_reasons",
+    "high_risk_review_confirmed", "high_risk_reviewed_by",
+    "high_risk_reviewed_at_utc", "high_risk_review_note",
 )
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
@@ -306,6 +311,38 @@ def _clear_execution_evidence(task: dict[str, Any]) -> None:
         task.pop(field, None)
 
 
+def _clear_package_numbering_authorization(task: dict[str, Any]) -> None:
+    """Discard package-numbering authorization when its source package is invalidated.
+
+    Both the approval and prepared operations are bound to one exact impact plan
+    and source snapshot. A changed active document requires a new plan, approval,
+    and PatchOperations; immutable historical Patch records are not rewritten.
+    """
+    if task.get("task_type") != "global_numbering":
+        return
+    invalidated = task.get("invalidated_package_numbering_approval_hashes", [])
+    if (
+        not isinstance(invalidated, list)
+        or any(not _is_sha256(value) for value in invalidated)
+        or len(invalidated) != len(set(invalidated))
+    ):
+        raise WorkflowValidationError(
+            "Task invalidated_package_numbering_approval_hashes must be a unique array of SHA-256 digests."
+        )
+    approval = task.get("author_decision_ref")
+    if approval is not None:
+        if not isinstance(approval, Mapping) or not _is_sha256(approval.get("approval_sha256")):
+            raise WorkflowValidationError(
+                "Cannot invalidate a global-numbering task with a malformed author_decision_ref."
+            )
+        approval_sha = str(approval["approval_sha256"])
+        if approval_sha not in invalidated:
+            invalidated.append(approval_sha)
+    task["invalidated_package_numbering_approval_hashes"] = invalidated
+    task.pop("author_decision_ref", None)
+    task["patch_operations"] = []
+
+
 def _string_list(value: Any, field: str, task_id: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     if value is None:
@@ -366,6 +403,28 @@ def validate_workflow_tasks(tasks: Any) -> list[str]:
             errors.append(f"Task {task_id} stage must be a string.")
         if isinstance(status, str) and status in WORKFLOW_STATUSES:
             errors.extend(_state_evidence_errors(task_id, task, status))
+        if "risk_tier" in task:
+            expected_risk = assess_task_risk(task)
+            if task.get("risk_tier") != expected_risk["risk_tier"]:
+                errors.append(
+                    f"Task {task_id} risk_tier does not match deterministic policy "
+                    f"({expected_risk['risk_tier']})."
+                )
+            if task.get("risk_policy_version") != expected_risk["risk_policy_version"]:
+                errors.append(f"Task {task_id} risk_policy_version is stale or unsupported.")
+            if task.get("risk_reasons") != expected_risk["risk_reasons"]:
+                errors.append(f"Task {task_id} risk_reasons do not match deterministic policy.")
+            if expected_risk["risk_tier"] == "TIER_1" and status in {
+                "ready", "preflighted", "approved", "applied", "verified", "completed"
+            }:
+                if task.get("high_risk_review_confirmed") is not True:
+                    errors.append(f"Tier 1 Task {task_id} requires explicit high_risk_review_confirmed=true.")
+                if not isinstance(task.get("high_risk_reviewed_by"), str) or not task["high_risk_reviewed_by"].strip():
+                    errors.append(f"Tier 1 Task {task_id} requires high_risk_reviewed_by.")
+                if not _is_aware_timestamp(task.get("high_risk_reviewed_at_utc")):
+                    errors.append(f"Tier 1 Task {task_id} requires timezone-aware high_risk_reviewed_at_utc.")
+                if not isinstance(task.get("high_risk_review_note"), str) or not task["high_risk_review_note"].strip():
+                    errors.append(f"Tier 1 Task {task_id} requires a non-empty high_risk_review_note.")
 
     for task_id, deps in dependencies.items():
         for dependency in deps:
@@ -661,6 +720,12 @@ def transition_task(
         updated["block_reason"] = reason.strip()
         return updated
     if new_status == "recheck_required":
+        for field in (
+            "high_risk_review_confirmed", "high_risk_reviewed_by",
+            "high_risk_reviewed_at_utc", "high_risk_review_note",
+        ):
+            updated.pop(field, None)
+        _clear_package_numbering_authorization(updated)
         updated["recheck_from"] = current
         updated["invalidation_reason"] = reason.strip()
         return updated
@@ -846,6 +911,7 @@ def invalidate_affected_tasks(
         if task.get("status") != "recheck_required":
             task["recheck_from"] = task.get("status", "identified")
         task["status"] = "recheck_required"
+        _clear_package_numbering_authorization(task)
         task["invalidation_reason"] = reason.strip()
     return rows, sorted(impacted)
 
@@ -888,6 +954,7 @@ def invalidate_downstream(
         if task.get("status") != "recheck_required":
             task["recheck_from"] = task.get("status", "identified")
         task["status"] = "recheck_required"
+        _clear_package_numbering_authorization(task)
         task["invalidation_reason"] = reason.strip()
     return rows
 
@@ -975,6 +1042,23 @@ def workflow_tasks_from_decision_plan(tasks: Any, target_refs_by_task: Mapping[s
         # The workflow ledger is the common layer; DOCX-only revision_items are
         # generated later from mutating tasks, not from response-only tasks.
         record = copy.deepcopy(dict(task))
+        author_decision_ref = record.get("author_decision_ref")
+        raw_patch_operations = record.get("patch_operations", [])
+        if author_decision_ref is not None and isinstance(raw_patch_operations, list):
+            bound_operations = []
+            for operation in raw_patch_operations:
+                if not isinstance(operation, Mapping):
+                    bound_operations.append(operation)
+                    continue
+                operation_record = copy.deepcopy(dict(operation))
+                existing_author_ref = operation_record.get("author_decision_ref")
+                if existing_author_ref is not None and existing_author_ref != author_decision_ref:
+                    raise WorkflowValidationError(
+                        f"Task {task_id.strip()} PatchOperation author_decision_ref differs from its task-level decision."
+                    )
+                operation_record["author_decision_ref"] = copy.deepcopy(author_decision_ref)
+                bound_operations.append(operation_record)
+            record["patch_operations"] = bound_operations
         record.update({
             "task_id": task_id.strip(),
             "sequence": task.get("sequence", 0),
@@ -985,6 +1069,7 @@ def workflow_tasks_from_decision_plan(tasks: Any, target_refs_by_task: Mapping[s
         })
         if stable_refs:
             record["target_refs"] = stable_refs
+        record.update(assess_task_risk(record))
         adapted.append(record)
     return adapted
 
@@ -1012,10 +1097,50 @@ _WORKFLOW_EVENT_TYPES = frozenset({
 })
 
 
+def _published_source_records_from_events(
+    events: Any,
+    known_task_ids: set[str],
+) -> set[tuple[str, str, str]]:
+    """Return source versions grounded in structurally valid append-only publish events.
+
+    source_files is the immutable initial-input inventory. Published versions are
+    recorded by batch_published event documents and must not be copied into that
+    initial inventory merely to satisfy task provenance validation.
+    """
+    records: set[tuple[str, str, str]] = set()
+    if not isinstance(events, list):
+        return records
+    for event in events:
+        if not isinstance(event, Mapping) or event.get("event_type") != "batch_published":
+            continue
+        if event.get("task_id") not in known_task_ids:
+            continue
+        batch_id = event.get("batch_id")
+        documents = event.get("documents")
+        if not isinstance(batch_id, str) or not batch_id.strip() or not isinstance(documents, Mapping) or not documents:
+            continue
+        for role, pointer in documents.items():
+            if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+                continue
+            if not isinstance(pointer, Mapping):
+                continue
+            file_path = pointer.get("file")
+            digest = pointer.get("sha256")
+            if (
+                isinstance(file_path, str) and file_path.strip()
+                and _is_sha256(digest)
+                and pointer.get("batch_id") == batch_id
+                and _is_aware_timestamp(pointer.get("updated_at_utc"))
+            ):
+                records.add((role, _canonical_workflow_file_path(file_path), digest))
+    return records
+
+
 def validate_workflow_ledger(ledger: Any) -> list[str]:
     """Validate the persisted review-round ledger and all of its task records."""
     if not isinstance(ledger, Mapping):
         return ["Workflow ledger must be an object."]
+    from .revision_models import RevisionModelError, validate_author_decision_ref
     errors: list[str] = []
     if ledger.get("schema_version") != "0.5.1":
         errors.append("Workflow ledger schema_version must be '0.5.1'.")
@@ -1030,6 +1155,7 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         errors.append("Workflow ledger source_files must be an array.")
         sources = []
     seen_sources: set[tuple[str, str]] = set()
+    seen_source_roles: set[str] = set()
     source_records: set[tuple[str, str, str]] = set()
     source_hashes_by_role: dict[str, set[str]] = defaultdict(set)
     for index, source in enumerate(sources):
@@ -1042,6 +1168,12 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         )
         if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
             errors.append(f"{prefix}.role is unsupported.")
+        elif role in seen_source_roles:
+            errors.append(
+                f"{prefix} duplicates initial source role {role}; source_files is an initial-input inventory, not version history."
+            )
+        else:
+            seen_source_roles.add(role)
         if not isinstance(file_path, str) or not file_path.strip():
             errors.append(f"{prefix}.file must be non-empty.")
         if not _is_sha256(digest):
@@ -1181,10 +1313,30 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
     if not isinstance(tasks, list) or not tasks:
         errors.append("Workflow ledger tasks must be a non-empty array.")
         tasks = []
+    known_task_ids_for_sources = {
+        task.get("task_id")
+        for task in tasks
+        if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
+    }
+    source_records.update(
+        _published_source_records_from_events(
+            ledger.get("events", []),
+            known_task_ids_for_sources,
+        )
+    )
     for index, task in enumerate(tasks):
         if not isinstance(task, Mapping):
             continue
         task_id = task.get("task_id", f"index {index}")
+        invalidated_approvals = task.get("invalidated_package_numbering_approval_hashes", [])
+        if (
+            not isinstance(invalidated_approvals, list)
+            or any(not _is_sha256(value) for value in invalidated_approvals)
+            or len(invalidated_approvals) != len(set(invalidated_approvals))
+        ):
+            errors.append(
+                f"Task {task_id} invalidated_package_numbering_approval_hashes must be a unique array of SHA-256 digests."
+            )
         task_source_versions = task.get("source_versions", [])
         if not isinstance(task_source_versions, list):
             errors.append(f"Task {task_id} source_versions must be an array.")
@@ -1210,7 +1362,9 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                 errors.append(f"{prefix} duplicates a source version.")
             seen_task_sources.add(key)
             if key not in source_records:
-                errors.append(f"{prefix} is not present in the Workflow Ledger source_files.")
+                errors.append(
+                    f"{prefix} is not present in the initial source inventory, current active pointers, or validated published-batch history."
+                )
         task_type = task.get("task_type")
         if not isinstance(task_type, str) or task_type not in _WORKFLOW_TASK_TYPES:
             errors.append(f"Task {task_id} has unsupported task_type {task_type!r}.")
@@ -1268,10 +1422,25 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if not isinstance(raw_patch_operations, list):
             errors.append(f"Task {task_id} patch_operations must be an array.")
             raw_patch_operations = []
+        task_author_decision_ref = None
+        raw_author_decision_ref = task.get("author_decision_ref")
+        if raw_author_decision_ref is not None:
+            try:
+                task_author_decision_ref = validate_author_decision_ref(raw_author_decision_ref)
+                if task_type != "global_numbering":
+                    errors.append(
+                        f"Task {task_id} may use package-numbering author provenance only with task_type=global_numbering."
+                    )
+            except (RevisionModelError, TypeError, ValueError) as exc:
+                errors.append(f"Task {task_id} author_decision_ref is invalid: {exc}")
         if task_type == "response_only" and raw_patch_operations:
             errors.append(f"Response-only task {task_id} cannot contain DOCX patch operations.")
+        if raw_patch_operations and task_type == "global_numbering" and task_author_decision_ref is None:
+            errors.append(
+                f"Global-numbering task {task_id} requires a hash-bound author_decision_ref before it can contain PatchOperations."
+            )
         if raw_patch_operations:
-            from .revision_models import PatchOperation, RevisionModelError
+            from .revision_models import PatchOperation
             operation_ids: set[str] = set()
             for operation_index, raw_operation in enumerate(raw_patch_operations):
                 prefix = f"Task {task_id} patch_operations[{operation_index}]"
@@ -1290,6 +1459,19 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
                     }:
                         errors.append(
                             f"{prefix} document role is not represented in the task's evidence-linked targets."
+                        )
+                    if operation.author_decision_ref is not None:
+                        if (
+                            task_type != "global_numbering"
+                            or task_author_decision_ref is None
+                            or dict(operation.author_decision_ref) != task_author_decision_ref
+                        ):
+                            errors.append(
+                                f"{prefix} author_decision_ref does not match its Workflow global-numbering task."
+                            )
+                    elif task_type == "global_numbering":
+                        errors.append(
+                            f"{prefix} is missing the exact author_decision_ref required by its global-numbering task."
                         )
                     if operation.evidence_ids:
                         known_evidence_ids = {
@@ -1318,6 +1500,10 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
         if isinstance(task, Mapping) and isinstance(task.get("task_id"), str)
     }
     seen_event_ids: set[str] = set()
+    batch_events_by_type: dict[str, dict[str, list[tuple[int, Mapping[str, Any]]]]] = {
+        "batch_published": defaultdict(list),
+        "batch_rolled_back": defaultdict(list),
+    }
     for index, event in enumerate(events):
         prefix = f"Workflow ledger events[{index}]"
         if not isinstance(event, Mapping):
@@ -1340,6 +1526,105 @@ def validate_workflow_ledger(ledger: Any) -> list[str]:
             errors.append(f"{prefix}.event_type is unsupported.")
         if "fingerprint" in event and not _is_sha256(event.get("fingerprint")):
             errors.append(f"{prefix}.fingerprint must be a lowercase SHA-256 digest.")
+        if event_type in {"batch_published", "batch_rolled_back"}:
+            batch_id = event.get("batch_id")
+            if not isinstance(batch_id, str) or not batch_id.strip():
+                errors.append(f"{prefix}.batch_id must be a non-empty string for batch events.")
+            else:
+                batch_events_by_type[event_type][batch_id].append((index, event))
+            documents = event.get("documents")
+            if not isinstance(documents, Mapping) or not documents:
+                errors.append(f"{prefix}.documents must be a non-empty role-to-pointer object for batch events.")
+                continue
+            for role, pointer in documents.items():
+                pointer_prefix = f"{prefix}.documents[{role}]"
+                if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+                    errors.append(f"{pointer_prefix} has an unsupported document role.")
+                    continue
+                if not isinstance(pointer, Mapping):
+                    errors.append(f"{pointer_prefix} must be an object.")
+                    continue
+                file_path = pointer.get("file")
+                digest = pointer.get("sha256")
+                pointer_batch_id = pointer.get("batch_id")
+                if not isinstance(file_path, str) or not file_path.strip():
+                    errors.append(f"{pointer_prefix}.file must be non-empty.")
+                if not _is_sha256(digest):
+                    errors.append(f"{pointer_prefix}.sha256 must be a lowercase SHA-256 digest.")
+                if event_type == "batch_published" and pointer_batch_id != batch_id:
+                    errors.append(f"{pointer_prefix}.batch_id must match its batch_published event.")
+                elif event_type == "batch_rolled_back" and pointer_batch_id is not None and (
+                    not isinstance(pointer_batch_id, str) or not pointer_batch_id.strip()
+                ):
+                    errors.append(f"{pointer_prefix}.batch_id must be a non-empty string or null.")
+                if not _is_aware_timestamp(pointer.get("updated_at_utc")):
+                    errors.append(f"{pointer_prefix}.updated_at_utc must be timezone-aware.")
+
+    def _batch_event_documents_projection(event: Mapping[str, Any]) -> tuple[Any, ...]:
+        documents = event.get("documents")
+        if not isinstance(documents, Mapping):
+            return ()
+        projected = []
+        for role, pointer in documents.items():
+            if not isinstance(pointer, Mapping):
+                projected.append((str(role), None, None, None, None))
+                continue
+            file_path = pointer.get("file")
+            projected.append((
+                str(role),
+                _canonical_workflow_file_path(file_path) if isinstance(file_path, str) else None,
+                pointer.get("sha256"),
+                pointer.get("batch_id"),
+                pointer.get("updated_at_utc"),
+            ))
+        return tuple(sorted(projected))
+
+    for batch_id, batch_rows in batch_events_by_type["batch_published"].items():
+        task_ids = [
+            row.get("task_id") for _, row in batch_rows
+            if isinstance(row.get("task_id"), str)
+        ]
+        if len(task_ids) != len(batch_rows) or len(task_ids) != len(set(task_ids)):
+            errors.append(
+                f"Workflow Ledger batch_published events for {batch_id} have duplicate or invalid task IDs."
+            )
+        projections = {
+            _batch_event_documents_projection(row)
+            for _, row in batch_rows
+        }
+        if len(projections) != 1:
+            errors.append(
+                f"Workflow Ledger batch_published events for {batch_id} disagree on document output pointers."
+            )
+
+    for batch_id, batch_rows in batch_events_by_type["batch_rolled_back"].items():
+        task_ids = [
+            row.get("task_id") for _, row in batch_rows
+            if isinstance(row.get("task_id"), str)
+        ]
+        if len(task_ids) != len(batch_rows) or len(task_ids) != len(set(task_ids)):
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} have duplicate or invalid task IDs."
+            )
+        projections = {
+            _batch_event_documents_projection(row)
+            for _, row in batch_rows
+        }
+        if len(projections) != 1:
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} disagree on restored document pointers."
+            )
+        published_rows = batch_events_by_type["batch_published"].get(batch_id, [])
+        if not published_rows:
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} have no preceding published batch."
+            )
+        elif min(position for position, _ in batch_rows) < max(
+            position for position, _ in published_rows
+        ):
+            errors.append(
+                f"Workflow Ledger batch_rolled_back events for {batch_id} occur before publication is complete."
+            )
 
     for task in tasks:
         if not isinstance(task, Mapping) or task.get("status") != "ready":
@@ -1400,25 +1685,58 @@ def build_workflow_ledger(
         decision_plan.get("tasks"),
         target_refs_by_task=target_refs_by_task,
     )
-    source_records_by_role: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for source in decision_plan.get("source_files", []):
+    raw_source_files = decision_plan.get("source_files", [])
+    if not isinstance(raw_source_files, list):
+        raise WorkflowValidationError("Decision-plan source_files must be an array.")
+
+    # source_files is the immutable initial-input inventory, not a history of
+    # every occurrence emitted by task/evidence aggregation. Collapse exact
+    # duplicates and the legacy Reply alias, but never guess between two
+    # different files/hashes claiming the same logical document role.
+    source_files: list[dict[str, Any]] = []
+    source_records_by_role: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    source_identity_by_role: dict[str, tuple[str, str]] = {}
+    seen_initial_records: set[tuple[str, str, str]] = set()
+    for index, source in enumerate(raw_source_files):
         if not isinstance(source, Mapping):
-            continue
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] must be an object."
+            )
         role = source.get("role")
         if role == "Reply":
             role = "Reviewers"
         file_path = source.get("file")
         digest = source.get("sha256")
-        if (
-            isinstance(role, str) and role
-            and isinstance(file_path, str) and file_path
-            and isinstance(digest, str) and _is_sha256(digest)
-        ):
-            source_records_by_role[role].append({
-                "role": role,
-                "file": file_path,
-                "sha256": digest,
-            })
+        if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] has unsupported role {role!r}."
+            )
+        if not isinstance(file_path, str) or not file_path.strip() or not _is_sha256(digest):
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] requires a non-empty file and lowercase SHA-256."
+            )
+        canonical_path = _canonical_workflow_file_path(file_path)
+        role_identity = (canonical_path, digest)
+        previous_identity = source_identity_by_role.get(role)
+        if previous_identity is not None and previous_identity != role_identity:
+            raise WorkflowValidationError(
+                f"Conflicting initial source records exist for role {role}; "
+                "select one unambiguous initial document before building the Workflow Ledger."
+            )
+        source_identity_by_role[role] = role_identity
+        record_key = (role, canonical_path, digest)
+        if record_key in seen_initial_records:
+            continue
+
+        canonical_source = {
+            "role": role,
+            "file": file_path,
+            "sha256": digest,
+        }
+        source_files.append(canonical_source)
+        source_records_by_role[role].append(canonical_source)
+        seen_initial_records.add(record_key)
+
     for task in tasks:
         roles: set[str] = set()
         if isinstance(task.get("target_documents"), (list, tuple)):
@@ -1442,22 +1760,13 @@ def build_workflow_ledger(
         task["source_versions"] = [
             copy.deepcopy(source)
             for role in sorted(roles)
-            for source in sorted(
-                source_records_by_role.get(role, []),
-                key=lambda item: (item["file"], item["sha256"]),
-            )
+            for source in source_records_by_role.get(role, [])
         ]
-    source_files = copy.deepcopy(decision_plan.get("source_files", []))
+
     active_documents: dict[str, dict[str, Any]] = {}
     for source in source_files:
-        if not isinstance(source, Mapping):
-            continue
         role, file_path, digest = source.get("role"), source.get("file"), source.get("sha256")
         if isinstance(role, str) and isinstance(file_path, str) and _is_sha256(digest):
-            if role in active_documents:
-                raise WorkflowValidationError(
-                    f"Multiple initial source files exist for role {role}; resolve document identity before creating active pointers."
-                )
             active_documents[role] = {
                 "file": file_path,
                 "sha256": digest,

@@ -629,6 +629,7 @@ class BatchStoreTests(unittest.TestCase):
             "find": "old phrase",
             "replace": "new phrase",
             "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "location": "Synthetic paragraph",
             "source_sha256": source_sha,
             "evidence_ids": ["E1"],
@@ -972,6 +973,7 @@ class BatchStoreTests(unittest.TestCase):
             "find": "old phrase",
             "replace": "corrected phrase",
             "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "location": "Synthetic paragraph",
             "source_sha256": source_sha,
             "evidence_ids": ["E1"],
@@ -1042,6 +1044,95 @@ class BatchStoreTests(unittest.TestCase):
             str(self.source),
         )
 
+    def test_two_sequential_publications_keep_initial_inventory_separate_from_history(self):
+        workflow = copy.deepcopy(self.workflow)
+        initial_source = dict(workflow["source_files"][0])
+        workflow["tasks"][0]["source_versions"] = [dict(initial_source)]
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        published_versions = []
+
+        for index in (1, 2):
+            batch_id = f"sequential-{index:03d}"
+            # Separate run roots keep this test focused on publication-ledger
+            # semantics; role-lock lifecycle is covered by its own tests.
+            intent = create_batch_intent(
+                workflow,
+                self.workflow_path,
+                ["T1"],
+                ["Manuscript"],
+                runs_dir=self.root / f"runs-{index:03d}",
+                batch_id=batch_id,
+            )
+            batch_dir = Path(intent["batch_dir"])
+            output = Path(intent["documents"]["Manuscript"]["output_file"])
+            output.write_bytes(f"sequential published DOCX {index}".encode("utf-8"))
+            output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
+            source_sha = hashlib.sha256(
+                Path(intent["documents"]["Manuscript"]["parent_file"]).read_bytes()
+            ).hexdigest()
+            self.assertEqual(
+                intent["documents"]["Manuscript"]["parent_sha256"],
+                source_sha,
+            )
+
+            patch = SimpleNamespace(
+                patch_id=f"P-{index}",
+                task_id="T1",
+                status="verified",
+                operations=[SimpleNamespace(
+                    document="Manuscript",
+                    input_file=intent["documents"]["Manuscript"]["parent_file"],
+                    output_file=str(output),
+                    source_sha256=source_sha,
+                )],
+                verified_output_hashes=[{"path": str(output), "sha256": output_sha}],
+            )
+            workflow, receipt = publish_active_pointers(
+                workflow,
+                self.workflow_path,
+                batch_dir,
+                SimpleNamespace(patches=[patch]),
+            )
+            self.assertEqual(receipt["status"], "published")
+            version = {
+                "role": "Manuscript",
+                "file": str(output.resolve()),
+                "sha256": output_sha,
+            }
+            published_versions.append(version)
+
+            # Simulate the downstream re-preparation step which records the
+            # version used as its input. It must remain history, not be copied
+            # into the single initial source_files inventory.
+            if index == 1:
+                workflow["tasks"][0]["source_versions"].append(dict(version))
+
+            self.assertEqual(validate_workflow_ledger(workflow), [])
+            self.workflow_path.write_text(
+                json.dumps(workflow, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        self.assertEqual(len(workflow["source_files"]), 1)
+        self.assertEqual(workflow["source_files"][0], initial_source)
+        self.assertEqual(
+            workflow["tasks"][0]["source_versions"],
+            [initial_source, published_versions[0]],
+        )
+        self.assertEqual(
+            workflow["active_documents"]["Manuscript"]["file"],
+            published_versions[1]["file"],
+        )
+        self.assertEqual(
+            [event["batch_id"] for event in workflow["events"]
+             if event.get("event_type") == "batch_published"],
+            ["sequential-001", "sequential-002"],
+        )
+        self.assertEqual(validate_workflow_ledger(workflow), [])
+
     def test_publish_rejects_unverified_patch_without_changing_parent_ledger(self):
         intent = self._intent()
         batch_dir = Path(intent["batch_dir"])
@@ -1065,15 +1156,32 @@ class BatchStoreTests(unittest.TestCase):
         output = Path(intent["documents"]["Manuscript"]["output_file"])
         output.write_bytes(b"published synthetic Marked DOCX")
         output_sha = hashlib.sha256(output.read_bytes()).hexdigest()
-        published = json.loads(json.dumps(self.workflow))
-        published["active_documents"] = {
-            "Manuscript": {
-                "file": str(output.resolve()),
-                "sha256": output_sha,
-                "batch_id": "run-001",
-                "updated_at_utc": STAMP,
-            }
-        }
+        source_sha = hashlib.sha256(
+            Path(intent["documents"]["Manuscript"]["parent_file"]).read_bytes()
+        ).hexdigest()
+        patch = SimpleNamespace(
+            patch_id="P1",
+            task_id="T1",
+            status="verified",
+            operations=[SimpleNamespace(
+                document="Manuscript",
+                input_file=intent["documents"]["Manuscript"]["parent_file"],
+                output_file=str(output),
+                source_sha256=source_sha,
+            )],
+            verified_output_hashes=[{"path": str(output), "sha256": output_sha}],
+        )
+        published, publish_receipt = publish_active_pointers(
+            self.workflow,
+            self.workflow_path,
+            batch_dir,
+            SimpleNamespace(patches=[patch]),
+        )
+        self.assertEqual(publish_receipt["status"], "published")
+        self.assertEqual(
+            [event["event_type"] for event in published["events"]],
+            ["batch_published"],
+        )
         self.assertEqual(validate_workflow_ledger(published), [])
 
         updated, receipt = rollback_active_pointers(

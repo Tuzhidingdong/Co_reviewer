@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from argparse import Namespace
 import json
 import tempfile
 import unittest
@@ -19,8 +20,8 @@ from co_reviewer.docx_identity import (
     build_target_refs_by_task,
     validate_manifest_sources,
 )
-from co_reviewer.identity import sha256_file
-from co_reviewer_cli import build_parser
+from co_reviewer.identity import IdentityValidationError, TargetRef, sha256_file
+from co_reviewer_cli import build_parser, cmd_attach_document_identities
 
 
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
@@ -69,6 +70,27 @@ class DocxIdentityRegistryTests(unittest.TestCase):
         if para_ids:
             _set_para_ids(path, para_ids)
         return path
+
+    def test_target_ref_rejects_invalid_advisory_paragraph_hints(self):
+        base = {
+            "document_id": "doc-manuscript",
+            "revision_id": "rev-001",
+            "object_id": "obj-001",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+        }
+        for value in (-1, True, "4", 1.5):
+            with self.subTest(p_idx=value):
+                with self.assertRaisesRegex(
+                    IdentityValidationError,
+                    "location_hint.p_idx must be a non-negative integer",
+                ):
+                    TargetRef(**base, location_hint={"p_idx": value})
+        self.assertEqual(
+            TargetRef(**base, location_hint={"p_idx": 4}).location_hint["p_idx"],
+            4,
+        )
 
     def test_native_para_ids_preserve_object_identity_when_paragraph_moves(self):
         first = self._docx(
@@ -330,6 +352,55 @@ class DocxIdentityRegistryTests(unittest.TestCase):
                 previous_manifest=None,
             ))
         self.assertEqual(source.read_bytes(), original)
+
+    def test_cli_binds_manifest_to_new_workflow_ledger_and_registers_targetrefs(self):
+        source = self._docx("workflow-bind.docx", ["A source paragraph to revise."])
+        manifest, _ = build_document_identity_manifest(_inventory(source))
+        manifest_path = self.root / "document_identity_manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        from co_reviewer.workflow_engine import build_workflow_ledger, validate_workflow_ledger
+        plan = {
+            "source_files": [{"role": "Manuscript", "file": str(source), "sha256": sha256_file(source)}],
+            "tasks": [{
+                "task_id": "T1", "sequence": 1, "title": "Revise source paragraph",
+                "task_type": "local_revision", "source_comment_ids": ["C1"],
+                "target_documents": ["Manuscript"],
+                "evidence": [{
+                    "evidence_id": "E1", "document": "Manuscript",
+                    "part": "word/document.xml", "p_idx": 0,
+                    "source_excerpt": "A source paragraph to revise.",
+                    "evidence_type": "paragraph", "match_status": "confirmed",
+                }],
+                "proposed_action": "Revise the paragraph at the confirmed target.",
+                "targets": [{
+                    "document": "Manuscript", "part": "word/document.xml",
+                    "p_idx": 0, "action": "replace", "evidence_ids": ["E1"],
+                }],
+                "dependencies": [], "readiness": "ready_for_author_approval",
+                "unresolved_questions": [], "confidence": 0.95,
+                "status": "pending", "requires_user_approval": True,
+            }],
+        }
+        workflow = build_workflow_ledger(plan, "round-identity-bind", "2026-11-20T00:00:00+00:00")
+        workflow_path = self.root / "workflow_ledger.json"
+        workflow_path.write_text(json.dumps(workflow, ensure_ascii=False), encoding="utf-8")
+        output_path = self.root / "workflow_ledger.identity-bound.json"
+        result = cmd_attach_document_identities(Namespace(
+            workflow_ledger=str(workflow_path),
+            identity_manifest=str(manifest_path),
+            out=str(output_path),
+        ))
+        self.assertEqual(result, 0)
+        bound = json.loads(output_path.read_text(encoding="utf-8"))
+        task = bound["tasks"][0]
+        self.assertEqual(len(task["target_refs"]), 1)
+        self.assertEqual(task["target_refs"][0]["part"], "word/document.xml")
+        self.assertEqual(task["target_groups"], [
+            bound["documents"][0]["document_id"] + "|object=" + task["target_refs"][0]["object_id"]
+        ])
+        self.assertEqual(bound["identity_manifest"]["sha256"], sha256_file(manifest_path))
+        self.assertEqual(validate_workflow_ledger(bound), [])
+        self.assertNotEqual(workflow_path.read_bytes(), output_path.read_bytes())
 
     def test_target_para_id_mismatch_fails_closed(self):
         path = self._docx(

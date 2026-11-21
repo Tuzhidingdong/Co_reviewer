@@ -17,12 +17,12 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from lxml import etree as ET
 from .v232_contract import (
-    attach_format_change, effective_run_properties, narrow_revision,
-    targeted_revision_gate,
+    attach_format_change, build_revision_baseline_inventory,
+    effective_run_properties, narrow_revision, targeted_revision_gate,
 )
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -51,6 +51,286 @@ def visible_text(paragraph: ET.Element) -> str:
         elif node.tag == qn("br"):
             out.append("\n")
     return "".join(out)
+
+def _xml_element_path(node: ET.Element) -> str:
+    """Return a deterministic child-index path for an element in its source part."""
+    segments = []
+    current = node
+    while current.getparent() is not None:
+        parent = current.getparent()
+        segments.append(str(list(parent).index(current)))
+        current = parent
+    return "/" + "/".join(reversed(segments))
+
+
+def map_target_text_to_xml_nodes(
+    root: ET.Element,
+    paragraph: ET.Element,
+    target_text: str,
+) -> dict[str, Any]:
+    """Map one unique ordinary-Run target to exact w:r/w:t nodes before mutation.
+
+    This is an audit map, not an authorization. It deliberately refuses targets
+    that cannot be represented as one unique contiguous ordinary Run sequence.
+    """
+    if not isinstance(root, ET.Element) or not isinstance(paragraph, ET.Element):
+        raise TypeError("root and paragraph must be lxml elements.")
+    if not isinstance(target_text, str) or not target_text:
+        raise ValueError("target_text must be a non-empty string.")
+    document_order = {node: index for index, node in enumerate(root.iter())}
+    paragraph_text = visible_text(paragraph)
+    occurrences = paragraph_text.count(target_text)
+    target_start_global = paragraph_text.find(target_text)
+    target_end_global = target_start_global + len(target_text)
+    if occurrences == 0:
+        raise ValueError("Target text was not found in the paragraph visible-text projection.")
+    if occurrences > 1:
+        raise ValueError("Target is ambiguous: it occurs more than once in the paragraph visible-text projection.")
+
+    containers = [paragraph]
+    containers.extend(
+        node for node in paragraph.iter()
+        if node is not paragraph and node.tag == qn("hyperlink")
+    )
+    matches = []
+    for container in containers:
+        children = list(container)
+        index = 0
+        while index < len(children):
+            if children[index].tag != qn("r"):
+                index += 1
+                continue
+            runs = []
+            values = []
+            while index < len(children) and children[index].tag == qn("r"):
+                value = run_plain_text(children[index])
+                if value is None:
+                    break
+                runs.append(children[index])
+                values.append(value)
+                index += 1
+            if not runs:
+                index += 1
+                continue
+            joined = "".join(values)
+            start = joined.find(target_text)
+            while start >= 0:
+                matches.append((container, runs, start, joined))
+                start = joined.find(target_text, start + 1)
+
+    if len(matches) != 1:
+        raise ValueError(
+            "Target refused: it does not map to exactly one contiguous ordinary Run sequence "
+            "and may cross a protected or unsupported XML boundary."
+        )
+    container, runs, target_start, joined = matches[0]
+    target_end = target_start + len(target_text)
+    run_map = []
+    run_cursor = 0
+    for run_index, run in enumerate(runs):
+        run_text = run_plain_text(run) or ""
+        run_start, run_end = run_cursor, run_cursor + len(run_text)
+        overlap_start, overlap_end = max(target_start, run_start), min(target_end, run_end)
+        if overlap_start < overlap_end:
+            text_nodes = []
+            node_cursor = 0
+            for child_index, child in enumerate(run):
+                if child.tag != qn("t"):
+                    continue
+                value = child.text or ""
+                node_start, node_end = node_cursor, node_cursor + len(value)
+                text_start, text_end = max(overlap_start - run_start, node_start), min(overlap_end - run_start, node_end)
+                if text_start < text_end:
+                    text_nodes.append({
+                        "text_node_index_in_run": child_index,
+                        "text_node_document_order": document_order[child],
+                        "text_node_xml_path": _xml_element_path(child),
+                        "text_node_text_start": text_start - node_start,
+                        "text_node_text_end": text_end - node_start,
+                        "target_text": value[text_start - node_start:text_end - node_start],
+                    })
+                node_cursor = node_end
+            run_map.append({
+                "run_index_in_sequence": run_index,
+                "run_document_order": document_order[run],
+                "run_xml_path": _xml_element_path(run),
+                "run_text_start": overlap_start - run_start,
+                "run_text_end": overlap_end - run_start,
+                "target_text": run_text[overlap_start - run_start:overlap_end - run_start],
+                "text_nodes": text_nodes,
+            })
+        run_cursor = run_end
+
+    mapped = "".join(
+        node["target_text"] for run in run_map for node in run["text_nodes"]
+    )
+    if mapped != target_text:
+        raise ValueError("Run/Text-node event map does not reconstruct the exact target text.")
+    # Record every structural/non-text XML event in this paragraph, including zero-width
+    # boundaries that are not represented in the visible-text projection.
+    projection_positions: dict[ET.Element, tuple[int, int]] = {}
+    projection_cursor = 0
+    visible_text_tags = {qn("t"), qn("tab"), qn("br")}
+    def index_projection(node: ET.Element) -> None:
+        nonlocal projection_cursor
+        start = projection_cursor
+        if node.tag == qn("t"):
+            projection_cursor += len(node.text or "")
+        elif node.tag in {qn("tab"), qn("br")}:
+            projection_cursor += 1
+        else:
+            for child in list(node):
+                index_projection(child)
+        projection_positions[node] = (start, projection_cursor)
+    index_projection(paragraph)
+    if projection_cursor != len(paragraph_text):
+        raise ValueError("Structural event projection does not reconcile with visible_text().")
+
+    formatting_nodes: set[ET.Element] = set()
+    for property_node in paragraph.findall(".//w:pPr", NS) + paragraph.findall(".//w:rPr", NS):
+        formatting_nodes.update(property_node.iter())
+    event_families = {
+        "bookmarkStart": "bookmark_boundary", "bookmarkEnd": "bookmark_boundary",
+        "commentRangeStart": "comment_boundary", "commentRangeEnd": "comment_boundary",
+        "commentReference": "comment_reference",
+        "permStart": "permission_boundary", "permEnd": "permission_boundary",
+        "fldChar": "field_marker", "instrText": "field_instruction",
+        "hyperlink": "hyperlink_container",
+        "drawing": "drawing_object", "pict": "drawing_object", "object": "drawing_object",
+        "sdt": "content_control", "sdtContent": "content_control", "sdtPr": "content_control",
+        "ins": "revision_wrapper", "del": "revision_wrapper",
+        "moveFrom": "revision_wrapper", "moveTo": "revision_wrapper",
+        "moveFromRangeStart": "revision_boundary", "moveFromRangeEnd": "revision_boundary",
+        "moveToRangeStart": "revision_boundary", "moveToRangeEnd": "revision_boundary",
+        "proofErr": "proofing_boundary", "tab": "visible_control", "br": "visible_control",
+        "footnoteReference": "note_reference", "endnoteReference": "note_reference",
+        "customXml": "custom_xml_container", "altChunk": "alternate_content",
+        "lastRenderedPageBreak": "page_break_marker",
+    }
+    structural_events: list[dict[str, Any]] = []
+    for node in paragraph.iter():
+        if node is paragraph or node in formatting_nodes:
+            continue
+        if node.tag in {qn("p"), qn("pPr"), qn("r"), qn("rPr"), qn("t")} :
+            continue
+        if node not in projection_positions:
+            raise ValueError("A paragraph XML event is missing its visible-text projection position.")
+        start, end = projection_positions[node]
+        local_name = ET.QName(node).localname
+        family = event_families.get(local_name, "other_structural_xml")
+        if start == end:
+            if start < target_start_global:
+                relation = "before_target"
+            elif start == target_start_global:
+                relation = "at_target_start"
+            elif start == target_end_global:
+                relation = "at_target_end"
+            elif start < target_end_global:
+                relation = "inside_target"
+            else:
+                relation = "after_target"
+        elif end <= target_start_global:
+            relation = "before_target"
+        elif start >= target_end_global:
+            relation = "after_target"
+        elif start <= target_start_global and end >= target_end_global:
+            relation = "contains_target"
+        else:
+            relation = "intersects_target"
+        parent = node.getparent()
+        depth = 0
+        while parent is not None and parent is not paragraph:
+            depth += 1
+            parent = parent.getparent()
+        attributes = {
+            ET.QName(key).localname: value
+            for key, value in sorted(node.attrib.items())
+        }
+        event = {
+            "event_index": len(structural_events),
+            "event_document_order": document_order.get(node),
+            "event_kind": local_name,
+            "event_family": family,
+            "xml_path": _xml_element_path(node),
+            "parent_xml_path": _xml_element_path(node.getparent()) if node.getparent() is not None else None,
+            "nesting_depth": depth,
+            "visible_text_start": start,
+            "visible_text_end": end,
+            "zero_width": start == end,
+            "target_relation": relation,
+            "attributes": attributes,
+        }
+        if local_name == "instrText":
+            event["instruction_text"] = node.text or ""
+        structural_events.append(event)
+
+    field_stack: list[dict[str, Any]] = []
+    field_ranges: list[dict[str, Any]] = []
+    for event in structural_events:
+        if event["event_kind"] != "fldChar":
+            continue
+        field_type = event["attributes"].get("fldCharType")
+        if field_type == "begin":
+            field_stack.append({
+                "begin_event_index": event["event_index"],
+                "begin_visible_text_offset": event["visible_text_start"],
+                "separate_event_index": None,
+                "result_start": None,
+            })
+        elif field_type == "separate" and field_stack:
+            field_stack[-1]["separate_event_index"] = event["event_index"]
+            field_stack[-1]["result_start"] = event["visible_text_end"]
+        elif field_type == "end" and field_stack:
+            field = field_stack.pop()
+            field["end_event_index"] = event["event_index"]
+            field["end_visible_text_offset"] = event["visible_text_start"]
+            field["complete"] = field["separate_event_index"] is not None
+            field["target_in_field_result"] = (
+                field["result_start"] is not None
+                and field["result_start"] <= target_start_global
+                and target_end_global <= field["end_visible_text_offset"]
+            )
+            field_ranges.append(field)
+    for field in field_stack:
+        field["end_event_index"] = None
+        field["end_visible_text_offset"] = None
+        field["complete"] = False
+        field["target_in_field_result"] = False
+        field_ranges.append(field)
+    boundary_events = [
+        event for event in structural_events
+        if event["zero_width"] or event["event_family"] in {
+            "bookmark_boundary", "comment_boundary", "permission_boundary",
+            "field_marker", "field_instruction", "revision_boundary",
+            "proofing_boundary", "page_break_marker",
+        }
+    ]
+    return {
+        "schema_version": "1.0",
+        "status": "MAPPED",
+        "source_part_document_order": document_order.get(root),
+        "paragraph_document_order": document_order[paragraph],
+        "paragraph_xml_path": _xml_element_path(paragraph),
+        "container_xml_path": _xml_element_path(container),
+        "target_text": target_text,
+        "target_start_in_run_sequence": target_start,
+        "target_end_in_run_sequence": target_end,
+        "target_start_in_paragraph": target_start_global,
+        "target_end_in_paragraph": target_end_global,
+        "paragraph_visible_text_length": len(paragraph_text),
+        "run_map": run_map,
+        "text_node_count": sum(len(run["text_nodes"]) for run in run_map),
+        "structural_events": structural_events,
+        "boundary_events": boundary_events,
+        "field_ranges": field_ranges,
+        "structural_event_count": len(structural_events),
+        "structural_event_coverage_complete": len(structural_events) == sum(
+            1 for node in paragraph.iter()
+            if node is not paragraph and node not in formatting_nodes
+            and node.tag not in {qn("p"), qn("pPr"), qn("r"), qn("rPr"), qn("t")}
+        ),
+        "mapping_reconstructed_exactly": True,
+    }
 
 def has_drawing(paragraph: ET.Element) -> bool:
     return any(x.tag in {qn("drawing"), qn("pict"), qn("object")} for x in paragraph.iter())
@@ -491,13 +771,21 @@ def replace_in_paragraph(
         while pos >= 0:
             matches.append((start, end, runs, text, pos))
             pos = text.find(old, pos + 1)
+    # Search all enabled text containers before selecting any location. A
+    # plain Run match and a Hyperlink match are competing targets, not a reason
+    # to prefer the ordinary Run merely because it was visited first.
+    hyperlink_matches = [
+        child for child in children
+        if child.tag == qn("hyperlink") and old in visible_text(child)
+    ]
+    if matches and hyperlink_matches:
+        return (
+            False, next_id,
+            "target is ambiguous across plain-text and hyperlink containers",
+        )
     if not matches:
         # A target may be wholly contained in one simple hyperlink. Recurse into
         # that wrapper so the relationship ID and hyperlink attributes survive.
-        hyperlink_matches = [
-            child for child in children
-            if child.tag == qn("hyperlink") and old in visible_text(child)
-        ]
         if len(hyperlink_matches) == 1:
             return replace_in_paragraph(
                 hyperlink_matches[0], old, new, author, date, next_id,
@@ -596,6 +884,92 @@ def safe_part(part: str) -> str:
         raise ValueError(f"Unsupported or unsafe Word XML part path: {part}")
     return part
 
+def _resolve_target_ref_paragraph(
+    source: Path,
+    part: str,
+    edit: Mapping[str, Any],
+    paragraphs: Sequence[ET.Element],
+) -> tuple[int, dict[str, Any]]:
+    """Resolve a stable TargetRef from exact source DOCX bytes; never guess by p_idx."""
+    from .identity import TargetRef, canonical_fingerprint, normalize_visible_text, sha256_file
+    from .docx_identity import _read_docx
+
+    raw_ref = edit.get("target_ref")
+    if not isinstance(raw_ref, Mapping):
+        raise ValueError("Stable TargetRef must be an object.")
+    try:
+        ref = TargetRef(
+            document_id=raw_ref.get("document_id"), revision_id=raw_ref.get("revision_id"),
+            object_id=raw_ref.get("object_id"), object_type=raw_ref.get("object_type"),
+            part=raw_ref.get("part"), object_fingerprint=raw_ref.get("object_fingerprint"),
+            start_offset=raw_ref.get("start_offset"), end_offset=raw_ref.get("end_offset"),
+            location_hint=raw_ref.get("location_hint"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Stable TargetRef is invalid: {exc}") from exc
+    if ref.part != part:
+        raise ValueError("TargetRef part does not match the PatchOperation part.")
+    actual_sha256 = sha256_file(source)
+    expected_sha256 = edit.get("source_sha256")
+    if not isinstance(expected_sha256, str) or expected_sha256 != actual_sha256:
+        raise ValueError("TargetRef source SHA-256 is absent or stale; re-preflight and re-authorize the Patch.")
+    expected_revision_id = canonical_fingerprint({
+        "document_id": ref.document_id, "source_sha256": actual_sha256,
+    })
+    if ref.revision_id != expected_revision_id:
+        raise ValueError("TargetRef revision_id does not match the exact source DOCX version.")
+    _, descriptors = _read_docx(source)
+    if sha256_file(source) != actual_sha256:
+        raise ValueError("Source DOCX changed while its TargetRef was being resolved.")
+    hint = ref.location_hint if isinstance(ref.location_hint, Mapping) else {}
+    native_id = hint.get("para_id")
+    matches = []
+    for descriptor in descriptors:
+        if descriptor.get("part") != part or descriptor.get("object_type") != ref.object_type:
+            continue
+        payload = descriptor.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        fingerprint = canonical_fingerprint({
+            "object_type": descriptor.get("object_type"),
+            "part": descriptor.get("part"),
+            "payload": payload,
+        })
+        if fingerprint != ref.object_fingerprint:
+            continue
+        if native_id and descriptor.get("native_id") != native_id:
+            continue
+        matches.append(descriptor)
+    if len(matches) != 1:
+        raise ValueError(
+            "TargetRef object fingerprint must resolve to exactly one current DOCX object; "
+            "no paragraph-index fallback is permitted."
+        )
+    resolved_hint = matches[0].get("location_hint")
+    resolved_p_idx = resolved_hint.get("p_idx") if isinstance(resolved_hint, Mapping) else None
+    if not isinstance(resolved_p_idx, int) or isinstance(resolved_p_idx, bool):
+        raise ValueError("TargetRef resolved object has no unique paragraph location.")
+    supplied_p_idx = edit.get("p_idx")
+    if supplied_p_idx is not None and supplied_p_idx != resolved_p_idx:
+        raise ValueError("TargetRef identity conflicts with the PatchOperation paragraph hint.")
+    if resolved_p_idx < 0 or resolved_p_idx >= len(paragraphs):
+        raise ValueError("TargetRef paragraph location is outside the current Word part.")
+    normalized_text = normalize_visible_text(visible_text(paragraphs[resolved_p_idx]))
+    normalized_find = normalize_visible_text(str(edit.get("find", "")))
+    if not normalized_find or normalized_text.count(normalized_find) != 1:
+        raise ValueError("TargetRef paragraph does not contain one unique exact source-text occurrence.")
+    if ref.start_offset is not None and ref.end_offset is not None:
+        if normalized_text[ref.start_offset:ref.end_offset] != normalized_find:
+            raise ValueError("TargetRef character offsets do not identify the PatchOperation source text.")
+    return resolved_p_idx, {
+        "mode": "stable_target_ref", "status": "verified",
+        "document_id": ref.document_id, "revision_id": ref.revision_id,
+        "object_id": ref.object_id, "object_type": ref.object_type,
+        "object_fingerprint": ref.object_fingerprint, "part": ref.part,
+        "p_idx_location_hint": resolved_p_idx,
+        "start_offset": ref.start_offset, "end_offset": ref.end_offset,
+    }
+
 def prepare_document(input_file: str, output_file: str, edits: list[dict[str, Any]], author: str):
     """Prepare and fully validate a DOCX in memory without writing the output path."""
     source, target = Path(input_file).expanduser().resolve(), Path(output_file).expanduser().resolve()
@@ -619,7 +993,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
     if "word/document.xml" not in original: raise ValueError("Missing word/document.xml.")
     from .structure_classifier import (
         StructureClassificationError,
-        assert_edit_target_supported,
+        assert_edit_target_supported_with_bounded_safe_span,
         classify_docx_package_members,
     )
     structure_inventory = classify_docx_package_members(
@@ -627,16 +1001,12 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         source_name=str(source),
     )
-    revision_kinds = {
-        "text_revision_wrapper", "format_revision", "paragraph_revision",
-        "table_revision", "move_revision", "comment_anchor", "comment_definition",
-    }
-    revision_inventory = {
-        "revisions": [
-            item for item in structure_inventory.get("structures", [])
-            if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))
-        ]
-    }
+    from .manual_suggestion import ManualFallbackRequired, build_manual_suggestion
+
+    # Use the full target-scoped history inventory, including precise visible
+    # text intervals. A paragraph-only projection would incorrectly block a
+    # second independent edit elsewhere in the same paragraph.
+    revision_inventory = build_revision_baseline_inventory(source)
     if structure_inventory["package_status"] != "READY":
         blocking = [
             f"{item['code']}: {item['message']}"
@@ -681,6 +1051,40 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             if any(ch in old for ch in "\t\r\n") or any(ch in new for ch in "\t\r\n"):
                 raise ValueError("Tabs/newlines are not supported in safe find/replace text.")
             p_idx = edit.get("p_idx")
+            target_identity_validation = None
+            target_ref = edit.get("target_ref")
+            target_identity_mode = edit.get("target_identity_mode")
+            if target_ref is not None:
+                if target_identity_mode != "stable_target_ref":
+                    raise ValueError("TargetRef Apply requires target_identity_mode=stable_target_ref.")
+                p_idx, target_identity_validation = _resolve_target_ref_paragraph(
+                    source, part, edit, paras
+                )
+            elif target_identity_mode == "legacy_p_idx_explicit":
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0 or p_idx >= len(paras):
+                    raise ValueError("Explicit legacy identity mode requires a valid p_idx location hint.")
+                if not isinstance(edit.get("source_sha256"), str) or hashlib.sha256(source.read_bytes()).hexdigest() != edit.get("source_sha256"):
+                    raise ValueError("Explicit legacy p_idx mode requires the exact preflight source SHA-256.")
+                target_identity_validation = {
+                    "mode": "legacy_p_idx_explicit",
+                    "status": "migration_compatibility_not_stable_identity",
+                    "p_idx_location_hint": p_idx,
+                }
+            elif edit.get("operation_id"):
+                raise ValueError(
+                    "Typed PatchOperation has no stable TargetRef or explicit legacy identity mode; refusing implicit p_idx fallback."
+                )
+            else:
+                if p_idx is not None and (
+                    not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0
+                ):
+                    raise ValueError("Legacy untyped P0 operation has an invalid paragraph location hint.")
+                target_identity_validation = {
+                    "mode": "legacy_untyped_p0",
+                    "status": "compatibility_not_stable_identity",
+                    "p_idx_location_hint": p_idx,
+                    "requires_unique_text_match": True,
+                }
             if p_idx is None: candidates = list(enumerate(paras))
             else:
                 if not isinstance(p_idx, int) or p_idx < 0 or p_idx >= len(paras):
@@ -691,8 +1095,21 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 why = "not found" if not found else "ambiguous across paragraphs"
                 raise ValueError(f"Target {old[:80]!r} {why} in {part}; no output was written.")
             idx, para = found[0]
+            history_target = {"part": part, "p_idx": idx}
+            paragraph_text_for_history = visible_text(para)
+            target_positions = []
+            cursor = 0
+            while True:
+                match_position = paragraph_text_for_history.find(old, cursor)
+                if match_position < 0:
+                    break
+                target_positions.append(match_position)
+                cursor = match_position + max(1, len(old))
+            if len(target_positions) == 1:
+                history_target["start_offset"] = target_positions[0]
+                history_target["end_offset"] = target_positions[0] + len(old)
             history_gate = targeted_revision_gate(
-                revision_inventory, [{"part": part, "p_idx": idx}]
+                revision_inventory, [history_target]
             )
             if history_gate["status"] != "PASS":
                 conflicts = [
@@ -704,9 +1121,59 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "existing tracked changes; resolve the overlapping history explicitly in Word "
                     "and re-import before editing. " + "; ".join(conflicts[:8])
                 )
-            assert_edit_target_supported(
-                structure_inventory, part=part, paragraph_index=idx
-            )
+            try:
+                structural_event_map = map_target_text_to_xml_nodes(root, para, old)
+                structure_safety = assert_edit_target_supported_with_bounded_safe_span(
+                    structure_inventory,
+                    part=part,
+                    paragraph_index=idx,
+                    paragraph=para,
+                    part_root=root,
+                    target_text=old,
+                )
+            except StructureClassificationError as exc:
+                paragraph_text = visible_text(para)
+                position = paragraph_text.find(old)
+                blocking_structures = [
+                    {
+                        "kind": item.get("kind"),
+                        "structure_id": item.get("structure_id"),
+                        "word_part": item.get("part"),
+                        "element_path": item.get("element_path"),
+                        "reason": item.get("reason"),
+                        "details": item.get("details", {}),
+                    }
+                    for item in structure_inventory.get("structures", [])
+                    if item.get("part") == part
+                    and (
+                        item.get("paragraph_index") == idx
+                        or idx in (item.get("paragraph_indices") or [])
+                    )
+                    and item.get("status") in {"BLOCKED", "GUARDED"}
+                ]
+                role = edit.get("document") if edit.get("document") in {"Manuscript", "SI", "Reviewers", "Reply"} else "Manuscript"
+                target_identity = {"paragraph_index": idx}
+                for key in ("object_id", "para_id", "target_ref"):
+                    if edit.get(key) is not None:
+                        target_identity[key] = edit[key]
+                suggestion = build_manual_suggestion({
+                    "document_role": role,
+                    "source_document_path": str(source),
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "word_part": part,
+                    "target": target_identity,
+                    "reviewer_comment_ids": [str(value) for value in (edit.get("source_comment_ids") or [])],
+                    "author_decision_ref": copy.deepcopy(edit.get("author_decision_ref")),
+                    "operation_id": edit.get("operation_id"),
+                    "source_excerpt": old,
+                    "before_context": paragraph_text[max(0, position - 160):position] if position >= 0 else "",
+                    "after_context": paragraph_text[position + len(old):position + len(old) + 160] if position >= 0 else "",
+                    "blocking_reason": str(exc),
+                    "blocking_structures": blocking_structures,
+                    "missing_evidence": list(edit.get("missing_evidence") or []),
+                    "proposed_edit": new,
+                })
+                raise ManualFallbackRequired(suggestion, str(exc)) from exc
             format_operations = edit.get("format_operations", [])
             format_authorization = edit.get("format_authorization")
             if not isinstance(format_operations, list):
@@ -745,8 +1212,14 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     raise ValueError(
                         f"FormatChange target {format_find[:80]!r} is not unique in paragraph P[{idx}]."
                     )
+                format_history_target = {"part": part, "p_idx": idx}
+                format_paragraph_text = visible_text(para)
+                format_offset = format_paragraph_text.find(format_find)
+                if format_offset >= 0 and format_paragraph_text.count(format_find) == 1:
+                    format_history_target["start_offset"] = format_offset
+                    format_history_target["end_offset"] = format_offset + len(format_find)
                 format_gate = targeted_revision_gate(
-                    revision_inventory, [{"part": part, "p_idx": idx}]
+                    revision_inventory, [format_history_target]
                 )
                 if format_gate["status"] != "PASS":
                     raise ValueError(
@@ -852,6 +1325,10 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "format_changes": format_change_results,
                 "format_authorization": copy.deepcopy(format_authorization),
                 "format_operations": copy.deepcopy(format_operations),
+                "structure_safety": copy.deepcopy(structure_safety),
+                "structural_event_map": copy.deepcopy(structural_event_map),
+                "target_ref": copy.deepcopy(dict(target_ref)) if isinstance(target_ref, Mapping) else None,
+                "target_identity_validation": copy.deepcopy(target_identity_validation),
                 "authorization_validation": {
                     "status": contract["status"],
                     "diff_algorithm": contract["diff_algorithm"],
@@ -859,7 +1336,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "token_lock": contract["token_lock"],
                 }
             }
-            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "location_phrase"):
+            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "author_decision_ref", "location_phrase"):
                 if metadata_key in edit:
                     edit_result[metadata_key] = edit[metadata_key]
             edit_results.append(edit_result)

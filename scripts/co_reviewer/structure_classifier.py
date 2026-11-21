@@ -780,6 +780,410 @@ def _field_groups(
         )
 
 
+
+def _build_structural_event_map(
+    part: str,
+    root: ET._Element,
+    *,
+    source_sha256: str,
+    paragraph_indices: Mapping[ET._Element, int],
+    records: list[dict[str, Any]],
+    relationships: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose parser-backed XML order and text/run coordinates for protected structures."""
+    nodes = [node for node in root.iter() if isinstance(node.tag, str)]
+    xml_order = {node: index for index, node in enumerate(nodes)}
+    paragraph_for_node: dict[ET._Element, ET._Element] = {}
+    run_for_node: dict[ET._Element, ET._Element] = {}
+    run_index: dict[ET._Element, int] = {}
+    text_index: dict[ET._Element, int] = {}
+    text_offsets: dict[ET._Element, tuple[int, int]] = {}
+    paragraph_text_index: dict[ET._Element, int] = {}
+    paragraph_text_offsets: dict[ET._Element, tuple[int, int]] = {}
+
+    text_locals = {"t", "delText", "instrText", "delInstrText"}
+    for paragraph in paragraph_indices:
+        for descendant in paragraph.iter():
+            paragraph_for_node[descendant] = paragraph
+        paragraph_cursor = 0
+        paragraph_node_index = 0
+        for descendant in paragraph.iter():
+            if (
+                isinstance(descendant.tag, str)
+                and _qname(descendant.tag).namespace == W
+                and _qname(descendant.tag).localname in text_locals
+            ):
+                value = descendant.text or ""
+                paragraph_text_index[descendant] = paragraph_node_index
+                paragraph_text_offsets[descendant] = (
+                    paragraph_cursor,
+                    paragraph_cursor + len(value),
+                )
+                paragraph_cursor += len(value)
+                paragraph_node_index += 1
+        runs = list(paragraph.iter(f"{{{W}}}r"))
+        for index, run in enumerate(runs):
+            run_index[run] = index
+            for descendant in run.iter():
+                run_for_node[descendant] = run
+            cursor = 0
+            text_nodes = [
+                item for item in run.iter()
+                if isinstance(item.tag, str)
+                and _qname(item.tag).namespace == W
+                and _qname(item.tag).localname in text_locals
+            ]
+            for text_node_index, text_node in enumerate(text_nodes):
+                value = text_node.text or ""
+                text_index[text_node] = text_node_index
+                text_offsets[text_node] = (cursor, cursor + len(value))
+                cursor += len(value)
+
+    records_by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        if record.get("part") == part and isinstance(record.get("element_path"), str):
+            records_by_path[record["element_path"]].append(record)
+
+    range_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    range_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    field_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    field_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    proofing_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    order_by_path = {_path(node): order for node, order in xml_order.items()}
+    node_by_path = {_path(node): node for node in nodes}
+    for record in records:
+        if record.get("part") != part:
+            continue
+        details = record.get("details")
+        if not isinstance(details, Mapping):
+            continue
+        kind = record.get("kind")
+        if isinstance(kind, str) and kind.endswith("_range") and not kind.startswith("incomplete_"):
+            start_path = details.get("start_path")
+            end_path = details.get("end_path")
+            link = {
+                "range_kind": kind,
+                "range_id": details.get("range_id"),
+                "status": record.get("status"),
+                "start_path": start_path,
+                "end_path": end_path,
+                "start_order": details.get("start_order"),
+                "end_order": details.get("end_order"),
+                "scope_mapping": details.get("scope_mapping"),
+            }
+            for marker_path in (start_path, end_path):
+                if isinstance(marker_path, str):
+                    range_links[marker_path].append(link)
+            start_order = link.get("start_order")
+            end_order = link.get("end_order")
+            if (
+                isinstance(start_order, int) and not isinstance(start_order, bool)
+                and isinstance(end_order, int) and not isinstance(end_order, bool)
+                and start_order <= end_order
+            ):
+                for order in range(start_order, end_order + 1):
+                    range_links_by_order[order].append(link)
+        elif kind == "complex_field":
+            group = {
+                "field_id": details.get("field_id"),
+                "field_kind": "complex",
+                "status": record.get("status"),
+                "begin_path": details.get("begin_path"),
+                "separate_path": details.get("separate_path"),
+                "end_path": details.get("end_path"),
+                "instruction_paths": details.get("instruction_paths", []),
+                "complete": details.get("complete") is True,
+            }
+            paths = [
+                details.get("begin_path"),
+                details.get("separate_path"),
+                details.get("end_path"),
+                *(details.get("instruction_paths") or []),
+            ]
+            for marker_path in paths:
+                if isinstance(marker_path, str):
+                    field_links[marker_path].append(group)
+            begin_order = order_by_path.get(details.get("begin_path"))
+            end_order = order_by_path.get(details.get("end_path"))
+            if isinstance(begin_order, int):
+                upper = end_order if isinstance(end_order, int) else len(nodes) - 1
+                if begin_order <= upper:
+                    for order in range(begin_order, upper + 1):
+                        field_links_by_order[order].append(group)
+        elif kind == "simple_field":
+            field_path = record.get("element_path")
+            field_node = node_by_path.get(field_path)
+            begin_order = order_by_path.get(field_path)
+            if field_node is not None and isinstance(begin_order, int):
+                descendants = list(field_node.iter())
+                end_node = descendants[-1] if descendants else field_node
+                end_path = _path(end_node)
+                end_order = order_by_path.get(end_path, begin_order)
+                group = {
+                    "field_id": record.get("structure_id"),
+                    "field_kind": "simple",
+                    "status": record.get("status"),
+                    "begin_path": field_path,
+                    "separate_path": None,
+                    "end_path": end_path,
+                    "instruction_paths": [field_path],
+                    "instruction": details.get("instruction", ""),
+                    "complete": True,
+                }
+                field_links[field_path].append(group)
+                for order in range(begin_order, end_order + 1):
+                    field_links_by_order[order].append(group)
+
+    comment_links_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen_comment_link_ids: set[str] = set()
+    for links in range_links.values():
+        for link in links:
+            if link.get("range_kind") != "comment_range":
+                continue
+            comment_id = link.get("range_id")
+            if isinstance(comment_id, str) and comment_id not in seen_comment_link_ids:
+                comment_links_by_id[comment_id].append(link)
+                seen_comment_link_ids.add(comment_id)
+
+    proofing_stacks: dict[str, list[ET._Element]] = defaultdict(list)
+    for node in nodes:
+        if node.tag != f"{{{W}}}proofErr":
+            continue
+        marker_type = node.get(f"{{{W}}}type", "")
+        if marker_type.endswith("Start"):
+            proofing_stacks[marker_type[:-5]].append(node)
+        elif marker_type.endswith("End"):
+            base_type = marker_type[:-3]
+            stack = proofing_stacks.get(base_type, [])
+            if stack:
+                start_node = stack.pop()
+                start_order = xml_order[start_node]
+                end_order = xml_order[node]
+                link = {
+                    "range_kind": "proofing_range",
+                    "range_type": base_type,
+                    "range_id": f"{part}#proofErr-{base_type}-{_path(start_node)}",
+                    "status": "SUPPORTED",
+                    "start_path": _path(start_node),
+                    "end_path": _path(node),
+                    "start_order": start_order,
+                    "end_order": end_order,
+                    "scope_mapping": "xml_document_order",
+                }
+                for order in range(start_order, end_order + 1):
+                    proofing_links_by_order[order].append(link)
+
+    def unique_links(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for group in groups:
+            for item in group:
+                key = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if key not in seen:
+                    seen.add(key)
+                    output.append(item)
+        return output
+
+    # Preserve the full enclosing table path, including nested tables. The
+    # indices are hints only; table/row/cell element paths plus XML order remain
+    # the structural coordinates used by downstream adapters.
+    table_nodes = list(root.iter(f"{{{W}}}tbl"))
+    table_indices = {table: index for index, table in enumerate(table_nodes)}
+
+    def direct_child_index(parent: ET._Element, child: ET._Element, local_name: str) -> int | None:
+        matches = [item for item in parent if item.tag == f"{{{W}}}{local_name}"]
+        try:
+            return matches.index(child)
+        except ValueError:
+            return None
+
+    def table_context_for(node: ET._Element) -> list[dict[str, Any]]:
+        ancestry = list(node.iterancestors())[::-1] + [node]
+        table_positions = [
+            index for index, item in enumerate(ancestry)
+            if item.tag == f"{{{W}}}tbl"
+        ]
+        contexts: list[dict[str, Any]] = []
+        for table_number, position in enumerate(table_positions):
+            table = ancestry[position]
+            stop = (
+                table_positions[table_number + 1]
+                if table_number + 1 < len(table_positions)
+                else len(ancestry)
+            )
+            segment = ancestry[position + 1:stop]
+            row = next((item for item in segment if item.tag == f"{{{W}}}tr"), None)
+            cell = None
+            if row is not None:
+                row_position = segment.index(row)
+                cell = next(
+                    (item for item in segment[row_position + 1:] if item.tag == f"{{{W}}}tc"),
+                    None,
+                )
+            contexts.append({
+                "table_index": table_indices[table],
+                "table_depth": table_number + 1,
+                "table_path": _path(table),
+                "row_index": (
+                    direct_child_index(table, row, "tr") if row is not None else None
+                ),
+                "row_path": _path(row) if row is not None else None,
+                "cell_index": (
+                    direct_child_index(row, cell, "tc")
+                    if row is not None and cell is not None else None
+                ),
+                "cell_path": _path(cell) if cell is not None else None,
+            })
+        return contexts
+
+    events: list[dict[str, Any]] = []
+    marker_locals = {
+        "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
+        "commentReference", "fldChar", "instrText", "delInstrText", "fldSimple",
+        "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+        "customXmlInsRangeStart", "customXmlInsRangeEnd",
+        "customXmlDelRangeStart", "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+        "permStart", "permEnd",
+        "proofErr", "footnoteReference", "endnoteReference",
+        "lastRenderedPageBreak",
+    }
+    for node in nodes:
+        q = _qname(node.tag)
+        namespace, local = q.namespace or "", q.localname
+        paragraph = paragraph_for_node.get(node)
+        paragraph_index = paragraph_indices.get(paragraph) if paragraph is not None else None
+        path = _path(node)
+        attached_records = records_by_path.get(path, [])
+        # Keep a complete event sequence for paragraph XML and every classified
+        # structure outside paragraphs (for example a body-level range marker).
+        if paragraph is None and not attached_records and not (
+            namespace == W and local in {"tbl", "tr", "tc", "sectPr"}
+        ):
+            continue
+
+        run = run_for_node.get(node)
+        if namespace == W and local == "r":
+            run = node
+        event_kind = (
+            "paragraph" if namespace == W and local == "p"
+            else "run" if namespace == W and local == "r"
+            else "text_node" if namespace == W and local in {"t", "delText"}
+            else "field_instruction_text" if namespace == W and local in {"instrText", "delInstrText"}
+            else "relationship_container" if namespace == W and local in {"hyperlink", "smartTag", "customXml"}
+            else "table" if namespace == W and local == "tbl"
+            else "table_row" if namespace == W and local == "tr"
+            else "table_cell" if namespace == W and local == "tc"
+            else "range_or_field_marker" if namespace == W and local in marker_locals
+            else "xml_element"
+        )
+        if attached_records and event_kind == "xml_element":
+            event_kind = attached_records[0].get("kind", event_kind)
+
+        attributes: dict[str, str] = {}
+        relationship_refs: list[dict[str, Any]] = []
+        for raw_name, value in node.attrib.items():
+            attr = _qname(raw_name)
+            prefix = _PREFIXES.get(attr.namespace or "")
+            display_name = f"{prefix}:{attr.localname}" if prefix else attr.localname
+            if attr.namespace in {W, R}:
+                attributes[display_name] = value
+            if attr.namespace == R and value:
+                relationship = relationships.get(value)
+                relationship_refs.append({
+                    "attribute": display_name,
+                    "relationship_id": value,
+                    "status": relationship.get("status") if isinstance(relationship, Mapping) else "MISSING",
+                    "target": relationship.get("target") if isinstance(relationship, Mapping) else None,
+                    "resolved_target_part": (
+                        relationship.get("resolved_target_part")
+                        if isinstance(relationship, Mapping) else None
+                    ),
+                })
+
+        row: dict[str, Any] = {
+            "event_id": hashlib.sha256(
+                "\\0".join((source_sha256, part, path, event_kind)).encode("utf-8")
+            ).hexdigest()[:24],
+            "event_kind": event_kind,
+            "part": part,
+            "element": local,
+            "namespace": namespace,
+            "element_path": path,
+            "parent_path": _path(node.getparent()) if node.getparent() is not None else None,
+            "xml_order": xml_order[node],
+            "paragraph_index": paragraph_index,
+            "paragraph_xml_order": xml_order.get(paragraph) if paragraph is not None else None,
+            "run_index": run_index.get(run) if run is not None else None,
+            "text_node_index_in_run": text_index.get(node),
+            "text_offset_in_run": (
+                {"start": text_offsets[node][0], "end": text_offsets[node][1]}
+                if node in text_offsets else None
+            ),
+            "text_node_index_in_paragraph": paragraph_text_index.get(node),
+            "text_offset_in_paragraph": (
+                {
+                    "start": paragraph_text_offsets[node][0],
+                    "end": paragraph_text_offsets[node][1],
+                }
+                if node in paragraph_text_offsets else None
+            ),
+            "attributes": attributes,
+            "relationship_refs": relationship_refs,
+            "table_context": table_context_for(node),
+            "run_text": (
+                "".join(
+                    item.text or ""
+                    for item in run.iter()
+                    if isinstance(item.tag, str)
+                    and _qname(item.tag).namespace == W
+                    and _qname(item.tag).localname in text_locals
+                )
+                if run is not None and node is run else None
+            ),
+            "run_text_length": (
+                len("".join(
+                    item.text or ""
+                    for item in run.iter()
+                    if isinstance(item.tag, str)
+                    and _qname(item.tag).namespace == W
+                    and _qname(item.tag).localname in text_locals
+                ))
+                if run is not None and node is run else None
+            ),
+            "structure_records": [
+                {
+                    "structure_id": record.get("structure_id"),
+                    "kind": record.get("kind"),
+                    "status": record.get("status"),
+                    "reason": record.get("reason"),
+                    "details": dict(record.get("details") or {}),
+                }
+                for record in attached_records
+            ],
+            "paired_ranges": unique_links(
+                range_links_by_order.get(xml_order[node], []),
+                range_links.get(path, []),
+                proofing_links_by_order.get(xml_order[node], []),
+                (
+                    comment_links_by_id.get(attributes.get("w:id"), [])
+                    if namespace == W and local == "commentReference" else []
+                ),
+            ),
+            "field_groups": unique_links(
+                field_links_by_order.get(xml_order[node], []),
+                field_links.get(path, []),
+            ),
+        }
+        if namespace == W and local in text_locals:
+            value = node.text or ""
+            row["text_length"] = len(value)
+            row["text_content"] = value
+        events.append(row)
+
+    return events
+
 def _classify_members(
     members: Mapping[str, bytes],
     *,
@@ -791,6 +1195,7 @@ def _classify_members(
     )).hexdigest()
     issues: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
+    structural_events: list[dict[str, Any]] = []
     package_names = set(members)
 
     for name in sorted(package_names):
@@ -1049,10 +1454,37 @@ def _classify_members(
             kind="comment_range", source_sha256=digest,
             paragraph_indices=paragraph_indices, records=records, issues=issues,
         )
+        # Revision moves, Custom XML change ranges and editing permissions
+        # also have explicit start/end marker identities. Pair them using
+        # the same part-wide XML order contract so their interior events
+        # carry a protected range ID instead of relying on node-local tags.
+        for start_local, end_local, range_kind in (
+            ("moveFromRangeStart", "moveFromRangeEnd", "move_from_range"),
+            ("moveToRangeStart", "moveToRangeEnd", "move_to_range"),
+            ("customXmlInsRangeStart", "customXmlInsRangeEnd", "custom_xml_insert_range"),
+            ("customXmlDelRangeStart", "customXmlDelRangeEnd", "custom_xml_delete_range"),
+            ("customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "custom_xml_move_from_range"),
+            ("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd", "custom_xml_move_to_range"),
+            ("permStart", "permEnd", "permission_range"),
+        ):
+            _pair_ranges(
+                part=part, root=root,
+                start_local=start_local, end_local=end_local,
+                kind=range_kind, source_sha256=digest,
+                paragraph_indices=paragraph_indices, records=records, issues=issues,
+            )
         _field_groups(
             part=part, root=root, source_sha256=digest,
             paragraph_indices=paragraph_indices, records=records, issues=issues,
         )
+        structural_events.extend(_build_structural_event_map(
+            part,
+            root,
+            source_sha256=digest,
+            paragraph_indices=paragraph_indices,
+            records=records,
+            relationships=relationships_by_source.get(part, {}),
+        ))
 
     # A relationship issue inside a specific paragraph is a local edit blocker.
     blocked_package_codes = {
@@ -1072,6 +1504,10 @@ def _classify_members(
         "structures": len(records),
         "structures_by_kind": dict(sorted(Counter(item["kind"] for item in records).items())),
         "structures_by_status": dict(sorted(Counter(item["status"] for item in records).items())),
+        "structural_events": len(structural_events),
+        "structural_events_by_kind": dict(sorted(
+            Counter(item["event_kind"] for item in structural_events).items()
+        )),
         "issues_by_code": dict(sorted(Counter(item["code"] for item in issues).items())),
     }
     return {
@@ -1083,6 +1519,7 @@ def _classify_members(
         "parts": parts,
         "relationships": relationships,
         "structures": records,
+        "structural_events": structural_events,
         "issues": issues,
         "summary": summary,
     }
@@ -1201,3 +1638,113 @@ def assert_edit_target_supported(
             f"Refusing edit in {part} P[{paragraph_index}] because the target scope intersects "
             "guarded/unsupported OOXML structure: " + "; ".join(blockers[:12])
         )
+
+def assert_edit_target_supported_with_bounded_safe_span(
+    inventory: Mapping[str, Any],
+    *,
+    part: str,
+    paragraph_index: int,
+    paragraph: ET._Element,
+    part_root: ET._Element,
+    target_text: str,
+) -> dict[str, Any]:
+    """Permit a precise ordinary-Run span outside supported paired range markers.
+
+    Valid bookmark, comment, permission, move and Custom XML change ranges may
+    be reconsidered as boundaries. Their interiors remain protected. Incomplete
+    markers, Fields, hyperlinks, drawings, structured containers, unknown
+    structures and package-level issues remain fail-closed.
+    """
+    gate_error: StructureClassificationError | None = None
+    try:
+        assert_edit_target_supported(
+            inventory, part=part, paragraph_index=paragraph_index
+        )
+        return {
+            "status": "ALLOW_CANDIDATE",
+            "allowed": True,
+            "method": "paragraph_scope",
+            "authorization_note": (
+                "Structural permission only; all authorization and verification gates remain mandatory."
+            ),
+        }
+    except StructureClassificationError as exc:
+        gate_error = exc
+
+    if inventory.get("package_status") != "READY":
+        raise gate_error
+
+    relevant: list[Mapping[str, Any]] = []
+    for item in inventory.get("structures", []):
+        if item.get("status") not in _BLOCKING_STATUSES:
+            continue
+        item_part = item.get("part")
+        span = item.get("paragraph_indices") or []
+        target_match = (
+            item_part == part
+            and (item.get("paragraph_index") == paragraph_index or paragraph_index in span)
+        )
+        global_context_match = item_part in _GLOBAL_CONTEXT_PARTS and not span
+        if target_match or global_context_match:
+            relevant.append(item)
+
+    blocking_issues = []
+    for issue in inventory.get("issues", []):
+        issue_part = issue.get("part")
+        target_match = (
+            issue_part == part
+            and issue.get("severity") == BLOCKED
+            and issue.get("paragraph_index") in {None, paragraph_index}
+        )
+        global_context_match = (
+            issue_part in _GLOBAL_CONTEXT_PARTS
+            and issue.get("severity") == BLOCKED
+        )
+        if target_match or global_context_match:
+            blocking_issues.append(issue)
+
+    safe_boundary_kinds = {
+        "bookmark_range",
+        "bookmark_marker",
+        "comment_range",
+        "comment_range_marker",
+        "comment_reference",
+        "permission_range",
+        "protected_range_marker",
+        "move_from_range",
+        "move_to_range",
+        "move_range_marker",
+        "custom_xml_insert_range",
+        "custom_xml_delete_range",
+        "custom_xml_move_from_range",
+        "custom_xml_move_to_range",
+    }
+    if blocking_issues or not relevant or any(
+        item.get("kind") not in safe_boundary_kinds
+        for item in relevant
+    ):
+        raise gate_error
+
+    from .bounded_safe_span import analyze_bounded_safe_span
+
+    analysis = analyze_bounded_safe_span(part_root, paragraph, target_text)
+    if not analysis.get("allowed"):
+        raise StructureClassificationError(
+            f"Refusing edit in {part} P[{paragraph_index}]: bounded safe-span analysis blocked "
+            f"{target_text[:80]!r}: {analysis.get('reason', 'no safe span was proven')}."
+        )
+    analysis["intersecting_bookmark_structure_ids"] = [
+        item.get("structure_id")
+        for item in relevant
+        if item.get("kind") == "bookmark_range"
+    ]
+    analysis["intersecting_protected_structure_ids"] = [
+        item.get("structure_id")
+        for item in relevant
+        if item.get("kind") not in {"bookmark_range", "bookmark_marker"}
+    ]
+    analysis["bounded_structure_kinds"] = sorted({
+        str(item.get("kind")) for item in relevant
+    })
+    return analysis
+

@@ -4,7 +4,9 @@ import json
 import unittest
 from pathlib import Path
 
+from jsonschema.exceptions import ValidationError
 from jsonschema.validators import validator_for
+from referencing import Registry, Resource
 
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
@@ -95,12 +97,81 @@ class JsonSchemaContractTests(unittest.TestCase):
             self.assertIn("format_authorization", schema["properties"])
             self.assertIn("format_operations", schema["properties"])
             self.assertFalse(schema["additionalProperties"])
+        identity_schema = json.loads(
+            (SCHEMA_DIR / "document-identity.schema.json").read_text(encoding="utf-8")
+        )
+        identity_registry = Registry().with_resource(
+            "document-identity.schema.json",
+            Resource.from_contents(identity_schema),
+        )
+        ledger_validator = validator_for(ledger_schema)(ledger_schema, registry=identity_registry)
+        plan_validator = validator_for(plan_schema)(plan_schema, registry=identity_registry)
+
+        legacy_target = {
+            "document": "Manuscript",
+            "input_file": "source.docx",
+            "output_file": "marked.docx",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "find": "old",
+            "replace": "new",
+            "source_comment_ids": ["C1"],
+        }
+        plan_instance = {
+            "schema_version": "1.0",
+            "approved": False,
+            "revision_items": [{
+                "id": "R1-C1",
+                "reviewer": "Reviewer 1",
+                "comment": "Update wording",
+                "status": "planned",
+                "targets": [legacy_target],
+            }],
+        }
+        plan_validator.validate(plan_instance)
+        implicit_plan_target = json.loads(json.dumps(plan_instance))
+        implicit_plan_target["revision_items"][0]["targets"][0].pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            plan_validator.validate(implicit_plan_target)
+
+        null_plan_target = json.loads(json.dumps(plan_instance))
+        null_plan_target["revision_items"][0]["targets"][0]["target_ref"] = None
+        null_plan_target["revision_items"][0]["targets"][0].pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            plan_validator.validate(null_plan_target)
+
+        stable_plan_target = json.loads(json.dumps(plan_instance))
+        stable_target = stable_plan_target["revision_items"][0]["targets"][0]
+        stable_target.pop("target_identity_mode")
+        stable_target["target_ref"] = {
+            "document_id": "doc-1",
+            "revision_id": "rev-1",
+            "object_id": "obj-1",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+            "start_offset": None,
+            "end_offset": None,
+            "location_hint": {"p_idx": 0},
+        }
+        stable_target["target_identity_mode"] = "stable_target_ref"
+        plan_validator.validate(stable_plan_target)
+        for invalid_hint in ("0", -1, True):
+            invalid_location = json.loads(json.dumps(stable_plan_target))
+            invalid_location["revision_items"][0]["targets"][0]["target_ref"]["location_hint"]["p_idx"] = invalid_hint
+            with self.subTest(location_hint_p_idx=invalid_hint):
+                with self.assertRaises(ValidationError):
+                    plan_validator.validate(invalid_location)
+
         operation = {
             "operation_id": "OP-FORMAT",
             "document": "Manuscript",
             "input_file": "source.docx",
             "output_file": "marked.docx",
             "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "find": "Journal Name",
             "replace": "Journal Name",
             "evidence_ids": ["E1"],
@@ -111,7 +182,7 @@ class JsonSchemaContractTests(unittest.TestCase):
                 {"replacement_start": 0, "replacement_end": 12, "source_offset": 0}
             ],
         }
-        validator_for(ledger_schema)(ledger_schema).validate({
+        ledger_validator.validate({
             "schema_version": "0.5.1",
             "revision_round_id": "round-schema-format",
             "documents": [],
@@ -129,6 +200,55 @@ class JsonSchemaContractTests(unittest.TestCase):
             "response_units": [],
             "events": [],
         })
+
+        valid_ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-schema-format",
+            "documents": [],
+            "patches": [{
+                "patch_id": "T-FORMAT",
+                "task_id": "T-FORMAT",
+                "reviewer": "Reviewer 1",
+                "comment": "Restore typography",
+                "proposed_response": "Formatting restored",
+                "operations": [operation],
+                "status": "planned",
+                "apply_report_ids": [],
+                "verified_output_hashes": [],
+            }],
+            "response_units": [],
+            "events": [],
+        }
+        ledger_validator.validate(valid_ledger)
+
+        implicit_legacy = json.loads(json.dumps(valid_ledger))
+        implicit_legacy["patches"][0]["operations"][0].pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            ledger_validator.validate(implicit_legacy)
+
+        null_target_without_mode = json.loads(json.dumps(valid_ledger))
+        null_operation = null_target_without_mode["patches"][0]["operations"][0]
+        null_operation["target_ref"] = None
+        null_operation.pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            ledger_validator.validate(null_target_without_mode)
+
+        stable_target = json.loads(json.dumps(valid_ledger))
+        stable_operation = stable_target["patches"][0]["operations"][0]
+        stable_operation["target_ref"] = {
+            "document_id": "doc-1",
+            "revision_id": "rev-1",
+            "object_id": "obj-1",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+            "start_offset": None,
+            "end_offset": None,
+            "location_hint": {"p_idx": 0},
+        }
+        stable_operation["target_identity_mode"] = "stable_target_ref"
+        ledger_validator.validate(stable_target)
+
 
     def test_bounded_qa_remediation_state_schema_accepts_pending_and_complete_only(self):
         schema = json.loads((SCHEMA_DIR / "qa-remediation.schema.json").read_text(encoding="utf-8"))
