@@ -199,6 +199,9 @@ class WorkflowPreparationTests(unittest.TestCase):
         # indices once a document identity / object registry is available.
         legacy_scope = json.loads(json.dumps(self.scope))
         legacy_scope["identity_mode"] = "legacy_p_idx_explicit"
+        legacy_scope["workflow_ledger_sha256"] = hashlib.sha256(
+            self.workflow_path.read_bytes()
+        ).hexdigest()
         with self.assertRaisesRegex(
             WorkflowPreparationError,
             "missing its registered TargetRef; rebind the task identity manifest",
