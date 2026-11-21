@@ -534,7 +534,7 @@ class NumberingTransactionTests(unittest.TestCase):
             "Scheme S1. Reaction route.",
             "Section 2.1. Experimental methods.",
             "[1] Example reference record.",
-            "Figure 1 and Table 1 are discussed with Eq. 2, Scheme S1, Section 2.1 and citation [1].",
+            "As shown in Figure 1 and Table 1, Eq. 2, Scheme S1, Section 2.1 and citation [1] are relevant.",
         ]
         segments = [
             {
