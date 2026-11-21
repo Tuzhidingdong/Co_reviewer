@@ -428,7 +428,20 @@ def prepare_workflow_execution(
         comment_ids = [str(value) for value in task.get("source_comment_ids", [])]
         raw_scope_author_ref = spec.get("author_decision_ref")
         workflow_author_ref = task.get("author_decision_ref")
-        if (
+        reauthorizing_numbering_task = (
+            task.get("status") == "recheck_required"
+            and task.get("task_type") == "global_numbering"
+        )
+        if reauthorizing_numbering_task:
+            if raw_scope_author_ref is None:
+                raise WorkflowPreparationError(
+                    f"Task {task_id} requires a fresh package-numbering author approval after recheck."
+                )
+            if workflow_author_ref is not None and raw_scope_author_ref == workflow_author_ref:
+                raise WorkflowPreparationError(
+                    f"Task {task_id} cannot reuse its pre-recheck package-numbering author approval."
+                )
+        elif (
             raw_scope_author_ref is not None
             and workflow_author_ref is not None
             and raw_scope_author_ref != workflow_author_ref

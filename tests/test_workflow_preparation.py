@@ -406,6 +406,94 @@ class WorkflowPreparationTests(unittest.TestCase):
         self.assertEqual(report["status"], "prepared_pending_author_approval")
         self.assertEqual(self.manuscript.read_bytes(), b"synthetic manuscript source")
 
+    def test_recheck_requires_a_fresh_numbering_author_approval(self) -> None:
+        approval = {
+            "schema_version": "1.0",
+            "status": "authorized",
+            "decision_type": "package_numbering",
+            "impact_plan_sha256": "d" * 64,
+            "approved_by": "Human Author",
+            "approved_at_utc": "2026-11-20T12:00:00+00:00",
+        }
+        approval["approval_sha256"] = hashlib.sha256(
+            json.dumps(
+                approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+
+        workflow = json.loads(json.dumps(self.workflow))
+        task = workflow["tasks"][0]
+        task["task_type"] = "global_numbering"
+        task["targets"][0]["action"] = "renumber"
+        task["status"] = "recheck_required"
+        task["recheck_from"] = "completed"
+        task["invalidation_reason"] = "An upstream batch changed the package inputs."
+        task["author_decision_ref"] = approval
+        workflow["active_documents"] = {
+            "Reviewers": {
+                "file": str(self.reviewers),
+                "sha256": hashlib.sha256(self.reviewers.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+            "Manuscript": {
+                "file": str(self.manuscript),
+                "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                "batch_id": None,
+            },
+        }
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        scope = json.loads(json.dumps(self.scope))
+        scope["workflow_ledger_sha256"] = hashlib.sha256(
+            self.workflow_path.read_bytes()
+        ).hexdigest()
+        scope_task = scope["tasks"][0]
+        scope_task["evidence"] = [{
+            "evidence_id": "E-MAN-REFRESH",
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "source_excerpt": "The selected sample is ZB-01.",
+            "evidence_type": "audit_finding",
+            "match_status": "confirmed",
+        }]
+        scope_task["targets"] = [{
+            "document": "Manuscript",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "action": "renumber",
+            "evidence_ids": ["E-MAN-REFRESH"],
+        }]
+        scope_task["patch_operations"][0]["evidence_ids"] = ["E-MAN-REFRESH"]
+        self.scope_path.write_text(
+            json.dumps(scope, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        inventory = json.loads(json.dumps(self.inventory))
+        manuscript_inventory = next(
+            row for row in inventory if row["role"] == "Manuscript"
+        )
+        manuscript_inventory["paragraphs"] = [{
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "text": "The selected sample is ZB-01.",
+        }]
+
+        with self.assertRaisesRegex(
+            WorkflowPreparationError,
+            "requires a fresh package-numbering author approval after recheck",
+        ):
+            prepare_workflow_execution(
+                workflow,
+                scope,
+                inventory,
+                workflow_path=self.workflow_path,
+                execution_scope_path=self.scope_path,
+            )
+
     def test_workflow_execution_scope_schema_accepts_author_numbering_provenance(self) -> None:
         schema_path = Path(__file__).resolve().parents[1] / "schemas" / "workflow-execution-scope.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))

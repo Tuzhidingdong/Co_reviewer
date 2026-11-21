@@ -310,6 +310,19 @@ def _clear_execution_evidence(task: dict[str, Any]) -> None:
         task.pop(field, None)
 
 
+def _clear_package_numbering_authorization(task: dict[str, Any]) -> None:
+    """Discard package-numbering authorization when its source package is invalidated.
+
+    Both the approval and prepared operations are bound to one exact impact plan
+    and source snapshot. A changed active document requires a new plan, approval,
+    and PatchOperations; immutable historical Patch records are not rewritten.
+    """
+    if task.get("task_type") != "global_numbering":
+        return
+    task.pop("author_decision_ref", None)
+    task["patch_operations"] = []
+
+
 def _string_list(value: Any, field: str, task_id: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     if value is None:
@@ -692,6 +705,7 @@ def transition_task(
             "high_risk_reviewed_at_utc", "high_risk_review_note",
         ):
             updated.pop(field, None)
+        _clear_package_numbering_authorization(updated)
         updated["recheck_from"] = current
         updated["invalidation_reason"] = reason.strip()
         return updated
@@ -877,6 +891,7 @@ def invalidate_affected_tasks(
         if task.get("status") != "recheck_required":
             task["recheck_from"] = task.get("status", "identified")
         task["status"] = "recheck_required"
+        _clear_package_numbering_authorization(task)
         task["invalidation_reason"] = reason.strip()
     return rows, sorted(impacted)
 
@@ -919,6 +934,7 @@ def invalidate_downstream(
         if task.get("status") != "recheck_required":
             task["recheck_from"] = task.get("status", "identified")
         task["status"] = "recheck_required"
+        _clear_package_numbering_authorization(task)
         task["invalidation_reason"] = reason.strip()
     return rows
 

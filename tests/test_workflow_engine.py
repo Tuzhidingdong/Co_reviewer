@@ -14,6 +14,7 @@ from co_reviewer.workflow_engine import (
     WorkflowValidationError,
     build_workflow_ledger,
     build_workflow_schedule,
+    invalidate_affected_tasks,
     invalidate_downstream,
     select_ready_tasks,
     transition_task,
@@ -866,6 +867,72 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(updated["status"], "recheck_required")
         self.assertNotIn("high_risk_review_confirmed", updated)
         self.assertNotIn("high_risk_review_note", updated)
+
+    def test_recheck_invalidates_global_numbering_approval_and_patch_operations(self):
+        import hashlib
+
+        approval = {
+            "schema_version": "1.0",
+            "status": "authorized",
+            "decision_type": "package_numbering",
+            "impact_plan_sha256": INPUT_HASH,
+            "approved_by": "Human Author",
+            "approved_at_utc": STAMP,
+        }
+        approval["approval_sha256"] = hashlib.sha256(
+            json.dumps(
+                approval, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+
+        def numbering_task(task_id, dependencies=None, status="planned", groups=None):
+            task = _task(task_id, dependencies, status, groups)
+            task["task_type"] = "global_numbering"
+            task["author_decision_ref"] = dict(approval)
+            task["patch_operations"] = [{
+                "operation_id": f"{task_id}-OP1",
+                "author_decision_ref": dict(approval),
+            }]
+            return task
+
+        direct = numbering_task("GN-DIRECT", status="ready")
+        transitioned = transition_task(
+            direct,
+            "recheck_required",
+            reason="An upstream publication changed the approved package inputs.",
+        )
+        self.assertEqual(transitioned["status"], "recheck_required")
+        self.assertNotIn("author_decision_ref", transitioned)
+        self.assertEqual(transitioned["patch_operations"], [])
+        self.assertEqual(direct["author_decision_ref"], approval)
+        self.assertEqual(len(direct["patch_operations"]), 1)
+
+        affected, affected_ids = invalidate_affected_tasks(
+            [
+                _task("UP-A", [], "planned", ["shared-target"]),
+                numbering_task("GN-AFFECTED", status="planned", groups=["shared-target"]),
+            ],
+            ["UP-A"],
+            "A conflicting upstream publication changed the package.",
+        )
+        affected_task = next(row for row in affected if row["task_id"] == "GN-AFFECTED")
+        self.assertIn("GN-AFFECTED", affected_ids)
+        self.assertEqual(affected_task["status"], "recheck_required")
+        self.assertNotIn("author_decision_ref", affected_task)
+        self.assertEqual(affected_task["patch_operations"], [])
+
+        downstream = invalidate_downstream(
+            [
+                _task("UP-D", [], "planned"),
+                numbering_task("GN-DOWNSTREAM", ["UP-D"], "planned"),
+            ],
+            "UP-D",
+            "A dependency publication changed the package.",
+        )
+        downstream_task = next(row for row in downstream if row["task_id"] == "GN-DOWNSTREAM")
+        self.assertEqual(downstream_task["status"], "recheck_required")
+        self.assertNotIn("author_decision_ref", downstream_task)
+        self.assertEqual(downstream_task["patch_operations"], [])
 
     def test_workflow_schema_requires_tier_one_review_evidence_after_authorization(self):
         import jsonschema
