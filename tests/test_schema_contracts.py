@@ -105,6 +105,58 @@ class JsonSchemaContractTests(unittest.TestCase):
             Resource.from_contents(identity_schema),
         )
         ledger_validator = validator_for(ledger_schema)(ledger_schema, registry=identity_registry)
+        plan_validator = validator_for(plan_schema)(plan_schema, registry=identity_registry)
+
+        legacy_target = {
+            "document": "Manuscript",
+            "input_file": "source.docx",
+            "output_file": "marked.docx",
+            "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "find": "old",
+            "replace": "new",
+            "source_comment_ids": ["C1"],
+        }
+        plan_instance = {
+            "schema_version": "1.0",
+            "approved": False,
+            "revision_items": [{
+                "id": "R1-C1",
+                "reviewer": "Reviewer 1",
+                "comment": "Update wording",
+                "status": "planned",
+                "targets": [legacy_target],
+            }],
+        }
+        plan_validator.validate(plan_instance)
+        implicit_plan_target = json.loads(json.dumps(plan_instance))
+        implicit_plan_target["revision_items"][0]["targets"][0].pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            plan_validator.validate(implicit_plan_target)
+
+        null_plan_target = json.loads(json.dumps(plan_instance))
+        null_plan_target["revision_items"][0]["targets"][0]["target_ref"] = None
+        null_plan_target["revision_items"][0]["targets"][0].pop("target_identity_mode")
+        with self.assertRaises(ValidationError):
+            plan_validator.validate(null_plan_target)
+
+        stable_plan_target = json.loads(json.dumps(plan_instance))
+        stable_target = stable_plan_target["revision_items"][0]["targets"][0]
+        stable_target.pop("target_identity_mode")
+        stable_target["target_ref"] = {
+            "document_id": "doc-1",
+            "revision_id": "rev-1",
+            "object_id": "obj-1",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+            "start_offset": None,
+            "end_offset": None,
+            "location_hint": {"p_idx": 0},
+        }
+        stable_target["target_identity_mode"] = "stable_target_ref"
+        plan_validator.validate(stable_plan_target)
 
         operation = {
             "operation_id": "OP-FORMAT",
