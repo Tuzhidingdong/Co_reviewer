@@ -97,7 +97,7 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertTrue(any("verified_output_hashes" in error for error in errors))
 
     def test_confirm_verified_refuses_incomplete_apply_report(self):
-        make_docx(self.input, [[("old phrase", False)], [("outdated terminology", False)]])
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
         self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
         apply_args = Namespace(
             plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
@@ -251,7 +251,6 @@ class RevisionWorkflowTests(unittest.TestCase):
     def test_apply_refuses_report_path_that_would_overwrite_docx_output(self):
         make_docx(self.input, [[("old phrase", False)]])
         plan = self._plan()
-        plan["revision_items"][1]["targets"][0]["p_idx"] = 1
         self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
         args = Namespace(
             plan=str(self.plan_path), report=str(self.output), author="Test Author"
