@@ -101,7 +101,7 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | 46 Legacy Baseline | PRESENT_UNVERIFIED | Original 76-test baseline is documented/present; verify none deleted/weakened and run on current HEAD |
 | 47 Core Test Independence | IMPLEMENTED_UNVERIFIED | Core deterministic suite is Python-based; verify current test paths do not require Word COM |
 | 48 Platform Matrix | TESTED_PASS_PARTIAL | Current source/test HEAD `3687cda4`: GitHub Actions PR run [44917528914](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44917528914) passed 4/4 jobs; 497/497 unit tests passed on Python 3.10 and Python 3.13, and Windows PowerShell 5.1 quality checks passed on both Python versions |
-| 49 Adapter Test Isolation | TESTED_PASS_PARTIAL | Safe Span, Manual Suggestion, Risk and citation/field tests added; full positive/negative/boundary matrix is not complete |
+| 49 Adapter Test Isolation | TESTED_PASS_PARTIAL | The current enabled writer paths (ordinary text Run and one simple Hyperlink) have positive, negative, boundary and regression coverage. `test_ac49_enabled_adapter_acceptance_matrix` exercises both writer paths, a bounded safe-span candidate, protected comment/field/drawing/nested-table negatives, duplicate-match ambiguity and cross-container boundaries; a separate Hyperlink regression checks relationship preservation and ambiguous hyperlink rejection. Deferred/unsupported structures remain disabled and fail closed. This is component-level adapter evidence, not full Word/real-review-round acceptance |
 | 50 Honest RC Report | NOT_DONE | Global gap audit and AC-45 failure report added; final M1 RC report depends on closing all M1 blockers and binding evidence to one final HEAD |
 
 ## 4. M2 user acceptance matrix
