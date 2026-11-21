@@ -72,6 +72,101 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertIn("unpaired", result["reason"])
 
+    def test_nested_bookmark_ranges_block_inner_text_but_allow_text_after_outer_end(self):
+        root, paragraph = _document(
+            '<w:p><w:bookmarkStart w:id="outer" w:name="outer"/>'
+            + _run("outer protected ")
+            + '<w:bookmarkStart w:id="inner" w:name="inner"/>'
+            + _run("inner protected")
+            + '<w:bookmarkEnd w:id="inner"/>'
+            + _run(" outer protected")
+            + '<w:bookmarkEnd w:id="outer"/>'
+            + _run("outside")
+            + '</w:p>'
+        )
+        nested = analyze_bounded_safe_span(root, paragraph, "inner protected")
+        self.assertFalse(nested["allowed"])
+        self.assertEqual(
+            {row["range_id"] for row in nested["protected_ranges"]},
+            {"outer", "inner"},
+        )
+        outside = analyze_bounded_safe_span(root, paragraph, "outside")
+        self.assertTrue(outside["allowed"])
+        self.assertEqual(
+            {row["range_id"] for row in outside["bookmark_boundaries"]},
+            {"outer", "inner"},
+        )
+
+    def test_intersecting_bookmark_ranges_block_overlap_and_allow_text_after_both(self):
+        root, paragraph = _document(
+            '<w:p><w:bookmarkStart w:id="one" w:name="one"/>'
+            + _run("one only ")
+            + '<w:bookmarkStart w:id="two" w:name="two"/>'
+            + _run("overlap")
+            + '<w:bookmarkEnd w:id="one"/>'
+            + _run("two only")
+            + '<w:bookmarkEnd w:id="two"/>'
+            + _run("safe")
+            + '</w:p>'
+        )
+        overlap = analyze_bounded_safe_span(root, paragraph, "overlap")
+        self.assertFalse(overlap["allowed"])
+        self.assertEqual(
+            {row["range_id"] for row in overlap["protected_ranges"]},
+            {"one", "two"},
+        )
+        safe = analyze_bounded_safe_span(root, paragraph, "safe")
+        self.assertTrue(safe["allowed"])
+
+    def test_text_immediately_adjacent_to_bookmark_endpoints_is_not_inside_range(self):
+        root, paragraph = _document(
+            '<w:p>'
+            + _run("left")
+            + '<w:bookmarkStart w:id="1" w:name="protected"/>'
+            + _run("protected")
+            + '<w:bookmarkEnd w:id="1"/>'
+            + _run("right")
+            + '</w:p>'
+        )
+        left = analyze_bounded_safe_span(root, paragraph, "left")
+        right = analyze_bounded_safe_span(root, paragraph, "right")
+        inside = analyze_bounded_safe_span(root, paragraph, "protected")
+        self.assertTrue(left["allowed"])
+        self.assertTrue(right["allowed"])
+        self.assertFalse(inside["allowed"])
+
+    def test_duplicate_out_of_order_and_collapsed_bookmark_markers_fail_closed(self):
+        cases = [
+            (
+                "duplicate start",
+                '<w:bookmarkStart w:id="1" w:name="a"/>'
+                '<w:bookmarkStart w:id="1" w:name="b"/>'
+                + _run("target")
+                + '<w:bookmarkEnd w:id="1"/>',
+            ),
+            (
+                "out of order",
+                '<w:bookmarkEnd w:id="2"/>'
+                + _run("target")
+                + '<w:bookmarkStart w:id="2" w:name="late"/>',
+            ),
+            (
+                "collapsed boundary",
+                _run("left")
+                + '<w:bookmarkStart w:id="3" w:name="empty"/>'
+                + '<w:bookmarkEnd w:id="3"/>'
+                + _run("right"),
+            ),
+        ]
+        for label, markup in cases:
+            with self.subTest(case=label):
+                root, paragraph = _document("<w:p>" + markup + "</w:p>")
+                target = "left" if label == "collapsed boundary" else "target"
+                if label == "collapsed boundary":
+                    target = "leftright"
+                result = analyze_bounded_safe_span(root, paragraph, target)
+                self.assertFalse(result["allowed"])
+
     def test_mixed_direct_formatting_runs_fail_closed(self):
         root, paragraph = _document(
             '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>mixed </w:t></w:r>'
