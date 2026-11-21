@@ -149,9 +149,11 @@ class ReleasePackageTransactionTests(unittest.TestCase):
             release_intent_path=intent_path,
             workflow_ledger=workflow,
         )
+        release_dir = round_root / "release"
+        release_dir.mkdir()
         return {
             "round_root": round_root,
-            "release_dir": round_root / "release",
+            "release_dir": release_dir,
             "manifest": manifest,
             "manifest_path": manifest_path,
             "intent_path": intent_path,
@@ -230,6 +232,15 @@ class ReleasePackageTransactionTests(unittest.TestCase):
             workflow_path = fixture["workflow_path"]
             before = _sha(workflow_path)
             workflow_path.write_text(workflow_path.read_text(encoding="utf-8") + " ", encoding="utf-8")
+            # Simulate a stale Manifest collector snapshot but provide a fresh
+            # artifact record so the transaction-level expected-ledger guard is
+            # the gate that detects the change.
+            workflow_record = next(
+                row for row in fixture["records"]
+                if row["source_file"] == str(workflow_path.resolve())
+            )
+            workflow_record["sha256"] = _sha(workflow_path)
+            workflow_record["bytes"] = workflow_path.stat().st_size
             with self.assertRaisesRegex(ReleasePackageTransactionError, "changed while packaging"):
                 commit_release_package(
                     fixture["release_dir"],
