@@ -507,11 +507,25 @@
                 },
                 {
                   "if": {
-                    "not": {
-                      "required": [
-                        "target_ref"
-                      ]
-                    }
+                    "anyOf": [
+                      {
+                        "not": {
+                          "required": [
+                            "target_ref"
+                          ]
+                        }
+                      },
+                      {
+                        "required": [
+                          "target_ref"
+                        ],
+                        "properties": {
+                          "target_ref": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    ]
                   },
                   "then": {
                     "required": [
