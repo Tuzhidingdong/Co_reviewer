@@ -269,6 +269,22 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
 
         workflow = json.loads(audit_workflow_path.read_text(encoding="utf-8"))
         task = workflow["tasks"][0]
+        document_ids_by_role = {
+            row["role"]: row["document_id"]
+            for row in workflow.get("documents", [])
+            if isinstance(row, dict)
+            and isinstance(row.get("role"), str)
+            and isinstance(row.get("document_id"), str)
+        }
+        target_refs_by_role = {}
+        for role in ("Manuscript", "SI"):
+            document_id = document_ids_by_role.get(role)
+            matches = [
+                row for row in task.get("target_refs", [])
+                if isinstance(row, dict) and row.get("document_id") == document_id
+            ]
+            self.assertEqual(len(matches), 1, f"{role} must have one registered TargetRef")
+            target_refs_by_role[role] = matches[0]
         task["patch_id"] = "T1"
         task["proposed_response"] = (
             "We have aligned the sample identifier in the Manuscript and Supporting Information."
@@ -281,6 +297,8 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "output_file": str(manuscript_output),
                 "part": "word/document.xml",
                 "p_idx": manuscript_paragraph["p_idx"],
+                "target_ref": target_refs_by_role["Manuscript"],
+                "target_identity_mode": "stable_target_ref",
                 "find": "ZB-01",
                 "replace": "ZB-02",
                 "location": "Manuscript body paragraph 1",
@@ -298,6 +316,8 @@ class FullWorkflowIntegrationTests(unittest.TestCase):
                 "output_file": str(si_output),
                 "part": "word/document.xml",
                 "p_idx": si_paragraph["p_idx"],
+                "target_ref": target_refs_by_role["SI"],
+                "target_identity_mode": "stable_target_ref",
                 "find": "ZB-01",
                 "replace": "ZB-02",
                 "location": "SI body paragraph 1",
