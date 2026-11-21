@@ -68,7 +68,7 @@ def _safe_component(value: str, label: str) -> str:
     # Keep Unicode filenames (including Chinese manuscript names), while
     # replacing separators/control/Windows-reserved characters and bounding
     # the component length for cross-platform filesystem compatibility.
-    normalized = re.sub(r"[\\s/\\\\<>:\"|?*\\x00-\\x1f]+", "_", value.strip())
+    normalized = re.sub(r'[\s/\\<>:"|?*\x00-\x1f]+', "_", value.strip())
     normalized = normalized.strip(" ._")
     if not normalized:
         normalized = "artifact"
