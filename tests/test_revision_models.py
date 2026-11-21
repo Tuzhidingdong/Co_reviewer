@@ -169,10 +169,8 @@ class RevisionModelsTests(unittest.TestCase):
         ):
             PatchOperation.from_mapping(legacy)
 
-        missing_hint = _operation(
-            target_identity_mode="legacy_p_idx_explicit",
-            p_idx=None,
-        ).to_dict()
+        missing_hint = _operation().to_dict()
+        missing_hint["p_idx"] = None
         with self.assertRaisesRegex(
             RevisionModelError,
             "requires an exact non-negative p_idx",
