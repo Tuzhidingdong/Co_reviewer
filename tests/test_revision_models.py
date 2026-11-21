@@ -38,6 +38,7 @@ def _operation(**overrides):
         "output_file": "Manuscript_revised.docx",
         "part": "word/document.xml",
         "p_idx": 4,
+        "target_identity_mode": "legacy_p_idx_explicit",
         "find": "old phrase",
         "replace": "revised phrase",
         "location": "Results paragraph 4",
@@ -158,6 +159,49 @@ class RevisionModelsTests(unittest.TestCase):
         self.assertEqual(patch.status, "planned")
         self.assertEqual(patch.operations[0].find, "old phrase")
         self.assertEqual(patch.operations[0].replace, "revised phrase")
+
+    def test_patch_operation_requires_explicit_stable_or_migration_identity(self):
+        legacy = _operation().to_dict()
+        legacy.pop("target_identity_mode")
+        with self.assertRaisesRegex(
+            RevisionModelError,
+            "must explicitly declare legacy_p_idx_explicit",
+        ):
+            PatchOperation.from_mapping(legacy)
+
+        missing_hint = _operation(
+            target_identity_mode="legacy_p_idx_explicit",
+            p_idx=None,
+        ).to_dict()
+        with self.assertRaisesRegex(
+            RevisionModelError,
+            "requires an exact non-negative p_idx",
+        ):
+            PatchOperation.from_mapping(missing_hint)
+
+        stable = _operation().to_dict()
+        stable["target_ref"] = {
+            "document_id": "doc-manuscript",
+            "revision_id": "rev-001",
+            "object_id": "obj-paragraph-001",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+            "start_offset": None,
+            "end_offset": None,
+            "location_hint": {"p_idx": 4},
+        }
+        stable["target_identity_mode"] = None
+        with self.assertRaisesRegex(
+            RevisionModelError,
+            "requires target_identity_mode=stable_target_ref",
+        ):
+            PatchOperation.from_mapping(stable)
+        stable["target_identity_mode"] = "stable_target_ref"
+        self.assertEqual(
+            PatchOperation.from_mapping(stable).target_identity_mode,
+            "stable_target_ref",
+        )
 
     def test_patch_operation_requires_explicit_source_comment_attribution(self):
         payload = _operation().to_dict()
