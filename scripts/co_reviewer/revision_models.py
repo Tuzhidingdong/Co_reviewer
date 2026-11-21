@@ -247,10 +247,22 @@ class PatchOperation:
             )
         if self.target_identity_mode not in {None, "stable_target_ref", "legacy_p_idx_explicit"}:
             raise RevisionModelError("target_identity_mode must be stable_target_ref or legacy_p_idx_explicit.")
-        if self.target_ref is not None and self.target_identity_mode == "legacy_p_idx_explicit":
-            raise RevisionModelError("A stable TargetRef cannot be downgraded to legacy paragraph-index mode.")
-        if self.target_identity_mode == "stable_target_ref" and self.target_ref is None:
-            raise RevisionModelError("stable_target_ref mode requires a registered target_ref.")
+        if self.target_ref is not None:
+            if self.target_identity_mode != "stable_target_ref":
+                raise RevisionModelError(
+                    "A registered TargetRef requires target_identity_mode=stable_target_ref; "
+                    "the identity mode cannot be omitted or downgraded."
+                )
+        else:
+            if self.target_identity_mode != "legacy_p_idx_explicit":
+                raise RevisionModelError(
+                    "PatchOperation without a registered TargetRef must explicitly declare "
+                    "legacy_p_idx_explicit; paragraph-index compatibility is migration-only."
+                )
+            if self.p_idx is None:
+                raise RevisionModelError(
+                    "legacy_p_idx_explicit requires an exact non-negative p_idx migration hint."
+                )
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any], *, fallback_id: str = "") -> "PatchOperation":
