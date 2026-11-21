@@ -916,6 +916,17 @@ def _build_structural_event_map(
                 for order in range(begin_order, end_order + 1):
                     field_links_by_order[order].append(group)
 
+    comment_links_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen_comment_link_ids: set[str] = set()
+    for links in range_links.values():
+        for link in links:
+            if link.get("range_kind") != "comment_range":
+                continue
+            comment_id = link.get("range_id")
+            if isinstance(comment_id, str) and comment_id not in seen_comment_link_ids:
+                comment_links_by_id[comment_id].append(link)
+                seen_comment_link_ids.add(comment_id)
+
     proofing_stacks: dict[str, list[ET._Element]] = defaultdict(list)
     for node in nodes:
         if node.tag != f"{{{W}}}proofErr":
@@ -1050,6 +1061,10 @@ def _build_structural_event_map(
                 range_links_by_order.get(xml_order[node], []),
                 range_links.get(path, []),
                 proofing_links_by_order.get(xml_order[node], []),
+                (
+                    comment_links_by_id.get(attributes.get("w:id"), [])
+                    if namespace == W and local == "commentReference" else []
+                ),
             ),
             "field_groups": unique_links(
                 field_links_by_order.get(xml_order[node], []),
