@@ -459,14 +459,16 @@ def verify_release_package(
     if (
         marker.get("package_manifest_file") != str(manifest_path)
         or marker.get("package_manifest_sha256") != manifest_sha
-        or marker.get("source_release_manifest_sha256")
-            != (json.loads(manifest_bytes.decode("utf-8")).get("source_release_manifest_sha256"))
     ):
         raise ReleasePackageTransactionError("Release Package manifest does not match the final commit marker.")
     try:
         package_manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ReleasePackageTransactionError(f"Release Package manifest is unreadable: {exc}") from exc
+    if marker.get("source_release_manifest_sha256") != package_manifest.get("source_release_manifest_sha256"):
+        raise ReleasePackageTransactionError(
+            "Release Package commit marker is not bound to the source Release Manifest hash."
+        )
     if (
         not isinstance(package_manifest, Mapping)
         or package_manifest.get("schema_version") != "1.0"
@@ -664,7 +666,20 @@ def commit_release_package(
         with temporary_marker.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(marker, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
-        os.replace(temporary_marker, marker_path)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            # Hard-link publication is atomic and no-clobber: a concurrent
+            # writer can never replace an already committed marker.
+            os.link(temporary_marker, marker_path)
+        except FileExistsError:
+            existing = verify_release_package(root, expected_release_id=release_id)
+            if existing != manifest:
+                raise ReleasePackageTransactionError(
+                    "A concurrent Release Package commit published a different artifact snapshot."
+                )
+        finally:
+            temporary_marker.unlink(missing_ok=True)
     except Exception:
         temporary_marker.unlink(missing_ok=True)
         raise
