@@ -780,6 +780,211 @@ def _field_groups(
         )
 
 
+
+def _build_structural_event_map(
+    part: str,
+    root: ET._Element,
+    *,
+    source_sha256: str,
+    paragraph_indices: Mapping[ET._Element, int],
+    records: list[dict[str, Any]],
+    relationships: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose parser-backed XML order and text/run coordinates for protected structures."""
+    nodes = [node for node in root.iter() if isinstance(node.tag, str)]
+    xml_order = {node: index for index, node in enumerate(nodes)}
+    paragraph_for_node: dict[ET._Element, ET._Element] = {}
+    run_for_node: dict[ET._Element, ET._Element] = {}
+    run_index: dict[ET._Element, int] = {}
+    text_index: dict[ET._Element, int] = {}
+    text_offsets: dict[ET._Element, tuple[int, int]] = {}
+
+    text_locals = {"t", "delText", "instrText", "delInstrText"}
+    for paragraph in paragraph_indices:
+        runs = list(paragraph.iter(f"{{{W}}}r"))
+        for index, run in enumerate(runs):
+            run_index[run] = index
+            cursor = 0
+            text_nodes = [
+                item for item in run.iter()
+                if isinstance(item.tag, str)
+                and _qname(item.tag).namespace == W
+                and _qname(item.tag).localname in text_locals
+            ]
+            for text_node_index, text_node in enumerate(text_nodes):
+                value = text_node.text or ""
+                text_index[text_node] = text_node_index
+                text_offsets[text_node] = (cursor, cursor + len(value))
+                cursor += len(value)
+                text_node_run = run
+                current = text_node
+                while current is not None:
+                    paragraph_for_node[current] = paragraph
+                    run_for_node[current] = text_node_run
+                    current = current.getparent()
+            current = run
+            while current is not None:
+                paragraph_for_node[current] = paragraph
+                if current is not run:
+                    run_for_node.setdefault(current, run)
+                current = current.getparent()
+        current = paragraph
+        while current is not None:
+            paragraph_for_node.setdefault(current, paragraph)
+            current = current.getparent()
+
+    records_by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        if record.get("part") == part and isinstance(record.get("element_path"), str):
+            records_by_path[record["element_path"]].append(record)
+
+    range_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    field_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        if record.get("part") != part:
+            continue
+        details = record.get("details")
+        if not isinstance(details, Mapping):
+            continue
+        kind = record.get("kind")
+        if kind in {"bookmark_range", "comment_range"}:
+            start_path = details.get("start_path")
+            end_path = details.get("end_path")
+            link = {
+                "range_kind": kind,
+                "range_id": details.get("range_id"),
+                "status": record.get("status"),
+                "start_path": start_path,
+                "end_path": end_path,
+                "start_order": details.get("start_order"),
+                "end_order": details.get("end_order"),
+                "scope_mapping": details.get("scope_mapping"),
+            }
+            for marker_path in (start_path, end_path):
+                if isinstance(marker_path, str):
+                    range_links[marker_path].append(link)
+        elif kind == "complex_field":
+            group = {
+                "field_id": details.get("field_id"),
+                "status": record.get("status"),
+                "begin_path": details.get("begin_path"),
+                "separate_path": details.get("separate_path"),
+                "end_path": details.get("end_path"),
+                "instruction_paths": details.get("instruction_paths", []),
+                "complete": details.get("complete") is True,
+            }
+            paths = [
+                details.get("begin_path"),
+                details.get("separate_path"),
+                details.get("end_path"),
+                *(details.get("instruction_paths") or []),
+            ]
+            for marker_path in paths:
+                if isinstance(marker_path, str):
+                    field_links[marker_path].append(group)
+
+    events: list[dict[str, Any]] = []
+    marker_locals = {
+        "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
+        "commentReference", "fldChar", "instrText", "delInstrText", "fldSimple",
+        "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+        "customXmlInsRangeStart", "customXmlInsRangeEnd",
+        "customXmlDelRangeStart", "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+        "permStart", "permEnd",
+    }
+    for node in nodes:
+        q = _qname(node.tag)
+        namespace, local = q.namespace or "", q.localname
+        paragraph = paragraph_for_node.get(node)
+        paragraph_index = paragraph_indices.get(paragraph) if paragraph is not None else None
+        path = _path(node)
+        attached_records = records_by_path.get(path, [])
+        # Keep a complete event sequence for paragraph XML and every classified
+        # structure outside paragraphs (for example a body-level range marker).
+        if paragraph is None and not attached_records and not (
+            namespace == W and local in {"tbl", "tr", "tc", "sectPr"}
+        ):
+            continue
+
+        run = run_for_node.get(node)
+        if namespace == W and local == "r":
+            run = node
+        event_kind = (
+            "paragraph" if namespace == W and local == "p"
+            else "run" if namespace == W and local == "r"
+            else "text_node" if namespace == W and local in {"t", "delText"}
+            else "field_instruction_text" if namespace == W and local in {"instrText", "delInstrText"}
+            else "range_or_field_marker" if namespace == W and local in marker_locals
+            else "xml_element"
+        )
+        if attached_records:
+            event_kind = attached_records[0].get("kind", event_kind)
+
+        attributes: dict[str, str] = {}
+        relationship_refs: list[dict[str, Any]] = []
+        for raw_name, value in node.attrib.items():
+            attr = _qname(raw_name)
+            prefix = _PREFIXES.get(attr.namespace or "")
+            display_name = f"{prefix}:{attr.localname}" if prefix else attr.localname
+            if attr.namespace in {W, R}:
+                attributes[display_name] = value
+            if attr.namespace == R and value:
+                relationship = relationships.get(value)
+                relationship_refs.append({
+                    "attribute": display_name,
+                    "relationship_id": value,
+                    "status": relationship.get("status") if isinstance(relationship, Mapping) else "MISSING",
+                    "target": relationship.get("target") if isinstance(relationship, Mapping) else None,
+                    "resolved_target_part": (
+                        relationship.get("resolved_target_part")
+                        if isinstance(relationship, Mapping) else None
+                    ),
+                })
+
+        row: dict[str, Any] = {
+            "event_id": hashlib.sha256(
+                "\\0".join((source_sha256, part, path, event_kind)).encode("utf-8")
+            ).hexdigest()[:24],
+            "event_kind": event_kind,
+            "part": part,
+            "element": local,
+            "namespace": namespace,
+            "element_path": path,
+            "parent_path": _path(node.getparent()) if node.getparent() is not None else None,
+            "xml_order": xml_order[node],
+            "paragraph_index": paragraph_index,
+            "paragraph_xml_order": xml_order.get(paragraph) if paragraph is not None else None,
+            "run_index": run_index.get(run) if run is not None else None,
+            "text_node_index_in_run": text_index.get(node),
+            "text_offset_in_run": (
+                {"start": text_offsets[node][0], "end": text_offsets[node][1]}
+                if node in text_offsets else None
+            ),
+            "attributes": attributes,
+            "relationship_refs": relationship_refs,
+            "structure_records": [
+                {
+                    "structure_id": record.get("structure_id"),
+                    "kind": record.get("kind"),
+                    "status": record.get("status"),
+                    "reason": record.get("reason"),
+                    "details": dict(record.get("details") or {}),
+                }
+                for record in attached_records
+            ],
+            "paired_ranges": range_links.get(path, []),
+            "field_groups": field_links.get(path, []),
+        }
+        if namespace == W and local in text_locals:
+            value = node.text or ""
+            row["text_length"] = len(value)
+            row["text_content"] = value
+        events.append(row)
+
+    return events
+
 def _classify_members(
     members: Mapping[str, bytes],
     *,
