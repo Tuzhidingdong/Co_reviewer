@@ -798,11 +798,29 @@ def _build_structural_event_map(
     run_index: dict[ET._Element, int] = {}
     text_index: dict[ET._Element, int] = {}
     text_offsets: dict[ET._Element, tuple[int, int]] = {}
+    paragraph_text_index: dict[ET._Element, int] = {}
+    paragraph_text_offsets: dict[ET._Element, tuple[int, int]] = {}
 
     text_locals = {"t", "delText", "instrText", "delInstrText"}
     for paragraph in paragraph_indices:
         for descendant in paragraph.iter():
             paragraph_for_node[descendant] = paragraph
+        paragraph_cursor = 0
+        paragraph_node_index = 0
+        for descendant in paragraph.iter():
+            if (
+                isinstance(descendant.tag, str)
+                and _qname(descendant.tag).namespace == W
+                and _qname(descendant.tag).localname in text_locals
+            ):
+                value = descendant.text or ""
+                paragraph_text_index[descendant] = paragraph_node_index
+                paragraph_text_offsets[descendant] = (
+                    paragraph_cursor,
+                    paragraph_cursor + len(value),
+                )
+                paragraph_cursor += len(value)
+                paragraph_node_index += 1
         runs = list(paragraph.iter(f"{{{W}}}r"))
         for index, run in enumerate(runs):
             run_index[run] = index
@@ -1102,6 +1120,14 @@ def _build_structural_event_map(
             "text_offset_in_run": (
                 {"start": text_offsets[node][0], "end": text_offsets[node][1]}
                 if node in text_offsets else None
+            ),
+            "text_node_index_in_paragraph": paragraph_text_index.get(node),
+            "text_offset_in_paragraph": (
+                {
+                    "start": paragraph_text_offsets[node][0],
+                    "end": paragraph_text_offsets[node][1],
+                }
+                if node in paragraph_text_offsets else None
             ),
             "attributes": attributes,
             "relationship_refs": relationship_refs,

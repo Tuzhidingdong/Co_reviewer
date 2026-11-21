@@ -208,6 +208,20 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertEqual(pair_text_nodes[0]["text_offset_in_run"], {"start": 0, "end": 1})
         self.assertEqual(pair_text_nodes[1]["text_offset_in_run"], {"start": 1, "end": 2})
         self.assertEqual(
+            [row["text_node_index_in_paragraph"] for row in pair_text_nodes],
+            [0, 1],
+        )
+        self.assertEqual(
+            pair_text_nodes[0]["text_offset_in_paragraph"],
+            {"start": 0, "end": 1},
+        )
+        self.assertEqual(
+            pair_text_nodes[1]["text_offset_in_paragraph"],
+            {"start": 1, "end": 2},
+        )
+        linked_text = next(row for row in text_nodes if row.get("text_content") == "linked")
+        self.assertEqual(linked_text["text_offset_in_paragraph"], {"start": 2, "end": 8})
+        self.assertEqual(
             {row["range_id"] for row in pair_text_nodes[0]["paired_ranges"]},
             {"7"},
         )
