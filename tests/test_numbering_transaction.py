@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from docx import Document
+from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -91,6 +92,10 @@ class NumberingTransactionTests(unittest.TestCase):
             )
             self.assertEqual(cli.cmd_create_numbering_impact_plan(args), 0)
             plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan_schema = json.loads(
+                (ROOT / "schemas" / "numbering-impact-plan.schema.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(plan_schema, format_checker=FormatChecker()).validate(plan)
             self.assertEqual(plan["status"], "awaiting_authorization")
             self.assertFalse(plan["numbering_mutation_authorized"])
             self.assertEqual(set(plan["source_documents"]), set(sources))
@@ -103,6 +108,10 @@ class NumberingTransactionTests(unittest.TestCase):
             )
             self.assertEqual(cli.cmd_authorize_numbering_impact_plan(approval_args), 0)
             approval = json.loads(approval_path.read_text(encoding="utf-8"))
+            approval_schema = json.loads(
+                (ROOT / "schemas" / "numbering-author-approval.schema.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(approval_schema, format_checker=FormatChecker()).validate(approval)
             self.assertEqual(approval["impact_plan_sha256"], plan["impact_plan_sha256"])
             self.assertEqual(validate_author_decision_ref(approval), approval)
 
@@ -574,6 +583,10 @@ class NumberingTransactionTests(unittest.TestCase):
                 )
 
             self.assertEqual(receipt["status"], "COMMITTED")
+            receipt_schema = json.loads(
+                (ROOT / "schemas" / "numbering-transaction-receipt.schema.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(receipt_schema, format_checker=FormatChecker()).validate(receipt)
             self.assertEqual(receipt["batch_id"], batch_id)
             self.assertTrue(Path(receipt["package_manifest"]).is_file())
             self.assertTrue(Path(receipt["commit_marker"]).is_file())
