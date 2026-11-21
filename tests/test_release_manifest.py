@@ -53,6 +53,7 @@ from co_reviewer.workflow_engine import (
     workflow_tasks_from_decision_plan,
 )
 from co_reviewer.v232_contract import ContractError, validate_qa_remediation_eligibility
+from co_reviewer.release_package import verify_release_package
 from response_letter_docx import render_response_docx
 
 
@@ -216,9 +217,16 @@ class ReleaseManifestGateTests(unittest.TestCase):
         }
         receipt = json.loads((release_dir / "release_package_receipt.json").read_text(encoding="utf-8"))
         manifest = json.loads((release_dir / "final_release_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["schema_version"], "2.0")
         self.assertEqual(receipt["status"], "complete")
         self.assertEqual(receipt["artifacts"]["final_release_manifest.json"], hashes["final_release_manifest.json"])
         self.assertEqual(manifest["release_status"], "READY")
+        self.assertTrue(Path(receipt["package_manifest_file"]).is_file())
+        self.assertTrue(Path(receipt["commit_marker_file"]).is_file())
+        committed = verify_release_package(release_dir, expected_release_id=receipt["release_id"])
+        self.assertEqual(committed["package_id"], receipt["package_id"])
+        self.assertEqual(committed["artifact_count"], receipt["package_artifact_count"])
+        self.assertGreaterEqual(receipt["package_artifact_count"], 6)
 
         # A lost success response is idempotent: a rerun verifies the receipt and
         # all package hashes without changing the committed artifacts.
