@@ -223,7 +223,7 @@ class StructureClassifierTests(unittest.TestCase):
             row for row in events
             if row["element"] in {"fldChar", "instrText"}
         ]
-        self.assertEqual(len(field_events), 3)
+        self.assertEqual(len(field_events), 4)
         self.assertTrue(all(row["field_groups"][0]["field_id"] for row in field_events))
         self.assertEqual(
             {row["attributes"].get("w:fldCharType") for row in field_events if row["element"] == "fldChar"},
