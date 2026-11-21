@@ -266,6 +266,31 @@ class StructureClassifierTests(unittest.TestCase):
             row["field_kind"] == "simple" and row["complete"]
             for row in simple_field_result["field_groups"]
         ))
+        proofing_markers = [
+            row for row in events
+            if row["element"] == "proofErr"
+        ]
+        self.assertEqual(len(proofing_markers), 2)
+        self.assertTrue(all(
+            row["event_kind"] == "range_or_field_marker"
+            and row["paired_ranges"]
+            for row in proofing_markers
+        ))
+        self.assertEqual(
+            {row["attributes"].get("w:type") for row in proofing_markers},
+            {"spellStart", "spellEnd"},
+        )
+        hyperlink = next(row for row in events if row["element"] == "hyperlink")
+        self.assertEqual(hyperlink["event_kind"], "relationship_container")
+        self.assertEqual(hyperlink["relationship_refs"][0]["relationship_id"], "rIdLink")
+        table_events = [
+            row for row in events
+            if row["element"] in {"tbl", "tr", "tc"}
+        ]
+        self.assertEqual(
+            {row["element"]: row["event_kind"] for row in table_events},
+            {"tbl": "table", "tr": "table_row", "tc": "table_cell"},
+        )
         proofed_text = next(row for row in text_nodes if row.get("text_content") == "proofed text")
         self.assertIn(
             ("proofing_range", "spell"),

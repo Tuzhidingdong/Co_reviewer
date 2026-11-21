@@ -1028,6 +1028,8 @@ def _build_structural_event_map(
         "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
         "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
         "permStart", "permEnd",
+        "proofErr", "footnoteReference", "endnoteReference",
+        "lastRenderedPageBreak",
     }
     for node in nodes:
         q = _qname(node.tag)
@@ -1051,6 +1053,10 @@ def _build_structural_event_map(
             else "run" if namespace == W and local == "r"
             else "text_node" if namespace == W and local in {"t", "delText"}
             else "field_instruction_text" if namespace == W and local in {"instrText", "delInstrText"}
+            else "relationship_container" if namespace == W and local in {"hyperlink", "smartTag", "customXml"}
+            else "table" if namespace == W and local == "tbl"
+            else "table_row" if namespace == W and local == "tr"
+            else "table_cell" if namespace == W and local == "tc"
             else "range_or_field_marker" if namespace == W and local in marker_locals
             else "xml_element"
         )
