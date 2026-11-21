@@ -594,6 +594,28 @@ def validate_numbering_target_ref_bindings(
         raise NumberingTransactionError(
             "Workflow document identity roles must exactly match the approved numbering source documents."
         )
+    from .docx_identity import validate_manifest_sources
+    identity_errors = validate_manifest_sources(
+        {
+            "schema_version": "0.5.1",
+            "documents": raw_documents,
+            "objects": raw_objects,
+        },
+        {
+            "source_files": [
+                {"role": role, "sha256": record.get("sha256")}
+                for role, record in source_documents.items()
+                if isinstance(record, Mapping)
+            ]
+        },
+    )
+    if identity_errors:
+        raise NumberingTransactionError(
+            "Workflow document/object identity registry is invalid or stale:
+- "
+            + "
+- ".join(identity_errors)
+        )
 
     objects_by_id: dict[str, Mapping[str, Any]] = {}
     objects_by_location: dict[tuple[str, str, int], list[Mapping[str, Any]]] = {}

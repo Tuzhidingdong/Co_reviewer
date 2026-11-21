@@ -495,6 +495,16 @@ class NumberingTransactionTests(unittest.TestCase):
                     plan, approval, legacy_workflow, intent, scope
                 )
 
+            stale_document_identity = json.loads(json.dumps(workflow))
+            stale_document_identity["documents"][0]["source_sha256"] = "e" * 64
+            with self.assertRaisesRegex(
+                NumberingTransactionError,
+                "Workflow document/object identity registry is invalid or stale",
+            ):
+                verify_numbering_batch_candidate_before_publication(
+                    plan, approval, stale_document_identity, intent, scope
+                )
+
             tampered_registry_workflow = json.loads(json.dumps(workflow))
             first_target_ref = tampered_registry_workflow["tasks"][0]["patch_operations"][0]["target_ref"]
             registry_object = next(
