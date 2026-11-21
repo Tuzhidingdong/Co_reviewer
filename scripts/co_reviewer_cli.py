@@ -6891,12 +6891,12 @@ def cmd_create_manual_suggestion(args):
     if source_requested.is_symlink():
         raise ValueError("Manual suggestion source DOCX must not be a symbolic link.")
     source_path = source_requested.resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(f"Manual suggestion source DOCX does not exist: {source_path}")
+    if not source_path.is_file() or source_path.suffix.casefold() != ".docx":
+        raise FileNotFoundError(f"Manual suggestion source DOCX does not exist or is not a DOCX: {source_path}")
     source_sha256 = payload.get("source_sha256")
     if not isinstance(source_sha256, str) or sha256_file(source_path) != source_sha256:
         raise ValueError(
-            "Manual suggestion source DOCX no longer matches its recorded SHA-256; rebuild the diagnostic."
+            "Manual suggestion source DOCX SHA-256 does not match its recorded hash; rebuild the diagnostic."
         )
     payload["source_document_path"] = str(source_path)
     suggestion = build_manual_suggestion(payload)
