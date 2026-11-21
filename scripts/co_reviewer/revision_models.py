@@ -253,6 +253,19 @@ class PatchOperation:
                     "A registered TargetRef requires target_identity_mode=stable_target_ref; "
                     "the identity mode cannot be omitted or downgraded."
                 )
+            location_hint = self.target_ref.get("location_hint")
+            hinted_p_idx = (
+                location_hint.get("p_idx")
+                if isinstance(location_hint, Mapping) else None
+            )
+            if (
+                self.p_idx is not None
+                and hinted_p_idx is not None
+                and self.p_idx != hinted_p_idx
+            ):
+                raise RevisionModelError(
+                    "PatchOperation p_idx differs from its registered TargetRef location_hint.p_idx."
+                )
         else:
             if self.target_identity_mode != "legacy_p_idx_explicit":
                 raise RevisionModelError(
