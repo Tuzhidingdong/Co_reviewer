@@ -65,10 +65,20 @@ def _reject_symlink_path(path: Path, label: str, *, allow_missing: bool = True) 
 def _safe_component(value: str, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ReleasePackageTransactionError(f"{label} must be non-empty.")
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()).strip("._")
-    if not normalized or normalized in {".", ".."}:
-        raise ReleasePackageTransactionError(f"{label} is not a safe package path component.")
-    return normalized[:96]
+    # Keep Unicode filenames (including Chinese manuscript names), while
+    # replacing separators/control/Windows-reserved characters and bounding
+    # the component length for cross-platform filesystem compatibility.
+    normalized = re.sub(r"[\\s/\\\\<>:\"|?*\\x00-\\x1f]+", "_", value.strip())
+    normalized = normalized.strip(" ._")
+    if not normalized:
+        normalized = "artifact"
+    if normalized.upper() in {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }:
+        normalized = "_" + normalized
+    return normalized[:64]
 
 
 def _validate_docx_bytes(payload: bytes, label: str) -> None:
