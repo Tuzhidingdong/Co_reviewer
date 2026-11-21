@@ -807,19 +807,19 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                     in_reference_section = True
                 in_reference_paragraph = in_reference_section
                 if not in_reference_paragraph:
-                    if re.search(r"\\[\\s*\\d+(?:\\s*[,;\\-–]\\s*\\d+)*\\s*\\]", text_value):
+                    if re.search(r"\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]", text_value):
                         citation_modes.add("numeric_bracketed")
                     for match in _PAREN_CITATION_RANGE.finditer(text_value):
                         prefix = text_value[max(0, match.start() - 24):match.start()]
-                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
                             citation_modes.add("numeric_parenthetical")
                     for match in _PAREN_CITATION_GROUP.finditer(text_value):
                         prefix = text_value[max(0, match.start() - 24):match.start()]
-                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
                             citation_modes.add("numeric_parenthetical")
                     for match in _PAREN_CITATION_SINGLE.finditer(text_value):
                         prefix = text_value[max(0, match.start() - 24):match.start()]
-                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                        if not re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
                             citation_modes.add("numeric_parenthetical")
                     if _AUTHOR_YEAR_CITATION.search(text_value):
                         citation_modes.add("author_year")
@@ -829,7 +829,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                         if (
                             (vertical.get(qn("val")) if vertical is not None else None) == "superscript"
                             and run_text
-                            and re.fullmatch(r"[\\d,;–\\-]+", run_text)
+                            and re.fullmatch(r"[\d,;–\-]+", run_text)
                         ):
                             citation_modes.add("numeric_superscript")
                     if paragraph.findall(".//w:footnoteReference", NS):
@@ -871,7 +871,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                 run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS)).strip()
                 if (vertical.get(qn("val")) if vertical is not None else None) != "superscript" or not run_text:
                     continue
-                if not re.fullmatch(r"[\\d,;–\\-]+", run_text):
+                if not re.fullmatch(r"[\d,;–\-]+", run_text):
                     continue
                 text_nodes = run.findall(".//w:t", NS)
                 if not text_nodes or any(node not in text_offsets for node in text_nodes):
@@ -880,7 +880,7 @@ def extract_docx_reference_segments(path: str | Path) -> list[dict[str, Any]]:
                     "kind": "numeric_superscript", "text": run_text,
                     "offset": text_offsets[text_nodes[0]][0],
                     "end_offset": text_offsets[text_nodes[-1]][1],
-                    "numbers": re.findall(r"\\d+", run_text),
+                    "numbers": re.findall(r"\d+", run_text),
                 })
             for node, offset in footnote_offsets.items():
                 marker_events.append({
