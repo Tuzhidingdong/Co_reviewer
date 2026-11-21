@@ -524,6 +524,71 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(ledger["tasks"][0]["target_groups"], [])
         self.assertEqual(validate_workflow_ledger(ledger), [])
 
+    def test_workflow_ledger_deduplicates_initial_sources_and_normalizes_reply_role(self):
+        manuscript = {
+            "role": "Manuscript",
+            "file": "Manuscript.docx",
+            "sha256": INPUT_HASH,
+        }
+        reviewers = {
+            "role": "Reviewers",
+            "file": "Reviewers.docx",
+            "sha256": OUTPUT_HASH,
+        }
+        decision_plan = {
+            # Same initial input can be surfaced more than once by upstream
+            # inventory/task aggregation. Reply is the supported legacy alias
+            # for the single logical Reviewers document.
+            "source_files": [
+                dict(manuscript),
+                dict(manuscript),
+                {**reviewers, "role": "Reply"},
+                dict(reviewers),
+            ],
+            "tasks": [{
+                "task_id": "T1",
+                "sequence": 1,
+                "task_type": "response_only",
+                "title": "Prepare response",
+                "source_comment_ids": ["C1"],
+                "target_documents": [],
+                "evidence": [{
+                    "evidence_id": "E1",
+                    "document": "Reviewers",
+                    "part": "word/comments.xml",
+                    "p_idx": 0,
+                    "source_excerpt": "Please clarify.",
+                    "evidence_type": "reviewer_comment",
+                    "match_status": "confirmed",
+                    "source_comment_id": "C1",
+                }],
+                "proposed_action": "Draft a response using the cited comment.",
+                "targets": [],
+                "dependencies": [],
+                "readiness": "ready_for_author_approval",
+                "unresolved_questions": [],
+                "confidence": 0.9,
+                "status": "pending",
+                "requires_user_approval": True,
+            }],
+        }
+
+        ledger = build_workflow_ledger(
+            decision_plan, "round-source-deduplication", STAMP
+        )
+
+        self.assertEqual(
+            ledger["source_files"],
+            [manuscript, reviewers],
+            "Initial source inventory must contain one canonical record per logical role.",
+        )
+        self.assertEqual(
+            ledger["tasks"][0]["source_versions"],
+            [reviewers],
+            "Task provenance must not duplicate the same aliased initial source version.",
+        )
+        self.assertEqual(validate_workflow_ledger(ledger), [])
+
     def test_workflow_ledger_rejects_document_identity_source_hash_mismatch(self):
         document = build_document_identity(
             role="Manuscript",
