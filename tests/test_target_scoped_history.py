@@ -106,6 +106,87 @@ class TargetScopedHistoricalRevisionTests(unittest.TestCase):
                 )
                 self.assertEqual(result["status"], "USER_DECISION_REQUIRED")
 
+    def test_comment_range_history_is_exact_and_only_blocks_its_visible_interval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "comment-range.docx"
+            document = Document()
+            document.add_paragraph("safe before comment text safe after")
+            document.save(source)
+            temporary_path = source.with_suffix(".with-comment.docx")
+            with zipfile.ZipFile(source, "r") as original, zipfile.ZipFile(
+                temporary_path, "w", zipfile.ZIP_DEFLATED
+            ) as rewritten:
+                for item in original.infolist():
+                    payload = original.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        root = ET.fromstring(payload)
+                        paragraph = root.find(".//{%s}p" % W)
+                        for child in list(paragraph):
+                            if child.tag != "{%s}pPr" % W:
+                                paragraph.remove(child)
+
+                        def add_run(text):
+                            run = ET.SubElement(paragraph, "{%s}r" % W)
+                            node = ET.SubElement(run, "{%s}t" % W)
+                            node.text = text
+
+                        add_run("safe before ")
+                        start = ET.SubElement(
+                            paragraph, "{%s}commentRangeStart" % W,
+                            {"{%s}id" % W: "41"},
+                        )
+                        add_run("comment text")
+                        end = ET.SubElement(
+                            paragraph, "{%s}commentRangeEnd" % W,
+                            {"{%s}id" % W: "41"},
+                        )
+                        add_run(" safe after")
+                        payload = ET.tostring(
+                            root, xml_declaration=True, encoding="UTF-8", standalone=True
+                        )
+                    rewritten.writestr(item, payload)
+            temporary_path.replace(source)
+
+            inventory = build_revision_baseline_inventory(source)
+            ranges = [
+                row for row in inventory["revisions"]
+                if row.get("kind") == "comment_range"
+            ]
+            self.assertEqual(len(ranges), 1)
+            self.assertEqual(ranges[0]["text_range_precision"], "exact_visible_text")
+            self.assertEqual(ranges[0]["text_ranges"], [{
+                "paragraph_index": 0,
+                "start_offset": len("safe before "),
+                "end_offset": len("safe before comment text"),
+            }])
+            self.assertFalse(any(
+                row.get("kind") in {"comment_range_marker", "comment_reference"}
+                for row in inventory["revisions"]
+            ))
+
+            visible = "safe before comment text safe after"
+            for phrase in ("safe before", "safe after"):
+                start = visible.index(phrase)
+                result = targeted_revision_gate(inventory, [{
+                    "part": "word/document.xml",
+                    "p_idx": 0,
+                    "start_offset": start,
+                    "end_offset": start + len(phrase),
+                }])
+                self.assertEqual(result["status"], "PASS", phrase)
+            start = visible.index("comment text")
+            blocked = targeted_revision_gate(inventory, [{
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "start_offset": start,
+                "end_offset": start + len("comment text"),
+            }])
+            self.assertEqual(blocked["status"], "USER_DECISION_REQUIRED")
+            self.assertEqual(
+                [row["kind"] for row in blocked["overlapping_revisions"]],
+                ["comment_range"],
+            )
+
     def test_disjoint_text_in_same_paragraph_is_not_blocked_by_historical_insertion(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "source.docx"

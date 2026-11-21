@@ -1807,6 +1807,7 @@ def _annotate_revision_visible_text_ranges(
                         cursor += 1
                 paragraph_positions[paragraph] = positions
 
+            node_order = {node: index for index, node in enumerate(root.iter())}
             for record in part_records:
                 path = record.get("element_path")
                 if not isinstance(path, str) or not path:
@@ -1818,6 +1819,46 @@ def _annotate_revision_visible_text_ranges(
                 if len(matches) != 1:
                     raise ContractError("HISTORICAL_REVISION_PATH_NOT_UNIQUE:" + path)
                 node = matches[0]
+
+                # Comment ranges are real paragraph/part-wide intervals. Bind
+                # every paragraph slice to exact visible-text coordinates so
+                # edits outside the comment can proceed, while edits inside
+                # remain blocked by the historical-revision gate.
+                if record.get("kind") == "comment_range":
+                    details = record.get("details")
+                    start_path = details.get("start_path") if isinstance(details, Mapping) else None
+                    end_path = details.get("end_path") if isinstance(details, Mapping) else None
+                    if isinstance(start_path, str) and isinstance(end_path, str):
+                        try:
+                            start_nodes = root.xpath(start_path, namespaces={"w": W, "r": R})
+                            end_nodes = root.xpath(end_path, namespaces={"w": W, "r": R})
+                        except ET.XPathError as exc:
+                            raise ContractError("INVALID_COMMENT_RANGE_PATH") from exc
+                        if len(start_nodes) == 1 and len(end_nodes) == 1:
+                            start_order = node_order[start_nodes[0]]
+                            end_order = node_order[end_nodes[0]]
+                            if start_order < end_order:
+                                ranges = []
+                                for paragraph_index, paragraph_node in enumerate(paragraphs):
+                                    positions = paragraph_positions[paragraph_node]
+                                    selected_nodes = [
+                                        child for child in positions
+                                        if child.tag in {qn("t"), qn("tab"), qn("br"), qn("cr")}
+                                        and start_order < node_order[child] < end_order
+                                    ]
+                                    if not selected_nodes:
+                                        continue
+                                    ranges.append({
+                                        "paragraph_index": paragraph_index,
+                                        "start_offset": min(positions[child][0] for child in selected_nodes),
+                                        "end_offset": max(positions[child][1] for child in selected_nodes),
+                                    })
+                                record["text_ranges"] = ranges
+                                record["text_range_precision"] = (
+                                    "exact_visible_text" if ranges else "exact_visible_text_empty"
+                                )
+                                continue
+
                 paragraph = node
                 while paragraph is not None and paragraph.tag != qn("p"):
                     paragraph = paragraph.getparent()
@@ -1870,8 +1911,8 @@ def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, A
     revision_kinds = {
         "text_revision_wrapper", "format_revision", "paragraph_revision",
         "paragraph_mark_deletion", "table_structure_revision", "move_range_marker",
-        "comment_anchor", "comment_definition", "comment_range", "comment_range_marker",
-        "comment_reference", "incomplete_comment_range",
+        "comment_anchor", "comment_definition", "comment_range",
+        "incomplete_comment_range",
     }
     records = [dict(item) for item in report.get("structures", [])
                if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))]

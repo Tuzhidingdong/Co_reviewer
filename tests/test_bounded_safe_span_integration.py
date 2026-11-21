@@ -157,7 +157,6 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
 
     def test_prepare_document_edits_only_text_outside_comment_and_permission_ranges(self):
         for label, start_local, end_local in (
-            ("comment", "commentRangeStart", "commentRangeEnd"),
             ("permission", "permStart", "permEnd"),
         ):
             with self.subTest(range_kind=label), tempfile.TemporaryDirectory() as temp:
@@ -201,7 +200,7 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
                     "revised wording",
                 )
                 self.assertEqual(
-                    "".join(node.text or "" for node in revised.findall(".//w:del//w:t", NS)),
+                    "".join(node.text or "" for node in revised.findall(".//w:del//w:delText", NS)),
                     "safe wording",
                 )
 
