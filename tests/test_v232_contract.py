@@ -835,10 +835,19 @@ class V232ContractTests(unittest.TestCase):
         updated = renumber_reference_graph(
             graph, {"Manuscript::citation::1": "4"}, explicit_authorization=True
         )
-        self.assertTrue(any(
-            row["kind"] == "citation" and row["old_number"] == "1" and row["new_number"] == "4"
-            for row in updated["definition_updates"]
-        ))
+        definition_update = next(
+            row for row in updated["definition_updates"] if row["kind"] == "citation"
+        )
+        self.assertEqual(definition_update["old_text"], "1")
+        self.assertEqual(definition_update["old_surface_text"], "1. Smith et al. Reference one.")
+        self.assertEqual(definition_update["new_surface_text"], "4. Smith et al. Reference one.")
+        parenthetical_update = next(
+            row for row in updated["mention_updates"]
+            if row["paragraph_index"] == 3 and row["old_number"] == "1"
+        )
+        self.assertEqual(parenthetical_update["old_text"], "1")
+        self.assertEqual(parenthetical_update["old_surface_text"], "(1)")
+        self.assertEqual(parenthetical_update["new_surface_text"], "(4)")
 
     def test_package_graph_resolves_superscript_citation_events_and_keeps_footnotes_manual(self):
         graph = build_package_reference_graph({

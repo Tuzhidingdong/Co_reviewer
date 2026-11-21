@@ -971,7 +971,8 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 ).hexdigest()[:16]
                 definitions.append({
                     "id": record_id, **base, "kind": "citation",
-                    "number": match.group(1), "text": match.group(),
+                    "number": match.group(1), "text": match.group(1),
+                    "surface_text": match.group(),
                     "offset": match.start(1), "end_offset": match.end(1),
                     "reference_mechanism": (
                         "manual_review_required" if mechanism == "mixed_with_word_field" else mechanism
@@ -994,7 +995,8 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     ).hexdigest()[:16]
                     definitions.append({
                         "id": record_id, **base, "kind": "citation",
-                        "number": number, "text": match.group(),
+                        "number": number, "text": number,
+                        "surface_text": match.group(),
                         "offset": match.start(1), "end_offset": match.end(1),
                         "reference_mechanism": (
                             "manual_review_required"
@@ -1048,12 +1050,15 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     })
 
             citation_group_spans: list[tuple[int, int]] = []
-            if "numeric_parenthetical" in citation_profile_modes:
+            if (
+                "numeric_parenthetical" in citation_profile_modes
+                and segment.get("in_reference_section") is not True
+            ):
                 for match in _PAREN_CITATION_RANGE.finditer(text_value):
                     if any(match.start() < right and match.end() > left for left, right in caption_spans):
                         continue
                     prefix = text_value[max(0, match.start() - 24):match.start()]
-                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
                         continue
                     numbers = [match.group(1), match.group(2)]
                     record_id = "men-" + hashlib.sha1(
@@ -1076,7 +1081,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
                         continue
                     prefix = text_value[max(0, match.start() - 24):match.start()]
-                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\.?\s*$", prefix, re.I):
                         continue
                     numbers = re.findall(r"\d+", match.group("body"))
                     if len(numbers) < 2:
@@ -1109,7 +1114,8 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     mentions.append({
                         "id": record_id, **base,
                         "kind": "citation", "number": number,
-                        "text": match.group(), "offset": match.start(1), "end_offset": match.end(1),
+                        "text": number, "surface_text": match.group(),
+                        "offset": match.start(1), "end_offset": match.end(1),
                         "target_definition_ids": [],
                         "resolution": (
                             "manual_review_required"
@@ -1169,7 +1175,10 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         "resolution_reason": "Native footnote references need a dedicated footnote citation adapter and explicit target mapping.",
                     })
 
-            if "author_year" in citation_profile_modes:
+            if (
+                "author_year" in citation_profile_modes
+                and segment.get("in_reference_section") is not True
+            ):
                 for match in _AUTHOR_YEAR_CITATION.finditer(text_value):
                     record_id = "men-" + hashlib.sha1(
                         (doc_id + segment["part"] + str(segment["paragraph_index"])
@@ -1544,7 +1553,7 @@ def renumber_reference_graph(
             definition["number"] = new_number
             definition["text"] = new_text
             definition["end_offset"] = offset + len(new_text)
-            definition_updates.append({
+            definition_update = {
                 "document": document,
                 "part": definition.get("part"),
                 "paragraph_index": definition.get("paragraph_index"),
@@ -1557,7 +1566,14 @@ def renumber_reference_graph(
                 "new_text": new_text,
                 "old_number": old_number,
                 "new_number": new_number,
-            })
+            }
+            if definition.get("surface_text") is not None:
+                old_surface = definition["surface_text"]
+                new_surface = old_surface.replace(old_number, new_number, 1)
+                definition["surface_text"] = new_surface
+                definition_update["old_surface_text"] = old_surface
+                definition_update["new_surface_text"] = new_surface
+            definition_updates.append(definition_update)
         if isinstance(definition_id, str):
             by_id[definition_id] = definition
 
