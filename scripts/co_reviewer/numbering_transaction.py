@@ -611,8 +611,8 @@ def validate_numbering_target_ref_bindings(
     )
     if identity_errors:
         raise NumberingTransactionError(
-            "Workflow document/object identity registry is invalid or stale:\\n- "
-            + "\\n- ".join(identity_errors)
+            "Workflow document/object identity registry is invalid or stale:\n- "
+            + "\n- ".join(identity_errors)
         )
 
     objects_by_id: dict[str, Mapping[str, Any]] = {}
