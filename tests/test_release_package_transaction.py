@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from docx import Document
 from jsonschema import Draft202012Validator
@@ -335,6 +336,65 @@ class ReleasePackageTransactionTests(unittest.TestCase):
             packaged_pdf.write_bytes(packaged_pdf.read_bytes() + b"tampered")
             with self.assertRaisesRegex(ReleasePackageTransactionError, "hash/size mismatch"):
                 verify_release_package(fixture["release_dir"], expected_release_id=release_id)
+
+    def test_interruption_after_directory_publish_before_marker_recovers_safely(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self._fixture(Path(temporary))
+            workflow_path = fixture["workflow_path"]
+            original_workflow = workflow_path.read_bytes()
+            source_hashes = {
+                str(workflow_path): _sha(workflow_path),
+                str(fixture["revision_path"]): _sha(fixture["revision_path"]),
+            }
+            from co_reviewer import release_package as package_module
+            original_verify = package_module._verify_package_directory_against_manifest
+            mutated = {"done": False}
+
+            def verify_then_mutate(package_dir, manifest):
+                result = original_verify(package_dir, manifest)
+                if not mutated["done"]:
+                    workflow_path.write_bytes(original_workflow + b" ")
+                    mutated["done"] = True
+                return result
+
+            marker = fixture["release_dir"] / "release_package_commit.json"
+            with mock.patch(
+                "co_reviewer.release_package._verify_package_directory_against_manifest",
+                side_effect=verify_then_mutate,
+            ):
+                with self.assertRaisesRegex(
+                    ReleasePackageTransactionError,
+                    "changed during package staging",
+                ):
+                    commit_release_package(
+                        fixture["release_dir"],
+                        fixture["records"],
+                        release_id="release-test-interrupted",
+                        source_release_manifest_sha256=_sha(fixture["manifest_path"]),
+                        source_snapshot_hashes=source_hashes,
+                    )
+            self.assertTrue(mutated["done"])
+            self.assertFalse(marker.exists())
+            package_directories = list(fixture["release_dir"].glob("package-*"))
+            self.assertEqual(len(package_directories), 1)
+            self.assertTrue((package_directories[0] / "package_manifest.json").is_file())
+
+            # Restore the exact ledger snapshot. The unmarked candidate must be
+            # revalidated and only then receive its external commit marker.
+            workflow_path.write_bytes(original_workflow)
+            recovered = commit_release_package(
+                fixture["release_dir"],
+                fixture["records"],
+                release_id="release-test-interrupted",
+                source_release_manifest_sha256=_sha(fixture["manifest_path"]),
+                source_snapshot_hashes=source_hashes,
+            )
+            self.assertEqual(recovered["status"], "COMMITTED")
+            self.assertTrue(marker.is_file())
+            verified = verify_release_package(
+                fixture["release_dir"], expected_release_id="release-test-interrupted"
+            )
+            self.assertEqual(verified["package_id"], recovered["package_id"])
 
     def test_unlisted_package_artifact_blocks_committed_package_verification(self):
         with tempfile.TemporaryDirectory() as temporary:
