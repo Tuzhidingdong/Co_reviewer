@@ -624,11 +624,11 @@ class NumberingTransactionTests(unittest.TestCase):
                 "events": [],
             }
             workflow_path.write_text(
-                json.dumps(workflow, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps(workflow, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             revision_path.write_text(
-                json.dumps({"schema_version": "0.5.1"}, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps({"schema_version": "0.5.1"}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             workflow_sha = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
@@ -652,7 +652,7 @@ class NumberingTransactionTests(unittest.TestCase):
             }
             intent_path = batch_dir / "batch_intent.json"
             intent_path.write_text(
-                json.dumps(intent, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps(intent, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             scope = {
@@ -667,7 +667,7 @@ class NumberingTransactionTests(unittest.TestCase):
                 "documents": scope_documents,
             }
             (batch_dir / "batch_scope.json").write_text(
-                json.dumps(scope, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps(scope, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
 
