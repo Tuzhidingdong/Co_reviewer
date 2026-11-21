@@ -588,6 +588,23 @@ class WorkflowEngineTests(unittest.TestCase):
             "Task provenance must not duplicate the same aliased initial source version.",
         )
         self.assertEqual(validate_workflow_ledger(ledger), [])
+        import jsonschema
+        schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas" / "workflow-ledger.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        jsonschema.validate(ledger, schema)
+
+        conflicting = json.loads(json.dumps(decision_plan))
+        conflicting["source_files"].append({
+            "role": "Manuscript",
+            "file": "alternate-Manuscript.docx",
+            "sha256": OUTPUT_HASH,
+        })
+        with self.assertRaisesRegex(WorkflowValidationError, "Conflicting initial source records"):
+            build_workflow_ledger(
+                conflicting, "round-conflicting-initial-sources", STAMP
+            )
 
     def test_workflow_ledger_rejects_document_identity_source_hash_mismatch(self):
         document = build_document_identity(
