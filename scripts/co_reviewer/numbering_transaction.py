@@ -692,6 +692,13 @@ def commit_numbering_package_transaction(
     publication = _load_json_object(publication_path, "Batch publication receipt")
     if Path(str(scope.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path:
         raise NumberingTransactionError("Numbering batch scope belongs to another RevisionLedger.")
+    if (
+        Path(str(publication.get("revision_ledger_file", ""))).expanduser().resolve() != revision_path
+        or publication.get("revision_ledger_sha256") != revision_sha_before
+    ):
+        raise NumberingTransactionError(
+            "Published numbering batch is bound to a different RevisionLedger snapshot; rebuild the batch and re-approve."
+        )
     patch_statuses = {
         patch.patch_id: patch.status
         for patch in getattr(revision_ledger, "patches", [])
