@@ -279,7 +279,10 @@ def _save_revision_ledger(path: Path, ledger: RevisionLedger) -> None:
 
 
 class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
-    """Join two real batch publications, downstream evidence refresh and Release Package creation."""
+    """Join two real batch publications, downstream evidence refresh and package creation.
+
+    Manual locators isolate the Release Package lifecycle; they do not stand in for Word COM acceptance.
+    """
 
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
