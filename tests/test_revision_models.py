@@ -200,6 +200,13 @@ class RevisionModelsTests(unittest.TestCase):
             PatchOperation.from_mapping(stable).target_identity_mode,
             "stable_target_ref",
         )
+        conflicting_hint = json.loads(json.dumps(stable))
+        conflicting_hint["p_idx"] = 5
+        with self.assertRaisesRegex(
+            RevisionModelError,
+            "differs from its registered TargetRef location_hint.p_idx",
+        ):
+            PatchOperation.from_mapping(conflicting_hint)
 
     def test_patch_operation_requires_explicit_source_comment_attribution(self):
         payload = _operation().to_dict()
