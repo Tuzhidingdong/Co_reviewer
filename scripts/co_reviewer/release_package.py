@@ -459,6 +459,8 @@ def verify_release_package(
     if (
         marker.get("package_manifest_file") != str(manifest_path)
         or marker.get("package_manifest_sha256") != manifest_sha
+        or marker.get("source_release_manifest_sha256")
+            != (json.loads(manifest_bytes.decode("utf-8")).get("source_release_manifest_sha256"))
     ):
         raise ReleasePackageTransactionError("Release Package manifest does not match the final commit marker.")
     try:
@@ -529,10 +531,23 @@ def commit_release_package(
     *,
     release_id: str,
     source_release_manifest_sha256: str,
+    source_snapshot_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Stage every Release artifact, publish immutable directory, then write marker last."""
     root = _reject_symlink_path(Path(release_dir), "Release directory", allow_missing=False)
     marker_path = root / "release_package_commit.json"
+    snapshots = dict(source_snapshot_hashes or {})
+    for source_path, expected_sha in snapshots.items():
+        candidate = _reject_symlink_path(
+            Path(source_path), "Release source ledger snapshot", allow_missing=False
+        )
+        if not isinstance(expected_sha, str) or not _SHA256_RE.fullmatch(expected_sha):
+            raise ReleasePackageTransactionError("Release source ledger snapshot hash is invalid.")
+        if _sha256_file(candidate) != expected_sha:
+            raise ReleasePackageTransactionError(
+                f"Release source ledger changed while packaging: {candidate}"
+            )
+
     manifest = _package_manifest_payload(
         records,
         release_id=release_id,
@@ -633,8 +648,17 @@ def commit_release_package(
         "package_manifest_file": str(manifest_path),
         "package_manifest_sha256": _sha256_file(manifest_path),
         "artifact_count": manifest["artifact_count"],
+        "source_release_manifest_sha256": source_release_manifest_sha256,
         "committed_at_utc": datetime.now(timezone.utc).isoformat(),
     }
+    for source_path, expected_sha in snapshots.items():
+        candidate = _reject_symlink_path(
+            Path(source_path), "Release source ledger snapshot", allow_missing=False
+        )
+        if _sha256_file(candidate) != expected_sha:
+            raise ReleasePackageTransactionError(
+                f"Release source ledger changed during package staging: {candidate}"
+            )
     temporary_marker = root / (".release_package_commit." + os.urandom(8).hex() + ".tmp")
     try:
         with temporary_marker.open("x", encoding="utf-8", newline="\n") as stream:
