@@ -20,7 +20,7 @@ from co_reviewer.docx_identity import (
     build_target_refs_by_task,
     validate_manifest_sources,
 )
-from co_reviewer.identity import sha256_file
+from co_reviewer.identity import IdentityValidationError, TargetRef, sha256_file
 from co_reviewer_cli import build_parser, cmd_attach_document_identities
 
 
@@ -70,6 +70,27 @@ class DocxIdentityRegistryTests(unittest.TestCase):
         if para_ids:
             _set_para_ids(path, para_ids)
         return path
+
+    def test_target_ref_rejects_invalid_advisory_paragraph_hints(self):
+        base = {
+            "document_id": "doc-manuscript",
+            "revision_id": "rev-001",
+            "object_id": "obj-001",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+        }
+        for value in (-1, True, "4", 1.5):
+            with self.subTest(p_idx=value):
+                with self.assertRaisesRegex(
+                    IdentityValidationError,
+                    "location_hint.p_idx must be a non-negative integer",
+                ):
+                    TargetRef(**base, location_hint={"p_idx": value})
+        self.assertEqual(
+            TargetRef(**base, location_hint={"p_idx": 4}).location_hint["p_idx"],
+            4,
+        )
 
     def test_native_para_ids_preserve_object_identity_when_paragraph_moves(self):
         first = self._docx(
