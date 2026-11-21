@@ -14,11 +14,18 @@
     "revision_ledger_sha256",
     "intent_file",
     "intent_sha256",
-    "artifacts"
+    "artifacts",
+    "package_id",
+    "package_directory",
+    "package_manifest_file",
+    "package_manifest_sha256",
+    "commit_marker_file",
+    "commit_marker_sha256",
+    "package_artifact_count"
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "const": "2.0"
     },
     "status": {
       "const": "complete"
@@ -82,6 +89,34 @@
         }
       },
       "additionalProperties": false
+    },
+    "package_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "package_directory": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_manifest_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "commit_marker_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit_marker_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "package_artifact_count": {
+      "type": "integer",
+      "minimum": 1
     }
   },
   "additionalProperties": false
