@@ -801,9 +801,13 @@ def _build_structural_event_map(
 
     text_locals = {"t", "delText", "instrText", "delInstrText"}
     for paragraph in paragraph_indices:
+        for descendant in paragraph.iter():
+            paragraph_for_node[descendant] = paragraph
         runs = list(paragraph.iter(f"{{{W}}}r"))
         for index, run in enumerate(runs):
             run_index[run] = index
+            for descendant in run.iter():
+                run_for_node[descendant] = run
             cursor = 0
             text_nodes = [
                 item for item in run.iter()
@@ -816,22 +820,6 @@ def _build_structural_event_map(
                 text_index[text_node] = text_node_index
                 text_offsets[text_node] = (cursor, cursor + len(value))
                 cursor += len(value)
-                text_node_run = run
-                current = text_node
-                while current is not None:
-                    paragraph_for_node[current] = paragraph
-                    run_for_node[current] = text_node_run
-                    current = current.getparent()
-            current = run
-            while current is not None:
-                paragraph_for_node[current] = paragraph
-                if current is not run:
-                    run_for_node.setdefault(current, run)
-                current = current.getparent()
-        current = paragraph
-        while current is not None:
-            paragraph_for_node.setdefault(current, paragraph)
-            current = current.getparent()
 
     records_by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
