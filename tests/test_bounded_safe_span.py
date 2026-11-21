@@ -198,6 +198,26 @@ class BoundedSafeSpanTests(unittest.TestCase):
         )
         self.assertTrue(safe["allowed"])
 
+    def test_foreign_namespace_text_does_not_shift_word_range_coordinates(self):
+        math_ns = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        root = ET.fromstring(
+            f'<w:document xmlns:w="{W}" xmlns:m="{math_ns}"><w:body>'
+            '<w:p><m:oMath><m:t>x</m:t></m:oMath>'
+            '<w:commentRangeStart w:id="c1"/>'
+            '<w:r><w:t>protected</w:t></w:r>'
+            '<w:commentRangeEnd w:id="c1"/>'
+            '<w:r><w:t>safe</w:t></w:r></w:p>'
+            '</w:body></w:document>'
+        )
+        paragraph = root.find(".//w:p", NS)
+        protected = analyze_bounded_safe_span(root, paragraph, "protected")
+        safe = analyze_bounded_safe_span(root, paragraph, "safe")
+        self.assertFalse(protected["allowed"])
+        self.assertTrue(
+            safe["allowed"],
+            "Non-WordprocessingML m:t nodes are not in the visible Word text coordinate space.",
+        )
+
     def test_unpaired_non_bookmark_range_markers_fail_closed(self):
         root, paragraph = _document(
             '<w:p><w:commentRangeStart w:id="c1"/>'

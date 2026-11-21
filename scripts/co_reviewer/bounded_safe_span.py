@@ -106,7 +106,10 @@ def _part_text_positions(
             paragraph_count += 1
             continue
 
-        local = ET.QName(node).localname
+        qname = ET.QName(node)
+        if qname.namespace != W:
+            continue
+        local = qname.localname
         if local in marker_pairs:
             _, range_kind = marker_pairs[local]
             marker_id = node.get(_q("id"), "")
