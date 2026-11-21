@@ -64,7 +64,9 @@ class ReleaseManifestGateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.source = self.root / "Manuscript.docx"
-        self.source.write_bytes(b"synthetic source document")
+        source_document = Document()
+        source_document.add_paragraph("Synthetic immutable manuscript source.")
+        source_document.save(self.source)
         self.workflow = build_workflow_ledger(
             {
                 "source_files": [{
