@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import co_reviewer_cli as cli
+from co_reviewer.docx_identity import build_document_identity_manifest, build_target_refs_by_task
 from co_reviewer.revision_models import PatchOperation, RevisionModelError, validate_author_decision_ref
 from co_reviewer.numbering_transaction import (
     NumberingTransactionError,
@@ -393,14 +394,44 @@ class NumberingTransactionTests(unittest.TestCase):
                 for field in ("definition_updates", "mention_updates")
                 for row in plan[field]
             }
+            identity_documents = []
+            identity_objects = []
+            for role, source in sources.items():
+                identity_manifest, _ = build_document_identity_manifest([{
+                    "role": role,
+                    "file": str(source),
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "paragraphs": [],
+                }])
+                identity_documents.extend(identity_manifest["documents"])
+                identity_objects.extend(identity_manifest["objects"])
+            identity_manifest = {
+                "schema_version": "0.5.1",
+                "documents": identity_documents,
+                "objects": identity_objects,
+            }
+            target_specs = [{
+                "document": role,
+                "part": part,
+                "p_idx": p_idx,
+                "action": "replace",
+            } for role, part, p_idx in sorted(required_targets)]
+            target_refs_by_task, identity_errors = build_target_refs_by_task([{
+                "task_id": task_id,
+                "targets": target_specs,
+            }], identity_manifest)
+            self.assertEqual(identity_errors, [])
+            stable_refs = target_refs_by_task[task_id]
+            self.assertEqual(len(stable_refs), len(target_specs))
             operations = [
                 {
                     "operation_id": f"GN-PREPUBLISH-{index:03d}",
                     "document": role,
                     "part": part,
                     "p_idx": p_idx,
+                    "target_ref": stable_refs[index - 1],
+                    "target_identity_mode": "stable_target_ref",
                     "author_decision_ref": approval,
-                    "target_identity_mode": "legacy_p_idx_explicit",
                 }
                 for index, (role, part, p_idx) in enumerate(sorted(required_targets), start=1)
             ]
@@ -447,14 +478,33 @@ class NumberingTransactionTests(unittest.TestCase):
             }
             workflow = {
                 "active_documents": active_documents,
+                "documents": identity_documents,
+                "object_registry": identity_objects,
                 "tasks": [task],
             }
+
+            legacy_workflow = json.loads(json.dumps(workflow))
+            for operation in legacy_workflow["tasks"][0]["patch_operations"]:
+                operation.pop("target_ref", None)
+                operation["target_identity_mode"] = "legacy_p_idx_explicit"
+            with self.assertRaisesRegex(
+                NumberingTransactionError,
+                "must use stable_target_ref",
+            ):
+                verify_numbering_batch_candidate_before_publication(
+                    plan, approval, legacy_workflow, intent, scope
+                )
 
             result = verify_numbering_batch_candidate_before_publication(
                 plan, approval, workflow, intent, scope
             )
             self.assertEqual(result["prepublication_gate"], "PASS")
             self.assertEqual(result["impact_plan_sha256"], plan["impact_plan_sha256"])
+            self.assertEqual(result["target_identity_coverage"]["status"], "PASS")
+            self.assertEqual(
+                result["target_identity_coverage"]["stable_target_ref_operations"],
+                len(required_targets),
+            )
             self.assertEqual(
                 result["patch_operation_coverage"]["target_paragraph_count"],
                 len(required_targets),

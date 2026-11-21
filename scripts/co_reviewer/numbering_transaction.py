@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from .identity import sha256_file
+from .identity import IdentityValidationError, TargetRef, sha256_file
 from .v232_contract import (
     ContractError,
     build_package_reference_graph,
@@ -556,6 +556,177 @@ def validate_numbering_patch_operation_coverage(
     }
 
 
+
+def validate_numbering_target_ref_bindings(
+    workflow: Mapping[str, Any],
+    workflow_tasks: list[Mapping[str, Any]],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Require each global-numbering PatchOperation to use a registered stable TargetRef.
+
+    Paragraph indices are checked only as advisory coordinates against the
+    registered object; they never stand in for the object/document identity.
+    """
+    raw_documents = workflow.get("documents")
+    raw_objects = workflow.get("object_registry")
+    if not isinstance(raw_documents, list) or not raw_documents:
+        raise NumberingTransactionError(
+            "Global numbering requires registered document identities; legacy p_idx-only targeting is blocked."
+        )
+    if not isinstance(raw_objects, list) or not raw_objects:
+        raise NumberingTransactionError(
+            "Global numbering requires a registered DOCX object registry; legacy p_idx-only targeting is blocked."
+        )
+
+    documents_by_role: dict[str, Mapping[str, Any]] = {}
+    for row in raw_documents:
+        if not isinstance(row, Mapping):
+            raise NumberingTransactionError("Workflow document identity registry contains a malformed record.")
+        role = row.get("role")
+        if not isinstance(role, str) or not role or role in documents_by_role:
+            raise NumberingTransactionError(
+                "Workflow document identity registry must contain one unique identity per document role."
+            )
+        documents_by_role[role] = row
+
+    source_documents = plan.get("source_documents")
+    if not isinstance(source_documents, Mapping) or set(documents_by_role) != set(source_documents):
+        raise NumberingTransactionError(
+            "Workflow document identity roles must exactly match the approved numbering source documents."
+        )
+
+    objects_by_id: dict[str, Mapping[str, Any]] = {}
+    objects_by_location: dict[tuple[str, str, int], list[Mapping[str, Any]]] = {}
+    for row in raw_objects:
+        if not isinstance(row, Mapping):
+            raise NumberingTransactionError("Workflow object registry contains a malformed record.")
+        object_id = row.get("object_id")
+        if not isinstance(object_id, str) or not object_id or object_id in objects_by_id:
+            raise NumberingTransactionError(
+                "Workflow object registry must contain unique non-empty object IDs."
+            )
+        objects_by_id[object_id] = row
+        role_by_document_id = {
+            document.get("document_id"): role
+            for role, document in documents_by_role.items()
+        }
+        role = role_by_document_id.get(row.get("document_id"))
+        hint = row.get("location_hint")
+        p_idx = hint.get("p_idx") if isinstance(hint, Mapping) else None
+        part = row.get("part")
+        if (
+            role is not None
+            and isinstance(part, str)
+            and isinstance(p_idx, int) and not isinstance(p_idx, bool)
+            and p_idx >= 0
+        ):
+            objects_by_location.setdefault((role, part, p_idx), []).append(row)
+
+    bound_operations = 0
+    used_targets: set[tuple[str, str, str]] = set()
+    expected_target_locations = {
+        (row.get("document"), row.get("part"), row.get("paragraph_index"))
+        for field in ("definition_updates", "mention_updates")
+        for row in plan.get(field, [])
+        if isinstance(row, Mapping)
+    }
+    for task in workflow_tasks:
+        operations = task.get("patch_operations")
+        if not isinstance(operations, list):
+            raise NumberingTransactionError(
+                f"Global-numbering task {task.get('task_id')} PatchOperations must be an array."
+            )
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                raise NumberingTransactionError("Global-numbering PatchOperation is malformed.")
+            operation_id = operation.get("operation_id", "<unknown>")
+            role, part, p_idx = (
+                operation.get("document"), operation.get("part"), operation.get("p_idx")
+            )
+            if operation.get("target_identity_mode") != "stable_target_ref":
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation_id} must use stable_target_ref; "
+                    "legacy_p_idx_explicit is not accepted for package-wide numbering."
+                )
+            raw_ref = operation.get("target_ref")
+            if not isinstance(raw_ref, Mapping):
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation_id} is missing its registered TargetRef."
+                )
+            try:
+                target_ref = TargetRef(
+                    document_id=raw_ref.get("document_id"),
+                    revision_id=raw_ref.get("revision_id"),
+                    object_id=raw_ref.get("object_id"),
+                    object_type=raw_ref.get("object_type"),
+                    part=raw_ref.get("part"),
+                    object_fingerprint=raw_ref.get("object_fingerprint"),
+                    start_offset=raw_ref.get("start_offset"),
+                    end_offset=raw_ref.get("end_offset"),
+                    location_hint=raw_ref.get("location_hint"),
+                ).to_dict()
+            except (IdentityValidationError, TypeError, ValueError) as exc:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation_id} has an invalid TargetRef: {exc}"
+                ) from exc
+
+            document = documents_by_role.get(role)
+            object_record = objects_by_id.get(target_ref["object_id"])
+            hint = target_ref.get("location_hint") or {}
+            target_p_idx = hint.get("p_idx") if isinstance(hint, Mapping) else None
+            if (
+                not isinstance(role, str)
+                or document is None
+                or not isinstance(object_record, Mapping)
+                or target_ref["document_id"] != document.get("document_id")
+                or target_ref["revision_id"] != document.get("revision_id")
+                or target_ref["part"] != part
+                or object_record.get("document_id") != target_ref["document_id"]
+                or object_record.get("revision_id") != target_ref["revision_id"]
+                or object_record.get("object_type") != target_ref["object_type"]
+                or object_record.get("part") != target_ref["part"]
+                or object_record.get("object_fingerprint") != target_ref["object_fingerprint"]
+                or dict(object_record.get("location_hint") or {}) != dict(hint)
+                or not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool)
+                or target_p_idx < 0
+                or (p_idx is not None and p_idx != target_p_idx)
+            ):
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation_id} TargetRef does not exactly match "
+                    "the registered document/object identity and advisory location."
+                )
+            candidates = objects_by_location.get((role, part, target_p_idx), [])
+            if len(candidates) != 1 or candidates[0].get("object_id") != target_ref["object_id"]:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation_id} TargetRef does not resolve to exactly one "
+                    "registered DOCX object at {role}/{part}/p_idx={target_p_idx}."
+                )
+            source_record = source_documents.get(role)
+            if (
+                not isinstance(source_record, Mapping)
+                or document.get("source_sha256") != source_record.get("sha256")
+            ):
+                raise NumberingTransactionError(
+                    f"Workflow document identity for {role} is not bound to the exact approved source SHA-256."
+                )
+            used_targets.add((role, target_ref["part"], target_ref["object_id"]))
+            bound_operations += 1
+
+    for role, part, p_idx in expected_target_locations:
+        if (role, part, p_idx) not in objects_by_location or len(objects_by_location[(role, part, p_idx)]) != 1:
+            raise NumberingTransactionError(
+                f"Approved numbering paragraph {role}/{part}/p_idx={p_idx} has no unique registered DOCX object identity."
+            )
+    if bound_operations == 0:
+        raise NumberingTransactionError("Global-numbering batch contains no stable TargetRef-bound PatchOperations.")
+    return {
+        "status": "PASS",
+        "registered_documents": len(documents_by_role),
+        "registered_objects": len(objects_by_id),
+        "stable_target_ref_operations": bound_operations,
+    }
+
+
 def verify_numbering_batch_candidate_before_publication(
     plan: Mapping[str, Any],
     approval: Mapping[str, Any],
@@ -661,6 +832,9 @@ def verify_numbering_batch_candidate_before_publication(
     coverage = validate_numbering_patch_operation_coverage(
         actual_plan, selected_tasks
     )
+    target_identity_coverage = validate_numbering_target_ref_bindings(
+        workflow, selected_tasks, actual_plan
+    )
 
     source_documents = actual_plan["source_documents"]
     active_documents = workflow.get("active_documents")
@@ -746,6 +920,7 @@ def verify_numbering_batch_candidate_before_publication(
         "approval_sha256": actual_approval["approval_sha256"],
         "batch_id": batch_id,
         "patch_operation_coverage": coverage,
+        "target_identity_coverage": target_identity_coverage,
     }
 
 
