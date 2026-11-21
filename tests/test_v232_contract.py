@@ -981,6 +981,82 @@ class V232ContractTests(unittest.TestCase):
             self.assertEqual(mention["resolution"], "resolved")
             self.assertEqual(mention["target_definition_ids"], [definition["id"]])
 
+    def test_docx_reference_extractor_detects_parenthetical_citations_only_from_body_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "parenthetical-citations.docx"
+            document = Document()
+            document.add_paragraph("Prior work (1) supports the method.")
+            document.add_paragraph("Equation (2) is evaluated separately.")
+            document.add_paragraph("References")
+            document.add_paragraph("1. Smith et al. Reference one.")
+            document.save(path)
+
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Prior work")
+            )
+            equation = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Equation")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("1. Smith")
+            )
+            self.assertIn("numeric_parenthetical", body["citation_profile_modes"])
+            self.assertIn("numeric_parenthetical", equation["citation_profile_modes"])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            self.assertTrue(bibliography["in_reference_section"])
+
+            graph = build_package_reference_graph({"Manuscript": segments})
+            citation_mentions = [
+                row for row in graph["mentions"] if row["kind"] == "citation"
+            ]
+            self.assertEqual(len(citation_mentions), 1)
+            self.assertEqual(citation_mentions[0]["number"], "1")
+            self.assertEqual(citation_mentions[0]["resolution"], "resolved")
+            self.assertFalse(any(
+                row["kind"] == "citation" and row.get("text") == "(2)"
+                for row in graph["mentions"]
+            ))
+
+    def test_docx_reference_extractor_keeps_author_year_edges_manual_until_bibliography_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "author-year-citations.docx"
+            document = Document()
+            document.add_paragraph("Prior work (Smith et al., 2020) supports this method.")
+            document.add_paragraph("References")
+            document.add_paragraph("Smith et al. (2020). Reference entry.")
+            document.save(path)
+
+            segments = extract_docx_reference_segments(path)
+            body = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Prior work")
+            )
+            bibliography = next(
+                row for row in segments
+                if row["part"] == "word/document.xml"
+                and row["text"].startswith("Smith")
+            )
+            self.assertIn("author_year", body["citation_profile_modes"])
+            self.assertEqual(bibliography["citation_profile_modes"], [])
+            graph = build_package_reference_graph({"Manuscript": segments})
+            author_year = [
+                row for row in graph["mentions"]
+                if row.get("reference_mechanism") == "static_text"
+                and row["kind"] == "citation"
+            ]
+            self.assertEqual(len(author_year), 1)
+            self.assertEqual(author_year[0]["resolution"], "manual_review_required")
+            self.assertEqual(author_year[0]["number"], "Smith et al.,2020")
+            self.assertFalse(graph["edges"])
+
     def test_docx_reference_extractor_does_not_infer_citation_style_from_bibliography_or_equation_labels(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bibliography-only.docx"
