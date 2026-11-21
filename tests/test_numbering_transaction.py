@@ -495,6 +495,21 @@ class NumberingTransactionTests(unittest.TestCase):
                     plan, approval, legacy_workflow, intent, scope
                 )
 
+            tampered_registry_workflow = json.loads(json.dumps(workflow))
+            first_target_ref = tampered_registry_workflow["tasks"][0]["patch_operations"][0]["target_ref"]
+            registry_object = next(
+                row for row in tampered_registry_workflow["object_registry"]
+                if row["object_id"] == first_target_ref["object_id"]
+            )
+            registry_object["object_fingerprint"] = "f" * 64
+            with self.assertRaisesRegex(
+                NumberingTransactionError,
+                "TargetRef does not exactly match",
+            ):
+                verify_numbering_batch_candidate_before_publication(
+                    plan, approval, tampered_registry_workflow, intent, scope
+                )
+
             result = verify_numbering_batch_candidate_before_publication(
                 plan, approval, workflow, intent, scope
             )

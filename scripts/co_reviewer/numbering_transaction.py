@@ -597,6 +597,10 @@ def validate_numbering_target_ref_bindings(
 
     objects_by_id: dict[str, Mapping[str, Any]] = {}
     objects_by_location: dict[tuple[str, str, int], list[Mapping[str, Any]]] = {}
+    role_by_document_id = {
+        document.get("document_id"): role
+        for role, document in documents_by_role.items()
+    }
     for row in raw_objects:
         if not isinstance(row, Mapping):
             raise NumberingTransactionError("Workflow object registry contains a malformed record.")
@@ -606,10 +610,6 @@ def validate_numbering_target_ref_bindings(
                 "Workflow object registry must contain unique non-empty object IDs."
             )
         objects_by_id[object_id] = row
-        role_by_document_id = {
-            document.get("document_id"): role
-            for role, document in documents_by_role.items()
-        }
         role = role_by_document_id.get(row.get("document_id"))
         hint = row.get("location_hint")
         p_idx = hint.get("p_idx") if isinstance(hint, Mapping) else None
@@ -623,7 +623,6 @@ def validate_numbering_target_ref_bindings(
             objects_by_location.setdefault((role, part, p_idx), []).append(row)
 
     bound_operations = 0
-    used_targets: set[tuple[str, str, str]] = set()
     expected_target_locations = {
         (row.get("document"), row.get("part"), row.get("paragraph_index"))
         for field in ("definition_updates", "mention_updates")
@@ -699,7 +698,7 @@ def validate_numbering_target_ref_bindings(
             if len(candidates) != 1 or candidates[0].get("object_id") != target_ref["object_id"]:
                 raise NumberingTransactionError(
                     f"Global-numbering PatchOperation {operation_id} TargetRef does not resolve to exactly one "
-                    "registered DOCX object at {role}/{part}/p_idx={target_p_idx}."
+                    f"registered DOCX object at {role}/{part}/p_idx={target_p_idx}."
                 )
             source_record = source_documents.get(role)
             if (
@@ -709,7 +708,6 @@ def validate_numbering_target_ref_bindings(
                 raise NumberingTransactionError(
                     f"Workflow document identity for {role} is not bound to the exact approved source SHA-256."
                 )
-            used_targets.add((role, target_ref["part"], target_ref["object_id"]))
             bound_operations += 1
 
     for role, part, p_idx in expected_target_locations:
