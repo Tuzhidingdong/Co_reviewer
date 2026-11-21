@@ -422,6 +422,46 @@ class V232ContractTests(unittest.TestCase):
                  if d["document"] == "Manuscript" and d["number"] == "2a"),
         )
 
+    def test_reference_graph_records_grouped_and_ranged_mentions_as_manual_relations(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0, "text": "Figure 1. First result."},
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "Figure 2. Second result."},
+                {"part": "word/document.xml", "paragraph_index": 2, "text": "Figure 3. Third result."},
+                {"part": "word/document.xml", "paragraph_index": 3, "text": "Table 1. First table."},
+                {"part": "word/document.xml", "paragraph_index": 4, "text": "Table 2. Second table."},
+                {"part": "word/document.xml", "paragraph_index": 5, "text": "Table 3. Third table."},
+                {"part": "word/document.xml", "paragraph_index": 6,
+                 "text": "See Figs. 1–3 and Tables 1, 2 and 3; also see Fig. 2."},
+            ],
+        })
+        grouped = [
+            row for row in graph["mentions"]
+            if row.get("group_kind") in {"range", "list"}
+        ]
+        self.assertEqual(len(grouped), 2)
+        figure_range = next(row for row in grouped if row["kind"] == "figure")
+        table_list = next(row for row in grouped if row["kind"] == "table")
+        self.assertEqual(figure_range["numbers"], ["1", "3"])
+        self.assertEqual(figure_range["group_kind"], "range")
+        self.assertEqual(table_list["numbers"], ["1", "2", "3"])
+        self.assertEqual(table_list["group_kind"], "list")
+        self.assertEqual(
+            {row["resolution"] for row in grouped},
+            {"manual_review_required"},
+        )
+        self.assertTrue(all(not row["target_definition_ids"] for row in grouped))
+        single = next(
+            row for row in graph["mentions"]
+            if row["document"] == "Manuscript" and row["text"] == "Fig. 2"
+        )
+        self.assertEqual(single["resolution"], "resolved")
+        self.assertEqual(
+            {edge["mention_id"] for edge in graph["edges"]},
+            {single["id"]},
+            "Grouped relations must not be silently expanded into guessed graph edges.",
+        )
+
     def test_reference_graph_recognizes_supplementary_and_extended_data_labels(self):
         graph = build_package_reference_graph({
             "Manuscript": [

@@ -634,9 +634,18 @@ _CAPTION = re.compile(
     rf"(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
 )
+_REFERENCE_GROUP_SEPARATOR = r"(?:[-–]\s*|[,;]\s*(?:and\\s+)?|&\\s*|\\band\\b\\s*)"
+_MENTION_GROUP = re.compile(
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(?:Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
+    rf"\s*\(?\s*(?P<references>{_REFERENCE_NUMBER}"
+    rf"(?:\s*{_REFERENCE_GROUP_SEPARATOR}{_REFERENCE_NUMBER})+)"
+    rf"\s*\)?(?=$|[\s.;:)\]])",
+    re.I,
+)
 _MENTION = re.compile(
     rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
-    rf"(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
+    rf"(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Eqns?\.?|Schemes?|Sections?)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=$|[\s,.;:)\]])",
     re.I,
 )
@@ -874,8 +883,57 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                         } if mechanism == "mixed_with_word_field" else {}),
                     })
 
+            mention_group_spans: list[tuple[int, int]] = []
+            for match in _MENTION_GROUP.finditer(text_value):
+                start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in caption_spans
+                ):
+                    continue
+                references = match.group("references")
+                numbers = re.findall(_REFERENCE_NUMBER, references)
+                if len(numbers) < 2:
+                    continue
+                record_id = "men-" + hashlib.sha1(
+                    (doc_id + segment["part"] + str(segment["paragraph_index"])
+                     + str(start_offset) + match.group()).encode("utf-8")
+                ).hexdigest()[:16]
+                group_kind = (
+                    "range" if re.search(r"[-–]", references)
+                    else "list"
+                )
+                mentions.append({
+                    "id": record_id, **base,
+                    "kind": _canonical_reference_kind(
+                        re.match(
+                            r"(?i)(?:Extended\\s+Data|Supplementary|Supporting\\s+Information\\s+)?"
+                            r"(Figures?|Figs?\\.?|Tables?|Equations?|Eqs?\\.?|Eqns?\\.?|Schemes?|Sections?)",
+                            match.group(0),
+                        ).group(1)
+                    ),
+                    "number": references,
+                    "numbers": numbers,
+                    "group_kind": group_kind,
+                    "text": match.group(),
+                    "offset": start_offset,
+                    "end_offset": end_offset,
+                    "target_definition_ids": [],
+                    "resolution": "manual_review_required",
+                    "resolution_reason": (
+                        "Grouped or ranged cross-references require explicit per-target expansion; "
+                        "the graph does not infer one-to-many edges or numeric ranges."
+                    ),
+                })
+                mention_group_spans.append((start_offset, end_offset))
+
             for match in _MENTION.finditer(text_value):
                 start_offset, end_offset = match.span()
+                if any(
+                    start_offset < right and end_offset > left
+                    for left, right in mention_group_spans
+                ):
+                    continue
                 if any(start_offset >= left and end_offset <= right for left, right in caption_spans):
                     continue
                 kind = _canonical_reference_kind(match.group(1))
