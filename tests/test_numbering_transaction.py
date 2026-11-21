@@ -578,7 +578,7 @@ class NumberingTransactionTests(unittest.TestCase):
             },
             explicit_authorization=True,
         )
-        self.assertEqual(updated["change_counts"]["definitions"], 6)
+        self.assertEqual(len(updated["definition_updates"]), 6)
         self.assertEqual(updated["unresolved_count"], 0)
         self.assertEqual(
             {(row["kind"], str(row["number"])) for row in updated["definitions"]},
