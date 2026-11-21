@@ -155,6 +155,15 @@ class StructureClassifierTests(unittest.TestCase):
             '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
             '<w:ins w:id="11" w:author="Synthetic Author">'
             '<w:r><w:t>inserted</w:t></w:r></w:ins>'
+            '<w:moveFromRangeStart w:id="13"/>'
+            '<w:r><w:t>moved content</w:t></w:r>'
+            '<w:moveFromRangeEnd w:id="13"/>'
+            '<w:customXmlInsRangeStart w:id="14"/>'
+            '<w:r><w:t>custom XML content</w:t></w:r>'
+            '<w:customXmlInsRangeEnd w:id="14"/>'
+            '<w:permStart w:id="15" w:edGrp="everyone"/>'
+            '<w:r><w:t>permitted content</w:t></w:r>'
+            '<w:permEnd w:id="15"/>'
             '<w:r><w:drawing/></w:r>'
             '</w:p>'
         )
@@ -254,6 +263,16 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertIn("text_revision_wrapper", {
             item["kind"] for item in inserted["structure_records"]
         })
+        for text_value, range_kind, range_id in (
+            ("moved content", "move_from_range", "13"),
+            ("custom XML content", "custom_xml_insert_range", "14"),
+            ("permitted content", "permission_range", "15"),
+        ):
+            interior = next(row for row in text_nodes if row.get("text_content") == text_value)
+            self.assertIn(
+                (range_kind, range_id),
+                {(row["range_kind"], row["range_id"]) for row in interior["paired_ranges"]},
+            )
         drawing = next(row for row in events if row["element"] == "drawing")
         self.assertIn("embedded_object", {
             item["kind"] for item in drawing["structure_records"]
