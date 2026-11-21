@@ -5698,19 +5698,16 @@ def _verify_completed_release_package(
     committed_manifest = verify_release_package(
         release_dir, expected_release_id=str(intent.get("release_id"))
     )
+    package_directory = Path(receipt.get("package_directory", "")).expanduser().resolve()
     package_manifest_path = Path(receipt.get("package_manifest_file", "")).expanduser().resolve()
     commit_marker_path = Path(receipt.get("commit_marker_file", "")).expanduser().resolve()
     if (
         receipt.get("package_id") != committed_manifest.get("package_id")
-        or receipt.get("package_directory") != str(
-            Path(receipt.get("package_directory", "")).expanduser().resolve()
-        )
-        or package_manifest_path != (
-            Path(committed_manifest.get("package_id") and receipt.get("package_directory", ""))
-            .expanduser().resolve() / "package_manifest.json"
-        )
+        or receipt.get("package_directory") != str(package_directory)
+        or package_manifest_path != package_directory / "package_manifest.json"
         or not package_manifest_path.is_file()
         or sha256_file(package_manifest_path) != receipt.get("package_manifest_sha256")
+        or commit_marker_path != release_dir / "release_package_commit.json"
         or not commit_marker_path.is_file()
         or sha256_file(commit_marker_path) != receipt.get("commit_marker_sha256")
         or receipt.get("package_artifact_count") != committed_manifest.get("artifact_count")
@@ -6048,6 +6045,10 @@ def cmd_create_release_package(args):
         package_records,
         release_id=intent["release_id"],
         source_release_manifest_sha256=artifacts["final_release_manifest.json"],
+        source_snapshot_hashes={
+            str(workflow_path): workflow_sha_snapshot,
+            str(revision_path): revision_sha_snapshot,
+        },
     )
 
     receipt = {
