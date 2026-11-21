@@ -36,7 +36,7 @@ from co_reviewer.workflow_engine import (
     transition_task,
     validate_workflow_ledger,
 )
-from co_reviewer.workflow_preparation import _refresh_task_evidence
+from co_reviewer.workflow_preparation import prepare_workflow_execution
 
 
 STAMP = "2026-11-21T12:00:00+00:00"
@@ -483,18 +483,34 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
         )
         task_two = next(row for row in workflow["tasks"] if row["task_id"] == "T2")
         self.assertEqual(task_two["status"], "recheck_required")
-        current_pointers = load_active_document_pointers(workflow)
-        inventory_by_role = {
-            "Manuscript": {
+        self.workflow_path.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        refreshed_inventory = [
+            {
+                "role": "Reviewers",
+                "file": str(self.reviewers.resolve()),
+                "source_sha256": _sha(self.reviewers),
+                "comments": [
+                    {"id": "C1", "author": "Reviewer 1"},
+                    {"id": "C2", "author": "Reviewer 1"},
+                ],
+            },
+            {
+                "role": "Manuscript",
+                "file": str(first_output.resolve()),
+                "source_sha256": _sha(first_output),
                 "paragraphs": [{
                     "part": "word/document.xml",
                     "p_idx": 0,
                     "text": "Sample ID: ZB-02.",
-                }]
+                }],
             },
-            "Reviewers": {"comments": []},
-        }
+        ]
         refresh_spec = {
+            "task_id": "T2",
+            "patch_id": "P2",
+            "proposed_response": "We updated the sample identifier from ZB-02 to ZB-03.",
             "evidence": [{
                 "evidence_id": "E-MAN-C2-REFRESH",
                 "document": "Manuscript",
@@ -511,13 +527,64 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
                 "action": "replace",
                 "evidence_ids": ["E-MAN-C2-REFRESH"],
             }],
+            "patch_operations": [{
+                "operation_id": "OP2-PREPARED",
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "ZB-02",
+                "replace": "ZB-03",
+                "location": "Sample ID: ZB-02.",
+                "evidence_ids": ["E-MAN-C2-REFRESH"],
+                "source_comment_ids": ["C2"],
+            }],
+            "response_unit_specs": [{
+                "comment_id": "C2",
+                "disposition": "revised",
+                "location_requirement": "manual_required",
+                "resolution_reason": "The upstream publication changed the active source; T2 was rebound to the newly inventoried paragraph.",
+            }],
         }
         if task_two.get("target_refs"):
             refresh_spec["target_refs"] = task_two["target_refs"]
-        self.assertTrue(_refresh_task_evidence(
-            task_two, refresh_spec, inventory_by_role, current_pointers
+        execution_scope_path = self.root / "T2-refreshed-execution-scope.json"
+        execution_scope = {
+            "schema_version": "1.0",
+            "revision_round_id": workflow["revision_round_id"],
+            "workflow_ledger_sha256": _sha(self.workflow_path),
+            "identity_mode": "legacy_p_idx_explicit",
+            "tasks": [refresh_spec],
+        }
+        _write_json(execution_scope_path, execution_scope)
+        prepared_workflow, refreshed_reviewer_map, preparation_report = prepare_workflow_execution(
+            workflow,
+            execution_scope,
+            refreshed_inventory,
+            workflow_path=self.workflow_path,
+            execution_scope_path=execution_scope_path,
+        )
+        self.assertEqual(preparation_report["status"], "prepared_pending_author_approval")
+        self.assertEqual(preparation_report["refreshed_task_ids"], ["T2"])
+        self.assertEqual(refreshed_reviewer_map["T2"]["comment_ids"]["C2"], "Reviewer 1")
+        task_two = next(row for row in prepared_workflow["tasks"] if row["task_id"] == "T2")
+        prepared_operation = task_two["patch_operations"][0]
+        self.assertEqual(prepared_operation["input_file"], str(first_output.resolve()))
+        self.assertEqual(prepared_operation["source_sha256"], _sha(first_output))
+        self.assertEqual(prepared_operation["find"], "ZB-02")
+        self.assertEqual(prepared_operation["target_identity_mode"], "legacy_p_idx_explicit")
+        self.assertEqual(task_two["response_unit_specs"][0]["location_requirement"], "manual_required")
+        self.assertTrue(any(
+            row["role"] == "Manuscript"
+            and Path(row["file"]).resolve() == first_output.resolve()
+            and row["sha256"] == _sha(first_output)
+            for row in task_two["source_versions"]
         ))
+
+        # Preparation is not authorization. Only the explicit synthetic test
+        # author decision below allows the task to enter the formal execution
+        # state sequence; the prepared evidence/operations remain unchanged.
         task_two = _complete_task(task_two, "T2-REFRESHED")
+        workflow = prepared_workflow
         workflow["tasks"] = [
             task_two if row["task_id"] == "T2" else row for row in workflow["tasks"]
         ]
