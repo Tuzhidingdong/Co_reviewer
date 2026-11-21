@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from docx import Document
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from co_reviewer.manual_suggestion import build_manual_suggestion
@@ -67,16 +69,20 @@ class ManualSuggestionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source_docx = root / "source.docx"
-            source_docx.write_bytes(b"original DOCX bytes")
+            document = Document()
+            document.add_paragraph("Original source.")
+            document.save(source_docx)
             stale_hash = hashlib.sha256(source_docx.read_bytes()).hexdigest()
-            source_docx.write_bytes(b"changed DOCX bytes")
+            changed = Document()
+            changed.add_paragraph("Changed source.")
+            changed.save(source_docx)
             diagnostic = root / "diagnostic.json"
             output = root / "manual-suggestion.json"
             diagnostic.write_text(json.dumps(_payload(
                 source_document_path=str(source_docx),
                 source_sha256=stale_hash,
             )), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "does not match its recorded SHA-256"):
+            with self.assertRaisesRegex(ValueError, "SHA-256 does not match its recorded hash"):
                 cli.cmd_create_manual_suggestion(SimpleNamespace(
                     input=str(diagnostic), out=str(output)
                 ))
@@ -87,7 +93,9 @@ class ManualSuggestionTests(unittest.TestCase):
             root = Path(temp)
             source = root / "diagnostic.json"
             source_docx = root / "source.docx"
-            source_docx.write_bytes(b"exact source DOCX snapshot")
+            document = Document()
+            document.add_paragraph("Exact source snapshot.")
+            document.save(source_docx)
             output = root / "manual-suggestion.json"
             payload = _payload(
                 source_document_path=str(source_docx),
@@ -98,7 +106,10 @@ class ManualSuggestionTests(unittest.TestCase):
             self.assertEqual(result, 0)
             saved = json.loads(output.read_text(encoding="utf-8"))
             self.assertTrue(saved["not_applied"])
-            self.assertEqual(json.loads(source.read_text(encoding="utf-8"))["source_sha256"], HASH)
+            self.assertEqual(
+                json.loads(source.read_text(encoding="utf-8"))["source_sha256"],
+                hashlib.sha256(source_docx.read_bytes()).hexdigest(),
+            )
             with self.assertRaises(FileExistsError):
                 cli.cmd_create_manual_suggestion(SimpleNamespace(input=str(source), out=str(output)))
 
