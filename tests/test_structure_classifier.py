@@ -509,6 +509,173 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertIn("ambiguous across hyperlink", reason)
 
+    def test_ac49_enabled_adapter_acceptance_matrix(self):
+        # AC-49 matrix: each enabled writer path has a positive case, a
+        # boundary/ambiguity case, and a structural negative case. The matrix
+        # deliberately distinguishes an ALLOW_CANDIDATE from edit authorization.
+        matrix = {}
+
+        ordinary_xml = _document(
+            '<w:p><w:r><w:t>ordinary target text</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, ordinary_xml)
+        ordinary_report = classify_docx_structure(self.docx)
+        assert_edit_target_supported(
+            ordinary_report, part="word/document.xml", paragraph_index=0
+        )
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            ordinary_root = parse_xml(archive.read("word/document.xml"))
+        ordinary_para = ordinary_root.find(".//w:p", {"w": W})
+        changed, _, reason = replace_in_paragraph(
+            ordinary_para, "target", "revised",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertTrue(changed, reason)
+        self.assertTrue(ordinary_para.findall(".//w:del", {"w": W}))
+        self.assertTrue(ordinary_para.findall(".//w:ins", {"w": W}))
+        matrix["ordinary_run"] = "PASS"
+
+        link_rels = (
+            f'<Relationships xmlns="{PKG_REL}">'
+            '<Relationship Id="rIdLink" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" '
+            'Target="https://example.invalid" TargetMode="External"/>'
+            '</Relationships>'
+        )
+        hyperlink_xml = _document(
+            '<w:p><w:hyperlink r:id="rIdLink" w:history="1">'
+            '<w:r><w:t>linked target</w:t></w:r>'
+            '</w:hyperlink></w:p>'
+        )
+        _write_docx(self.docx, hyperlink_xml, document_rels=link_rels)
+        hyperlink_report = classify_docx_structure(self.docx)
+        assert_edit_target_supported(
+            hyperlink_report, part="word/document.xml", paragraph_index=0
+        )
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            hyperlink_root = parse_xml(archive.read("word/document.xml"))
+        hyperlink_para = hyperlink_root.find(".//w:p", {"w": W})
+        changed, _, reason = replace_in_paragraph(
+            hyperlink_para, "linked target", "revised link",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertTrue(changed, reason)
+        hyperlink = hyperlink_para.find("w:hyperlink", {"w": W})
+        self.assertEqual(hyperlink.get(f"{{{R}}}id"), "rIdLink")
+        self.assertEqual(hyperlink.get(f"{{{W}}}history"), "1")
+        self.assertTrue(hyperlink.findall(".//w:ins", {"w": W}))
+        matrix["single_hyperlink"] = "PASS"
+
+        bookmark_xml = _document(
+            '<w:p><w:bookmarkStart w:id="7" w:name="protected"/>'
+            '<w:r><w:t>protected anchor text</w:t></w:r>'
+            '<w:bookmarkEnd w:id="7"/>'
+            '<w:r><w:t> independent safe target</w:t></w:r></w:p>'
+        )
+        _write_docx(self.docx, bookmark_xml)
+        bookmark_report = classify_docx_structure(self.docx)
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            bookmark_root = parse_xml(archive.read("word/document.xml"))
+        bookmark_para = bookmark_root.find(".//w:p", {"w": W})
+        allowed = assert_edit_target_supported_with_bounded_safe_span(
+            bookmark_report,
+            part="word/document.xml",
+            paragraph_index=0,
+            paragraph=bookmark_para,
+            part_root=bookmark_root,
+            target_text="independent safe target",
+        )
+        self.assertEqual(allowed["status"], "ALLOW_CANDIDATE")
+        changed, _, reason = replace_in_paragraph(
+            bookmark_para, "independent safe target", "revised safe target",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertTrue(changed, reason)
+        self.assertEqual(len(bookmark_para.findall(".//w:bookmarkStart", {"w": W})), 1)
+        self.assertEqual(len(bookmark_para.findall(".//w:bookmarkEnd", {"w": W})), 1)
+        self.assertTrue(bookmark_para.findall(".//w:ins", {"w": W}))
+        with self.assertRaises(StructureClassificationError):
+            assert_edit_target_supported_with_bounded_safe_span(
+                bookmark_report,
+                part="word/document.xml",
+                paragraph_index=0,
+                paragraph=bookmark_para,
+                part_root=bookmark_root,
+                target_text="protected anchor",
+            )
+        matrix["bookmark_safe_span"] = "PASS"
+
+        negative_fixtures = {
+            "comment_range": (
+                '<w:p><w:commentRangeStart w:id="8"/>'
+                '<w:r><w:t>protected target</w:t></w:r>'
+                '<w:commentRangeEnd w:id="8"/></w:p>'
+            ),
+            "complex_field": (
+                '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                '<w:r><w:instrText> REF _Ref1 </w:instrText></w:r>'
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                '<w:r><w:t>protected target</w:t></w:r>'
+                '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+            ),
+            "drawing": (
+                '<w:p><w:r><w:drawing/></w:r>'
+                '<w:r><w:t>protected target</w:t></w:r></w:p>'
+            ),
+            "nested_table": (
+                '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>outer</w:t></w:r></w:p>'
+                '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>protected target</w:t></w:r>'
+                '</w:p></w:tc></w:tr></w:tbl>'
+                '</w:tc></w:tr></w:tbl>'
+            ),
+        }
+        for adapter, body in negative_fixtures.items():
+            with self.subTest(adapter=adapter):
+                _write_docx(self.docx, _document(body))
+                report = classify_docx_structure(self.docx)
+                target_index = next(
+                    (
+                        row["paragraph_index"]
+                        for row in report["structural_events"]
+                        if row.get("text_content") == "protected target"
+                    ),
+                    None,
+                )
+                self.assertIsInstance(target_index, int)
+                with self.assertRaises(StructureClassificationError):
+                    assert_edit_target_supported(
+                        report,
+                        part="word/document.xml",
+                        paragraph_index=target_index,
+                    )
+                matrix[adapter] = "BLOCKED_AS_REQUIRED"
+
+        # No enabled adapter may synthesize a match across a hyperlink
+        # container boundary, even if the visible concatenated text matches.
+        crossing = parse_xml(
+            f'<w:p xmlns:w="{W}" xmlns:r="{R}">'
+            '<w:r><w:t>across </w:t></w:r>'
+            '<w:hyperlink r:id="rIdLink"><w:r><w:t>boundary</w:t></w:r></w:hyperlink>'
+            '</w:p>'
+        )
+        changed, _, reason = replace_in_paragraph(
+            crossing, "across boundary", "unsafe merge",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertFalse(changed)
+        self.assertIn("not found", reason)
+        matrix["cross_container_boundary"] = "BLOCKED_AS_REQUIRED"
+
+        self.assertEqual(
+            set(matrix),
+            {
+                "ordinary_run", "single_hyperlink", "bookmark_safe_span",
+                "comment_range", "complex_field", "drawing", "nested_table",
+                "cross_container_boundary",
+            },
+        )
+        self.assertTrue(all(value in {"PASS", "BLOCKED_AS_REQUIRED"} for value in matrix.values()))
+
     def test_complex_word_field_crossing_paragraphs_maps_result_and_blocks_target(self):
         body = (
             '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>'
