@@ -38,18 +38,23 @@ class ReleasePackageTransactionTests(unittest.TestCase):
         sources = round_root / "sources"
         sources.mkdir()
         runs = round_root / "runs"
-        batch_dir = runs / "batch-b001"
-        documents_dir = batch_dir / "documents"
-        documents_dir.mkdir(parents=True)
+        batch_one_dir = runs / "batch-b001"
+        batch_two_dir = runs / "batch-b002"
+        batch_one_documents = batch_one_dir / "documents"
+        batch_two_documents = batch_two_dir / "documents"
+        batch_one_documents.mkdir(parents=True)
+        batch_two_documents.mkdir(parents=True)
 
         initial = sources / "论文初稿.docx"
-        marked = documents_dir / "Manuscript.marked.docx"
+        batch_one_marked = batch_one_documents / "Manuscript.marked.docx"
+        marked = batch_two_documents / "Manuscript.marked.docx"
         working_clean = runs / "Manuscript.working-clean.docx"
         final_clean = runs / "Manuscript.final-clean.docx"
         response_docx = round_root / "Response_to_Reviewers.docx"
         for path, text in (
             (initial, "Original manuscript"),
-            (marked, "Marked manuscript"),
+            (batch_one_marked, "First published Marked manuscript"),
+            (marked, "Second published Marked manuscript"),
             (working_clean, "Working Clean manuscript"),
             (final_clean, "Final Clean manuscript"),
             (response_docx, "Response to Reviewers"),
@@ -79,9 +84,91 @@ class ReleasePackageTransactionTests(unittest.TestCase):
         intent_path = round_root / "release_package_intent.json"
         intent_path.write_text('{"schema_version":"1.0","status":"building"}\n', encoding="utf-8")
 
-        (batch_dir / "batch_intent.json").write_text('{"batch_id":"b001"}\n', encoding="utf-8")
-        (batch_dir / "batch_scope.json").write_text('{"batch_id":"b001"}\n', encoding="utf-8")
-        (batch_dir / "batch_published.json").write_text('{"batch_id":"b001"}\n', encoding="utf-8")
+        initial_sha = _sha(initial)
+        batch_one_sha = _sha(batch_one_marked)
+        batch_two_sha = _sha(marked)
+        batch_one_intent = {
+            "batch_id": "b001",
+            "selected_task_ids": ["T1"],
+            "documents": {
+                "Manuscript": {
+                    "parent_file": str(initial),
+                    "parent_sha256": initial_sha,
+                    "output_file": str(batch_one_marked),
+                }
+            },
+        }
+        batch_one_intent_path = batch_one_dir / "batch_intent.json"
+        batch_one_intent_path.write_text(
+            json.dumps(batch_one_intent, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        batch_one_scope = {
+            "batch_id": "b001",
+            "batch_intent_sha256": _sha(batch_one_intent_path),
+            "documents": {"Manuscript": {
+                "input_file": str(initial),
+                "input_sha256": initial_sha,
+                "output_file": str(batch_one_marked),
+            }},
+        }
+        (batch_one_dir / "batch_scope.json").write_text(
+            json.dumps(batch_one_scope, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (batch_one_dir / "batch_published.json").write_text(
+            json.dumps({
+                "batch_id": "b001",
+                "status": "published",
+                "active_documents": {"Manuscript": {
+                    "file": str(batch_one_marked),
+                    "sha256": batch_one_sha,
+                    "batch_id": "b001",
+                }},
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        batch_two_intent = {
+            "batch_id": "b002",
+            "selected_task_ids": ["T2"],
+            "documents": {
+                "Manuscript": {
+                    "parent_file": str(batch_one_marked),
+                    "parent_sha256": batch_one_sha,
+                    "output_file": str(marked),
+                }
+            },
+        }
+        batch_two_intent_path = batch_two_dir / "batch_intent.json"
+        batch_two_intent_path.write_text(
+            json.dumps(batch_two_intent, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        batch_two_scope = {
+            "batch_id": "b002",
+            "batch_intent_sha256": _sha(batch_two_intent_path),
+            "documents": {"Manuscript": {
+                "input_file": str(batch_one_marked),
+                "input_sha256": batch_one_sha,
+                "output_file": str(marked),
+            }},
+        }
+        (batch_two_dir / "batch_scope.json").write_text(
+            json.dumps(batch_two_scope, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (batch_two_dir / "batch_published.json").write_text(
+            json.dumps({
+                "batch_id": "b002",
+                "status": "published",
+                "active_documents": {"Manuscript": {
+                    "file": str(marked),
+                    "sha256": batch_two_sha,
+                    "batch_id": "b002",
+                }},
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
         manifest = {
             "schema_version": "1.0",
@@ -95,22 +182,22 @@ class ReleasePackageTransactionTests(unittest.TestCase):
                 "Manuscript": {
                     "file": str(marked),
                     "sha256": _sha(marked),
-                    "batch_id": "b001",
+                    "batch_id": "b002",
                 }
             },
             "marked_documents": {
                 "Manuscript": {
                     "active_file": str(marked),
                     "active_sha256": _sha(marked),
-                    "active_batch_id": "b001",
+                    "active_batch_id": "b002",
                     "working_clean_file": str(working_clean),
                     "working_clean_sha256": _sha(working_clean),
                 }
             },
-            "batches": [{
-                "batch_id": "b001",
-                "directory": str(batch_dir),
-            }],
+            "batches": [
+                {"batch_id": "b001", "directory": str(batch_one_dir)},
+                {"batch_id": "b002", "directory": str(batch_two_dir)},
+            ],
             "recovered_batches": [],
             "final_documents": {
                 "Manuscript": {
@@ -198,6 +285,24 @@ class ReleasePackageTransactionTests(unittest.TestCase):
                 for category in item["categories"]
             }
             self.assertTrue({"initial-source", "marked-active", "working-clean", "final-clean", "final-pdf", "source-ledger", "response-artifact", "batches-history"}.issubset(categories))
+            batch_history_names = {
+                name
+                for row in manifest["artifacts"]
+                for name in row.get("logical_names", [])
+                if name.startswith("batches/")
+            }
+            self.assertTrue(any(name.startswith("batches/b001/") for name in batch_history_names))
+            self.assertTrue(any(name.startswith("batches/b002/") for name in batch_history_names))
+            self.assertTrue(any(
+                row.get("path", "").endswith("Manuscript.marked.docx")
+                and "b001" in row.get("roles", [])
+                for row in manifest["artifacts"]
+            ))
+            self.assertTrue(any(
+                row.get("path", "").endswith("Manuscript.marked.docx")
+                and "b002" in row.get("roles", [])
+                for row in manifest["artifacts"]
+            ))
 
             again = commit_release_package(
                 fixture["release_dir"],
