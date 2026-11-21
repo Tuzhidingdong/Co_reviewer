@@ -24,6 +24,28 @@ def _run(text):
     return run
 
 
+def _paired_range_docx(path, start_local, end_local, *, range_id="7"):
+    document = Document()
+    document.add_paragraph("placeholder")
+    document.save(path)
+    with zipfile.ZipFile(path, "r") as source:
+        members = {name: source.read(name) for name in source.namelist()}
+    root = ET.fromstring(members["word/document.xml"])
+    paragraph = root.find(".//w:body/w:p", NS)
+    for child in list(paragraph):
+        if child.tag != f"{{{W}}}pPr":
+            paragraph.remove(child)
+    start = ET.Element(f"{{{W}}}{start_local}", {f"{{{W}}}id": range_id})
+    end = ET.Element(f"{{{W}}}{end_local}", {f"{{{W}}}id": range_id})
+    paragraph.extend([start, _run("protected wording"), end, _run("safe wording")])
+    members["word/document.xml"] = ET.tostring(
+        root, encoding="utf-8", xml_declaration=True
+    )
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
+        for name, payload in members.items():
+            target.writestr(name, payload)
+
+
 def _bookmark_docx(path, safe_text="safe wording"):
     document = Document()
     document.add_paragraph("placeholder")
@@ -132,6 +154,72 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
                 )
             self.assertEqual(format_source.read_bytes(), format_before)
             self.assertFalse(format_output.exists())
+
+    def test_prepare_document_edits_only_text_outside_comment_and_permission_ranges(self):
+        for label, start_local, end_local in (
+            ("comment", "commentRangeStart", "commentRangeEnd"),
+            ("permission", "permStart", "permEnd"),
+        ):
+            with self.subTest(range_kind=label), tempfile.TemporaryDirectory() as temp:
+                source = Path(temp) / "source.docx"
+                output = Path(temp) / "marked.docx"
+                _paired_range_docx(source, start_local, end_local)
+                source_before = source.read_bytes()
+
+                prepared = prepare_document(
+                    str(source), str(output),
+                    [{
+                        "part": "word/document.xml",
+                        "p_idx": 0,
+                        "find": "safe wording",
+                        "replace": "revised wording",
+                        "document": "Manuscript",
+                    }],
+                    "Test Author",
+                )
+                result = prepared["report"]["results"][0]
+                self.assertEqual(result["structure_safety"]["method"], "bounded_safe_span_v1")
+                kinds = set(result["structure_safety"]["bounded_structure_kinds"])
+                self.assertIn(
+                    "comment_range" if label == "comment" else "permission_range",
+                    kinds,
+                )
+                self.assertEqual(source.read_bytes(), source_before)
+
+                with zipfile.ZipFile(io.BytesIO(prepared["payload"]), "r") as archive:
+                    revised = ET.fromstring(archive.read("word/document.xml"))
+                self.assertEqual(
+                    len(revised.findall(f".//w:{start_local}", NS)),
+                    1,
+                )
+                self.assertEqual(
+                    len(revised.findall(f".//w:{end_local}", NS)),
+                    1,
+                )
+                self.assertEqual(
+                    "".join(node.text or "" for node in revised.findall(".//w:ins//w:t", NS)),
+                    "revised wording",
+                )
+                self.assertEqual(
+                    "".join(node.text or "" for node in revised.findall(".//w:del//w:t", NS)),
+                    "safe wording",
+                )
+
+                blocked_output = Path(temp) / "blocked.docx"
+                with self.assertRaises(ManualFallbackRequired) as caught:
+                    prepare_document(
+                        str(source), str(blocked_output),
+                        [{
+                            "part": "word/document.xml",
+                            "p_idx": 0,
+                            "find": "protected wording",
+                            "replace": "must not change",
+                            "document": "Manuscript",
+                        }],
+                        "Test Author",
+                    )
+                self.assertTrue(caught.exception.suggestion["not_applied"])
+                self.assertFalse(blocked_output.exists())
 
     def test_prepare_document_returns_unapplied_manual_suggestion_for_text_inside_bookmark(self):
         with tempfile.TemporaryDirectory() as temp:
