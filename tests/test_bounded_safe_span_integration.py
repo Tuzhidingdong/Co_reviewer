@@ -157,6 +157,7 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
 
     def test_prepare_document_edits_only_text_outside_comment_and_permission_ranges(self):
         for label, start_local, end_local in (
+            ("comment", "commentRangeStart", "commentRangeEnd"),
             ("permission", "permStart", "permEnd"),
         ):
             with self.subTest(range_kind=label), tempfile.TemporaryDirectory() as temp:
@@ -205,19 +206,38 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
                 )
 
                 blocked_output = Path(temp) / "blocked.docx"
-                with self.assertRaises(ManualFallbackRequired) as caught:
-                    prepare_document(
-                        str(source), str(blocked_output),
-                        [{
-                            "part": "word/document.xml",
-                            "p_idx": 0,
-                            "find": "protected wording",
-                            "replace": "must not change",
-                            "document": "Manuscript",
-                        }],
-                        "Test Author",
-                    )
-                self.assertTrue(caught.exception.suggestion["not_applied"])
+                if label == "comment":
+                    # Comment ranges are also present in the historical baseline.
+                    # The exact range lets disjoint edits pass, but an edit inside
+                    # a reviewer comment still requires an explicit history decision.
+                    with self.assertRaisesRegex(
+                        ValueError, "HISTORICAL_REVISION_OVERLAP_USER_DECISION_REQUIRED"
+                    ):
+                        prepare_document(
+                            str(source), str(blocked_output),
+                            [{
+                                "part": "word/document.xml",
+                                "p_idx": 0,
+                                "find": "protected wording",
+                                "replace": "must not change",
+                                "document": "Manuscript",
+                            }],
+                            "Test Author",
+                        )
+                else:
+                    with self.assertRaises(ManualFallbackRequired) as caught:
+                        prepare_document(
+                            str(source), str(blocked_output),
+                            [{
+                                "part": "word/document.xml",
+                                "p_idx": 0,
+                                "find": "protected wording",
+                                "replace": "must not change",
+                                "document": "Manuscript",
+                            }],
+                            "Test Author",
+                        )
+                    self.assertTrue(caught.exception.suggestion["not_applied"])
                 self.assertFalse(blocked_output.exists())
 
     def test_prepare_document_returns_unapplied_manual_suggestion_for_text_inside_bookmark(self):
