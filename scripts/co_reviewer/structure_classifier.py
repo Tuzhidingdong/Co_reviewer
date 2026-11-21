@@ -996,6 +996,7 @@ def _classify_members(
     )).hexdigest()
     issues: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
+    structural_events: list[dict[str, Any]] = []
     package_names = set(members)
 
     for name in sorted(package_names):
@@ -1258,6 +1259,14 @@ def _classify_members(
             part=part, root=root, source_sha256=digest,
             paragraph_indices=paragraph_indices, records=records, issues=issues,
         )
+        structural_events.extend(_build_structural_event_map(
+            part,
+            root,
+            source_sha256=digest,
+            paragraph_indices=paragraph_indices,
+            records=records,
+            relationships=relationships_by_source.get(part, {}),
+        ))
 
     # A relationship issue inside a specific paragraph is a local edit blocker.
     blocked_package_codes = {
@@ -1277,6 +1286,10 @@ def _classify_members(
         "structures": len(records),
         "structures_by_kind": dict(sorted(Counter(item["kind"] for item in records).items())),
         "structures_by_status": dict(sorted(Counter(item["status"] for item in records).items())),
+        "structural_events": len(structural_events),
+        "structural_events_by_kind": dict(sorted(
+            Counter(item["event_kind"] for item in structural_events).items()
+        )),
         "issues_by_code": dict(sorted(Counter(item["code"] for item in issues).items())),
     }
     return {
@@ -1288,6 +1301,7 @@ def _classify_members(
         "parts": parts,
         "relationships": relationships,
         "structures": records,
+        "structural_events": structural_events,
         "issues": issues,
         "summary": summary,
     }
