@@ -888,6 +888,34 @@ class V232ContractTests(unittest.TestCase):
         self.assertEqual([row["number"] for row in citations], ["1"])
         self.assertFalse(any(row.get("text") == "(2)" for row in citations))
 
+    def test_unresolved_grouped_citation_blocks_renumbering_of_any_group_member(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {"part": "word/document.xml", "paragraph_index": 0,
+                 "text": "[1] Smith. One."},
+                {"part": "word/document.xml", "paragraph_index": 1,
+                 "text": "[2] Jones. Two."},
+                {"part": "word/document.xml", "paragraph_index": 2,
+                 "text": "Prior work (1, 2) supports the method.",
+                 "citation_profile_modes": ["numeric_parenthetical"]},
+            ],
+        })
+        grouped = next(
+            row for row in graph["mentions"]
+            if row.get("group_kind") == "list"
+        )
+        self.assertEqual(grouped["numbers"], ["1", "2"])
+        self.assertEqual(grouped["resolution"], "manual_review_required")
+        with self.assertRaisesRegex(
+            ContractError,
+            "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION",
+        ):
+            renumber_reference_graph(
+                graph,
+                {"Manuscript::citation::1": "3"},
+                explicit_authorization=True,
+            )
+
     def test_reference_graph_does_not_guess_parenthetical_numeric_citations_without_style_evidence(self):
         graph = build_package_reference_graph({
             "Manuscript": [

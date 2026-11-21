@@ -1461,6 +1461,11 @@ def renumber_reference_graph(
             else mention.get("target_definition_ids", [])
         )
         direct_change = (document, kind, number) in normalized_map
+        grouped_member_change = any(
+            isinstance(member, str)
+            and (document, kind, member) in normalized_map
+            for member in mention.get("numbers", [])
+        )
         range_change = False
         if kind == "citation" and re.fullmatch(r"\d+[-–]\d+", number):
             left, right = re.split(r"[-–]", number)
@@ -1472,7 +1477,12 @@ def renumber_reference_graph(
                 for map_document, map_kind, map_number in normalized_map
                 if map_number.isdigit()
             )
-        affected = direct_change or bool(set(candidates) & changed_definition_ids) or range_change
+        affected = (
+            direct_change
+            or grouped_member_change
+            or bool(set(candidates) & changed_definition_ids)
+            or range_change
+        )
         if affected and resolution not in {"resolved", "confirmed_by_user", "ambiguous"}:
             raise ContractError(
                 "UNRESOLVED_REFERENCE_BLOCKS_NUMBERING_PROPAGATION: "
