@@ -68,6 +68,7 @@ class WordPdfMapperContractTests(unittest.TestCase):
             "output_file": str(self.marked_docx),
             "part": "word/document.xml",
             "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "find": "old phrase",
             "replace": "new phrase",
             "source_sha256": sha256_file(self.input_docx),
