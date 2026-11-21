@@ -28,6 +28,22 @@ class ReleasePackageTransactionError(ValueError):
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
+def _validate_release_package_schema(payload: Mapping[str, Any], schema_name: str) -> None:
+    schema_path = Path(__file__).resolve().parents[2] / "schemas" / schema_name
+    if not schema_path.is_file():
+        raise ReleasePackageTransactionError(f"Required Release Package schema is missing: {schema_path}")
+    try:
+        import jsonschema
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(
+            schema, format_checker=jsonschema.FormatChecker()
+        ).validate(payload)
+    except Exception as exc:
+        raise ReleasePackageTransactionError(
+            f"Release Package object does not satisfy {schema_name}: {exc}"
+        ) from exc
+
+
 def _canonical_json(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -417,7 +433,9 @@ def _package_manifest_payload(
         "artifacts": rows,
     }
     package_id = _sha256_bytes(_canonical_json(payload))
-    return {"package_id": package_id, **payload}
+    manifest = {"package_id": package_id, **payload}
+    _validate_release_package_schema(manifest, "committed-release-package.schema.json")
+    return manifest
 
 
 def _write_json_new(path: Path, payload: Mapping[str, Any]) -> None:
@@ -490,6 +508,7 @@ def verify_release_package(
     manifest_core = {key: value for key, value in package_manifest.items() if key != "package_id"}
     if _sha256_bytes(_canonical_json(manifest_core)) != package_id:
         raise ReleasePackageTransactionError("Release Package ID is not the hash of its immutable manifest contents.")
+    _validate_release_package_schema(package_manifest, "committed-release-package.schema.json")
     rows = package_manifest["artifacts"]
     if package_manifest.get("artifact_count") != len(rows) or len(rows) != marker.get("artifact_count"):
         raise ReleasePackageTransactionError("Release Package manifest artifact count does not match its commit marker.")
