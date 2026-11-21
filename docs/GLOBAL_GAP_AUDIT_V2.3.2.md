@@ -48,7 +48,7 @@ Status meanings:
 | 04 | Plan Protection | PASS / SCOPED | Frozen plan is on its own branch and was not changed by the RC implementation line. Keep immutable. |
 | 05 | Round Isolation | IMPLEMENTED / UNVERIFIED | Round starter, manifests and path containment are present; complete lifecycle evidence remains tied to AC-45. |
 | 06 | Source Integrity | IMPLEMENTED / UNVERIFIED | Source hashes and immutable input checks exist; confirm through global acceptance, including multi-document paths. |
-| 07 | Cache Reuse | IMPLEMENTED / UNVERIFIED + SCOPE REVIEW | RC has document-read/cache observations. PR #2 has a separate hash-keyed PDF/JSON/XML/CrossRef evidence cache. Decide and selectively integrate relevant context-reduction capability; do not merge its divergent branch wholesale. |
+| 07 | Cache Reuse | IMPLEMENTED / UNVERIFIED | PR #9 includes SHA-256 keyed DOCX inventory reuse, PDF text/geometry/selected-render cache, bounded JSON/JSONL/XML structural summaries with exact JSON Pointers, all-record CrossRef indexing, cache-artifact hash verification/rebuild, and whole-role Word/PDF mapping reuse guarded by current Clean DOCX and all output/PDF hashes. Tests cover reuse, source/parameter invalidation and tampered-artifact rebuild; full AC-07 integrated real-round acceptance remains part of WS-5. |
 | 08 | Comment Coverage | IMPLEMENTED / UNVERIFIED | Audit, Decision Plan and ResponseUnit coverage gates exist; prove every comment reaches exactly one terminal disposition in complete round. |
 | 09 | Evidence Grounding | IMPLEMENTED / UNVERIFIED | Exact evidence/target validation exists; current integrated round coverage is incomplete. |
 | 10 | Historical Gate | IMPLEMENTED / UNVERIFIED | Hash-bound historical inventory and target-scoped resolver exist; unsupported structure cases remain blocked. |
@@ -131,7 +131,7 @@ GitHub compare metadata and patches establish:
 | PR | Branch relationship | Finding | Disposition |
 |---|---|---|---|
 | #1 | `upgrade/foundation-v0.2` is an ancestor of P0; PR #1 head is contained in P0/P1/PR #9 | Foundation implementation is already in the selected integration ancestry | Superseded by PR #9; close as superseded |
-| #2 | `upgrade/v0.3-evidence-pipeline` diverged from foundation: 31 commits ahead and 39 behind; its evidence_tools.py and evidence-pipeline docs are absent from RC | Unique model-agnostic PDF/JSON/XML/CrossRef extraction/cache capability may support AC-07 and context optimization; do not merge branch wholesale | Keep open for selective scope audit/port decision |
+| #2 | `upgrade/v0.3-evidence-pipeline` remains divergent (31 commits ahead and 39 behind its foundation base); PR #2's branch is not part of PR #9 ancestry | Its required model-agnostic PDF/JSON/JSONL/XML/CrossRef extraction/cache capability has already been selectively ported and extended on PR #9, with stronger cache artifact-integrity checks and tests | Keep PR #2 open/unmerged for historical review; no duplicate port or wholesale merge |
 | #3 | P1 implementation branch is ancestor of PR #9 | P1 core workflow is in selected integration ancestry | Superseded by PR #9; close as superseded |
 | #4 | V2.3.2 format-integrity branch is ancestor of PR #8 and PR #9 | Its contract/format/authorization safeguards are included | Superseded by PR #9; close as superseded |
 | #5 | 4 commits after PR #4; ancestor of #6/#7/#8/#9 | Word settings/proofing anchor increment included later | Superseded by PR #9; close as superseded |
@@ -140,7 +140,7 @@ GitHub compare metadata and patches establish:
 | #8 | 5 additional commits after #7; exact PR #8 head is the merge base of PR #9 | Latest bookmark body-boundary implementation is already the PR #9 parent | Superseded by PR #9; close as superseded |
 | #9 | Selected RC line; includes P1 and PR #4–#8 ancestry | Sole active engineering integration PR | Keep Draft/Open until M1 evidence is complete |
 
-No PR was merged. `main` remains unchanged. PR #2 must not be forgotten: it contains unique code not in the selected line. Its features should be assessed against AC-07 and §3.6, then ported selectively only if they fit the frozen scope and do not duplicate/contradict current usage/cache mechanisms.
+No PR was merged. `main` remains unchanged. PR #2 remains open and divergent for historical review, but its in-scope AC-07/§3.6 evidence-extraction and context-cache capability is already selectively integrated and extended in PR #9 as recorded in `docs/PR2_SCOPE_DISPOSITION_V2.3.2.md`. Do not merge PR #2 or port the same tools again.
 
 ## 6. Explicit non-goals and M2 boundary
 
