@@ -27,6 +27,7 @@ from co_reviewer.numbering_transaction import (
     validate_numbering_patch_operation_coverage,
     verify_numbering_package_outputs,
     verify_numbering_batch_candidate_before_publication,
+    assert_numbering_candidate_hashes_unchanged,
 )
 from co_reviewer.v232_contract import (
     ContractError,
@@ -458,9 +459,32 @@ class NumberingTransactionTests(unittest.TestCase):
                 result["patch_operation_coverage"]["target_paragraph_count"],
                 len(required_targets),
             )
+            assert_numbering_candidate_hashes_unchanged(result)
+
+            # A post-verification byte change (even one outside the reference
+            # text) must be caught immediately before active-pointer mutation.
+            changed_role = plan["affected_document_roles"][0]
+            with candidate_outputs[changed_role].open("ab") as stream:
+                stream.write(b"tampered-after-graph-verification")
+            with self.assertRaisesRegex(
+                NumberingTransactionError,
+                "changed after reference-graph verification",
+            ):
+                assert_numbering_candidate_hashes_unchanged(result)
 
             # A candidate with the unmodified parent files must be stopped
             # before publish_active_pointers can switch any active document.
+            # Restore the exact candidate bytes so the separate stale-graph
+            # negative case exercises graph consistency rather than the hash guard.
+            for role, output_path in candidate_outputs.items():
+                document = Document(sources[role])
+                for paragraph in document.paragraphs:
+                    paragraph.text = (
+                        paragraph.text
+                        .replace("Figure 1", "Figure 2")
+                        .replace("Fig. 1", "Fig. 2")
+                    )
+                document.save(output_path)
             stale_intent = json.loads(json.dumps(intent))
             stale_scope = json.loads(json.dumps(scope))
             for role in plan["affected_document_roles"]:

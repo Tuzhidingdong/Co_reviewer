@@ -749,6 +749,41 @@ def verify_numbering_batch_candidate_before_publication(
     }
 
 
+def assert_numbering_candidate_hashes_unchanged(
+    verification: Mapping[str, Any],
+) -> None:
+    """Recheck the exact graph-verified DOCX bytes immediately before publication."""
+    if not isinstance(verification, Mapping) or verification.get("prepublication_gate") != "PASS":
+        raise NumberingTransactionError(
+            "Numbering candidate hash guard requires a successful pre-publication graph verification."
+        )
+    output_documents = verification.get("output_documents")
+    if not isinstance(output_documents, Mapping) or not output_documents:
+        raise NumberingTransactionError(
+            "Numbering candidate hash guard has no verified output-document records."
+        )
+    for role, record in output_documents.items():
+        if not isinstance(role, str) or not isinstance(record, Mapping):
+            raise NumberingTransactionError(
+                "Numbering candidate hash guard contains a malformed output-document record."
+            )
+        path = _assert_no_symlink_path(
+            record.get("file", ""), f"Graph-verified candidate DOCX for {role}"
+        )
+        expected_sha = record.get("sha256")
+        if (
+            not isinstance(expected_sha, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)
+            or not path.is_file()
+            or sha256_file(path) != expected_sha
+        ):
+            raise NumberingTransactionError(
+                f"Candidate DOCX for {role} changed after reference-graph verification; "
+                "refusing publication."
+            )
+
+
+
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

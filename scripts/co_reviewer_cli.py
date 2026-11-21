@@ -5419,6 +5419,7 @@ def cmd_publish_batch(args):
             + ", ".join(unverified)
         )
 
+    numbering_gate = None
     numbering_task_ids = [
         task_id for task_id in batch_task_ids
         if workflow_tasks.get(task_id, {}).get("task_type") == "global_numbering"
@@ -5440,6 +5441,7 @@ def cmd_publish_batch(args):
         numbering_approval = _read_json_object(numbering_approval_path, "Numbering author approval")
         from co_reviewer.numbering_transaction import (
             verify_numbering_batch_candidate_before_publication,
+            assert_numbering_candidate_hashes_unchanged,
         )
         numbering_gate = verify_numbering_batch_candidate_before_publication(
             numbering_plan, numbering_approval, workflow, intent, scope
@@ -5520,6 +5522,11 @@ def cmd_publish_batch(args):
                 "Workflow Ledger changed during publication; the active pointer update was not committed. "
                 "Reload workflow state and retry this same batch."
             )
+    if numbering_gate is not None:
+        # Re-hash every DOCX that contributed to the approved final graph after
+        # all other publication checks and immediately before pointer mutation.
+        assert_numbering_candidate_hashes_unchanged(numbering_gate)
+    if not pointers_already_committed:
         write_json_atomic(workflow_path, updated)
     write_json_new(batch_dir / "batch_published.json", receipt)
     print(f"[PUBLISHED] Batch {intent['batch_id']}")

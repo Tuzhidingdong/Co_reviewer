@@ -342,6 +342,81 @@ class StructureClassifierTests(unittest.TestCase):
                         target_text="target wording",
                     )
 
+    def test_bounded_safe_span_maps_multiple_nested_and_intersecting_bookmarks(self):
+        body = (
+            '<w:p>'
+            '<w:r><w:t>outside target</w:t></w:r>'
+            '<w:bookmarkStart w:id="10" w:name="outer"/>'
+            '<w:r><w:t>outer protected </w:t></w:r>'
+            '<w:bookmarkStart w:id="11" w:name="nested"/>'
+            '<w:r><w:t>nested protected</w:t></w:r>'
+            '<w:bookmarkEnd w:id="11"/>'
+            '<w:r><w:t> outer continuation</w:t></w:r>'
+            '<w:bookmarkEnd w:id="10"/>'
+            '<w:r><w:t>independent safe</w:t></w:r>'
+            '<w:bookmarkStart w:id="12" w:name="intersect-a"/>'
+            '<w:r><w:t>cross one</w:t></w:r>'
+            '<w:bookmarkStart w:id="13" w:name="intersect-b"/>'
+            '<w:r><w:t>overlap middle</w:t></w:r>'
+            '<w:bookmarkEnd w:id="12"/>'
+            '<w:r><w:t>cross two</w:t></w:r>'
+            '<w:bookmarkEnd w:id="13"/>'
+            '<w:r><w:t>tail safe</w:t></w:r>'
+            '</w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        bookmark_ranges = [
+            item for item in report["structures"]
+            if item.get("kind") == "bookmark_range"
+        ]
+        self.assertEqual(
+            {item["details"]["range_id"] for item in bookmark_ranges},
+            {"10", "11", "12", "13"},
+        )
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            part_root = parse_xml(archive.read("word/document.xml"))
+        paragraph = part_root.find(".//w:p", {"w": W})
+        self.assertIsNotNone(paragraph)
+
+        marker_events = [
+            item for item in report["structural_events"]
+            if item.get("element") in {"bookmarkStart", "bookmarkEnd"}
+        ]
+        mapped_range_ids = {
+            link["range_id"]
+            for event in marker_events
+            for link in event.get("paired_ranges", [])
+            if link.get("range_kind") == "bookmark_range"
+        }
+        self.assertEqual(mapped_range_ids, {"10", "11", "12", "13"})
+
+        for target in ("outside target", "independent safe", "tail safe"):
+            with self.subTest(target=target):
+                result = assert_edit_target_supported_with_bounded_safe_span(
+                    report,
+                    part="word/document.xml",
+                    paragraph_index=0,
+                    paragraph=paragraph,
+                    part_root=part_root,
+                    target_text=target,
+                )
+                self.assertTrue(result["allowed"])
+                self.assertEqual(
+                    set(result["intersecting_bookmark_structure_ids"]),
+                    {item["structure_id"] for item in bookmark_ranges},
+                )
+
+        with self.assertRaisesRegex(StructureClassificationError, "does not map"):
+            assert_edit_target_supported_with_bounded_safe_span(
+                report,
+                part="word/document.xml",
+                paragraph_index=0,
+                paragraph=paragraph,
+                part_root=part_root,
+                target_text="independent safecross one",
+            )
+
     def test_single_hyperlink_adapter_preserves_relationship_and_rejects_ambiguity(self):
         paragraph = parse_xml(
             f'<w:p xmlns:w="{W}" xmlns:r="{R}">'
