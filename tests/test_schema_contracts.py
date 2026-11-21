@@ -4,6 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
+from jsonschema.exceptions import ValidationError
 from jsonschema.validators import validator_for
 
 
@@ -155,14 +156,14 @@ class JsonSchemaContractTests(unittest.TestCase):
 
         implicit_legacy = json.loads(json.dumps(valid_ledger))
         implicit_legacy["patches"][0]["operations"][0].pop("target_identity_mode")
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             ledger_validator.validate(implicit_legacy)
 
         null_target_without_mode = json.loads(json.dumps(valid_ledger))
         null_operation = null_target_without_mode["patches"][0]["operations"][0]
         null_operation["target_ref"] = None
         null_operation.pop("target_identity_mode")
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             ledger_validator.validate(null_target_without_mode)
 
         stable_target = json.loads(json.dumps(valid_ledger))
