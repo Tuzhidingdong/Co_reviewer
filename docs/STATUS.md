@@ -9,18 +9,18 @@
 |---|---|
 | Repository | `Tuzhidingdong/Co_reviewer` |
 | Effective integration branch | `upgrade/v0.5.1-p1-rc-closeout-20261120` |
-| Last source/test-validated HEAD | `dfd77a1ac7dc9c9cc39006246c97cb953fc9e98c` |
-| Status snapshot commit | This documentation update; implementation and test files are unchanged from the validated HEAD |
+| Last source/test-validated HEAD | `6b14a941dc491d739f8899d8999e54422a658c37` |
+| Status snapshot commit | This documentation-only snapshot is based on the validated code/test HEAD above; it does not change implementation or test evidence |
 | Parent / frozen baseline | `8b77863329163d853c90bbfb5872fc313e2eaa76` |
 | Parent branch | `docs/freeze-global-user-task-plan-v2.3.2-20261120` |
 | Frozen plan | `docs/USER_TASK_PLAN_V2.3.2_GLOBAL.md` |
 | Draft PR | [#9 — V2.3.2 RC closeout](https://github.com/Tuzhidingdong/Co_reviewer/pull/9) |
 | `main` | Not modified |
-| Existing PRs #1/#2/#3 | Draft/Open historical PRs; not merged by this work; final diff/dependency reconciliation remains open |
-| Current M1 decision | **PUSH CI GREEN / INTEGRATION CANDIDATE; NOT FORMAL RC READY** — AC-45 full two-batch Release Package rerun, AC-13/AC-25–30/AC-49 remaining identity and structural coverage, PR #2 scope disposition, branch convergence and post-change Word COM/PDF evidence remain open. AC-31 now has a tested integrated numbering Package Transaction path, but does not close full-round acceptance |
+| Existing PRs | PR #1 and #3–#8 are closed as superseded and their implementation ancestry is contained in PR #9; PR #2 remains open, divergent and unmerged with its explicit M1 scope disposition recorded |
+| Current M1 decision | **CI GREEN / IMPLEMENTATION CANDIDATE; NOT FORMAL RC READY** — current-head CI passes, but AC-45's complete two-publication-to-Release-Package Word COM/PDF run remains outstanding; WS-1/WS-2 adapter and integrated acceptance evidence also require final closure. AC-31 numbering transaction and stale-approval invalidation are implemented and regression-tested; neither closes full-round acceptance |
 | Current M2 decision | **NOT USER ACCEPTED / NOT GA** |
 
-The RC branch begins at the frozen-plan commit and contains the subsequent RC-closeout commits. It does not merge or copy an old PR branch. PR #1/#2/#3 must be compared and dispositioned before final mainline convergence; no assumption is made that they are merge prerequisites or safe to merge wholesale.
+The RC branch begins at the frozen-plan commit and contains the subsequent RC-closeout commits. It does not merge or copy an old PR branch. PR #1 and #3–#8 are closed as superseded; PR #2 remains open because it is divergent, but its extra PDF/JSON/XML/CrossRef toolset is explicitly deferred from M1 and must not be bulk-merged. PR #9 remains the only active engineering integration PR.
 
 ## 2. Frozen inputs and SHA-256
 
@@ -40,7 +40,7 @@ Hashes below are SHA-256 over the exact file contents at the code snapshot HEAD,
 | `tests/test_word_pdf_acceptance.py` | `708faf650eefe8d3a8ec00f80bb86015c354fc51c9b6c525c50fa347bceab394` |
 | `tests/test_working_view.py` | `bf2a5a0265b4a7013765f4310e5d54094d228d7d1faf005c5b61374dc9342372` |
 | `docs/RC_LOCAL_ACCEPTANCE.md` | `12814b6d6b040d44e47d9dfab372fc85b26546802e4b7cb6c08accff7325de13` |
-| `schemas/workflow-ledger.schema.json` | `04403acc34d725ed6b9e78df0b1dd95e40a130677ea4299a11662eff98f1f77e` |
+| `schemas/workflow-ledger.schema.json` | `3214ac7bae3867e7a7252180ec621e121ce0bf8c0a1deb837e6534a669c09059` |
 | `schemas/manual-suggestion.schema.json` | `5d5c557d812bd1f5dfa0250e05c84aca8dad5e47c1a3ffc6a73588438fb0085a` |
 | `schemas/revision-decision-plan.schema.json` | `52badad4e47e86859851b80b019d55c5fd15f1d8e214c016341caeaaf8d4ba48` |
 | `schemas/revision-ledger.schema.json` | `d3929530e7d7673a9cac5bca110292a7fcb5db42cc89e1c9046b3e5dc3584a9b` |
@@ -54,7 +54,7 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | AC | Current state | Evidence / remaining work |
 |---|---|---|
 | 01 Single Active Baseline | IMPLEMENTED_UNVERIFIED | RC branch and parent recorded above; validate exact PR/CI head on acceptance |
-| 02 Branch Convergence | PARTIAL | PR #1 and #3–#8 are ancestry contained in PR #9 and are now CLOSED as superseded; PR #2 remains divergent with 31 unique commits/39 behind and requires selective AC-07 scope disposition |
+| 02 Branch Convergence | PARTIAL | PR #1 and #3–#8 are closed as superseded and their implementation ancestry is contained in PR #9. PR #2 remains divergent (31 unique commits/39 behind), open and unmerged; `PR2_SCOPE_DISPOSITION_V2.3.2.md` records the decision to defer its extra PDF/JSON/XML/CrossRef tools and retain the existing DOCX SHA-keyed cache path |
 | 03 Status Consistency | IMPLEMENTED_UNVERIFIED | This is the single status file; refresh hashes after final CI/fixes |
 | 04 Plan Protection | IMPLEMENTED_UNVERIFIED | Frozen plan left unchanged; verify its SHA-256 remains the value above |
 | 05 Round Isolation | IMPLEMENTED_UNVERIFIED | Existing round starter/orchestration and manifest |
@@ -65,7 +65,7 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | 10 Historical Gate | IMPLEMENTED_UNVERIFIED | Existing revision baseline and target-scoped resolver |
 | 11 Decision Plan | IMPLEMENTED_UNVERIFIED | Existing plan validator and Workflow adapter |
 | 12 Authorization | IMPLEMENTED_UNVERIFIED | Existing separate plan/scope/task/Patch/semantic gates; Tier 1 attestation added |
-| 13 Stable Identity | PARTIAL | Document/Object identity and TargetRef exist; legacy paragraph-index fallback remains and must be removed or strictly isolated |
+| 13 Stable Identity | TESTED_PASS_PARTIAL | Stable Document/Object identity and TargetRef are the default; `p_idx` is only a positional hint, never silently promoted to identity. Explicit legacy paragraph-index migration is isolated and blocked when an identity registry exists. Full package-wide migration/ambiguity evidence remains part of WS-5 |
 | 14 DAG Scheduling | IMPLEMENTED_UNVERIFIED | Existing dependency and target-group scheduler |
 | 15 Incremental Invalidation | IMPLEMENTED_UNVERIFIED | Existing downstream invalidation and refresh |
 | 16 Risk Tier | TESTED_PASS_PARTIAL | Deterministic Tier 0/1/2 policy; tier recalculated after exact operations; tests added |
@@ -77,13 +77,13 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | 22 Format Preservation | IMPLEMENTED_UNVERIFIED | Existing run/style preservation and FormatChange gates |
 | 23 Exact Verification | IMPLEMENTED_UNVERIFIED | Existing exact revision and untracked-text verification |
 | 24 Fail-Closed | IMPLEMENTED_UNVERIFIED | Existing unsupported-target and structure gates |
-| 25 Structural Event Map | PARTIAL | Run/Text mapping and part-wide XML-order offsets added for bounded spans; complete protected-structure event map remains a development item |
-| 26 Bounded Safe Span | TESTED_PASS_PARTIAL | Unique ordinary-Run target outside paired bookmark intervals supported; broader comment/field/hyperlink/drawing/nested adapters remain fail-closed |
-| 27 Boundary Protection | TESTED_PASS_PARTIAL | Bookmark interval intersection/crossing/unpaired tests added; broader structure matrix still required |
+| 25 Structural Event Map | TESTED_PASS_PARTIAL | Parser-backed part-wide map records XML order, Run/Text ranges, bookmark/comment/permission/move/custom-XML boundaries, fields, hyperlinks, drawings and revision wrappers in supported parts. Malformed or unrecognized structures fail closed; complete cross-adapter acceptance remains open |
+| 26 Bounded Safe Span | TESTED_PASS_PARTIAL | Unique ordinary-Run candidates are supported only outside protected ranges; nested/intersecting bookmark, comment and permission intervals are tested. Fields, hyperlinks, drawings and unsupported topologies remain non-editable/fail-closed |
+| 27 Boundary Protection | TESTED_PASS_PARTIAL | Tests cover nested/intersecting ranges, cross-paragraph comments, unmatched markers and body-level bookmark endpoints; unsupported field/link/drawing boundaries still block editing |
 | 28 Safe Span Authorization | TESTED_PASS_PARTIAL | Safe span returns ALLOW_CANDIDATE only; existing Token Lock/Authorized Change/history/format/approval/Verify gates remain |
 | 29 Manual Fallback | TESTED_PASS_PARTIAL | Hash-bound `not_applied` artifact and CLI/Apply integration added; current-head tests pending |
 | 30 Reference Graph | TESTED_PASS_PARTIAL | Caption/mention graph extended with numeric citation and native-field records; broad citation styles remain unsupported/manual |
-| 31 Numbering Propagation | TESTED_PASS_PARTIAL | Complete hash-bound impact plan and exact SHA author approval; global_numbering Workflow tasks and every PatchOperation bind the same author decision; exact changed-paragraph coverage; post-publication DOCX graph rebuild/consistency check; immutable DOCX Package Manifest, Commit Marker and numbering transaction Receipt. Current-head synthetic two-DOCX commit and tamper-on-resume regression passes on Python 3.10/3.13; full real-document/Word round remains outstanding |
+| 31 Numbering Propagation | TESTED_PASS_PARTIAL | Complete hash-bound impact plan and exact SHA author approval; global_numbering Workflow tasks and every PatchOperation bind the same author decision; exact changed-paragraph coverage; post-publication DOCX graph rebuild/consistency check; immutable DOCX Package Manifest, Commit Marker and transaction Receipt. Recheck now clears stale approvals/operations and records revoked approval hashes in the task fingerprint; old Execution Scope replay is rejected and a fresh plan-bound approval is accepted. Current CI passes on Python 3.10/3.13; full real-document/Word round remains outstanding |
 | 32 Immutable Batch | IMPLEMENTED_UNVERIFIED | Existing immutable intent/scope/plan snapshots/receipt |
 | 33 Sequential Publication | IMPLEMENTED_UNVERIFIED | Existing active-parent hash and publication gates |
 | 34 Recovery and Rollback | IMPLEMENTED_UNVERIFIED | Existing transaction recovery/rollback receipts |
@@ -100,7 +100,7 @@ The authoritative definitions are AC-01 through AC-50 in Section 6.1 of the froz
 | 45 Full Synthetic Round | FAIL (last full execution) | run_20261120_144140 remains the latest full Word COM run: A two publications PASS; B downstream refresh PASS; C actual Word COM/PDF PASS; D Response Letter PASS; E Release Package FAIL due source-version/initial-source uniqueness. Append-only source-history validation and related tests have since been added, but the full current-head workflow has not been rerun. See docs/AC45_SYNTHETIC_E2E_TEST_REPORT.md |
 | 46 Legacy Baseline | PRESENT_UNVERIFIED | Original 76-test baseline is documented/present; verify none deleted/weakened and run on current HEAD |
 | 47 Core Test Independence | IMPLEMENTED_UNVERIFIED | Core deterministic suite is Python-based; verify current test paths do not require Word COM |
-| 48 Platform Matrix | TESTED_PASS_PARTIAL | Current source/test HEAD `dfd77a1`: Push Actions run `44858330411` passed 4/4 jobs; 437/437 unit tests on Python 3.10 and 3.13, with Windows PowerShell 5.1 quality checks passing on both versions. PR-triggered run is pending at this snapshot |
+| 48 Platform Matrix | TESTED_PASS_PARTIAL | Current source/test HEAD `6b14a94`: GitHub Actions run [44904133734](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44904133734) passed 4/4 jobs; 496/496 unit tests passed on Python 3.10 and Python 3.13, and Windows PowerShell 5.1 quality checks passed on both Python versions |
 | 49 Adapter Test Isolation | TESTED_PASS_PARTIAL | Safe Span, Manual Suggestion, Risk and citation/field tests added; full positive/negative/boundary matrix is not complete |
 | 50 Honest RC Report | NOT_DONE | Global gap audit and AC-45 failure report added; final M1 RC report depends on closing all M1 blockers and binding evidence to one final HEAD |
 
@@ -133,20 +133,21 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 
 ## 6. Current blockers and next acceptance actions
 
-1. **Current source/test HEAD `dfd77a1ac7dc9c9cc39006246c97cb953fc9e98c`:** Push Actions run [44858330411](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44858330411) completed successfully with 4/4 jobs. The PR-triggered run [44858335338](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44858335338) was pending when this snapshot was written.
-2. **Current test evidence:** 437/437 unit tests passed on Python 3.10 and 437/437 on Python 3.13; the Windows PowerShell 5.1 quality-check jobs passed on both versions. New regressions exercise the complete numbering Package Transaction commit path and reject tampered DOCX content when resuming a committed package.
-3. **AC-31 implementation:** Package-wide impact planning, exact author approval, Workflow/Patch provenance, all-role Patch coverage, post-publication graph verification and Manifest/Commit Marker/Receipt creation are connected and have a current-head synthetic two-DOCX commit test. Full real-document/Word interoperability remains to be demonstrated.
-4. **AC-45:** the last full Word COM run on 2026-11-20 passed A–D and failed E at Release Package generation. Append-only historical source-version validation and Package content-integrity corrections have since been committed, but the complete current-head workflow has not been rerun. Do not mark AC-45 PASS until a new run generates and verifies a complete Release Package.
-5. Complete remaining AC-13 identity migration/isolation and AC-25–30/49 structural/reference graph coverage; unsupported structures must remain fail-closed with manual fallback.
-6. Review old PR/branch diffs and record an explicit convergence disposition, including the still-open PR #2 AC-07/context-cache scope decision.
-7. Rerun Word COM/PDF acceptance after source changes, then deliver the branch for user-local Word GUI and real-document M2 acceptance. Do not merge to `main`, call GA, or claim user acceptance before the user's explicit decision.
+1. **Current source/test HEAD `6b14a941dc491d739f8899d8999e54422a658c37`:** GitHub Actions run [44904133734](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44904133734) completed successfully with 4/4 jobs (Python unit tests 3.10/3.13 and Windows PowerShell 5.1 quality checks on both Python versions).
+2. **Current test evidence:** 496/496 unit tests passed on Python 3.10 and 496/496 on Python 3.13. The Windows PowerShell 5.1 quality checks also passed on both versions. New regressions cover invalidated package-numbering approval tombstones, stale Execution Scope replay rejection and renewed plan-bound approval.
+3. **AC-31 implementation:** Package-wide impact planning, exact author approval, Workflow/Patch provenance, all-role Patch coverage, post-publication graph verification and Manifest/Commit Marker/Receipt creation are connected and have a synthetic two-DOCX transaction test. When upstream changes force recheck, revoked package-numbering approvals are recorded by hash, old PatchOperations are cleared and replay from a persisted stale scope is rejected. Full real-document/Word interoperability remains to be demonstrated.
+4. **AC-45:** the last full Word COM run on 2026-11-20 passed A–D and failed E at Release Package generation. Historical source-version reconstruction from append-only publication events and release inventory separation are implemented with code-level/tamper regressions, but the complete current-head workflow has not been rerun. AC-45 remains FAIL until a new run generates and verifies a READY Release Manifest and complete Release Package.
+5. Continue WS-1/WS-2 acceptance closure: full stable-identity migration/ambiguity evidence; end-to-end Reference Graph and numbering propagation matrix; positive/negative/boundary adapter evidence. Unsupported structures must remain fail-closed with manual fallback.
+6. **WS-4 decision recorded:** keep PR #2 open/unmerged; defer its additional PDF/JSON/XML/CrossRef diagnostics from M1 because the existing DOCX source-hash cache covers the frozen AC-07 implementation slice. Validate remaining §3.6 context requirements in WS-5.
+7. Rerun the complete two-publication AC-45 workflow with actual Word COM/PDF mapping after source changes are frozen, then deliver the branch for user-local Word GUI and real-document M2 acceptance. Do not merge to `main`, call GA, or claim user acceptance before the user's explicit decision.
 
 ## 7. Test evidence ledger
 
 | Evidence | Exact code HEAD | Result |
 |---|---|---|
 | Historical GitHub Actions run | `4ee93a9c3d967f161ce70de51fcceb83f971549a` | 340/340 reported across four Python 3.10/3.13 + Windows PowerShell 5.1 jobs; historical only, not evidence for this RC branch |
-| Current RC branch unified CI | `dfd77a1ac7dc9c9cc39006246c97cb953fc9e98c` | PASS — Push run [44858330411](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44858330411), 4/4 jobs green; 437/437 unit tests on each Python version; Windows PowerShell 5.1 quality jobs passed on both. PR run [44858335338](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44858335338) pending at snapshot time |
+| Current RC branch unified CI | `6b14a941dc491d739f8899d8999e54422a658c37` | PASS — GitHub Actions run [44904133734](https://github.com/Tuzhidingdong/Co_reviewer/actions/runs/44904133734), 4/4 jobs green; 496/496 unit tests on Python 3.10 and 496/496 on Python 3.13; both Windows PowerShell 5.1 quality checks passed |
+| Package-numbering reauthorization regression | `6b14a941dc491d739f8899d8999e54422a658c37` | PASS in the same 496-test matrix: all three recheck paths revoke the old approval; Workflow Ledger keeps a unique SHA-256 tombstone; stale Execution Scope replay is rejected; fresh plan-bound approval remains preparable |
 | Full synthetic two-batch round | db3dcd406ac36fa9924ca56a1dc97546eb0b7a62 | A–D PASS; E Release Package FAIL; report docs/AC45_SYNTHETIC_E2E_TEST_REPORT.md |
 | Current-head Word COM/PDF acceptance | Not run | NOT DONE |
 | User Word GUI / real review round | Not run | USER ACCEPTANCE PENDING |
@@ -160,6 +161,7 @@ No deferred writing Adapter is enabled merely because its structure is recognize
 - Agent implementation contract: [AGENT_IMPLEMENTATION_CONTRACT_V2.3.2.md](AGENT_IMPLEMENTATION_CONTRACT_V2.3.2.md).
 - AC-45 real execution report: [AC45_SYNTHETIC_E2E_TEST_REPORT.md](AC45_SYNTHETIC_E2E_TEST_REPORT.md).
 - Git convergence: PR #9 remains the only active integration PR for P1/V2.3.2 ancestry. PR #1 and #3–#8 are ancestry-contained and marked superseded; PR #2 remains open for selective AC-07/context-cache disposition. No PR has been merged and `main` remains unchanged.
-- Current implementation/source/test baseline is `dfd77a1ac7dc9c9cc39006246c97cb953fc9e98c`; the last full AC-45 run used `db3dcd406ac36fa9924ca56a1dc97546eb0b7a62`. Since that run, append-only published-source history, the integrated AC-31 numbering Package Transaction path and package-content integrity checks/tests have been added. No new full Word COM/Release Package run has yet been performed.
-- This status snapshot changes documentation only; the implementation/test evidence remains bound to the validated code HEAD above. The frozen plan SHA-256 remains unchanged.
-- M1 remains NOT RC READY. AC-45 full Release Package rerun, AC-13 and AC-25–30/49 coverage, branch convergence, PR #2 scope disposition and final M1 evidence closure remain. M2 AC-51–57 remains user acceptance.
+- Current implementation/source/test baseline is `6b14a941dc491d739f8899d8999e54422a658c37`; the last full AC-45 run remains `run_20261120_144140` on `db3dcd406ac36fa9924ca56a1dc97546eb0b7a62`. Since that run, append-only published-source history validation, AC-31 numbering transaction integration and stale-approval invalidation/tombstone protection have been implemented. Current-head CI is green, but no new full Word COM/Release Package run has yet been performed.
+- PR #2 scope disposition is recorded and PR #9 remains Draft/Open/Unmerged. `main` and the frozen Global REV2 plan are unchanged.
+- This status snapshot changes documentation only; all implementation/test evidence in this snapshot is bound to the validated code HEAD above. The frozen plan SHA-256 remains unchanged.
+- M1 remains NOT RC READY. AC-45 full Release Package rerun, final WS-1/WS-2 adapter and reference-graph acceptance, and final M1 evidence closure remain. M2 AC-51–57 remains user acceptance.
