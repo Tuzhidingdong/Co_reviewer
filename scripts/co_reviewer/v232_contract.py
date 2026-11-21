@@ -1341,6 +1341,11 @@ def _annotate_revision_visible_text_ranges(
                         value = node.text or ""
                         positions[node] = (cursor, cursor + len(value))
                         cursor += len(value)
+                    elif node.tag == qn("delText"):
+                        # Deleted text is not in the current visible projection.
+                        # Preserve its exact zero-width anchor instead of treating
+                        # the entire paragraph as historically conflicting.
+                        positions[node] = (cursor, cursor)
                     elif node.tag in {qn("tab"), qn("br"), qn("cr")}:
                         positions[node] = (cursor, cursor + 1)
                         cursor += 1
@@ -1464,11 +1469,18 @@ def targeted_revision_gate(inventory: Mapping[str, Any],
                 continue
             if isinstance(revision_ranges, list) and revision_ranges and target["start_offset"] is not None:
                 for revision_range in revision_ranges:
-                    if (
-                        revision_range.get("paragraph_index") == target["paragraph_index"]
-                        and target["start_offset"] < revision_range.get("end_offset", -1)
-                        and revision_range.get("start_offset", -1) < target["end_offset"]
-                    ):
+                    range_start = revision_range.get("start_offset", -1)
+                    range_end = revision_range.get("end_offset", -1)
+                    if revision_range.get("paragraph_index") != target["paragraph_index"]:
+                        continue
+                    if range_start == range_end:
+                        intersects = target["start_offset"] <= range_start < target["end_offset"]
+                    else:
+                        intersects = (
+                            target["start_offset"] < range_end
+                            and range_start < target["end_offset"]
+                        )
+                    if intersects:
                         hit = True
                         break
                 if hit:
