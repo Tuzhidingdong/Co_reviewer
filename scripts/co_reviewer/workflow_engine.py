@@ -1568,25 +1568,55 @@ def build_workflow_ledger(
         decision_plan.get("tasks"),
         target_refs_by_task=target_refs_by_task,
     )
-    source_records_by_role: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for source in decision_plan.get("source_files", []):
+    raw_source_files = decision_plan.get("source_files", [])
+    if not isinstance(raw_source_files, list):
+        raise WorkflowValidationError("Decision-plan source_files must be an array.")
+
+    # source_files is the immutable initial-input inventory, not a history of
+    # every occurrence emitted by task/evidence aggregation. Collapse exact
+    # duplicates and the legacy Reply alias, but never guess between two
+    # different files/hashes claiming the same logical document role.
+    source_files: list[dict[str, Any]] = []
+    source_records_by_role: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    source_identity_by_role: dict[str, tuple[str, str]] = {}
+    seen_initial_records: set[tuple[str, str, str]] = set()
+    for index, source in enumerate(raw_source_files):
         if not isinstance(source, Mapping):
-            continue
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] must be an object."
+            )
         role = source.get("role")
         if role == "Reply":
             role = "Reviewers"
         file_path = source.get("file")
         digest = source.get("sha256")
-        if (
-            isinstance(role, str) and role
-            and isinstance(file_path, str) and file_path
-            and isinstance(digest, str) and _is_sha256(digest)
-        ):
-            source_records_by_role[role].append({
-                "role": role,
-                "file": file_path,
-                "sha256": digest,
-            })
+        if not isinstance(role, str) or role not in {"Reviewers", "Manuscript", "SI"}:
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] has unsupported role {role!r}."
+            )
+        if not isinstance(file_path, str) or not file_path.strip() or not _is_sha256(digest):
+            raise WorkflowValidationError(
+                f"Decision-plan source_files[{index}] requires a non-empty file and lowercase SHA-256."
+            )
+        canonical_path = _canonical_workflow_file_path(file_path)
+        role_identity = (canonical_path, digest)
+        previous_identity = source_identity_by_role.get(role)
+        if previous_identity is not None and previous_identity != role_identity:
+            raise WorkflowValidationError(
+                f"Conflicting initial source records exist for role {role}; "
+                "select one unambiguous initial document before building the Workflow Ledger."
+            )
+        source_identity_by_role[role] = role_identity
+        record_key = (role, canonical_path, digest)
+        if record_key in seen_initial_records:
+            continue
+
+        canonical_source = copy.deepcopy(dict(source))
+        canonical_source["role"] = role
+        source_files.append(canonical_source)
+        source_records_by_role[role].append(canonical_source)
+        seen_initial_records.add(record_key)
+
     for task in tasks:
         roles: set[str] = set()
         if isinstance(task.get("target_documents"), (list, tuple)):
@@ -1610,22 +1640,13 @@ def build_workflow_ledger(
         task["source_versions"] = [
             copy.deepcopy(source)
             for role in sorted(roles)
-            for source in sorted(
-                source_records_by_role.get(role, []),
-                key=lambda item: (item["file"], item["sha256"]),
-            )
+            for source in source_records_by_role.get(role, [])
         ]
-    source_files = copy.deepcopy(decision_plan.get("source_files", []))
+
     active_documents: dict[str, dict[str, Any]] = {}
     for source in source_files:
-        if not isinstance(source, Mapping):
-            continue
         role, file_path, digest = source.get("role"), source.get("file"), source.get("sha256")
         if isinstance(role, str) and isinstance(file_path, str) and _is_sha256(digest):
-            if role in active_documents:
-                raise WorkflowValidationError(
-                    f"Multiple initial source files exist for role {role}; resolve document identity before creating active pointers."
-                )
             active_documents[role] = {
                 "file": file_path,
                 "sha256": digest,
