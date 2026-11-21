@@ -1310,6 +1310,98 @@ def assert_safe_paragraph_merge(left: ET._Element, right: ET._Element) -> dict[s
             raise ContractError("PARAGRAPH_MERGE_PARAGRAPH_PROPERTIES_MISMATCH")
     return {"pPr_source": "left", "numPr": left_num, "right_pPr_discarded": True}
 
+def _annotate_revision_visible_text_ranges(
+    source: str | Path | bytes,
+    records: list[dict[str, Any]],
+) -> None:
+    """Attach exact visible-text intervals to revisions when their scope is measurable."""
+    import io
+    import zipfile
+
+    raw = source if isinstance(source, bytes) else Path(source).read_bytes()
+    with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+        available = set(archive.namelist())
+        by_part: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            part = record.get("part")
+            if isinstance(part, str) and part in available and part.startswith("word/") and part.endswith(".xml"):
+                by_part.setdefault(part, []).append(record)
+
+        for part, part_records in by_part.items():
+            root = _xml(archive.read(part))
+            paragraphs = list(root.iter(qn("p")))
+            paragraph_positions: dict[ET._Element, dict[ET._Element, tuple[int, int]]] = {}
+            paragraph_indexes: dict[ET._Element, int] = {}
+            for paragraph_index, paragraph in enumerate(paragraphs):
+                paragraph_indexes[paragraph] = paragraph_index
+                positions: dict[ET._Element, tuple[int, int]] = {}
+                cursor = 0
+                for node in paragraph.iter():
+                    if node.tag == qn("t"):
+                        value = node.text or ""
+                        positions[node] = (cursor, cursor + len(value))
+                        cursor += len(value)
+                    elif node.tag in {qn("tab"), qn("br"), qn("cr")}:
+                        positions[node] = (cursor, cursor + 1)
+                        cursor += 1
+                paragraph_positions[paragraph] = positions
+
+            for record in part_records:
+                path = record.get("element_path")
+                if not isinstance(path, str) or not path:
+                    continue
+                try:
+                    matches = root.xpath(path, namespaces={"w": W, "r": R})
+                except ET.XPathError as exc:
+                    raise ContractError("INVALID_HISTORICAL_REVISION_PATH:" + path) from exc
+                if len(matches) != 1:
+                    raise ContractError("HISTORICAL_REVISION_PATH_NOT_UNIQUE:" + path)
+                node = matches[0]
+                paragraph = node
+                while paragraph is not None and paragraph.tag != qn("p"):
+                    paragraph = paragraph.getparent()
+                if paragraph is None:
+                    record["text_ranges"] = []
+                    record["text_range_precision"] = "part_scope"
+                    continue
+                positions = paragraph_positions[paragraph]
+                visible_nodes = [
+                    child for child in node.iter()
+                    if child in positions
+                ]
+                if visible_nodes:
+                    starts = [positions[child][0] for child in visible_nodes]
+                    ends = [positions[child][1] for child in visible_nodes]
+                    record["text_ranges"] = [{
+                        "paragraph_index": paragraph_indexes[paragraph],
+                        "start_offset": min(starts),
+                        "end_offset": max(ends),
+                    }]
+                    record["text_range_precision"] = "exact_visible_text"
+                    continue
+
+                # Property-change snapshots have no visible text of their own.
+                # Bind a run-level range when the revision belongs to a Run;
+                # otherwise remain paragraph-scoped and fail closed.
+                run = node
+                while run is not None and run.tag != qn("r"):
+                    run = run.getparent()
+                if run is not None:
+                    run_nodes = [child for child in run.iter() if child in positions]
+                    if run_nodes:
+                        starts = [positions[child][0] for child in run_nodes]
+                        ends = [positions[child][1] for child in run_nodes]
+                        record["text_ranges"] = [{
+                            "paragraph_index": paragraph_indexes[paragraph],
+                            "start_offset": min(starts),
+                            "end_offset": max(ends),
+                        }]
+                        record["text_range_precision"] = "run_visible_text"
+                        continue
+                record["text_ranges"] = []
+                record["text_range_precision"] = "paragraph_fallback"
+
+
 def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, Any]:
     """Zero-model-call inventory of pre-existing native revisions and comments."""
     from .structure_classifier import classify_docx_structure
@@ -1322,25 +1414,73 @@ def build_revision_baseline_inventory(source: str | Path | bytes) -> dict[str, A
     }
     records = [dict(item) for item in report.get("structures", [])
                if item.get("kind") in revision_kinds or "revision" in str(item.get("kind", ""))]
+    _annotate_revision_visible_text_ranges(source, records)
     return {"schema_version": "1.0", "source_sha256": report.get("source_sha256"),
             "package_status": report.get("package_status"), "existing_revision_count": len(records),
             "revisions": records, "inventory": report}
+
 
 def targeted_revision_gate(inventory: Mapping[str, Any],
                            targets: Sequence[Mapping[str, Any]],
                            *, resolution_policy: str | None = None,
                            selectively_resolved_ids: Sequence[str] = ()) -> dict[str, Any]:
-    """Classify history conflicts; this gate never accepts or rejects Word revisions."""
+    """Classify target-overlapping history; uncertain scopes remain fail-closed."""
     if resolution_policy not in {None, "ACCEPT_EXISTING", "REJECT_EXISTING", "SELECTIVE_ACCEPT_CONFLICTS"}:
         raise ContractError("Unknown historical revision resolution policy")
     overlaps, unrelated = [], []
-    target_keys = {(str(t.get("part", "word/document.xml")), t.get("paragraph_index", t.get("p_idx")))
-                   for t in targets}
     selected = set(selectively_resolved_ids)
+    target_rows = []
+    for target in targets:
+        part = str(target.get("part", "word/document.xml"))
+        paragraph_index = target.get("paragraph_index", target.get("p_idx"))
+        start = target.get("start_offset")
+        end = target.get("end_offset")
+        if start is not None or end is not None:
+            if (
+                not isinstance(start, int) or isinstance(start, bool) or start < 0
+                or not isinstance(end, int) or isinstance(end, bool) or end <= start
+            ):
+                raise ContractError("Historical revision target offsets must be an exact non-empty non-negative interval.")
+        target_rows.append({
+            "part": part, "paragraph_index": paragraph_index,
+            "start_offset": start, "end_offset": end,
+        })
+
     for revision in inventory.get("revisions", []):
-        key = (str(revision.get("part")), revision.get("paragraph_index"))
-        span = revision.get("paragraph_indices") or []
-        hit = key in target_keys or any((str(revision.get("part")), idx) in target_keys for idx in span)
+        part = str(revision.get("part"))
+        paragraph_index = revision.get("paragraph_index")
+        paragraph_span = revision.get("paragraph_indices") or []
+        revision_ranges = revision.get("text_ranges")
+        hit = False
+        for target in target_rows:
+            if target["part"] != part:
+                continue
+            target_paragraphs = {target["paragraph_index"]} if target["paragraph_index"] is not None else set()
+            target_paragraphs.update(
+                idx for idx in paragraph_span
+                if target["paragraph_index"] is not None and idx == target["paragraph_index"]
+            )
+            if not target_paragraphs:
+                continue
+            if isinstance(revision_ranges, list) and revision_ranges and target["start_offset"] is not None:
+                for revision_range in revision_ranges:
+                    if (
+                        revision_range.get("paragraph_index") == target["paragraph_index"]
+                        and target["start_offset"] < revision_range.get("end_offset", -1)
+                        and revision_range.get("start_offset", -1) < target["end_offset"]
+                    ):
+                        hit = True
+                        break
+                if hit:
+                    break
+                # A precise revision span in this paragraph is disjoint from the
+                # requested target; do not broaden it to the entire paragraph.
+                continue
+            if paragraph_index == target["paragraph_index"] or any(
+                idx == target["paragraph_index"] for idx in paragraph_span
+            ):
+                hit = True
+                break
         (overlaps if hit else unrelated).append(revision)
     unresolved = []
     for item in overlaps:
