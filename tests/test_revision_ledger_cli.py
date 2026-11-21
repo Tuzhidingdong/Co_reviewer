@@ -496,6 +496,7 @@ class RevisionLedgerCliIntegrationTests(unittest.TestCase):
                 "output_file": str(replacement_output),
                 "part": "word/document.xml",
                 "p_idx": 0,
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "find": "old phrase",
                 "replace": "more precise phrase",
                 "evidence_ids": ["E1"],
