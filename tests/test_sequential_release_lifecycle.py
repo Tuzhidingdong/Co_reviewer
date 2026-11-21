@@ -213,6 +213,7 @@ def _make_patch(
         output_file=str(output_file),
         part="word/document.xml",
         p_idx=0,
+        target_identity_mode="legacy_p_idx_explicit",
         find=old_text,
         replace=new_text,
         source_sha256=input_sha,
