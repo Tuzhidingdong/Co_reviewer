@@ -135,6 +135,80 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertTrue(right["allowed"])
         self.assertFalse(inside["allowed"])
 
+    def test_text_outside_comment_range_is_a_candidate_but_comment_text_is_blocked(self):
+        root, paragraph = _document(
+            '<w:p><w:r><w:t>before </w:t></w:r>'
+            '<w:commentRangeStart w:id="7"/>'
+            + _run("comment protected")
+            + '<w:commentRangeEnd w:id="7"/>'
+            + _run(" after")
+            + '</w:p>'
+        )
+        inside = analyze_bounded_safe_span(root, paragraph, "comment protected")
+        outside = analyze_bounded_safe_span(root, paragraph, "after")
+        self.assertFalse(inside["allowed"])
+        self.assertIn("comment_range", {row["range_kind"] for row in inside["protected_ranges"]})
+        self.assertTrue(outside["allowed"])
+        self.assertEqual(
+            {row["range_kind"] for row in outside["protected_boundaries"]},
+            {"comment_range"},
+        )
+
+    def test_text_outside_permission_and_move_ranges_is_a_candidate(self):
+        root, paragraph = _document(
+            '<w:p><w:permStart w:id="p1" w:edGrp="everyone"/>'
+            + _run("permission protected")
+            + '<w:permEnd w:id="p1"/>'
+            + _run(" middle ")
+            + '<w:moveFromRangeStart w:id="m1"/>'
+            + _run("moved protected")
+            + '<w:moveFromRangeEnd w:id="m1"/>'
+            + _run(" outside")
+            + '</w:p>'
+        )
+        permission_text = analyze_bounded_safe_span(root, paragraph, "permission protected")
+        moved_text = analyze_bounded_safe_span(root, paragraph, "moved protected")
+        outside = analyze_bounded_safe_span(root, paragraph, "outside")
+        self.assertFalse(permission_text["allowed"])
+        self.assertFalse(moved_text["allowed"])
+        self.assertTrue(outside["allowed"])
+        self.assertEqual(
+            {row["range_kind"] for row in outside["protected_boundaries"]},
+            {"permission_range", "move_from_range"},
+        )
+
+    def test_overlapping_comment_and_custom_xml_ranges_block_their_intersection(self):
+        root, paragraph = _document(
+            '<w:p><w:commentRangeStart w:id="c1"/>'
+            + _run("comment only ")
+            + '<w:customXmlInsRangeStart w:id="x1"/>'
+            + _run("overlap")
+            + '<w:commentRangeEnd w:id="c1"/>'
+            + _run(" custom only")
+            + '<w:customXmlInsRangeEnd w:id="x1"/>'
+            + _run(" safe")
+            + '</w:p>'
+        )
+        overlap = analyze_bounded_safe_span(root, paragraph, "overlap")
+        safe = analyze_bounded_safe_span(root, paragraph, "safe")
+        self.assertFalse(overlap["allowed"])
+        self.assertEqual(
+            {row["range_kind"] for row in overlap["protected_ranges"]},
+            {"comment_range", "custom_xml_insert_range"},
+        )
+        self.assertTrue(safe["allowed"])
+
+    def test_unpaired_non_bookmark_range_markers_fail_closed(self):
+        root, paragraph = _document(
+            '<w:p><w:commentRangeStart w:id="c1"/>'
+            + _run("not safely bounded")
+            + '</w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "not safely bounded")
+        self.assertFalse(result["allowed"])
+        self.assertIn("comment_range", result["reason"])
+        self.assertIn("unpaired", result["reason"])
+
     def test_bookmark_range_across_paragraphs_blocks_middle_but_not_outer_text(self):
         root, first = _document(
             '<w:p>' + _run("safe before")

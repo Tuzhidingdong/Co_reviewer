@@ -65,32 +65,89 @@ def _run_blocks(paragraph: ET._Element) -> list[tuple[list[ET._Element], str]]:
     return blocks
 
 
-def _part_text_positions(root: ET._Element) -> tuple[dict[ET._Element, int], dict[str, dict[str, list[int]]]]:
-    """Map paragraphs and bookmark markers to offsets in part-wide visible text."""
+def _part_text_positions(
+    root: ET._Element,
+) -> tuple[
+    dict[ET._Element, int],
+    dict[tuple[str, str], dict[str, list[int]]],
+    list[dict[str, Any]],
+]:
+    """Map paragraphs and supported protected-range markers to part-wide text offsets."""
     paragraph_bases: dict[ET._Element, int] = {}
-    markers: dict[str, dict[str, list[int]]] = defaultdict(lambda: {"start": [], "end": []})
+    markers: dict[tuple[str, str], dict[str, list[int]]] = defaultdict(
+        lambda: {"start": [], "end": []}
+    )
+    point_markers: list[dict[str, Any]] = []
+    marker_pairs = {
+        "bookmarkStart": ("bookmarkEnd", "bookmark_range"),
+        "commentRangeStart": ("commentRangeEnd", "comment_range"),
+        "moveFromRangeStart": ("moveFromRangeEnd", "move_from_range"),
+        "moveToRangeStart": ("moveToRangeEnd", "move_to_range"),
+        "customXmlInsRangeStart": ("customXmlInsRangeEnd", "custom_xml_insert_range"),
+        "customXmlDelRangeStart": ("customXmlDelRangeEnd", "custom_xml_delete_range"),
+        "customXmlMoveFromRangeStart": ("customXmlMoveFromRangeEnd", "custom_xml_move_from_range"),
+        "customXmlMoveToRangeStart": ("customXmlMoveToRangeEnd", "custom_xml_move_to_range"),
+        "permStart": ("permEnd", "permission_range"),
+    }
+    reverse_pairs = {
+        end_local: (start_local, range_kind)
+        for start_local, (end_local, range_kind) in marker_pairs.items()
+    }
     cursor = 0
     paragraph_count = 0
 
     for node in root.iter():
+        if not isinstance(node.tag, str):
+            continue
         if node.tag == _q("p"):
             if paragraph_count:
-                cursor += 1  # separator; it cannot be part of a safe replacement
+                cursor += 1
             paragraph_bases[node] = cursor
             paragraph_count += 1
-        elif node.tag == _q("bookmarkStart"):
+            continue
+
+        local = ET.QName(node).localname
+        if local in marker_pairs:
+            _, range_kind = marker_pairs[local]
             marker_id = node.get(_q("id"), "")
-            markers[marker_id]["start"].append(cursor)
-        elif node.tag == _q("bookmarkEnd"):
+            markers[(range_kind, marker_id)]["start"].append(cursor)
+        elif local in reverse_pairs:
+            _, range_kind = reverse_pairs[local]
             marker_id = node.get(_q("id"), "")
-            markers[marker_id]["end"].append(cursor)
-        elif node.tag == _q("t") and node.text:
+            markers[(range_kind, marker_id)]["end"].append(cursor)
+        elif local == "proofErr":
+            marker_type = node.get(_q("type"), "")
+            if marker_type.endswith("Start"):
+                markers[("proofing_range", marker_type[:-5])]["start"].append(cursor)
+            elif marker_type.endswith("End"):
+                markers[("proofing_range", marker_type[:-3])]["end"].append(cursor)
+            else:
+                point_markers.append({
+                    "marker_kind": "proofing_marker",
+                    "marker_id": marker_type,
+                    "position": cursor,
+                })
+        elif local in {
+            "commentReference", "footnoteReference",
+            "endnoteReference", "lastRenderedPageBreak",
+        }:
+            marker_kind = {
+                "commentReference": "comment_reference",
+                "footnoteReference": "footnote_reference",
+                "endnoteReference": "endnote_reference",
+                "lastRenderedPageBreak": "rendered_page_break",
+            }[local]
+            point_markers.append({
+                "marker_kind": marker_kind,
+                "marker_id": node.get(_q("id"), ""),
+                "position": cursor,
+            })
+        elif local == "t" and node.text:
             cursor += len(node.text)
-        elif node.tag in {_q("tab"), _q("br")}:
+        elif local in {"tab", "br"}:
             cursor += 1
 
-    return paragraph_bases, markers
-
+    return paragraph_bases, markers, point_markers
 
 def analyze_bounded_safe_span(
     root: ET._Element,
@@ -127,7 +184,7 @@ def analyze_bounded_safe_span(
             ),
         }
 
-    paragraph_bases, marker_map = _part_text_positions(root)
+    paragraph_bases, marker_map, point_markers = _part_text_positions(root)
     base = paragraph_bases.get(paragraph)
     if base is None:
         return {
@@ -140,45 +197,78 @@ def analyze_bounded_safe_span(
     target_start = base + local_start
     target_end = target_start + len(target_text)
     protected_ranges: list[dict[str, Any]] = []
-    boundaries: list[dict[str, Any]] = []
+    bookmark_boundaries: list[dict[str, Any]] = []
+    protected_boundaries: list[dict[str, Any]] = []
+    annotation_boundaries: list[dict[str, Any]] = []
 
-    for marker_id, pair in sorted(marker_map.items()):
+    for (range_kind, marker_id), pair in sorted(marker_map.items()):
         starts, ends = pair["start"], pair["end"]
-        if not marker_id or len(starts) != 1 or len(ends) != 1 or starts[0] > ends[0]:
+        if (
+            not marker_id or len(starts) != 1 or len(ends) != 1
+            or starts[0] > ends[0]
+        ):
             return {
                 "status": "BLOCKED",
                 "allowed": False,
                 "reason": (
-                    f"Bookmark marker group {marker_id!r} is unpaired, duplicated, empty-ID, "
-                    "or out of document order; no safe span is inferred."
+                    f"Protected range marker group {range_kind}/{marker_id!r} is unpaired, "
+                    "duplicated, empty-ID, or out of document order; no safe span is inferred."
                 ),
+                "range_kind": range_kind,
                 "range_id": marker_id,
                 "start_count": len(starts),
                 "end_count": len(ends),
             }
 
         range_start, range_end = starts[0], ends[0]
-        boundaries.append({"range_id": marker_id, "start": range_start, "end": range_end})
+        boundary = {
+            "range_kind": range_kind,
+            "range_id": marker_id,
+            "start": range_start,
+            "end": range_end,
+        }
+        protected_boundaries.append(boundary)
+        if range_kind == "bookmark_range":
+            bookmark_boundaries.append(boundary)
+        if range_kind == "proofing_range":
+            annotation_boundaries.append(boundary)
+
         overlaps = target_start < range_end and target_end > range_start
-        crosses_collapsed_boundary = (
-            range_start == range_end and target_start < range_start < target_end
+        crosses_boundary = (
+            target_start < range_start < target_end
+            or target_start < range_end < target_end
+            or (range_start == range_end and target_start < range_start < target_end)
         )
-        if overlaps or crosses_collapsed_boundary:
-            protected_ranges.append({
-                "range_id": marker_id,
-                "start": range_start,
-                "end": range_end,
-            })
+        if (range_kind != "proofing_range" and overlaps) or crosses_boundary:
+            protected_ranges.append(dict(boundary))
+
+    crossed_points = [
+        row for row in point_markers
+        if target_start < row["position"] < target_end
+    ]
+    if crossed_points:
+        protected_ranges.extend({
+            "range_kind": row["marker_kind"],
+            "range_id": row.get("marker_id", ""),
+            "start": row["position"],
+            "end": row["position"],
+        } for row in crossed_points)
 
     if protected_ranges:
         return {
             "status": "BLOCKED",
             "allowed": False,
-            "reason": "The exact target interval overlaps or crosses a protected bookmark range.",
+            "reason": (
+                "The exact target interval overlaps or crosses a protected range or "
+                "point-marker boundary."
+            ),
             "target_start": target_start,
             "target_end": target_end,
             "protected_ranges": protected_ranges,
-            "bookmark_boundaries": boundaries,
+            "bookmark_boundaries": bookmark_boundaries,
+            "protected_boundaries": protected_boundaries,
+            "annotation_boundaries": annotation_boundaries,
+            "point_marker_boundaries": point_markers,
         }
 
     runs, joined, run_local_start = matches[0]
@@ -263,7 +353,10 @@ def analyze_bounded_safe_span(
         "target_end": target_end,
         "paragraph_text_start": local_start,
         "run_map": run_map,
-        "bookmark_boundaries": boundaries,
+        "bookmark_boundaries": bookmark_boundaries,
+        "protected_boundaries": protected_boundaries,
+        "annotation_boundaries": annotation_boundaries,
+        "point_marker_boundaries": point_markers,
         "authorization_note": (
             "Structural permission only; Authorized Change, Token Lock, Protected Content, "
             "formatting, Patch approval and post-Apply verification remain mandatory."

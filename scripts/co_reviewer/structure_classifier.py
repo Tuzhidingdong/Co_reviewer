@@ -1648,12 +1648,12 @@ def assert_edit_target_supported_with_bounded_safe_span(
     part_root: ET._Element,
     target_text: str,
 ) -> dict[str, Any]:
-    """Permit a precise ordinary-Run span outside bookmark ranges; keep all other gates.
+    """Permit a precise ordinary-Run span outside supported paired range markers.
 
-    The fallback is intentionally narrow: only valid paired bookmark_range
-    records may be reconsidered. Incomplete markers, Fields, comment ranges,
-    hyperlinks, drawings, unknown structures and package-level issues remain
-    blocked by the original paragraph gate.
+    Valid bookmark, comment, permission, move and Custom XML change ranges may
+    be reconsidered as boundaries. Their interiors remain protected. Incomplete
+    markers, Fields, hyperlinks, drawings, structured containers, unknown
+    structures and package-level issues remain fail-closed.
     """
     gate_error: StructureClassificationError | None = None
     try:
@@ -1703,8 +1703,24 @@ def assert_edit_target_supported_with_bounded_safe_span(
         if target_match or global_context_match:
             blocking_issues.append(issue)
 
+    safe_boundary_kinds = {
+        "bookmark_range",
+        "bookmark_marker",
+        "comment_range",
+        "comment_range_marker",
+        "comment_reference",
+        "permission_range",
+        "protected_range_marker",
+        "move_from_range",
+        "move_to_range",
+        "move_range_marker",
+        "custom_xml_insert_range",
+        "custom_xml_delete_range",
+        "custom_xml_move_from_range",
+        "custom_xml_move_to_range",
+    }
     if blocking_issues or not relevant or any(
-        item.get("kind") not in {"bookmark_range", "bookmark_marker"}
+        item.get("kind") not in safe_boundary_kinds
         for item in relevant
     ):
         raise gate_error
@@ -1722,5 +1738,13 @@ def assert_edit_target_supported_with_bounded_safe_span(
         for item in relevant
         if item.get("kind") == "bookmark_range"
     ]
+    analysis["intersecting_protected_structure_ids"] = [
+        item.get("structure_id")
+        for item in relevant
+        if item.get("kind") not in {"bookmark_range", "bookmark_marker"}
+    ]
+    analysis["bounded_structure_kinds"] = sorted({
+        str(item.get("kind")) for item in relevant
+    })
     return analysis
 

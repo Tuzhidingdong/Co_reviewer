@@ -443,6 +443,46 @@ class StructureClassifierTests(unittest.TestCase):
                         target_text="target wording",
                     )
 
+    def test_bounded_safe_span_allows_text_outside_paired_comment_and_permission_ranges(self):
+        body = (
+            '<w:p><w:commentRangeStart w:id="8"/>'
+            '<w:r><w:t>comment protected</w:t></w:r>'
+            '<w:commentRangeEnd w:id="8"/>'
+            '<w:r><w:t> separate safe target</w:t></w:r>'
+            '<w:permStart w:id="9" w:edGrp="everyone"/>'
+            '<w:r><w:t>permission protected</w:t></w:r>'
+            '<w:permEnd w:id="9"/></w:p>'
+        )
+        _write_docx(self.docx, _document(body))
+        report = classify_docx_structure(self.docx)
+        with zipfile.ZipFile(self.docx, "r") as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraph = root.find(".//w:p", {"w": W})
+        safe = assert_edit_target_supported_with_bounded_safe_span(
+            report,
+            part="word/document.xml",
+            paragraph_index=0,
+            paragraph=paragraph,
+            part_root=root,
+            target_text="separate safe target",
+        )
+        self.assertEqual(safe["status"], "ALLOW_CANDIDATE")
+        self.assertIn("comment_range", safe["bounded_structure_kinds"])
+        self.assertIn("permission_range", safe["bounded_structure_kinds"])
+        self.assertEqual(len(safe["intersecting_protected_structure_ids"]), 3)
+
+        for protected_text in ("comment protected", "permission protected"):
+            with self.subTest(target=protected_text):
+                with self.assertRaises(StructureClassificationError):
+                    assert_edit_target_supported_with_bounded_safe_span(
+                        report,
+                        part="word/document.xml",
+                        paragraph_index=0,
+                        paragraph=paragraph,
+                        part_root=root,
+                        target_text=protected_text,
+                    )
+
     def test_bounded_safe_span_maps_multiple_nested_and_intersecting_bookmarks(self):
         body = (
             '<w:p>'
