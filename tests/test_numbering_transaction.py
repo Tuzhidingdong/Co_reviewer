@@ -781,16 +781,35 @@ class NumberingTransactionTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            plan_path = root / "numbering-impact-plan.json"
+            approval_path = root / "numbering-author-approval.json"
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            approval_path.write_text(json.dumps(approval, ensure_ascii=False, indent=2), encoding="utf-8")
+            release_root = root / "numbering-releases"
+            command_args = SimpleNamespace(
+                plan=str(plan_path),
+                approval=str(approval_path),
+                batch_dir=str(batch_dir),
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+                release_root=str(release_root),
+            )
+            # Exercise the public CLI success path rather than only its
+            # underlying transaction helper. The loader is isolated here
+            # because this fixture's RevisionLedger model is intentionally
+            # lightweight; snapshot equality and transaction validation below
+            # still execute against the exact persisted file bytes.
             with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
-                receipt = commit_numbering_package_transaction(
-                    plan,
-                    approval,
-                    batch_dir=batch_dir,
-                    workflow_ledger_path=workflow_path,
-                    revision_ledger_path=revision_path,
-                    revision_ledger=revision_ledger,
-                    release_root=root / "numbering-releases",
-                )
+                with mock.patch.object(cli, "_load_revision_ledger", return_value=revision_ledger) as load_ledger:
+                    self.assertEqual(cli.cmd_commit_numbering_package(command_args), 0)
+                    load_ledger.assert_called_once_with(revision_path)
+
+            transaction_dir = (
+                release_root
+                / f"numbering-{batch_id}-{plan['impact_plan_sha256'][:16]}"
+            )
+            receipt_path = transaction_dir / "numbering_transaction_receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
 
             self.assertEqual(receipt["status"], "COMMITTED")
             receipt_schema = json.loads(
