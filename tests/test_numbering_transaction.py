@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from docx import Document
 
@@ -16,6 +20,7 @@ from co_reviewer.numbering_transaction import (
     _existing_numbering_package_receipt,
     authorize_numbering_impact_plan,
     build_numbering_impact_plan,
+    commit_numbering_package_transaction,
     validate_numbering_impact_approval,
     validate_numbering_patch_operation_coverage,
     verify_numbering_package_outputs,
@@ -294,6 +299,194 @@ class NumberingTransactionTests(unittest.TestCase):
                     "source_comment_ids": [],
                     "target_identity_mode": "legacy_p_idx_explicit",
                 })
+
+    def test_numbering_package_commit_validates_full_batch_and_resume_integrity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan, sources = self._impact_plan(root)
+            approval = authorize_numbering_impact_plan(
+                plan, plan["impact_plan_sha256"], "Human Author",
+                approved_at_utc="2026-11-20T12:00:00+00:00",
+            )
+
+            batch_id = "numbering-commit-001"
+            revision_round_id = "round-numbering-commit"
+            batch_dir = root / f"batch-{batch_id}"
+            documents_dir = batch_dir / "documents"
+            documents_dir.mkdir(parents=True)
+            output_documents = {}
+            for role, source in sources.items():
+                output_path = documents_dir / f"{role}.marked.docx"
+                document = Document(source)
+                for paragraph in document.paragraphs:
+                    paragraph.text = (
+                        paragraph.text
+                        .replace("Figure 1", "Figure 2")
+                        .replace("Fig. 1", "Fig. 2")
+                    )
+                document.save(output_path)
+                output_documents[role] = output_path
+
+            required_targets = {
+                (row["document"], row["part"], row["paragraph_index"])
+                for field in ("definition_updates", "mention_updates")
+                for row in plan[field]
+            }
+            operations = [
+                {
+                    "operation_id": f"GN-COMMIT-{index:03d}",
+                    "document": role,
+                    "part": part,
+                    "p_idx": p_idx,
+                    "author_decision_ref": approval,
+                    "target_identity_mode": "legacy_p_idx_explicit",
+                }
+                for index, (role, part, p_idx) in enumerate(sorted(required_targets), start=1)
+            ]
+            workflow_task = {
+                "task_id": "GN-COMMIT-001",
+                "task_type": "global_numbering",
+                "status": "verified",
+                "author_decision_ref": approval,
+                "patch_operations": operations,
+            }
+            workflow_path = root / "workflow_ledger.json"
+            revision_path = root / "revision_ledger.json"
+            revision_path.write_text('{"schema_version":"0.5.1"}\n', encoding="utf-8")
+            patch_id = "PATCH-GN-COMMIT-001"
+            revision_ledger = SimpleNamespace(
+                patches=[SimpleNamespace(patch_id=patch_id, status="verified")]
+            )
+
+            intent_documents = {}
+            scope_documents = {}
+            pointers = {}
+            for role, source in sources.items():
+                output_path = output_documents[role]
+                source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+                output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
+                intent_documents[role] = {
+                    "parent_file": str(source.resolve()),
+                    "parent_sha256": source_sha,
+                    "parent_batch_id": "initial",
+                    "output_file": str(output_path.resolve()),
+                }
+                scope_documents[role] = {
+                    "input_file": str(source.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output_path.resolve()),
+                }
+                pointers[role] = {
+                    "file": str(output_path.resolve()),
+                    "sha256": output_sha,
+                    "batch_id": batch_id,
+                    "updated_at_utc": "2026-11-20T12:30:00+00:00",
+                }
+
+            intent = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": revision_round_id,
+                "workflow_ledger_file": str(workflow_path.resolve()),
+                "selected_task_ids": ["GN-COMMIT-001"],
+                "all_selected_task_ids": ["GN-COMMIT-001"],
+                "documents": intent_documents,
+            }
+            intent_path = batch_dir / "batch_intent.json"
+            intent_path.write_text(json.dumps(intent, ensure_ascii=False, indent=2), encoding="utf-8")
+            intent_sha = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+            scope = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": revision_round_id,
+                "revision_ledger_file": str(revision_path.resolve()),
+                "selected_task_ids": ["GN-COMMIT-001"],
+                "batch_task_ids": ["GN-COMMIT-001"],
+                "patch_ids": [patch_id],
+                "batch_intent_sha256": intent_sha,
+                "documents": scope_documents,
+            }
+            scope_path = batch_dir / "batch_scope.json"
+            scope_path.write_text(json.dumps(scope, ensure_ascii=False, indent=2), encoding="utf-8")
+            scope_sha = hashlib.sha256(scope_path.read_bytes()).hexdigest()
+            revision_sha = hashlib.sha256(revision_path.read_bytes()).hexdigest()
+
+            workflow = {
+                "schema_version": "0.5.1",
+                "revision_round_id": revision_round_id,
+                "active_documents": pointers,
+                "tasks": [workflow_task],
+                "events": [{
+                    "event_id": "EV-GN-PUBLISHED",
+                    "task_id": "GN-COMMIT-001",
+                    "timestamp_utc": "2026-11-20T12:30:00+00:00",
+                    "event_type": "batch_published",
+                    "batch_id": batch_id,
+                    "documents": pointers,
+                }],
+            }
+            workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8")
+            publication_intent = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_ledger_sha256": revision_sha,
+                "batch_intent_sha256": intent_sha,
+                "batch_scope_sha256": scope_sha,
+                "active_documents_to_publish": pointers,
+            }
+            (batch_dir / "batch_publish_intent.json").write_text(
+                json.dumps(publication_intent, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            publication_receipt = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "status": "published",
+                "workflow_ledger_file": str(workflow_path.resolve()),
+                "revision_ledger_file": str(revision_path.resolve()),
+                "revision_ledger_sha256": revision_sha,
+                "batch_intent_sha256": intent_sha,
+                "batch_scope_sha256": scope_sha,
+                "selected_task_ids": ["GN-COMMIT-001"],
+                "active_documents": pointers,
+            }
+            (batch_dir / "batch_published.json").write_text(
+                json.dumps(publication_receipt, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+            with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
+                receipt = commit_numbering_package_transaction(
+                    plan,
+                    approval,
+                    batch_dir=batch_dir,
+                    workflow_ledger_path=workflow_path,
+                    revision_ledger_path=revision_path,
+                    revision_ledger=revision_ledger,
+                    release_root=root / "numbering-releases",
+                )
+
+            self.assertEqual(receipt["status"], "COMMITTED")
+            self.assertEqual(receipt["batch_id"], batch_id)
+            self.assertTrue(Path(receipt["package_manifest"]).is_file())
+            self.assertTrue(Path(receipt["commit_marker"]).is_file())
+            self.assertEqual(len(receipt["output_documents"]), 2)
+
+            packaged_docx = (
+                Path(receipt["package_directory"])
+                / "Manuscript"
+                / "Manuscript.marked.docx"
+            )
+            packaged_docx.write_bytes(packaged_docx.read_bytes() + b"tampered")
+            with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
+                with self.assertRaisesRegex(NumberingTransactionError, "integrity validation"):
+                    commit_numbering_package_transaction(
+                        plan,
+                        approval,
+                        batch_dir=batch_dir,
+                        workflow_ledger_path=workflow_path,
+                        revision_ledger_path=revision_path,
+                        revision_ledger=revision_ledger,
+                        release_root=root / "numbering-releases",
+                    )
 
     def test_existing_numbering_package_receipt_rejects_tampered_docx(self):
         with tempfile.TemporaryDirectory() as temporary:
