@@ -137,6 +137,113 @@ class StructureClassifierTests(unittest.TestCase):
         self.assertTrue(field["details"]["separate_path"])
         self.assertEqual(field["status"], DEFERRED)
 
+    def test_structural_event_map_tracks_text_ranges_fields_links_and_revision_wrappers(self):
+        body = (
+            '<w:p>'
+            '<w:bookmarkStart w:id="7" w:name="bookmark"/>'
+            '<w:r><w:t>A</w:t><w:t>B</w:t></w:r>'
+            '<w:hyperlink r:id="rIdLink"><w:r><w:t>linked</w:t></w:r></w:hyperlink>'
+            '<w:bookmarkEnd w:id="7"/>'
+            '<w:commentRangeStart w:id="9"/>'
+            '<w:r><w:t>commented</w:t></w:r>'
+            '<w:commentRangeEnd w:id="9"/>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> REF _Ref1 </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:r><w:t>1</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:ins w:id="11" w:author="Synthetic Author">'
+            '<w:r><w:t>inserted</w:t></w:r></w:ins>'
+            '<w:r><w:drawing/></w:r>'
+            '</w:p>'
+        )
+        rels = (
+            f'<Relationships xmlns="{PKG_REL}">'
+            '<Relationship Id="rIdLink" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.invalid" TargetMode="External"/>'
+            '</Relationships>'
+        )
+        _write_docx(self.docx, _document(body), document_rels=rels)
+        report = classify_docx_structure(self.docx)
+
+        events = [
+            row for row in report["structural_events"]
+            if row["part"] == "word/document.xml"
+        ]
+        self.assertTrue(events)
+        orders = [row["xml_order"] for row in events]
+        self.assertEqual(orders, sorted(orders))
+        self.assertEqual(len(orders), len(set(orders)))
+
+        text_nodes = [
+            row for row in events
+            if row["element"] == "t" and row["namespace"] == W
+        ]
+        pair_text_nodes = [
+            row for row in text_nodes if row.get("text_content") in {"A", "B"}
+        ]
+        self.assertEqual(len(pair_text_nodes), 2)
+        self.assertEqual(
+            [row["text_node_index_in_run"] for row in pair_text_nodes],
+            [0, 1],
+        )
+        self.assertEqual(
+            pair_text_nodes[0]["run_index"],
+            pair_text_nodes[1]["run_index"],
+        )
+        self.assertEqual(pair_text_nodes[0]["text_offset_in_run"], {"start": 0, "end": 1})
+        self.assertEqual(pair_text_nodes[1]["text_offset_in_run"], {"start": 1, "end": 2})
+
+        bookmark_start = next(
+            row for row in events
+            if row["element"] == "bookmarkStart"
+        )
+        bookmark_end = next(
+            row for row in events
+            if row["element"] == "bookmarkEnd"
+        )
+        self.assertEqual(bookmark_start["paired_ranges"][0]["range_id"], "7")
+        self.assertEqual(bookmark_end["paired_ranges"][0]["range_id"], "7")
+        self.assertEqual(
+            bookmark_start["paired_ranges"][0]["end_path"],
+            bookmark_end["element_path"],
+        )
+
+        comment_start = next(
+            row for row in events
+            if row["element"] == "commentRangeStart"
+        )
+        comment_end = next(
+            row for row in events
+            if row["element"] == "commentRangeEnd"
+        )
+        self.assertEqual(comment_start["paired_ranges"][0]["range_id"], "9")
+        self.assertEqual(comment_end["paired_ranges"][0]["range_id"], "9")
+
+        field_events = [
+            row for row in events
+            if row["element"] in {"fldChar", "instrText"}
+        ]
+        self.assertEqual(len(field_events), 3)
+        self.assertTrue(all(row["field_groups"][0]["field_id"] for row in field_events))
+        self.assertEqual(
+            {row["attributes"].get("w:fldCharType") for row in field_events if row["element"] == "fldChar"},
+            {"begin", "separate", "end"},
+        )
+
+        hyperlink = next(row for row in events if row["element"] == "hyperlink")
+        self.assertEqual(hyperlink["relationship_refs"][0]["relationship_id"], "rIdLink")
+        self.assertEqual(hyperlink["relationship_refs"][0]["status"], "EXTERNAL")
+        inserted = next(row for row in events if row["element"] == "ins")
+        self.assertIn("text_revision_wrapper", {
+            item["kind"] for item in inserted["structure_records"]
+        })
+        drawing = next(row for row in events if row["element"] == "drawing")
+        self.assertIn("embedded_object", {
+            item["kind"] for item in drawing["structure_records"]
+        })
+        self.assertEqual(report["summary"]["structural_events"], len(report["structural_events"]))
+        self.assertIn("text_node", report["summary"]["structural_events_by_kind"])
+
     def test_plain_paragraph_is_editable_but_special_structure_scopes_fail_closed(self):
         body = (
             '<w:p><w:r><w:t>ordinary text</w:t></w:r></w:p>'
