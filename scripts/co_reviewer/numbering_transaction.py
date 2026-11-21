@@ -556,6 +556,199 @@ def validate_numbering_patch_operation_coverage(
     }
 
 
+def verify_numbering_batch_candidate_before_publication(
+    plan: Mapping[str, Any],
+    approval: Mapping[str, Any],
+    workflow: Mapping[str, Any],
+    batch_intent: Mapping[str, Any],
+    batch_scope: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Fail closed unless the complete package graph is consistent before active pointers move."""
+    if not all(isinstance(value, Mapping) for value in (
+        workflow, batch_intent, batch_scope
+    )):
+        raise NumberingTransactionError(
+            "Pre-publication numbering gate requires Workflow Ledger, batch intent and batch scope objects."
+        )
+    actual_plan = _validate_impact_plan(plan)
+    actual_approval = validate_numbering_impact_approval(
+        actual_plan,
+        approval,
+        expected_plan_sha256=actual_plan["impact_plan_sha256"],
+    )
+    batch_id = batch_intent.get("batch_id")
+    if not isinstance(batch_id, str) or not batch_id.strip() or batch_scope.get("batch_id") != batch_id:
+        raise NumberingTransactionError(
+            "Pre-publication numbering gate batch intent and scope do not identify the same batch."
+        )
+
+    selected_task_ids = batch_intent.get("selected_task_ids")
+    scope_task_ids = batch_scope.get("batch_task_ids")
+    if (
+        not isinstance(selected_task_ids, list)
+        or not selected_task_ids
+        or any(not isinstance(value, str) or not value.strip() for value in selected_task_ids)
+        or len(selected_task_ids) != len(set(selected_task_ids))
+        or not isinstance(scope_task_ids, list)
+        or set(scope_task_ids) != set(selected_task_ids)
+    ):
+        raise NumberingTransactionError(
+            "Pre-publication numbering gate requires the exact unique selected task set in intent and scope."
+        )
+    workflow_tasks = {
+        row.get("task_id"): row
+        for row in workflow.get("tasks", [])
+        if isinstance(row, Mapping) and isinstance(row.get("task_id"), str)
+    }
+    selected_tasks: list[Mapping[str, Any]] = []
+    operation_roles: set[str] = set()
+    from .revision_models import validate_author_decision_ref
+    for task_id in selected_task_ids:
+        task = workflow_tasks.get(task_id)
+        if not isinstance(task, Mapping) or task.get("task_type") != "global_numbering":
+            raise NumberingTransactionError(
+                f"Pre-publication numbering batch task {task_id} is missing or is not a global_numbering task."
+            )
+        if task.get("status") not in {"verified", "completed"}:
+            raise NumberingTransactionError(
+                f"Pre-publication numbering task {task_id} is not verified/completed."
+            )
+        try:
+            task_approval = validate_author_decision_ref(task.get("author_decision_ref"))
+        except Exception as exc:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} has no valid author approval: {exc}"
+            ) from exc
+        if task_approval != actual_approval:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} is not bound to this exact impact plan approval."
+            )
+        operations = task.get("patch_operations")
+        if not isinstance(operations, list) or not operations:
+            raise NumberingTransactionError(
+                f"Global-numbering Workflow task {task_id} has no exact PatchOperations."
+            )
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                raise NumberingTransactionError(
+                    f"Global-numbering Workflow task {task_id} contains a malformed PatchOperation."
+                )
+            try:
+                operation_approval = validate_author_decision_ref(
+                    operation.get("author_decision_ref")
+                )
+            except Exception as exc:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation.get('operation_id')} has no valid author approval: {exc}"
+                ) from exc
+            if operation_approval != actual_approval:
+                raise NumberingTransactionError(
+                    f"Global-numbering PatchOperation {operation.get('operation_id')} is not bound to this exact impact plan approval."
+                )
+            role = operation.get("document")
+            if not isinstance(role, str) or not role:
+                raise NumberingTransactionError(
+                    "Global-numbering PatchOperation has no exact document role."
+                )
+            operation_roles.add(role)
+        selected_tasks.append(task)
+
+    affected_roles = set(actual_plan["affected_document_roles"])
+    if operation_roles != affected_roles:
+        raise NumberingTransactionError(
+            "Pre-publication numbering PatchOperations do not cover every and only affected document role."
+        )
+    coverage = validate_numbering_patch_operation_coverage(
+        actual_plan, selected_tasks
+    )
+
+    source_documents = actual_plan["source_documents"]
+    active_documents = workflow.get("active_documents")
+    if not isinstance(active_documents, Mapping) or set(active_documents) != set(source_documents):
+        raise NumberingTransactionError(
+            "Workflow active document roles must exactly match the complete approved Reference Graph source inventory."
+        )
+    intent_documents = batch_intent.get("documents")
+    scope_documents = batch_scope.get("documents")
+    if (
+        not isinstance(intent_documents, Mapping)
+        or not isinstance(scope_documents, Mapping)
+        or set(intent_documents) != affected_roles
+        or set(scope_documents) != affected_roles
+    ):
+        raise NumberingTransactionError(
+            "Pre-publication numbering batch must contain every and only role affected by the approved impact plan."
+        )
+
+    candidate_documents: dict[str, Path] = {}
+    for role, source in source_documents.items():
+        if not isinstance(source, Mapping):
+            raise NumberingTransactionError(
+                f"Approved numbering source record for {role} is malformed."
+            )
+        source_path = _assert_no_symlink_path(
+            source.get("file", ""), f"Approved source DOCX for {role}"
+        )
+        source_sha = source.get("sha256")
+        active = active_documents.get(role)
+        if (
+            not isinstance(source_sha, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", source_sha)
+            or not isinstance(active, Mapping)
+            or Path(str(active.get("file", ""))).expanduser().resolve() != source_path
+            or active.get("sha256") != source_sha
+            or not source_path.is_file()
+            or sha256_file(source_path) != source_sha
+        ):
+            raise NumberingTransactionError(
+                f"Approved source DOCX for {role} is not the current unchanged Workflow active version."
+            )
+
+        if role not in affected_roles:
+            candidate_documents[role] = source_path
+            continue
+
+        intent_record = intent_documents.get(role)
+        scope_record = scope_documents.get(role)
+        if not isinstance(intent_record, Mapping) or not isinstance(scope_record, Mapping):
+            raise NumberingTransactionError(
+                f"Pre-publication numbering batch is missing intent/scope document records for {role}."
+            )
+        output_value = intent_record.get("output_file")
+        if (
+            Path(str(intent_record.get("parent_file", ""))).expanduser().resolve() != source_path
+            or intent_record.get("parent_sha256") != source_sha
+            or Path(str(scope_record.get("input_file", ""))).expanduser().resolve() != source_path
+            or scope_record.get("input_sha256") != source_sha
+            or not isinstance(output_value, str)
+            or Path(output_value).expanduser().resolve()
+               != Path(str(scope_record.get("output_file", ""))).expanduser().resolve()
+        ):
+            raise NumberingTransactionError(
+                f"Numbering batch parent/scope for {role} differs from its exact approved source snapshot."
+            )
+        output_path = _assert_no_symlink_path(
+            output_value, f"Numbering candidate output DOCX for {role}"
+        )
+        if not output_path.is_file() or output_path.suffix.casefold() != ".docx":
+            raise NumberingTransactionError(
+                f"Numbering candidate output DOCX for {role} is missing or invalid: {output_path}."
+            )
+        candidate_documents[role] = output_path
+
+    verification = verify_numbering_package_outputs(
+        actual_plan, candidate_documents
+    )
+    return {
+        **verification,
+        "prepublication_gate": "PASS",
+        "impact_plan_sha256": actual_plan["impact_plan_sha256"],
+        "approval_sha256": actual_approval["approval_sha256"],
+        "batch_id": batch_id,
+        "patch_operation_coverage": coverage,
+    }
+
+
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

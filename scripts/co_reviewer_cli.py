@@ -5418,6 +5418,46 @@ def cmd_publish_batch(args):
             "Batch publication requires every Patch to be mechanically verified and semantically confirmed: "
             + ", ".join(unverified)
         )
+
+    numbering_task_ids = [
+        task_id for task_id in batch_task_ids
+        if workflow_tasks.get(task_id, {}).get("task_type") == "global_numbering"
+    ]
+    numbering_plan_path = getattr(args, "numbering_plan", None)
+    numbering_approval_path = getattr(args, "numbering_approval", None)
+    if numbering_task_ids:
+        if len(numbering_task_ids) != len(batch_task_ids):
+            raise ValueError(
+                "A package-wide numbering publication batch may contain only global_numbering tasks."
+            )
+        if not numbering_plan_path or not numbering_approval_path:
+            raise ValueError(
+                "Global-numbering publication is blocked before active-pointer mutation. "
+                "Supply --numbering-plan and --numbering-approval so the complete approved graph "
+                "can be verified against every candidate DOCX before publication."
+            )
+        numbering_plan = _read_json_object(numbering_plan_path, "Numbering impact plan")
+        numbering_approval = _read_json_object(numbering_approval_path, "Numbering author approval")
+        from co_reviewer.numbering_transaction import (
+            verify_numbering_batch_candidate_before_publication,
+        )
+        numbering_gate = verify_numbering_batch_candidate_before_publication(
+            numbering_plan, numbering_approval, workflow, intent, scope
+        )
+        print(
+            "[PRE-PUBLICATION NUMBERING GRAPH] PASS | "
+            f"definitions={numbering_gate['graph_counts']['definitions']}; "
+            f"mentions={numbering_gate['graph_counts']['mentions']}; "
+            f"edges={numbering_gate['graph_counts']['edges']}; "
+            f"unresolved={numbering_gate['graph_counts']['unresolved']}; "
+            f"ambiguous={numbering_gate['graph_counts']['ambiguous']}"
+        )
+        print(f"[APPROVED IMPACT PLAN SHA256] {numbering_gate['impact_plan_sha256']}")
+    elif numbering_plan_path or numbering_approval_path:
+        raise ValueError(
+            "--numbering-plan/--numbering-approval are valid only for a global_numbering batch."
+        )
+
     # Final ResponseUnit completion and final Word/PDF locations are round-level
     # release gates. They are intentionally deferred until every batch is published,
     # because a later batch can shift pagination for an entire document role.
@@ -7171,6 +7211,14 @@ def build_parser():
     pub.add_argument("--workflow-ledger", required=True)
     pub.add_argument("--revision-ledger", required=True)
     pub.add_argument("--batch-dir", required=True)
+    pub.add_argument(
+        "--numbering-plan",
+        help="Required for global_numbering batches: exact source-hash-bound package impact plan.",
+    )
+    pub.add_argument(
+        "--numbering-approval",
+        help="Required for global_numbering batches: author approval bound to the displayed impact-plan SHA-256.",
+    )
     pub.set_defaults(func=cmd_publish_batch)
     rb = sub.add_parser("rollback-batch", help="Restore the parent active document pointers without deleting any committed output.")
     rb.add_argument("--workflow-ledger", required=True)

@@ -26,6 +26,7 @@ from co_reviewer.numbering_transaction import (
     validate_numbering_impact_approval,
     validate_numbering_patch_operation_coverage,
     verify_numbering_package_outputs,
+    verify_numbering_batch_candidate_before_publication,
 )
 from co_reviewer.v232_contract import (
     ContractError,
@@ -362,6 +363,116 @@ class NumberingTransactionTests(unittest.TestCase):
                     "source_comment_ids": [],
                     "target_identity_mode": "legacy_p_idx_explicit",
                 })
+
+    def test_global_numbering_graph_is_verified_before_batch_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan, sources = self._impact_plan(root)
+            approval = authorize_numbering_impact_plan(
+                plan, plan["impact_plan_sha256"], "Human Author",
+                approved_at_utc="2026-11-20T12:00:00+00:00",
+            )
+            batch_id = "numbering-prepublish-001"
+            task_id = "GN-PREPUBLISH-001"
+            candidate_outputs = {}
+            for role, source in sources.items():
+                output_path = root / f"candidate-{role}.docx"
+                document = Document(source)
+                for paragraph in document.paragraphs:
+                    paragraph.text = (
+                        paragraph.text
+                        .replace("Figure 1", "Figure 2")
+                        .replace("Fig. 1", "Fig. 2")
+                    )
+                document.save(output_path)
+                candidate_outputs[role] = output_path
+
+            required_targets = {
+                (row["document"], row["part"], row["paragraph_index"])
+                for field in ("definition_updates", "mention_updates")
+                for row in plan[field]
+            }
+            operations = [
+                {
+                    "operation_id": f"GN-PREPUBLISH-{index:03d}",
+                    "document": role,
+                    "part": part,
+                    "p_idx": p_idx,
+                    "author_decision_ref": approval,
+                    "target_identity_mode": "legacy_p_idx_explicit",
+                }
+                for index, (role, part, p_idx) in enumerate(sorted(required_targets), start=1)
+            ]
+            task = {
+                "task_id": task_id,
+                "task_type": "global_numbering",
+                "status": "verified",
+                "author_decision_ref": approval,
+                "patch_operations": operations,
+            }
+            active_documents = {
+                role: {
+                    "file": str(source.resolve()),
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "batch_id": None,
+                }
+                for role, source in sources.items()
+            }
+            intent_documents = {}
+            scope_documents = {}
+            for role in plan["affected_document_roles"]:
+                source = sources[role]
+                output = candidate_outputs[role]
+                source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+                intent_documents[role] = {
+                    "parent_file": str(source.resolve()),
+                    "parent_sha256": source_sha,
+                    "output_file": str(output.resolve()),
+                }
+                scope_documents[role] = {
+                    "input_file": str(source.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output.resolve()),
+                }
+            intent = {
+                "batch_id": batch_id,
+                "selected_task_ids": [task_id],
+                "documents": intent_documents,
+            }
+            scope = {
+                "batch_id": batch_id,
+                "batch_task_ids": [task_id],
+                "documents": scope_documents,
+            }
+            workflow = {
+                "active_documents": active_documents,
+                "tasks": [task],
+            }
+
+            result = verify_numbering_batch_candidate_before_publication(
+                plan, approval, workflow, intent, scope
+            )
+            self.assertEqual(result["prepublication_gate"], "PASS")
+            self.assertEqual(result["impact_plan_sha256"], plan["impact_plan_sha256"])
+            self.assertEqual(
+                result["patch_operation_coverage"]["target_paragraph_count"],
+                len(required_targets),
+            )
+
+            # A candidate with the unmodified parent files must be stopped
+            # before publish_active_pointers can switch any active document.
+            stale_intent = json.loads(json.dumps(intent))
+            stale_scope = json.loads(json.dumps(scope))
+            for role in plan["affected_document_roles"]:
+                stale_intent["documents"][role]["output_file"] = str(sources[role].resolve())
+                stale_scope["documents"][role]["output_file"] = str(sources[role].resolve())
+            with self.assertRaisesRegex(
+                NumberingTransactionError,
+                "Post-publication Reference Graph mismatch",
+            ):
+                verify_numbering_batch_candidate_before_publication(
+                    plan, approval, workflow, stale_intent, stale_scope
+                )
 
     def test_numbering_package_commit_validates_full_batch_and_resume_integrity(self):
         with tempfile.TemporaryDirectory() as temporary:
