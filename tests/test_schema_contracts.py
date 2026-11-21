@@ -101,6 +101,8 @@ class JsonSchemaContractTests(unittest.TestCase):
             "input_file": "source.docx",
             "output_file": "marked.docx",
             "part": "word/document.xml",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
             "find": "Journal Name",
             "replace": "Journal Name",
             "evidence_ids": ["E1"],
