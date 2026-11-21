@@ -481,6 +481,35 @@ class NumberingTransactionTests(unittest.TestCase):
                         release_root=root / "numbering-releases-stale",
                     )
 
+            stale_after_publish = {"schema_version": "0.5.1", "post_publish_change": True}
+            revision_path.write_text(
+                json.dumps(stale_after_publish, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            post_publish_revision = SimpleNamespace(
+                patches=[SimpleNamespace(patch_id=patch_id, status="verified")],
+                to_dict=lambda: dict(stale_after_publish),
+                validate_or_raise=lambda: None,
+            )
+            with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
+                with self.assertRaisesRegex(
+                    NumberingTransactionError,
+                    "different RevisionLedger snapshot",
+                ):
+                    commit_numbering_package_transaction(
+                        plan,
+                        approval,
+                        batch_dir=batch_dir,
+                        workflow_ledger_path=workflow_path,
+                        revision_ledger_path=revision_path,
+                        revision_ledger=post_publish_revision,
+                        release_root=root / "numbering-releases-stale-after-publish",
+                    )
+            revision_path.write_text(
+                json.dumps(persisted_revision, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
             with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
                 receipt = commit_numbering_package_transaction(
                     plan,
