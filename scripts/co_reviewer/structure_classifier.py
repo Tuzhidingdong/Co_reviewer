@@ -830,7 +830,9 @@ def _build_structural_event_map(
     range_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
     field_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
     field_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    proofing_links_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
     order_by_path = {_path(node): order for node, order in xml_order.items()}
+    node_by_path = {_path(node): node for node in nodes}
     for record in records:
         if record.get("part") != part:
             continue
@@ -866,6 +868,7 @@ def _build_structural_event_map(
         elif kind == "complex_field":
             group = {
                 "field_id": details.get("field_id"),
+                "field_kind": "complex",
                 "status": record.get("status"),
                 "begin_path": details.get("begin_path"),
                 "separate_path": details.get("separate_path"),
@@ -889,6 +892,57 @@ def _build_structural_event_map(
                 if begin_order <= upper:
                     for order in range(begin_order, upper + 1):
                         field_links_by_order[order].append(group)
+        elif kind == "simple_field":
+            field_path = record.get("element_path")
+            field_node = node_by_path.get(field_path)
+            begin_order = order_by_path.get(field_path)
+            if field_node is not None and isinstance(begin_order, int):
+                descendants = list(field_node.iter())
+                end_node = descendants[-1] if descendants else field_node
+                end_path = _path(end_node)
+                end_order = order_by_path.get(end_path, begin_order)
+                group = {
+                    "field_id": record.get("structure_id"),
+                    "field_kind": "simple",
+                    "status": record.get("status"),
+                    "begin_path": field_path,
+                    "separate_path": None,
+                    "end_path": end_path,
+                    "instruction_paths": [field_path],
+                    "instruction": details.get("instruction", ""),
+                    "complete": True,
+                }
+                field_links[field_path].append(group)
+                for order in range(begin_order, end_order + 1):
+                    field_links_by_order[order].append(group)
+
+    proofing_stacks: dict[str, list[ET._Element]] = defaultdict(list)
+    for node in nodes:
+        if node.tag != f"{{{W}}}proofErr":
+            continue
+        marker_type = node.get(f"{{{W}}}type", "")
+        if marker_type.endswith("Start"):
+            proofing_stacks[marker_type[:-5]].append(node)
+        elif marker_type.endswith("End"):
+            base_type = marker_type[:-3]
+            stack = proofing_stacks.get(base_type, [])
+            if stack:
+                start_node = stack.pop()
+                start_order = xml_order[start_node]
+                end_order = xml_order[node]
+                link = {
+                    "range_kind": "proofing_range",
+                    "range_type": base_type,
+                    "range_id": f"{part}#proofErr-{base_type}-{_path(start_node)}",
+                    "status": "SUPPORTED",
+                    "start_path": _path(start_node),
+                    "end_path": _path(node),
+                    "start_order": start_order,
+                    "end_order": end_order,
+                    "scope_mapping": "xml_document_order",
+                }
+                for order in range(start_order, end_order + 1):
+                    proofing_links_by_order[order].append(link)
 
     def unique_links(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
@@ -995,6 +1049,7 @@ def _build_structural_event_map(
             "paired_ranges": unique_links(
                 range_links_by_order.get(xml_order[node], []),
                 range_links.get(path, []),
+                proofing_links_by_order.get(xml_order[node], []),
             ),
             "field_groups": unique_links(
                 field_links_by_order.get(xml_order[node], []),
