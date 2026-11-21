@@ -5646,7 +5646,7 @@ def _verify_completed_release_package(
     }
     if (
         intent.get("schema_version") != "1.0"
-        or receipt.get("schema_version") != "1.0"
+        or receipt.get("schema_version") != "2.0"
         or receipt.get("status") != "complete"
         or receipt.get("release_id") != intent.get("release_id")
         or not isinstance(intent.get("release_id"), str)
@@ -5694,6 +5694,30 @@ def _verify_completed_release_package(
         docx_path=str(release_dir / "Response_to_Reviewers.docx"),
         docx_sha256=sha256_file(release_dir / "Response_to_Reviewers.docx"),
     )
+    from co_reviewer.release_package import verify_release_package
+    committed_manifest = verify_release_package(
+        release_dir, expected_release_id=str(intent.get("release_id"))
+    )
+    package_manifest_path = Path(receipt.get("package_manifest_file", "")).expanduser().resolve()
+    commit_marker_path = Path(receipt.get("commit_marker_file", "")).expanduser().resolve()
+    if (
+        receipt.get("package_id") != committed_manifest.get("package_id")
+        or receipt.get("package_directory") != str(
+            Path(receipt.get("package_directory", "")).expanduser().resolve()
+        )
+        or package_manifest_path != (
+            Path(committed_manifest.get("package_id") and receipt.get("package_directory", ""))
+            .expanduser().resolve() / "package_manifest.json"
+        )
+        or not package_manifest_path.is_file()
+        or sha256_file(package_manifest_path) != receipt.get("package_manifest_sha256")
+        or not commit_marker_path.is_file()
+        or sha256_file(commit_marker_path) != receipt.get("commit_marker_sha256")
+        or receipt.get("package_artifact_count") != committed_manifest.get("artifact_count")
+        or committed_manifest.get("source_release_manifest_sha256")
+            != receipt.get("artifacts", {}).get("final_release_manifest.json")
+    ):
+        raise ValueError("Completed Release Package receipt does not match its committed package manifest/marker.")
 
 
 def cmd_create_release_package(args):
@@ -5768,7 +5792,8 @@ def cmd_create_release_package(args):
     docx_path = release_dir / "Response_to_Reviewers.docx"
     quality_path = release_dir / "Response_to_Reviewers.quality.json"
 
-    for canonical_path in (intent_path, receipt_path, manifest_path, md_path, docx_path, quality_path):
+    commit_marker_path = release_dir / "release_package_commit.json"
+    for canonical_path in (intent_path, receipt_path, manifest_path, md_path, docx_path, quality_path, commit_marker_path):
         if canonical_path.is_symlink():
             raise ValueError(f"Release Package canonical artifact must not be a symbolic link: {canonical_path}")
 
@@ -6005,8 +6030,28 @@ def cmd_create_release_package(args):
         "Response_to_Reviewers.quality.json": sha256_file(quality_path),
         "final_release_manifest.json": sha256_file(manifest_path),
     }
+    # Commit every managed DOCX and every referenced evidence artifact as one
+    # immutable directory. The external commit marker is created only after the
+    # staged package manifest and every copied byte have been revalidated.
+    from co_reviewer.release_package import (
+        collect_release_package_artifacts,
+        commit_release_package,
+    )
+    package_records = collect_release_package_artifacts(
+        manifest,
+        release_manifest_path=manifest_path,
+        release_intent_path=intent_path,
+        workflow_ledger=workflow,
+    )
+    package_commit = commit_release_package(
+        release_dir,
+        package_records,
+        release_id=intent["release_id"],
+        source_release_manifest_sha256=artifacts["final_release_manifest.json"],
+    )
+
     receipt = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "status": "complete",
         "release_id": intent["release_id"],
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -6017,6 +6062,13 @@ def cmd_create_release_package(args):
         "intent_file": str(intent_path),
         "intent_sha256": sha256_file(intent_path),
         "artifacts": artifacts,
+        "package_id": package_commit["package_id"],
+        "package_directory": package_commit["package_directory"],
+        "package_manifest_file": package_commit["package_manifest_file"],
+        "package_manifest_sha256": package_commit["package_manifest_sha256"],
+        "commit_marker_file": package_commit["commit_marker_file"],
+        "commit_marker_sha256": package_commit["commit_marker_sha256"],
+        "package_artifact_count": package_commit["artifact_count"],
     }
     if receipt_path.exists():
         raise ValueError("Release completion receipt appeared during finalization; inspect the concurrent run.")
@@ -6043,6 +6095,10 @@ def cmd_create_release_package(args):
     print(f"[QUALITY REPORT] {quality_path} | {response_quality['status']}")
     print(f"[FINAL RELEASE MANIFEST] {manifest_path}")
     print(f"[RELEASE RECEIPT] {receipt_path}")
+    print(f"[COMMITTED PACKAGE] {package_commit['package_directory']}")
+    print(f"[PACKAGE MANIFEST] {package_commit['package_manifest_file']} | SHA-256 {package_commit['package_manifest_sha256']}")
+    print(f"[PACKAGE COMMIT MARKER] {package_commit['commit_marker_file']} | SHA-256 {package_commit['commit_marker_sha256']}")
+    print(f"[PACKAGED ARTIFACTS] {package_commit['artifact_count']}")
     print(f"[MANIFEST SHA-256] {artifacts['final_release_manifest.json']}")
     print("[GATE] Active pointers, verified PatchOperations, completed ResponseUnits, final Word/PDF hashes, SEQ audit and exact Response Letter excerpts were rechecked.")
     return 0
