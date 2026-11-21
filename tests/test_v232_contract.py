@@ -17,6 +17,7 @@ from co_reviewer.v232_contract import (
     remediation_transition, compile_clean_from_marked, qn, W,
     build_revision_baseline_inventory, targeted_revision_gate,
     collect_revision_ids_from_lineage, extract_docx_text_for_reference_graph,
+    validate_committed_document_package,
 )
 from co_reviewer.historical_revisions import resolve_historical_revisions
 from co_reviewer.omml_converter import (
@@ -111,7 +112,7 @@ class V232ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "PARAGRAPH_PROPERTIES"):
             assert_safe_paragraph_merge(styled_left, styled_right)
 
-    def test_package_transaction_publishes_manifest_commit_marker(self):
+    def test_package_transaction_publishes_manifest_commit_marker_and_revalidates_docx_bytes(self):
         payload = io.BytesIO()
         with zipfile.ZipFile(payload, "w") as z:
             z.writestr("[Content_Types].xml", f'<Types xmlns="{ "http://schemas.openxmlformats.org/package/2006/content-types" }"/>')
@@ -121,6 +122,18 @@ class V232ContractTests(unittest.TestCase):
             self.assertEqual(result["status"], "COMMITTED")
             self.assertTrue(Path(result["commit_marker"]).is_file())
             self.assertTrue((Path(result["directory"]) / "package_manifest.json").is_file())
+            verified = validate_committed_document_package(
+                result["directory"], result["commit_marker"]
+            )
+            self.assertEqual(verified["package_id"], result["package_id"])
+            self.assertEqual(verified["documents"][0]["path"], "manuscript/Marked.docx")
+
+            packaged_docx = Path(result["directory"]) / "manuscript" / "Marked.docx"
+            packaged_docx.write_bytes(packaged_docx.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(ContractError, "size/SHA-256 mismatch"):
+                validate_committed_document_package(
+                    result["directory"], result["commit_marker"]
+                )
 
     def test_remediation_has_exactly_one_marked_reentry(self):
         patch = {"target_artifact": "Marked", "operation_id": "OP1", "find": "a", "replace": "b", "reason": "fix"}
