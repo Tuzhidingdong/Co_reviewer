@@ -802,7 +802,11 @@ class NumberingTransactionTests(unittest.TestCase):
             with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
                 with mock.patch.object(cli, "_load_revision_ledger", return_value=revision_ledger) as load_ledger:
                     self.assertEqual(cli.cmd_commit_numbering_package(command_args), 0)
-                    load_ledger.assert_called_once_with(revision_path)
+                    load_ledger.assert_called_once()
+                    self.assertEqual(
+                        Path(load_ledger.call_args.args[0]).resolve(),
+                        revision_path.resolve(),
+                    )
 
             transaction_dir = (
                 release_root
