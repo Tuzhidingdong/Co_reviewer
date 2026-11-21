@@ -132,6 +132,56 @@ class JsonSchemaContractTests(unittest.TestCase):
             "events": [],
         })
 
+        ledger_validator = validator_for(ledger_schema)(ledger_schema)
+        valid_ledger = {
+            "schema_version": "0.5.1",
+            "revision_round_id": "round-schema-format",
+            "documents": [],
+            "patches": [{
+                "patch_id": "T-FORMAT",
+                "task_id": "T-FORMAT",
+                "reviewer": "Reviewer 1",
+                "comment": "Restore typography",
+                "proposed_response": "Formatting restored",
+                "operations": [operation],
+                "status": "planned",
+                "apply_report_ids": [],
+                "verified_output_hashes": [],
+            }],
+            "response_units": [],
+            "events": [],
+        }
+        ledger_validator.validate(valid_ledger)
+
+        implicit_legacy = json.loads(json.dumps(valid_ledger))
+        implicit_legacy["patches"][0]["operations"][0].pop("target_identity_mode")
+        with self.assertRaises(Exception):
+            ledger_validator.validate(implicit_legacy)
+
+        null_target_without_mode = json.loads(json.dumps(valid_ledger))
+        null_operation = null_target_without_mode["patches"][0]["operations"][0]
+        null_operation["target_ref"] = None
+        null_operation.pop("target_identity_mode")
+        with self.assertRaises(Exception):
+            ledger_validator.validate(null_target_without_mode)
+
+        stable_target = json.loads(json.dumps(valid_ledger))
+        stable_operation = stable_target["patches"][0]["operations"][0]
+        stable_operation["target_ref"] = {
+            "document_id": "doc-1",
+            "revision_id": "rev-1",
+            "object_id": "obj-1",
+            "object_type": "paragraph",
+            "part": "word/document.xml",
+            "object_fingerprint": "a" * 64,
+            "start_offset": None,
+            "end_offset": None,
+            "location_hint": {"p_idx": 0},
+        }
+        stable_operation["target_identity_mode"] = "stable_target_ref"
+        ledger_validator.validate(stable_target)
+
+
     def test_bounded_qa_remediation_state_schema_accepts_pending_and_complete_only(self):
         schema = json.loads((SCHEMA_DIR / "qa-remediation.schema.json").read_text(encoding="utf-8"))
         validator = validator_for(schema)(schema)
