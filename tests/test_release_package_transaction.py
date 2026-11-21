@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from docx import Document
+from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -187,6 +188,10 @@ class ReleasePackageTransactionTests(unittest.TestCase):
                 fixture["release_dir"], expected_release_id=release_id
             )
             self.assertEqual(manifest["package_id"], result["package_id"])
+            package_schema = json.loads(
+                (ROOT / "schemas" / "committed-release-package.schema.json").read_text(encoding="utf-8")
+            )
+            Draft202012Validator(package_schema).validate(manifest)
             categories = {
                 category
                 for item in manifest["artifacts"]
