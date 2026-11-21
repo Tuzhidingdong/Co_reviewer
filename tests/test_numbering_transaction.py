@@ -573,6 +573,139 @@ class NumberingTransactionTests(unittest.TestCase):
                     plan, approval, workflow, stale_intent, stale_scope
                 )
 
+
+    def test_publish_batch_cli_blocks_global_numbering_without_plan_and_approval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, sources = self._impact_plan(root)
+            batch_id = "numbering-cli-gate-001"
+            task_id = "GLOBAL-NUMBERING-CLI-001"
+            patch_id = "PATCH-GLOBAL-NUMBERING-CLI-001"
+            batch_dir = root / f"batch-{batch_id}"
+            documents_dir = batch_dir / "documents"
+            documents_dir.mkdir(parents=True)
+            workflow_path = root / "workflow_ledger.json"
+            revision_path = root / "revision_ledger.json"
+            intent_documents = {}
+            scope_documents = {}
+            active_documents = {}
+
+            for role, source_docx in sources.items():
+                output_docx = documents_dir / f"{role}.marked.docx"
+                Document(source_docx).save(output_docx)
+                source_sha = hashlib.sha256(source_docx.read_bytes()).hexdigest()
+                intent_documents[role] = {
+                    "parent_file": str(source_docx.resolve()),
+                    "parent_sha256": source_sha,
+                    "parent_batch_id": None,
+                    "output_file": str(output_docx.resolve()),
+                }
+                scope_documents[role] = {
+                    "input_file": str(source_docx.resolve()),
+                    "input_sha256": source_sha,
+                    "output_file": str(output_docx.resolve()),
+                }
+                active_documents[role] = {
+                    "file": str(source_docx.resolve()),
+                    "sha256": source_sha,
+                    "batch_id": None,
+                    "updated_at_utc": "2026-11-21T00:00:00+00:00",
+                }
+
+            workflow = {
+                "schema_version": "0.5.1",
+                "revision_round_id": "round-numbering-cli-gate",
+                "active_documents": active_documents,
+                "tasks": [{
+                    "task_id": task_id,
+                    "task_type": "global_numbering",
+                    "status": "verified",
+                }],
+                "events": [],
+            }
+            workflow_path.write_text(
+                json.dumps(workflow, ensure_ascii=False, indent=2) + "\\n",
+                encoding="utf-8",
+            )
+            revision_path.write_text(
+                json.dumps({"schema_version": "0.5.1"}, ensure_ascii=False, indent=2) + "\\n",
+                encoding="utf-8",
+            )
+            workflow_sha = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+            intent = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": "round-numbering-cli-gate",
+                "workflow_ledger_file": str(workflow_path.resolve()),
+                "workflow_ledger_sha256_at_prepare": workflow_sha,
+                "created_at_utc": "2026-11-21T00:00:00+00:00",
+                "selected_task_ids": [task_id],
+                "all_selected_task_ids": [task_id],
+                "status": "prepared",
+                "documents": intent_documents,
+                "policy": {
+                    "append_only": True,
+                    "overwrite_committed_outputs": False,
+                    "rollback_deletes_files": False,
+                    "publish_mode": "single_workflow_ledger_active_documents_replace",
+                },
+            }
+            intent_path = batch_dir / "batch_intent.json"
+            intent_path.write_text(
+                json.dumps(intent, ensure_ascii=False, indent=2) + "\\n",
+                encoding="utf-8",
+            )
+            scope = {
+                "schema_version": "1.0",
+                "batch_id": batch_id,
+                "revision_round_id": "round-numbering-cli-gate",
+                "revision_ledger_file": str(revision_path.resolve()),
+                "selected_task_ids": [task_id],
+                "batch_task_ids": [task_id],
+                "patch_ids": [patch_id],
+                "batch_intent_sha256": hashlib.sha256(intent_path.read_bytes()).hexdigest(),
+                "documents": scope_documents,
+            }
+            (batch_dir / "batch_scope.json").write_text(
+                json.dumps(scope, ensure_ascii=False, indent=2) + "\\n",
+                encoding="utf-8",
+            )
+
+            persisted_workflow = workflow_path.read_bytes()
+            revision_ledger = SimpleNamespace(patches=[
+                SimpleNamespace(patch_id=patch_id, status="verified"),
+            ])
+            args = SimpleNamespace(
+                workflow_ledger=str(workflow_path),
+                revision_ledger=str(revision_path),
+                batch_dir=str(batch_dir),
+            )
+
+            # The actual publish CLI must stop at its package-wide approval
+            # gate, before publish_active_pointers can be called or any
+            # immutable publication intent/receipt can be written.
+            with mock.patch.object(
+                cli, "_load_revision_ledger", return_value=revision_ledger
+            ) as load_ledger:
+                with mock.patch(
+                    "co_reviewer.batch_store.publish_active_pointers"
+                ) as publish_pointers:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Global-numbering publication is blocked before active-pointer mutation",
+                    ):
+                        cli.cmd_publish_batch(args)
+                    load_ledger.assert_called_once()
+                    self.assertEqual(
+                        Path(load_ledger.call_args.args[0]).resolve(),
+                        revision_path.resolve(),
+                    )
+                    publish_pointers.assert_not_called()
+
+            self.assertEqual(workflow_path.read_bytes(), persisted_workflow)
+            self.assertFalse((batch_dir / "batch_publish_intent.json").exists())
+            self.assertFalse((batch_dir / "batch_published.json").exists())
+
     def test_numbering_package_commit_validates_full_batch_and_resume_integrity(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
