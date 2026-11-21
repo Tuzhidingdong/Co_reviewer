@@ -83,6 +83,7 @@ def _write_minimal_pdf(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
 def _make_source_docx(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     document = Document()
     document.add_paragraph(text)
     document.save(path)
