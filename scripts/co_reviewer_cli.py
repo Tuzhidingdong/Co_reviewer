@@ -6886,6 +6886,19 @@ def cmd_create_manual_suggestion(args):
     if output_path.exists():
         raise FileExistsError(f"Manual suggestion output already exists; refusing to overwrite: {output_path}")
     payload = json.loads(input_path.read_text(encoding="utf-8"))
+    source_value = payload.get("source_document_path") if isinstance(payload, dict) else None
+    source_requested = Path(str(source_value or "")).expanduser()
+    if source_requested.is_symlink():
+        raise ValueError("Manual suggestion source DOCX must not be a symbolic link.")
+    source_path = source_requested.resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Manual suggestion source DOCX does not exist: {source_path}")
+    source_sha256 = payload.get("source_sha256")
+    if not isinstance(source_sha256, str) or sha256_file(source_path) != source_sha256:
+        raise ValueError(
+            "Manual suggestion source DOCX no longer matches its recorded SHA-256; rebuild the diagnostic."
+        )
+    payload["source_document_path"] = str(source_path)
     suggestion = build_manual_suggestion(payload)
     digest = write_json_new(output_path, suggestion)
     print(f"[MANUAL SUGGESTION] {output_path}")
