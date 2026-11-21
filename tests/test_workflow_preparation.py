@@ -295,6 +295,7 @@ class WorkflowPreparationTests(unittest.TestCase):
             "tasks": [{
                 "task_id": "GN1",
                 "patch_id": "P-GN1",
+                "proposed_response": "We have updated the package-wide figure numbering under the approved numbering plan.",
                 "author_decision_ref": approval,
                 "patch_operations": [{
                     "operation_id": "GN1-OP1",

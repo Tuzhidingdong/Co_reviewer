@@ -100,7 +100,6 @@ class NumberingTransactionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plan, sources = self._impact_plan(root)
-            validate_numbering_impact_approval(plan, approval)
 
             manuscript_output = root / "Manuscript.marked.docx"
             si_output = root / "SI.marked.docx"

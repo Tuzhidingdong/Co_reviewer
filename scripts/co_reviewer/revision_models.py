@@ -160,7 +160,7 @@ class PatchOperation:
             validate_author_decision_ref(self.author_decision_ref)
         if not self.source_comment_ids and self.author_decision_ref is None:
             raise RevisionModelError(
-                "PatchOperation requires exact source_comment_ids or a hash-bound author_decision_ref."
+                "PatchOperation requires at least one exact source_comment_id or a hash-bound author_decision_ref."
             )
         if any(not isinstance(item, str) or not item.strip() for item in self.source_comment_ids):
             raise RevisionModelError("source_comment_ids must contain non-empty comment IDs.")
