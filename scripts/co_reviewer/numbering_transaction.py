@@ -24,6 +24,7 @@ from .v232_contract import (
     commit_document_package,
     extract_docx_reference_segments,
     renumber_reference_graph,
+    validate_committed_document_package,
 )
 
 
@@ -578,9 +579,12 @@ def _existing_numbering_package_receipt(
             raise NumberingTransactionError("Committed numbering package has a malformed commit marker.")
         version_dir = package_root / f"package-{package_id}"
         manifest_path = version_dir / "package_manifest.json"
-        if not manifest_path.is_file() or sha256_file(manifest_path) != marker.get("manifest_sha256"):
-            raise NumberingTransactionError("Committed numbering package manifest does not match its commit marker.")
-        manifest = _load_json_object(manifest_path, "Committed package manifest")
+        try:
+            manifest = validate_committed_document_package(version_dir, marker_path)
+        except ContractError as exc:
+            raise NumberingTransactionError(
+                f"Committed numbering package failed integrity validation: {exc}"
+            ) from exc
         metadata = manifest.get("metadata")
         tx = metadata.get("numbering_transaction") if isinstance(metadata, Mapping) else None
         if (
@@ -826,14 +830,34 @@ def commit_numbering_package_transaction(
             or receipt.get("batch_id") != batch_id
         ):
             raise NumberingTransactionError("Existing numbering transaction receipt conflicts with this approved transaction.")
-        marker = Path(receipt.get("commit_marker", ""))
-        manifest = Path(receipt.get("package_manifest", ""))
+        marker = Path(receipt.get("commit_marker", "")).expanduser()
+        manifest = Path(receipt.get("package_manifest", "")).expanduser()
+        package_directory = Path(receipt.get("package_directory", "")).expanduser()
+        try:
+            validated_manifest = validate_committed_document_package(package_directory, marker)
+        except ContractError as exc:
+            raise NumberingTransactionError(
+                f"Existing numbering transaction package failed integrity validation: {exc}"
+            ) from exc
+        metadata = validated_manifest.get("metadata")
+        transaction = metadata.get("numbering_transaction") if isinstance(metadata, Mapping) else None
+        expected_manifest = package_directory.resolve() / "package_manifest.json"
         if (
-            not marker.is_file() or not manifest.is_file()
-            or sha256_file(marker) != receipt.get("commit_marker_sha256")
-            or sha256_file(manifest) != receipt.get("package_manifest_sha256")
+            manifest.resolve() != expected_manifest
+            or marker.resolve().parent != package_directory.resolve().parent
+            or receipt.get("package_id") != validated_manifest.get("package_id")
+            or receipt.get("package_manifest_sha256") != sha256_file(expected_manifest)
+            or receipt.get("commit_marker_sha256") != sha256_file(marker)
+            or not isinstance(transaction, Mapping)
+            or transaction.get("impact_plan_sha256") != actual_plan["impact_plan_sha256"]
+            or transaction.get("approval_sha256") != actual_approval["approval_sha256"]
+            or transaction.get("batch_id") != batch_id
+            or transaction.get("output_documents") != receipt.get("output_documents")
+            or transaction.get("final_graph_sha256") != receipt.get("final_graph_sha256")
         ):
-            raise NumberingTransactionError("Existing numbering transaction receipt points to a missing or altered package.")
+            raise NumberingTransactionError(
+                "Existing numbering transaction receipt does not match its validated package manifest and approval."
+            )
         return receipt
 
     prior = _existing_numbering_package_receipt(
