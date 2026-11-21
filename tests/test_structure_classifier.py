@@ -193,6 +193,14 @@ class StructureClassifierTests(unittest.TestCase):
         )
         self.assertEqual(pair_text_nodes[0]["text_offset_in_run"], {"start": 0, "end": 1})
         self.assertEqual(pair_text_nodes[1]["text_offset_in_run"], {"start": 1, "end": 2})
+        self.assertEqual(
+            {row["range_id"] for row in pair_text_nodes[0]["paired_ranges"]},
+            {"7"},
+        )
+        self.assertEqual(
+            {row["range_id"] for row in pair_text_nodes[1]["paired_ranges"]},
+            {"7"},
+        )
 
         bookmark_start = next(
             row for row in events
@@ -219,6 +227,11 @@ class StructureClassifierTests(unittest.TestCase):
         )
         self.assertEqual(comment_start["paired_ranges"][0]["range_id"], "9")
         self.assertEqual(comment_end["paired_ranges"][0]["range_id"], "9")
+        commented_text = next(row for row in text_nodes if row.get("text_content") == "commented")
+        self.assertIn(
+            "9",
+            {row["range_id"] for row in commented_text["paired_ranges"]},
+        )
 
         field_events = [
             row for row in events
@@ -226,6 +239,9 @@ class StructureClassifierTests(unittest.TestCase):
         ]
         self.assertEqual(len(field_events), 4)
         self.assertTrue(all(row["field_groups"][0]["field_id"] for row in field_events))
+        field_result = next(row for row in text_nodes if row.get("text_content") == "1")
+        self.assertTrue(field_result["field_groups"])
+        self.assertTrue(field_result["field_groups"][0]["complete"])
         self.assertEqual(
             {row["attributes"].get("w:fldCharType") for row in field_events if row["element"] == "fldChar"},
             {"begin", "separate", "end"},
