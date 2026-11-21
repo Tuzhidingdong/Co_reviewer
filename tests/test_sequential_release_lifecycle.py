@@ -528,7 +528,7 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
                 "evidence_ids": ["E-MAN-C2-REFRESH"],
             }],
             "patch_operations": [{
-                "operation_id": "OP2-PREPARED",
+                "operation_id": "OP2",
                 "document": "Manuscript",
                 "part": "word/document.xml",
                 "p_idx": 0,
@@ -571,6 +571,7 @@ class SequentialReleaseLifecycleIntegrationTests(unittest.TestCase):
         self.assertEqual(prepared_operation["input_file"], str(first_output.resolve()))
         self.assertEqual(prepared_operation["source_sha256"], _sha(first_output))
         self.assertEqual(prepared_operation["find"], "ZB-02")
+        self.assertEqual(prepared_operation["operation_id"], "OP2")
         self.assertEqual(prepared_operation["target_identity_mode"], "legacy_p_idx_explicit")
         self.assertEqual(task_two["response_unit_specs"][0]["location_requirement"], "manual_required")
         self.assertTrue(any(
