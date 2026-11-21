@@ -422,6 +422,54 @@ class V232ContractTests(unittest.TestCase):
                  if d["document"] == "Manuscript" and d["number"] == "2a"),
         )
 
+    def test_reference_graph_recognizes_supplementary_and_extended_data_labels(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 1,
+                    "text": "Extended Data Figure 1. Additional control experiments.",
+                },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 2,
+                    "text": "Supplementary Table S2. Composition details.",
+                },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 3,
+                    "text": (
+                        "See Extended Data Fig. 1, Supplementary Table S2, "
+                        "and Supporting Information Figure S3."
+                    ),
+                },
+            ],
+            "SI": [
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 1,
+                    "text": "Supporting Information Figure S3. Extended results.",
+                },
+            ],
+        })
+        definition_keys = {
+            (row["kind"], row["number"])
+            for row in graph["definitions"]
+        }
+        self.assertIn(("figure", "1"), definition_keys)
+        self.assertIn(("table", "S2"), definition_keys)
+        self.assertIn(("figure", "S3"), definition_keys)
+        manuscript_mentions = [
+            row for row in graph["mentions"]
+            if row["document"] == "Manuscript"
+        ]
+        self.assertEqual(len(manuscript_mentions), 3)
+        self.assertTrue(all(row["resolution"] == "resolved" for row in manuscript_mentions))
+        self.assertEqual(
+            {(row["kind"], row["number"]) for row in manuscript_mentions},
+            {("figure", "1"), ("table", "S2"), ("figure", "S3")},
+        )
+
     def test_reference_graph_prefers_local_numbering_and_preserves_ambiguity(self):
         graph = build_package_reference_graph({
             "Manuscript": "Figure 1. Main manuscript result. See Figure 1.",

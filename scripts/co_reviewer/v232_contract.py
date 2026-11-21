@@ -630,11 +630,13 @@ _REFERENCE_LABELS = {
 }
 _REFERENCE_NUMBER = r"(S?\d+(?:\.\d+)*(?:[A-Za-z])?)"
 _CAPTION = re.compile(
-    rf"(?im)^\s*(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
+    rf"(?im)^\s*(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(Figure|Fig\.?|Table|Equation|Eq\.?|Scheme|Section)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=\s|[.:)]|$)"
 )
 _MENTION = re.compile(
-    rf"\b(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
+    rf"\b(?:(?:Extended\s+Data|Supplementary|Supporting\s+Information)\s+)?"
+    rf"(Figures?|Figs?\.?|Tables?|Equations?|Eqs?\.?|Schemes?|Sections?)"
     rf"\s*\(?\s*({_REFERENCE_NUMBER})\s*\)?(?=$|[\s,.;:)\]])",
     re.I,
 )
