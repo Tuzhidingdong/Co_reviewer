@@ -1029,7 +1029,7 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     ):
                         number = match.group(1)
                         record_id = "def-" + hashlib.sha1(
-                            (doc_id + segment["part"] + str(segment["paragraph_index")
+                            (doc_id + segment["part"] + str(segment["paragraph_index"])
                              + str(match.start()) + "citation-inline-reference" + number).encode("utf-8")
                         ).hexdigest()[:16]
                         definitions.append({
