@@ -1467,6 +1467,120 @@ def commit_document_package(outputs: Mapping[str, bytes], release_root: str | Pa
         raise
 
 
+
+def validate_committed_document_package(
+    package_directory: str | Path,
+    commit_marker: str | Path,
+) -> dict[str, Any]:
+    """Revalidate the marker, manifest and every packaged DOCX before reuse."""
+    requested_root = Path(package_directory).expanduser()
+    requested_marker = Path(commit_marker).expanduser()
+    for requested, label in (
+        (requested_root, "Committed package directory"),
+        (requested_marker, "Package commit marker"),
+    ):
+        probe = Path(os.path.abspath(str(requested)))
+        while True:
+            if probe.is_symlink():
+                raise ContractError(f"{label} must not traverse a symbolic link: {probe}")
+            if probe.parent == probe:
+                break
+            probe = probe.parent
+
+    root = requested_root.resolve()
+    marker_path = requested_marker.resolve()
+    if not root.is_dir() or marker_path.parent != root.parent or not marker_path.is_file():
+        raise ContractError("Committed package directory and sibling commit marker must both exist.")
+    if marker_path.is_symlink():
+        raise ContractError("Package commit marker must not be a symbolic link.")
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractError(f"Package commit marker is unreadable: {exc}") from exc
+    package_id = marker.get("package_id") if isinstance(marker, Mapping) else None
+    if (
+        not isinstance(package_id, str)
+        or not re.fullmatch(r"[a-f0-9]{32}", package_id)
+        or root.name != f"package-{package_id}"
+        or marker_path.name != f"COMMITTED-{package_id}.json"
+    ):
+        raise ContractError("Package directory and commit marker identify different or malformed package IDs.")
+
+    manifest_path = root / "package_manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ContractError("Committed package manifest is missing or is a symbolic link.")
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"Committed package manifest is unreadable: {exc}") from exc
+    manifest_sha = _sha(manifest_bytes)
+    if marker.get("manifest_sha256") != manifest_sha:
+        raise ContractError("Committed package manifest SHA-256 does not match its commit marker.")
+    if (
+        not isinstance(manifest, Mapping)
+        or manifest.get("schema_version") != "1.0"
+        or manifest.get("package_id") != package_id
+    ):
+        raise ContractError("Committed package manifest has an invalid schema version or package ID.")
+
+    rows = manifest.get("documents")
+    if not isinstance(rows, list) or not rows:
+        raise ContractError("Committed package manifest must list at least one DOCX.")
+    declared_paths: set[str] = set()
+    declared_casefold: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise ContractError(f"Committed package manifest documents[{index}] must be an object.")
+        name = row.get("path")
+        digest = row.get("sha256")
+        size = row.get("size")
+        if (
+            not isinstance(name, str) or not name.strip()
+            or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or not isinstance(size, int) or isinstance(size, bool) or size < 0
+        ):
+            raise ContractError(f"Committed package manifest documents[{index}] has invalid path/hash/size metadata.")
+        safe = PurePosixPath(name)
+        windows_safe = PureWindowsPath(name)
+        if (
+            safe.is_absolute() or windows_safe.is_absolute() or windows_safe.drive
+            or "\\" in name or ".." in safe.parts or safe.suffix.casefold() != ".docx"
+            or not safe.parts
+        ):
+            raise ContractError(f"Committed package manifest contains an unsafe DOCX path: {name}")
+        normalized = safe.as_posix()
+        folded = normalized.casefold()
+        if folded in declared_casefold:
+            raise ContractError(f"Committed package manifest contains duplicate or case-colliding path: {name}")
+        declared_paths.add(normalized)
+        declared_casefold.add(folded)
+
+        target = root.joinpath(*safe.parts)
+        probe = root
+        for part in safe.parts:
+            probe = probe / part
+            if probe.is_symlink():
+                raise ContractError(f"Committed package DOCX path traverses a symbolic link: {probe}")
+        if not target.is_file():
+            raise ContractError(f"Committed package DOCX is missing: {normalized}")
+        payload = target.read_bytes()
+        if len(payload) != size or _sha(payload) != digest:
+            raise ContractError(f"Committed package DOCX size/SHA-256 mismatch: {normalized}")
+
+    actual_paths: set[str] = set()
+    for candidate in root.rglob("*"):
+        if candidate.is_symlink():
+            raise ContractError(f"Committed package contains a symbolic link: {candidate}")
+        if candidate.is_file() and candidate.suffix.casefold() == ".docx":
+            actual_paths.add(candidate.relative_to(root).as_posix())
+    if actual_paths != declared_paths:
+        raise ContractError(
+            "Committed package DOCX inventory differs from its manifest "
+            f"(unlisted={sorted(actual_paths - declared_paths)}, missing={sorted(declared_paths - actual_paths)})."
+        )
+    return dict(manifest)
+
 def validate_qa_remediation_eligibility(
     qa_report: Mapping[str, Any],
     operation: Mapping[str, Any],
