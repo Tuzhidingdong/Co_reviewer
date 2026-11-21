@@ -135,6 +135,32 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertTrue(right["allowed"])
         self.assertFalse(inside["allowed"])
 
+    def test_bookmark_range_across_paragraphs_blocks_middle_but_not_outer_text(self):
+        root, first = _document(
+            '<w:p>' + _run("safe before")
+            + '<w:bookmarkStart w:id="cross" w:name="cross-paragraph"/>'
+            + _run("protected start")
+            + '</w:p>'
+            + '<w:p>' + _run("protected middle") + '</w:p>'
+            + '<w:p>' + _run("protected end")
+            + '<w:bookmarkEnd w:id="cross"/>'
+            + _run("safe after")
+            + '</w:p>'
+        )
+        paragraphs = root.findall(".//w:p", NS)
+        self.assertEqual(len(paragraphs), 3)
+        before = analyze_bounded_safe_span(root, paragraphs[0], "safe before")
+        middle = analyze_bounded_safe_span(root, paragraphs[1], "protected middle")
+        after = analyze_bounded_safe_span(root, paragraphs[2], "safe after")
+        self.assertTrue(before["allowed"])
+        self.assertFalse(middle["allowed"])
+        self.assertEqual(middle["protected_ranges"][0]["range_id"], "cross")
+        self.assertTrue(after["allowed"])
+        self.assertEqual(
+            {row["range_id"] for row in after["bookmark_boundaries"]},
+            {"cross"},
+        )
+
     def test_duplicate_out_of_order_and_collapsed_bookmark_markers_fail_closed(self):
         cases = [
             (
