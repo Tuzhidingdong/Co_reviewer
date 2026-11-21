@@ -354,10 +354,16 @@ class NumberingTransactionTests(unittest.TestCase):
             }
             workflow_path = root / "workflow_ledger.json"
             revision_path = root / "revision_ledger.json"
-            revision_path.write_text('{"schema_version":"0.5.1"}\n', encoding="utf-8")
+            persisted_revision = {"schema_version": "0.5.1"}
+            revision_path.write_text(
+                json.dumps(persisted_revision, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             patch_id = "PATCH-GN-COMMIT-001"
             revision_ledger = SimpleNamespace(
-                patches=[SimpleNamespace(patch_id=patch_id, status="verified")]
+                patches=[SimpleNamespace(patch_id=patch_id, status="verified")],
+                to_dict=lambda: dict(persisted_revision),
+                validate_or_raise=lambda: None,
             )
 
             intent_documents = {}
@@ -454,6 +460,26 @@ class NumberingTransactionTests(unittest.TestCase):
             (batch_dir / "batch_published.json").write_text(
                 json.dumps(publication_receipt, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+
+            stale_revision = SimpleNamespace(
+                patches=[SimpleNamespace(patch_id=patch_id, status="verified")],
+                to_dict=lambda: {"schema_version": "0.5.1", "revision_round_id": "stale"},
+                validate_or_raise=lambda: None,
+            )
+            with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
+                with self.assertRaisesRegex(
+                    NumberingTransactionError,
+                    "does not match the exact persisted RevisionLedger snapshot",
+                ):
+                    commit_numbering_package_transaction(
+                        plan,
+                        approval,
+                        batch_dir=batch_dir,
+                        workflow_ledger_path=workflow_path,
+                        revision_ledger_path=revision_path,
+                        revision_ledger=stale_revision,
+                        release_root=root / "numbering-releases-stale",
+                    )
 
             with mock.patch("co_reviewer.workflow_engine.validate_workflow_ledger", return_value=[]):
                 receipt = commit_numbering_package_transaction(
