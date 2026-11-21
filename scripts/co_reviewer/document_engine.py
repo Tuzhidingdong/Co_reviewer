@@ -771,13 +771,21 @@ def replace_in_paragraph(
         while pos >= 0:
             matches.append((start, end, runs, text, pos))
             pos = text.find(old, pos + 1)
+    # Search all enabled text containers before selecting any location. A
+    # plain Run match and a Hyperlink match are competing targets, not a reason
+    # to prefer the ordinary Run merely because it was visited first.
+    hyperlink_matches = [
+        child for child in children
+        if child.tag == qn("hyperlink") and old in visible_text(child)
+    ]
+    if matches and hyperlink_matches:
+        return (
+            False, next_id,
+            "target is ambiguous across plain-text and hyperlink containers",
+        )
     if not matches:
         # A target may be wholly contained in one simple hyperlink. Recurse into
         # that wrapper so the relationship ID and hyperlink attributes survive.
-        hyperlink_matches = [
-            child for child in children
-            if child.tag == qn("hyperlink") and old in visible_text(child)
-        ]
         if len(hyperlink_matches) == 1:
             return replace_in_paragraph(
                 hyperlink_matches[0], old, new, author, date, next_id,

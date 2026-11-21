@@ -650,6 +650,25 @@ class StructureClassifierTests(unittest.TestCase):
                     )
                 matrix[adapter] = "BLOCKED_AS_REQUIRED"
 
+        # An exact match in both an ordinary Run and a hyperlink is
+        # ambiguous even though the ordinary Run was enumerated first.
+        mixed_container = parse_xml(
+            f'<w:p xmlns:w="{W}" xmlns:r="{R}">'
+            '<w:r><w:t>duplicate target</w:t></w:r>'
+            '<w:hyperlink r:id="rIdLink"><w:r><w:t>duplicate target</w:t></w:r></w:hyperlink>'
+            '</w:p>'
+        )
+        changed, _, reason = replace_in_paragraph(
+            mixed_container, "duplicate target", "must not guess",
+            "Synthetic Author", "2026-11-21T00:00:00Z", 1,
+        )
+        self.assertFalse(changed)
+        self.assertIn(
+            "ambiguous across plain-text and hyperlink containers",
+            reason,
+        )
+        matrix["duplicate_plain_and_hyperlink"] = "BLOCKED_AS_REQUIRED"
+
         # No enabled adapter may synthesize a match across a hyperlink
         # container boundary, even if the visible concatenated text matches.
         crossing = parse_xml(
@@ -671,7 +690,7 @@ class StructureClassifierTests(unittest.TestCase):
             {
                 "ordinary_run", "single_hyperlink", "bookmark_safe_span",
                 "comment_range", "complex_field", "drawing", "nested_table",
-                "cross_container_boundary",
+                "cross_container_boundary", "duplicate_plain_and_hyperlink",
             },
         )
         self.assertTrue(all(value in {"PASS", "BLOCKED_AS_REQUIRED"} for value in matrix.values()))
