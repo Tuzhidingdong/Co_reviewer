@@ -1611,8 +1611,11 @@ def build_workflow_ledger(
         if record_key in seen_initial_records:
             continue
 
-        canonical_source = copy.deepcopy(dict(source))
-        canonical_source["role"] = role
+        canonical_source = {
+            "role": role,
+            "file": file_path,
+            "sha256": digest,
+        }
         source_files.append(canonical_source)
         source_records_by_role[role].append(canonical_source)
         seen_initial_records.add(record_key)
