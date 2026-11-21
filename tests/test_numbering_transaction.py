@@ -677,6 +677,14 @@ class NumberingTransactionTests(unittest.TestCase):
                     "word_field_instructions": ["REF _Ref123"],
                     "word_field_markers_present": True,
                 },
+                {
+                    "part": "word/document.xml",
+                    "paragraph_index": 2,
+                    "text": "Cited source.",
+                    "reference_mechanism": "mixed_with_word_field",
+                    "word_field_instructions": ["CITATION Smith2020 \\p 12"],
+                    "word_field_markers_present": True,
+                },
             ],
         }
         graph = build_package_reference_graph(documents)
@@ -693,10 +701,10 @@ class NumberingTransactionTests(unittest.TestCase):
         self.assertEqual(graph["ambiguous_count"], 1)
         self.assertGreaterEqual(graph["unresolved_count"], 3)
 
-        self.assertEqual(len(graph["field_references"]), 2)
+        self.assertEqual(len(graph["field_references"]), 3)
         self.assertEqual(
             {row["field_type"] for row in graph["field_references"]},
-            {"SEQ", "REF"},
+            {"SEQ", "REF", "CITATION"},
         )
         self.assertTrue(all(
             row["resolution"] == "manual_review_required"
