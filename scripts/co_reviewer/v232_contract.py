@@ -1052,6 +1052,9 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                 for match in _PAREN_CITATION_RANGE.finditer(text_value):
                     if any(match.start() < right and match.end() > left for left, right in caption_spans):
                         continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
+                        continue
                     numbers = [match.group(1), match.group(2)]
                     record_id = "men-" + hashlib.sha1(
                         (doc_id + segment["part"] + str(segment["paragraph_index"])
@@ -1071,6 +1074,9 @@ def build_package_reference_graph(documents: Mapping[str, Any]) -> dict[str, Any
                     if any(match.start() < right and match.end() > left for left, right in caption_spans):
                         continue
                     if any(match.start() < right and match.end() > left for left, right in citation_group_spans):
+                        continue
+                    prefix = text_value[max(0, match.start() - 24):match.start()]
+                    if re.search(r"(?:Fig(?:ure)?|Table|Eq(?:uation)?|Scheme|Section)\\.?\\s*$", prefix, re.I):
                         continue
                     numbers = re.findall(r"\d+", match.group("body"))
                     if len(numbers) < 2:

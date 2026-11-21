@@ -845,11 +845,11 @@ class V232ContractTests(unittest.TestCase):
             "Manuscript": [
                 {"part": "word/document.xml", "paragraph_index": 0, "text": "1. Smith et al. Reference one.",
                  "citation_profile_modes": ["numeric_superscript"], "in_reference_section": True},
-                {"part": "word/document.xml", "paragraph_index": 1, "text": "The method follows earlier work.",
+                {"part": "word/document.xml", "paragraph_index": 1, "text": "The method follows earlier work 1",
                  "citation_profile_modes": ["numeric_superscript", "footnote"],
                  "citation_marker_events": [{
                      "kind": "numeric_superscript", "text": "1",
-                     "offset": 33, "end_offset": 34, "numbers": ["1"],
+                     "offset": 32, "end_offset": 33, "numbers": ["1"],
                  }]},
                 {"part": "word/document.xml", "paragraph_index": 2, "text": "A note is attached here.",
                  "citation_profile_modes": ["footnote"],
@@ -865,6 +865,19 @@ class V232ContractTests(unittest.TestCase):
         footnote = next(row for row in graph["mentions"] if row.get("reference_mechanism") == "footnote_reference")
         self.assertEqual(footnote["number"], "footnote:4")
         self.assertEqual(footnote["resolution"], "manual_review_required")
+
+    def test_parenthetical_citation_profile_does_not_reclassify_equation_numbers(self):
+        graph = build_package_reference_graph({
+            "Manuscript": [{
+                "part": "word/document.xml",
+                "paragraph_index": 0,
+                "text": "See Eq. (2) and prior work (1).",
+                "citation_profile_modes": ["numeric_parenthetical"],
+            }],
+        })
+        citations = [row for row in graph["mentions"] if row["kind"] == "citation"]
+        self.assertEqual([row["number"] for row in citations], ["1"])
+        self.assertFalse(any(row.get("text") == "(2)" for row in citations))
 
     def test_reference_graph_does_not_guess_parenthetical_numeric_citations_without_style_evidence(self):
         graph = build_package_reference_graph({
