@@ -446,7 +446,66 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "target_ref"
+            ],
+            "properties": {
+              "target_ref": {
+                "type": "object"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "target_identity_mode"
+            ],
+            "properties": {
+              "target_identity_mode": {
+                "const": "stable_target_ref"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "target_ref"
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "target_ref": {
+                    "type": "null"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "target_identity_mode",
+              "p_idx"
+            ],
+            "properties": {
+              "target_identity_mode": {
+                "const": "legacy_p_idx_explicit"
+              },
+              "p_idx": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "patch": {
       "type": "object",
