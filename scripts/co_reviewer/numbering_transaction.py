@@ -32,6 +32,20 @@ class NumberingTransactionError(ValueError):
     """Raised when a package-wide numbering plan or commit is not safe."""
 
 
+def _validate_numbering_schema(payload: Mapping[str, Any], schema_name: str, label: str) -> None:
+    schema_path = Path(__file__).resolve().parents[2] / "schemas" / schema_name
+    if not schema_path.is_file():
+        raise NumberingTransactionError(f"Required {label} schema is missing: {schema_path}")
+    try:
+        import jsonschema
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(
+            schema, format_checker=jsonschema.FormatChecker()
+        ).validate(payload)
+    except Exception as exc:
+        raise NumberingTransactionError(f"{label} does not satisfy {schema_name}: {exc}") from exc
+
+
 def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -87,6 +101,7 @@ def _validate_impact_plan(plan: Any) -> dict[str, Any]:
         raise NumberingTransactionError("Numbering impact plan is not awaiting author authorization.")
     if plan.get("numbering_mutation_authorized") is not False:
         raise NumberingTransactionError("Impact-plan generation must not authorize or apply numbering changes.")
+    _validate_numbering_schema(plan, "numbering-impact-plan.schema.json", "Numbering impact plan")
     source_documents = plan.get("source_documents")
     affected_roles = plan.get("affected_document_roles")
     proposed_graph = plan.get("proposed_graph")
