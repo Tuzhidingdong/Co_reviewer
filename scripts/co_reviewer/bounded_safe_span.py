@@ -95,6 +95,9 @@ def _part_text_positions(
     }
     cursor = 0
     paragraph_count = 0
+    proofing_stacks: dict[str, list[str]] = defaultdict(list)
+    proofing_counts: dict[str, int] = defaultdict(int)
+    proofing_orphan_end_count: dict[str, int] = defaultdict(int)
 
     for node in root.iter():
         if not isinstance(node.tag, str):
@@ -121,9 +124,20 @@ def _part_text_positions(
         elif local == "proofErr":
             marker_type = node.get(_q("type"), "")
             if marker_type.endswith("Start"):
-                markers[("proofing_range", marker_type[:-5])]["start"].append(cursor)
+                base_type = marker_type[:-5]
+                proofing_counts[base_type] += 1
+                marker_id = f"{base_type}:{proofing_counts[base_type]}"
+                proofing_stacks[base_type].append(marker_id)
+                markers[("proofing_range", marker_id)]["start"].append(cursor)
             elif marker_type.endswith("End"):
-                markers[("proofing_range", marker_type[:-3])]["end"].append(cursor)
+                base_type = marker_type[:-3]
+                stack = proofing_stacks.get(base_type, [])
+                if stack:
+                    marker_id = stack.pop()
+                else:
+                    proofing_orphan_end_count[base_type] += 1
+                    marker_id = f"{base_type}:orphan-end:{proofing_orphan_end_count[base_type]}"
+                markers[("proofing_range", marker_id)]["end"].append(cursor)
             else:
                 point_markers.append({
                     "marker_kind": "proofing_marker",

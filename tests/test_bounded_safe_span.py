@@ -198,6 +198,30 @@ class BoundedSafeSpanTests(unittest.TestCase):
         )
         self.assertTrue(safe["allowed"])
 
+    def test_repeated_proofing_ranges_do_not_collide_with_bookmark_safe_span(self):
+        root, paragraph = _document(
+            '<w:p>'
+            '<w:proofErr w:type="spellStart"/>'
+            + _run("first spelling range")
+            + '<w:proofErr w:type="spellEnd"/>'
+            '<w:bookmarkStart w:id="b1" w:name="protected"/>'
+            + _run("bookmark protected")
+            + '<w:bookmarkEnd w:id="b1"/>'
+            '<w:proofErr w:type="spellStart"/>'
+            + _run("second spelling range")
+            + '<w:proofErr w:type="spellEnd"/>'
+            + _run("outside safe")
+            + '</w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "outside safe")
+        self.assertTrue(result["allowed"])
+        proofing = [
+            row for row in result["annotation_boundaries"]
+            if row["range_kind"] == "proofing_range"
+        ]
+        self.assertEqual(len(proofing), 2)
+        self.assertEqual(len({row["range_id"] for row in proofing}), 2)
+
     def test_foreign_namespace_text_does_not_shift_word_range_coordinates(self):
         math_ns = "http://schemas.openxmlformats.org/officeDocument/2006/math"
         root = ET.fromstring(
