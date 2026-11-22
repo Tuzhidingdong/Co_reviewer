@@ -94,3 +94,24 @@ Current GitHub Actions run: [44921598581](https://github.com/Tuzhidingdong/Co_re
 - AC-45 remains **FAIL / NOT ACCEPTED** until one current-head execution runs the complete chain with real Word COM: two sequential publications, formal downstream refresh/re-authorization, Word COM/PDF mapping, Response Letter, READY Release Package, and final package verification.
 - M2 Word GUI, Save/Close/Reopen, real scientific review and explicit user Release acceptance remain separate user-acceptance requirements.
 
+## 8. Current-head full Word COM E2E pass — 2026-11-22
+
+- **Executed on:** 2026-11-22
+- **Branch:** `upgrade/v0.5.1-p1-rc-closeout-20261120`
+- **Code/test HEAD:** `3f6e4a173a0e58490eb1950b0ed27c288b32c94c` (docs HEAD `1e9020d`)
+- **Environment:** Python 3.13.9; Microsoft Word COM 16.0; Windows PowerShell 5.1 (`scripts/run_quality_checks.ps1` exit code 0, log `Co_Reviewer_QualityChecks_20261122_093550_419fd9dc.log`)
+- **Execution:** real CLI (`publish-batch`, `create-working-clean-views`, `map-response-locations`, `render-response`, `render-response-docx`, `create-release-package`) + `prepare_workflow_execution()` + real Microsoft Word COM 16.0 + `verify_release_package()`; no mock.
+
+| Stage | Result | Actual execution evidence |
+|---|---|---|
+| A. Two sequential publications | **PASS** | `ac45-batch-001` (`Manuscript.marked.docx` SHA-256 `85ae7ce0c6d8a6624fcdf5f6294913767453ba9cd072e9e7b561489cf0bdc4c0`) → `ac45-batch-002` (`Manuscript.marked.docx` SHA-256 `597fd5adfbfb5f09e3539d2f25dcfc79bafb36173f7397321980ea537a62aca4`). |
+| B. Downstream dependency refresh | **PASS** | `T2` transitioned to `recheck_required` after `T1` publication, formally re-prepared via `prepare_workflow_execution()`, and re-authorized. |
+| C. Word/PDF mapping | **PASS — REAL WORD COM** | `create-working-clean-views` + `map-response-locations` invoked Microsoft Word COM 16.0 and mapped 2 `ResponseUnit`s (`RU-C1`, `RU-C2`) with verified final locations. |
+| D. Response Letter | **PASS** | `render-response` and `render-response-docx` produced `Response_to_Reviewers.md` and `Response_to_Reviewers.docx` (`DOCX QUALITY: PASS`). |
+| E. Release Package | **PASS — READY** | `create-release-package` emitted `[RELEASE READY] round-ac45-real-word-com`; `final_release_manifest.json` SHA-256 `e6cb07c0d349d69dd8c7f35d2993edde64cbb70e7a1102686432dbeb6e15efa8`; `package_manifest.json` SHA-256 `528a294c3807fa3235578d523de8dd2f062462cfea6a1816beb219988090935f`; `release_package_commit.json` SHA-256 `f756f42789bc25176f4f04f2a9633c5949b9781c69cdd97a028834daed8cff3c`; `verify_release_package()` verified **24** packaged artifacts. |
+
+### Disposition update
+
+- **AC-45:** **PASS (current-head real Word COM synthetic E2E)**. The historical `run_20261120_144140` failure record in Sections 2–5 remains intact for auditability.
+- **M2 (AC-51–57):** Remains **USER_ACCEPTANCE_PENDING** (Word GUI inspection, Save/Close/Reopen, real scientific review round, and explicit package acceptance).
+
