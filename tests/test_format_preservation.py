@@ -175,30 +175,75 @@ class FormatPreservationTests(unittest.TestCase):
             self.assertEqual("".join(r.find("w:t", NS).text for r in italic_runs), "θ")
             self.assertEqual("".join(r.find("w:t", NS).text for r in sub_runs), "20")
 
-    def test_multiword_replacement_resets_uniform_source_subscript_to_baseline(self):
+    def test_multiword_replacement_does_not_leak_sentence_subscript_and_keeps_local_scripts(self):
         original = "–5) and decreases to approximately 10 Å ps-1 at higher NHB (20–25)."
-        replacement = "–5) and decreases rapidly to approximately 10 Å ps-1 at higher NHB (20–25)."
+        replacement = "–5) and decreases rapidly to approximately 10 Å ps⁻¹ at higher NHB (20–25)."
+        expected_text = cli.normalize_script_characters(replacement)
         make_styled_docx(self.input, [[(original, {"vertAlign": "subscript"})]])
+        plan = {
+            "schema_version": "1.0",
+            "approved": True,
+            "revision_items": [{
+                "id": "REV-SCRIPT-01",
+                "reviewer": "R1",
+                "comment": "Revise the sentence and retain only explicitly scoped script formatting",
+                "status": "approved",
+                "targets": [{
+                    "document": "Manuscript",
+                    "input_file": str(self.input),
+                    "output_file": str(self.output),
+                    "p_idx": 0,
+                    "find": original,
+                    "replace": replacement,
+                    "two_pass": True,
+                    "authorized_change": {"intent": "Revise sentence wording"},
+                    "format_authorization": {"intent": "Italicize N and subscript HB only"},
+                    "format_operations": [
+                        {"find": "N", "properties": {"i": True}},
+                        {"find": "HB", "properties": {"vertAlign": "subscript"}},
+                    ],
+                }],
+            }],
+        }
+        plan["revision_items"][0]["approval_fingerprint"] = cli.revision_item_fingerprint(plan["revision_items"][0])
+        results = cli.apply_plan(plan, "Test Author")
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, results)
+        self.assertTrue(verification["passed"], verification)
 
-        results = cli.apply_document(self.input, self.output, [{
-            "p_idx": 0,
-            "find": original,
-            "replace": replacement,
-            "authorized_change": {"intent": "Clarify the sentence without changing its script role"},
-        }], "Test Author")
-        self.assertEqual(len(results), 1)
         with zipfile.ZipFile(self.output) as archive:
             root = ET.fromstring(archive.read("word/document.xml"))
             para = root.find(".//w:p", NS)
-            self.assertEqual(visible_text(para), replacement)
+            self.assertEqual(visible_text(para), expected_text)
             insertion = para.find(".//w:ins", NS)
             self.assertIsNotNone(insertion)
-            inserted_text = "".join(node.text or "" for node in insertion.findall(".//w:t", NS))
-            self.assertEqual(inserted_text, replacement)
-            for run in insertion.findall(".//w:r", NS):
+            inserted_runs = insertion.findall(".//w:r", NS)
+            inserted_text = "".join(
+                node.text or "" for node in insertion.findall(".//w:t", NS)
+            )
+            self.assertEqual(inserted_text, expected_text)
+
+            run_by_text = {
+                "".join(node.text or "" for node in run.findall("w:t", NS)): run
+                for run in inserted_runs
+            }
+            self.assertEqual(run_by_text["N"].find("w:rPr/w:i", NS).get(q("val")), "1")
+            self.assertEqual(
+                run_by_text["HB"].find("w:rPr/w:vertAlign", NS).get(q("val")),
+                "subscript",
+            )
+            self.assertEqual(
+                run_by_text["−1"].find("w:rPr/w:vertAlign", NS).get(q("val")),
+                "superscript",
+            )
+            for text, run in run_by_text.items():
                 vertical = run.find("w:rPr/w:vertAlign", NS)
-                self.assertIsNotNone(vertical)
-                self.assertEqual(vertical.get(q("val")), "baseline")
+                if text not in {"HB", "−1"}:
+                    self.assertIn(
+                        vertical.get(q("val")) if vertical is not None else None,
+                        {None, "baseline"},
+                        f"Unexpected script formatting leaked into {text!r}",
+                    )
 
     def test_ambiguous_mixed_style_replacement_still_rejected(self):
         make_styled_docx(self.input, [[
