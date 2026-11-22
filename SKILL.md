@@ -525,4 +525,26 @@ python scripts/co_reviewer_cli.py complete-qa-remediation --state "runs/qa-remed
 
 - This command regenerates the accepted-changes projection from the exact published Marked bytes, verifies it against the deterministic compiler, updates the RevisionLedger Clean pointer/hash/fingerprint, and performs the second QA pass. A PASS or PASS_WITH_WARNINGS completes remediation. A second QA FAIL records `BLOCKED`; there is no third attempt. The final Release Gate rejects missing, duplicate, incomplete, failed, or hash-mismatched remediation history.
 
+### Standard Plan Compilation (`compile-plan`)
+
+- Use `compile-plan` as the standard high-level plan compilation path to convert concise edit intents (including inline formatting `*italic*`, `^sup^`, `~sub~`, `**bold**` and explicit `FormatChange` intents) into a validated `revision_plan.json` with two-pass `Text` + `FormatChange` orchestration:
+
+```powershell
+python scripts/co_reviewer_cli.py compile-plan --intents "$roundRoot\intents.json" --out "$roundRoot\revision_plan.json"
+```
+
+### Mandatory Final Delivery Hard Gate (`final-gate`) & Zero-Silent-Fallback
+
+- Before declaring any deliverable complete, you MUST run `final-gate` and obtain `READY` (exit code `0`):
+
+```powershell
+python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.json" --verify-report "$roundRoot\verify_report.json" --docs "$roundRoot\manuscript_marked.docx" --out-json "$roundRoot\final_gate_report.json" --out-md "$roundRoot\final_gate_report.md"
+```
+
+- `final-gate` deterministically enforces:
+  1. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`).
+  2. `audit-docx-quality` passed (`summary.failures == 0`) on every delivered DOCX.
+  3. Microsoft Word COM PDF rendering succeeded with a non-empty `%PDF-` file beside each delivered DOCX.
+  4. **Zero-Silent-Fallback**: silent fallback to `manual_fallback_checklist.md`, unapplied `manual_suggestions/*.json`, `blocked`/`failed` targets, or skipped `FormatChange` operations is strictly forbidden. Any non-zero `manual_fallback_count`, `blocked_count`, or `skipped_format_ops` causes `final-gate` to return `BLOCKED` (exit code `1`) unless the user has explicitly approved the waiver and `--waive-fallback-reason` is recorded in both `final_gate_report.json` and `final_gate_report.md`.
+
 - At task start, confirm the actual project root (git rev-parse --show-toplevel), HEAD, working-tree status, and the resolved Skill/workflow paths. Do not assume a hard-coded repository path. If the globally loaded @Co_Reviewer Skill points to a different repository snapshot than the active project, stop and report the mismatch; do not silently use either snapshot.
