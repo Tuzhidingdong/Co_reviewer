@@ -108,7 +108,7 @@ If a new character needs a non-default format, use a profile occurrence as its s
 
 The reference profile reports multiple style groups without choosing a majority. If references are inconsistent, use a structurally and semantically comparable entry; do not silently normalize the whole list during a one-entry correction.
 
-The command also writes a bounded `review_decision_queue.json` conforming to `schemas/review-decision.schema.json`. Each comment packet contains the native anchor once, compact match coordinates, and at most 8 context excerpts of at most 1,200 characters each. Use `--comment-ids <comment-id>` (replace 3 with the Word comment ID) when only one comment needs semantic analysis; the full audit report remains complete while the AI queue contains only the selected item. Use this as the only model input for semantic decisions, one comment at a time.
+The command also writes a bounded `review_decision_queue.json` conforming to `schemas/review-decision.schema.json`. Each comment packet contains the native anchor once, compact match coordinates, and at most 8 context excerpts of at most 1,200 characters each. Use `--comment-ids <comment-id>` when only one comment needs semantic analysis; the full audit report remains complete while the AI queue contains only the selected item. Use this as the only model input for semantic decisions, one comment at a time.
 
 For each selected item, the Supervisor must propose a structured decision with: `disposition` (use the schema values `manuscript`, `si`, `reply_only`, `manuscript_and_si`, `no_change`, or `clarification_needed`), evidence-based `rationale`, exact `proposed_targets` (document, part, paragraph index, action and source excerpt), `response_outline`, `supporting_evidence`, `missing_evidence_or_questions`, and a confidence estimate. Mark the proposal as `proposed` or `needs_clarification`; `requires_user_approval` must remain true. Do not create/apply revision targets merely because a candidate match exists. Show the proposed decision to the user and create the revision plan only after the user accepts the disposition and target scope.
 
@@ -241,7 +241,7 @@ Resolution-only tasks are supported: the batch entry point records their Respons
 **Finalize once all document-changing batches have been published:**
 
 ```powershell
-.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "<path-to-python.exe>"
+.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "<manuscript-title>" -Author "<corresponding-author>" -PythonExe "<path-to-python.exe>"
 ```
 
 The finalizer reuses only a complete hash-current Working Clean set; otherwise it creates the projections once. It displays final Marked/Clean paths and hashes, asks for complete semantic review, performs Word COM pagination/PDF export and location mapping, records manual table/non-body locators when required, completes ResponseUnits, synchronizes Workflow task states and creates or resumes a Release Package. It reconciles outstanding batch and Workflow transactions before consuming active state.
@@ -269,7 +269,7 @@ Replace `<patch-id>` with the IDs printed in the batch plan. Both task-scope aut
 Apply only the approved snapshot:
 
 ```powershell
-python scripts/co_reviewer_cli.py apply --plan (Join-Path $batchDir "revision_plan.approved.json") --revision-ledger $revisionLedger --author "Author Name"
+python scripts/co_reviewer_cli.py apply --plan (Join-Path $batchDir "revision_plan.approved.json") --revision-ledger $revisionLedger --author "<author-name>"
 ```
 
 The CLI writes a separate Marked DOCX for each affected document role under the immutable batch's `documents/` folder and creates `revision_plan.applied.json` plus an Apply report. Inputs are never overwritten. Every textual change must be native Word Track Changes: deletions inside `w:del/w:delText` and insertions inside `w:ins/w:t`. Font color or direct XML text replacement is not a substitute.
@@ -322,7 +322,7 @@ On Windows with Microsoft Word installed, generate the final Word-layout Clean D
 
     python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
 
-This step requires the hash-bound Working Clean Views and real Microsoft Word COM pagination. It exports final-clean DOCX/PDF files, verifies the target phrases against the PDFs, and records actual page/line locations. Do not calculate page or line values from XML or estimate them from paragraph counts. If Word COM is unavailable or a target is in an unsupported structure (for example, a table cell), report the blocker and leave the ResponseUnit incomplete. record-response-locations is for attaching a separately generated, independently validated location map; do not fabricate one.
+This step requires the hash-bound Working Clean Views and real Microsoft Word COM pagination. It exports final-clean DOCX/PDF files, verifies the target phrases against the PDFs, and records actual page/line locations. Do not calculate page or line values from XML or estimate them from paragraph counts. If Word COM is unavailable or a target is in an unsupported structure (including a table cell), report the blocker and leave the ResponseUnit incomplete. record-response-locations is for attaching a separately generated, independently validated location map; do not fabricate one.
 
 Only after every required ResponseUnit has semantic review and final PDF location evidence, and the author confirms readiness, mark the selected units complete:
 
@@ -379,7 +379,7 @@ Never delete, auto-close, renumber or relocate bookmark markers to make a plan p
 
 ### Table and non-body manual locators
 
-When a target cannot safely receive an automatic body-line locator (for example, a table cell or unsupported header/footer object), set location_requirement to manual_required. The Word mapper still exports the final DOCX/PDF for that document role but does not invent a line number. After map-response-locations, enter one locator row for every exact linked PatchOperation:
+When a target cannot safely receive an automatic body-line locator (including table cells and unsupported header/footer objects), set location_requirement to manual_required. The Word mapper still exports the final DOCX/PDF for that document role but does not invent a line number. After map-response-locations, enter one locator row for every exact linked PatchOperation:
 
     {
       "response_units": [
@@ -401,7 +401,7 @@ Then record the author-confirmed locators against the Word-exported artifacts:
 The command requires exact operation coverage for every manual-required ResponseUnit, validates the output DOCX/PDF and current Working Clean hashes, and stores mapping_method=manual with a stable locator ID. locator_text is mandatory. Page is optional; line numbers may be supplied only when the author has checked them. When line numbers are supplied, page, line_start and line_end must all be positive integers. Do not fill uncertain line numbers with estimates. A manual locator is visibly distinct from a Word COM location in the ledger and Response Letter.
 
 
-A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id (for example, anchor:<anchor-id>), not operation_id; it records a locator, never an executable Patch.
+A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id using the anchor namespace and the current anchor identifier, not operation_id; it records a locator, never an executable Patch.
 
 
 For a `no_change/manual_required` unit, the input uses the confirmed anchor key rather than a PatchOperation:
