@@ -535,7 +535,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         )
             format_authorization = t.get("format_authorization")
             if format_operations:
-                if t.get("find") != t.get("replace"):
+                if t.get("find") != t.get("replace") and not (t.get("two_pass") or t.get("allow_two_pass_overlap")):
                     errors.append(
                         f"{tp} FormatChange must be a pure format operation; text replacement requires a separate target."
                     )
@@ -650,6 +650,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "protected_spans": list(target.get("protected_spans", [])),
                 "replacement_format_map": list(target.get("replacement_format_map", []))
                     if target.get("replacement_format_map") is not None else None,
+                "allow_format_flatten": bool(target.get("allow_format_flatten", False)),
+                "auto_inherit_format_map": bool(target.get("auto_inherit_format_map", False)),
+                "two_pass": bool(target.get("two_pass", False)),
+                "allow_two_pass_overlap": bool(target.get("allow_two_pass_overlap", False)),
                 "format_authorization": target.get("format_authorization"),
                 "format_operations": list(target.get("format_operations", [])),
                 "target_ref": target.get("target_ref"),
@@ -838,6 +842,10 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "protected_spans": list(target.get("protected_spans", [])),
                 "replacement_format_map": list(target.get("replacement_format_map", []))
                     if target.get("replacement_format_map") is not None else None,
+                "allow_format_flatten": bool(target.get("allow_format_flatten", False)),
+                "auto_inherit_format_map": bool(target.get("auto_inherit_format_map", False)),
+                "two_pass": bool(target.get("two_pass", False)),
+                "allow_two_pass_overlap": bool(target.get("allow_two_pass_overlap", False)),
                 "format_authorization": target.get("format_authorization"),
                 "format_operations": list(target.get("format_operations", [])),
                 "target_ref": target.get("target_ref"),
@@ -979,6 +987,7 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
 
         documents_checked += 1
         expected_parts = copy.deepcopy(source_parts)
+        pass1_inserted_by_para: dict[tuple[str, int], list[str]] = defaultdict(list)
         for edit in edits:
             part = edit.get("part", "word/document.xml")
             p_idx = edit.get("p_idx")
@@ -991,6 +1000,14 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "reason": "Applied target cannot be mapped to the source paragraph for untracked-edit audit."
                 })
                 continue
+            pure_format_change = (
+                find_text == edit.get("replace")
+                and bool(edit.get("format_changes"))
+                and edit.get("delete_revision_id") is None
+                and edit.get("insert_revision_id") is None
+            )
+            if pure_format_change and any(find_text in ins_txt for ins_txt in pass1_inserted_by_para.get((part, p_idx), [])):
+                continue
             if not isinstance(find_text, str) or paragraphs[p_idx].count(find_text) != 1:
                 violations.append({
                     "input_file": str(source_path), "output_file": str(output_path),
@@ -998,14 +1015,10 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
                 })
                 continue
-            pure_format_change = (
-                find_text == edit.get("replace")
-                and bool(edit.get("format_changes"))
-                and edit.get("delete_revision_id") is None
-                and edit.get("insert_revision_id") is None
-            )
             if not pure_format_change:
                 paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
+                if isinstance(edit.get("replace"), str) and edit["replace"]:
+                    pass1_inserted_by_para[(part, p_idx)].append(edit["replace"])
 
         for part in sorted(set(expected_parts) | set(output_parts)):
             expected = expected_parts.get(part)
@@ -1204,13 +1217,18 @@ def _verify_paragraph_format_integrity(
     p_idx: int,
 ) -> dict[str, Any]:
     """Prove unchanged characters retain source formatting and mapped insertions use approved source Runs."""
+    from co_reviewer.document_engine import _apply_format_properties
+
     source_rows = _paragraph_character_formats(source_paragraph)
     source_text = "".join(row["character"] for row in source_rows)
-    working = [
+    working: list[dict[str, Any]] = [
         {"character": row["character"], "source_index": index}
         for index, row in enumerate(source_rows)
     ]
     authorized_format_source_indices: set[int] = set()
+    # Keyed by (insert_revision_id, insert_char_offset) -> list of Pass 2 FormatChange property dicts
+    inserted_format_overlays: dict[tuple[Any, int], list[dict[str, Any]]] = defaultdict(list)
+    pending_insertion_checks: list[dict[str, Any]] = []
     insertion_map_checks: list[dict[str, Any]] = []
     errors: list[str] = []
 
@@ -1231,25 +1249,10 @@ def _verify_paragraph_format_integrity(
         start = current_text.index(anchor)
         end = start + len(anchor)
 
-        # FormatChange applies to existing characters only. It cannot silently
-        # authorize a newly inserted Run or a text replacement.
         operations = edit.get("format_operations", [])
         if not isinstance(operations, list):
             errors.append("format_operations is not an array.")
             operations = []
-        for operation in operations:
-            format_anchor = operation.get("find") if isinstance(operation, dict) else None
-            replay_text = "".join(item["character"] for item in working)
-            if not isinstance(format_anchor, str) or not format_anchor or replay_text.count(format_anchor) != 1:
-                errors.append("FormatChange target is not unique during source-format mapping.")
-                continue
-            format_start = replay_text.index(format_anchor)
-            for mapped in working[format_start:format_start + len(format_anchor)]:
-                source_index = mapped.get("source_index")
-                if not isinstance(source_index, int):
-                    errors.append("FormatChange target points to text inserted earlier in the same paragraph.")
-                else:
-                    authorized_format_source_indices.add(source_index)
 
         pure_format = (
             anchor == edit.get("replace")
@@ -1257,8 +1260,35 @@ def _verify_paragraph_format_integrity(
             and edit.get("delete_revision_id") is None
             and edit.get("insert_revision_id") is None
         )
+
+        def _replay_format_operations() -> None:
+            for operation in operations:
+                format_anchor = operation.get("find") if isinstance(operation, dict) else None
+                format_props = operation.get("properties") if isinstance(operation, dict) else None
+                replay_text = "".join(item["character"] for item in working)
+                if not isinstance(format_anchor, str) or not format_anchor or replay_text.count(format_anchor) != 1:
+                    errors.append("FormatChange target is not unique during source-format mapping.")
+                    continue
+                format_start = replay_text.index(format_anchor)
+                for mapped in working[format_start:format_start + len(format_anchor)]:
+                    source_index = mapped.get("source_index")
+                    if isinstance(source_index, int):
+                        authorized_format_source_indices.add(source_index)
+                    elif mapped.get("insert_revision_id") is not None and isinstance(format_props, dict):
+                        ins_key = (mapped["insert_revision_id"], int(mapped.get("insert_char_offset", 0)))
+                        inserted_format_overlays[ins_key].append(format_props)
+                    else:
+                        errors.append("FormatChange target points to text inserted earlier in the same paragraph.")
+
         if pure_format:
+            _replay_format_operations()
             continue
+
+        # When not two-pass, FormatChange operations apply before replacement (legacy behavior);
+        # when two-pass (both text replacement and format_operations on same edit), Pass 1 runs first.
+        is_two_pass_single = bool(operations) and anchor != edit.get("replace")
+        if operations and not is_two_pass_single:
+            _replay_format_operations()
 
         replacement = edit.get("inserted_text")
         if not isinstance(replacement, str):
@@ -1273,30 +1303,30 @@ def _verify_paragraph_format_integrity(
             if len(actual_insertions) != 1:
                 errors.append("Mapped replacement does not have exactly one insertion wrapper.")
             else:
-                actual_insert_rows = _paragraph_character_formats(actual_insertions[0])
-                expected_hashes: list[str] = []
-                def expected_run_hash(source_index: int, vertical_alignment: str | None,
-                                      apply_script_alignment: bool) -> str:
+                expected_runs: list[ET.Element] = []
+
+                def expected_run_node(
+                    source_index: int, vertical_alignment: str | None, apply_script_alignment: bool
+                ) -> ET.Element:
                     source_run = source_rows[source_index].get("run_node")
                     if source_run is None:
                         raise ValueError("source character is not inside an ordinary Run.")
                     expected_run = copy.deepcopy(source_run)
                     if apply_script_alignment:
                         _set_run_property(expected_run, "vertAlign", vertical_alignment)
-                    return _direct_run_format_sha256(expected_run)
+                    return expected_run
 
                 def append_expected_segment(
                     replacement_start: int, replacement_end: int, source_index: int
                 ) -> None:
-                    segment_text = replacement[replacement_start:replacement_end]
                     authored_replacement = edit.get("replace", replacement)
                     authored_segment = authored_replacement[replacement_start:replacement_end]
                     has_explicit_script = any(_script_character(character) for character in authored_segment)
                     for character in authored_segment:
                         script = _script_character(character)
                         alignment = script[0] if script else None
-                        expected_hashes.append(
-                            expected_run_hash(source_index, alignment, has_explicit_script)
+                        expected_runs.append(
+                            expected_run_node(source_index, alignment, has_explicit_script)
                         )
 
                 if replacement_map:
@@ -1315,7 +1345,7 @@ def _verify_paragraph_format_integrity(
                                 append_expected_segment(rep_start, rep_end, source_index)
                             except (KeyError, IndexError, TypeError, ValueError) as exc:
                                 errors.append(f"Replacement format map cannot resolve to original source text: {exc}")
-                                expected_hashes = []
+                                expected_runs = []
                                 break
                 else:
                     source_indices = [
@@ -1335,29 +1365,53 @@ def _verify_paragraph_format_integrity(
                             "Replacement spans mixed source formatting but has no complete replacement_format_map."
                         )
                     else:
-                        # The legacy writer inherits the first matched Run's format.
-                        # Explicit Unicode script characters intentionally override only
-                        # vertAlign; all other direct Run properties remain source-derived.
                         append_expected_segment(0, len(replacement), source_indices[0])
-                actual_hashes = [row["format_sha256"] for row in actual_insert_rows]
-                map_ok = (
-                    len(actual_hashes) == len(replacement)
-                    and len(expected_hashes) == len(replacement)
-                    and actual_hashes == expected_hashes
-                )
-                insertion_map_checks.append({
+
+                pending_insertion_checks.append({
                     "insert_revision_id": insert_id,
-                    "replacement_characters": len(replacement),
+                    "actual_insertion": actual_insertions[0],
+                    "expected_runs": expected_runs,
+                    "replacement_length": len(replacement),
                     "format_map_supplied": bool(replacement_map),
-                    "passed": map_ok,
                 })
-                if not map_ok:
-                    errors.append("Inserted replacement Run formatting does not match its approved source-format map.")
 
         working[start:end] = [
-            {"character": character, "source_index": None}
-            for character in replacement
+            {
+                "character": character,
+                "source_index": None,
+                "insert_revision_id": insert_id,
+                "insert_char_offset": char_offset,
+            }
+            for char_offset, character in enumerate(replacement)
         ]
+
+        if is_two_pass_single:
+            _replay_format_operations()
+
+    for pending in pending_insertion_checks:
+        ins_id = pending["insert_revision_id"]
+        actual_insert_rows = _paragraph_character_formats(pending["actual_insertion"])
+        expected_hashes: list[str] = []
+        for char_offset, expected_run in enumerate(pending["expected_runs"]):
+            overlaid_run = copy.deepcopy(expected_run)
+            for props in inserted_format_overlays.get((ins_id, char_offset), []):
+                _apply_format_properties(overlaid_run, props)
+            expected_hashes.append(_direct_run_format_sha256(overlaid_run))
+        actual_hashes = [row["format_sha256"] for row in actual_insert_rows]
+        rep_len = pending["replacement_length"]
+        map_ok = (
+            len(actual_hashes) == rep_len
+            and len(expected_hashes) == rep_len
+            and actual_hashes == expected_hashes
+        )
+        insertion_map_checks.append({
+            "insert_revision_id": ins_id,
+            "replacement_characters": rep_len,
+            "format_map_supplied": pending["format_map_supplied"],
+            "passed": map_ok,
+        })
+        if not map_ok:
+            errors.append("Inserted replacement Run formatting does not match its approved source-format map.")
 
     marked_rows = _paragraph_character_formats(marked_paragraph)
     expected_text = "".join(item["character"] for item in working)
@@ -1582,7 +1636,21 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         ]
                     # Compare every inserted character's direct Run formatting;
                     # run boundaries may differ after a Word save operation.
-                    native_script_format_preserved = (
+                    # If an authorized Pass 2 FormatChange in the same paragraph
+                    # subsequently modified runs inside this <w:ins>, format_integrity
+                    # verifies the exact Pass 1 + Pass 2 overlaid run properties.
+                    has_pass2_format_on_ins = (
+                        not pure_format_change
+                        and any(run.find("w:rPr/w:rPrChange", NS) is not None for run in inserted_runs)
+                        and any(
+                            b.get("part", "word/document.xml") == part
+                            and b.get("p_idx") == p_idx
+                            and b.get("format_changes")
+                            and b.get("delete_revision_id") is None
+                            for b in document_report.get("results", [])
+                        )
+                    )
+                    native_script_format_preserved = has_pass2_format_on_ins or (
                         per_character_format(actual_run_formats)
                         == per_character_format(expected_run_formats)
                     )
@@ -6910,6 +6978,32 @@ def cmd_compile_clean_from_marked(args):
     print(f"[COMPILE REPORT] {report_path}")
     return 0
 
+
+def cmd_compile_plan(args):
+    from co_reviewer.plan_compiler import compile_revision_plan
+
+    intents_path = Path(args.intents).expanduser().resolve()
+    intents_payload = json.loads(intents_path.read_text(encoding="utf-8"))
+    doc_map = None
+    if args.doc_map:
+        doc_map_path = Path(args.doc_map).expanduser().resolve()
+        doc_map = json.loads(doc_map_path.read_text(encoding="utf-8"))
+        if not isinstance(doc_map, dict):
+            raise ValueError("--doc-map must be a JSON object mapping doc_role to input_file/output_file.")
+    plan = compile_revision_plan(
+        intents_payload,
+        base_dir=intents_path.parent,
+        doc_map=doc_map,
+    )
+    errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    if errors:
+        raise ValueError("Compiled plan failed validation:\n- " + "\n- ".join(errors))
+    out_path = Path(args.out).expanduser().resolve()
+    write_json_atomic(out_path, plan)
+    print(f"[OK] Compiled {len(plan['revision_items'])} revision item(s) to {out_path}")
+    return 0
+
+
 def cmd_commit_document_package(args):
     outputs = {}
     for item in args.document:
@@ -7047,6 +7141,11 @@ def build_parser():
     cc_group.add_argument("--apply-report", help="Apply report JSON chain whose input/output SHA-256 values bind this Marked DOCX.")
     cc_group.add_argument("--revision-ids", help="JSON array of exact current revision IDs; use only when independently verified.")
     cc.set_defaults(func=cmd_compile_clean_from_marked)
+    cp_plan = sub.add_parser("compile-plan", help="Compile high-level edit intents into a validated revision_plan.json.")
+    cp_plan.add_argument("--intents", required=True, help="JSON file containing high-level edit intents.")
+    cp_plan.add_argument("--out", default="revision_plan.json", help="Output revision_plan.json path.")
+    cp_plan.add_argument("--doc-map", help="Optional JSON mapping doc_role to {input_file, output_file}.")
+    cp_plan.set_defaults(func=cmd_compile_plan)
     brm = sub.add_parser(
         "begin-qa-remediation",
         help="Start the one permitted QA remediation using one approved formal Patch against the exact active Marked DOCX.",
