@@ -17,6 +17,7 @@ Co_Reviewer manages a revision round. It does not invent experiments, results, n
 4. **Fail closed:** Ambiguous targets or unsupported Word structures are reported, not modified by approximate matching.
 5. **Incremental work:** A request to modify only one figure, paragraph, reviewer item or SI entry touches only relevant targets. Reuse prior inventory when source files are unchanged.
 6. **Auditable output:** Preserve inputs, write separate revised copies, and return a report linking each revision item to its targets.
+7. **Production-Skill data isolation:** Keep this Skill domain- and dataset-agnostic. Never copy test fixtures, manuscript-specific wording, measured values, scientific symbol strings, sample identifiers, citation examples, or figure/table-specific content into production instructions. Keep concrete synthetic examples in tests/fixtures; use neutral placeholders in this Skill.
 
 ## V2.3.2 RC safety, blocked operations and risk tiers
 
@@ -54,11 +55,11 @@ The output must be a new path; an existing artifact is never overwritten.
 
 ### Citation and native Word field handling
 
-The package reference graph recognizes static numeric citations (for example `[1]` and `[1, 2]`) and numbered reference-list entries, separately from Figure/Table/Equation/Scheme/Section references. Citation ranges such as `[1–3]` are retained as manual-review items rather than expanded by guesswork.
+The package reference graph recognizes static numeric citations and numbered reference-list entries, separately from Figure/Table/Equation/Scheme/Section references. Ambiguous citation ranges are retained as manual-review items rather than expanded by guesswork.
 
 Native Word `REF`, `PAGEREF`, `NOTEREF`, `SEQ`, `CITATION`, `ADDIN` and other unclassified field instructions are reported as native-field references, not static text. The current release candidate does not provide a general Field/Citation writing Adapter. Package-wide numbering propagation must stop when a potentially affected native field, unresolved mention or range cannot be uniquely mapped. Page metadata fields such as `PAGE` and `NUMPAGES` are recorded separately and do not by themselves block unrelated reference numbering.
 
-For renumbering, prefer a typed key such as `Manuscript::citation::1` or `Manuscript::figure::1`. The legacy `DOCUMENT::OLD_NUMBER` form is accepted only when it identifies exactly one reference kind. Never use an untyped key when Figure 1 and Citation 1 coexist.
+For renumbering, use a typed key that identifies the document role, reference kind and identifier. Accept a legacy untyped key only when it resolves uniquely to one reference kind. Never rely on an untyped key when different reference kinds can share an identifier.
 
 ## Workflow
 
@@ -68,10 +69,10 @@ On Windows, start a round workspace from the repository root. This copies the su
 
 ```powershell
 .\scripts\Start-CoReviewerRound.ps1 `
-  -ReviewersDocx "D:\Review\Reviewers.docx" `
-  -ManuscriptDocx "D:\Review\Manuscript.docx" `
-  -SupportingInformationDocx "D:\Review\SI.docx" `
-  -PythonExe "D:\Software\Anacoda\python.exe"
+  -ReviewersDocx "<path-to-reviewer-comments.docx>" `
+  -ManuscriptDocx "<path-to-manuscript.docx>" `
+  -SupportingInformationDocx "<path-to-supporting-information.docx>" `
+  -PythonExe "<path-to-python.exe>"
 ```
 
 Copy the exact `[WORKSPACE]` path printed by the starter into `$roundRoot`. Its `round_manifest.json` gives the exact input copies, hashes, inventory/audit paths and standard directories. Supporting Information is optional. The workspace is unique; the starter refuses to reuse an existing round folder. On non-Windows systems, create the same folder structure and call the `audit` CLI directly, directing every output into the round's `reports/` folder.
@@ -93,11 +94,11 @@ The profile deliberately separates two zones:
 - `body_occurrences`: independent instances of single-letter symbols, Greek letters, superscript/subscript characters, mathematical symbols and directly formatted Runs, each with its own occurrence ID, position, paragraph style, format properties and surrounding context.
 - `reference_occurrences` and `reference_entries`: bibliography-only instances, paragraphs and reference-list style groups. These are a separate formatting system. Never use a body occurrence as a reference-list formatting source, or a reference entry as a body formatting source.
 
-The profile records every occurrence separately. Two occurrences of the same visible character (for example, `a`) are not merged and do not inherit one global format. Their contexts, positions and format properties remain distinct.
+The profile records every occurrence separately. Occurrences are never merged or assigned one global format merely because they share the same visible character; their contexts, positions and format properties remain distinct.
 
-For the body, choose a source occurrence only when it has the same contextual semantic role as the new content. For example, a mathematical-variable `a` is not interchangeable with an English article `a`, sample label `a`, or crystallographic label `a`. For a bibliography edit, compare the corresponding field (author, title, journal, year, volume, pages, DOI, etc.) against other entries in the same reference list. Use the profile's style groups and comparable entries; never select the most frequent pattern automatically when multiple patterns exist.
+For body edits, choose a source occurrence only when it has the same contextual semantic role as the new content; glyph identity alone is insufficient. For a bibliography edit, compare the corresponding bibliographic field against comparable entries in the same reference list. Use the profile's style groups and comparable entries; never select the most frequent pattern automatically when multiple patterns exist.
 
-During the initial manuscript analysis, create `reports/document_semantic_annotations.json` conforming to `schemas/document-semantic-annotations.schema.json`. This is a sparse, occurrence-specific semantic archive bound to the profile's workspace fingerprint and each document's source/profile hashes. Annotate only occurrences useful for later revision decisions (for example variables, Greek symbols, formula components, units, phase labels, sample labels and formatted scientific tokens); do not spend tokens classifying every ordinary prose letter.
+During the initial manuscript analysis, create `reports/document_semantic_annotations.json` conforming to `schemas/document-semantic-annotations.schema.json`. This is a sparse, occurrence-specific semantic archive bound to the profile's workspace fingerprint and each document's source/profile hashes. Annotate only occurrences that may need semantic disambiguation or reusable special formatting; do not spend tokens classifying ordinary prose characters.
 
 Each annotation must identify the exact `occurrence_id`, its contextual `semantic_role`, short evidence from the archived context or an explicit definition, and confidence. Use `semantic_group` only when multiple occurrences represent the same concept. Never merge occurrences merely because their visible glyph is the same. For references, identify bibliographic field roles (author, title, journal, year, volume, pages, DOI, etc.) separately from body symbols. The reference field format source must still come from another comparable entry in the same reference list.
 
@@ -107,7 +108,7 @@ If a new character needs a non-default format, use a profile occurrence as its s
 
 The reference profile reports multiple style groups without choosing a majority. If references are inconsistent, use a structurally and semantically comparable entry; do not silently normalize the whole list during a one-entry correction.
 
-The command also writes a bounded `review_decision_queue.json` conforming to `schemas/review-decision.schema.json`. Each comment packet contains the native anchor once, compact match coordinates, and at most 8 context excerpts of at most 1,200 characters each. Use `--comment-ids 3` (replace 3 with the Word comment ID) when only one comment needs semantic analysis; the full audit report remains complete while the AI queue contains only the selected item. Use this as the only model input for semantic decisions, one comment at a time.
+The command also writes a bounded `review_decision_queue.json` conforming to `schemas/review-decision.schema.json`. Each comment packet contains the native anchor once, compact match coordinates, and at most 8 context excerpts of at most 1,200 characters each. Use `--comment-ids <comment-id>` (replace 3 with the Word comment ID) when only one comment needs semantic analysis; the full audit report remains complete while the AI queue contains only the selected item. Use this as the only model input for semantic decisions, one comment at a time.
 
 For each selected item, the Supervisor must propose a structured decision with: `disposition` (use the schema values `manuscript`, `si`, `reply_only`, `manuscript_and_si`, `no_change`, or `clarification_needed`), evidence-based `rationale`, exact `proposed_targets` (document, part, paragraph index, action and source excerpt), `response_outline`, `supporting_evidence`, `missing_evidence_or_questions`, and a confidence estimate. Mark the proposal as `proposed` or `needs_clarification`; `requires_user_approval` must remain true. Do not create/apply revision targets merely because a candidate match exists. Show the proposed decision to the user and create the revision plan only after the user accepts the disposition and target scope.
 
@@ -183,7 +184,7 @@ This is the manual/low-level route. When using the PowerShell batch orchestrator
 Only after the author accepts the exact task scope, authorize the selected tasks using the **prepared** Workflow Ledger:
 
 ```powershell
-python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger $preparedWorkflow --ids T1 T2 --plan-approved --actor "Human Author"
+python scripts/co_reviewer_cli.py approve-workflow-tasks --workflow-ledger $preparedWorkflow --ids <task-id-1> <task-id-2> --plan-approved --actor "Human Author"
 ```
 
 Use actual task IDs. This is an explicit human gate; it does not edit a DOCX. A dependent task remains planned until its dependencies are verified. Do not authorize it prematurely.
@@ -214,7 +215,7 @@ For an ordinary review round, use the round orchestrators below rather than manu
 **Publish one document-changing batch** after the user has approved the Decision Plan and exact execution scope:
 
 ```powershell
-.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "plan\workflow_ledger.json" -ExecutionScope "plan\workflow_execution_scope.json" -Inventory "reports\workspace_inventory.json" -TaskIds T1 -PythonExe "D:\Software\Anacoda\python.exe"
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "plan\workflow_ledger.json" -ExecutionScope "plan\workflow_execution_scope.json" -Inventory "reports\workspace_inventory.json" -TaskIds <task-id> -PythonExe "<path-to-python.exe>"
 ```
 
 The script creates a new prepared Workflow Ledger, Reviewer Map and preparation report; authorizes the selected task; builds one immutable batch; exports/preflights the plan; requests exact Patch approval; applies Word-native Track Changes; verifies the output and untracked-text audit; asks for semantic review; synchronizes the Workflow Ledger; and requests explicit publication approval. It reports the actual generated paths and never retries or overwrites a failed batch.
@@ -230,7 +231,7 @@ The batch runner records the current prepared Ledger/map, RevisionLedger, runs d
 
 
 ```powershell
-.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "<current prepared Workflow Ledger>" -ReviewerMap "<current Reviewer Map>" -TaskIds T2 -PythonExe "D:\Software\Anacoda\python.exe"
+.\scripts\Invoke-CoReviewerBatch.ps1 -RoundRoot $roundRoot -WorkflowLedger "<current prepared Workflow Ledger>" -ReviewerMap "<current Reviewer Map>" -TaskIds <task-id> -PythonExe "<path-to-python.exe>"
 ```
 
 If a dependency is marked `recheck_required`, first run `Refresh-CoReviewerRound.ps1` against the latest published active document pointers. The resulting `refresh_manifest.json` binds the new audit/inventory files by path and SHA-256; use it with `validate_decision_plan.py --round-manifest` and also pass the root round manifest through `--round-root-manifest`, so the newly generated Workflow Ledger path/hash is registered before the next Reconcile or batch. For normal dependent-task execution, author a new execution scope using that refresh inventory and the current prepared Workflow Ledger SHA-256, then call `Invoke-CoReviewerBatch.ps1` with the new `-ExecutionScope` and `-Inventory`. The script prepares new output Ledger/map/report files. Do not reuse old paragraph coordinates or approvals. Document-changing and resolution-only tasks are separate invocations.
@@ -240,7 +241,7 @@ Resolution-only tasks are supported: the batch entry point records their Respons
 **Finalize once all document-changing batches have been published:**
 
 ```powershell
-.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "D:\Software\Anacoda\python.exe"
+.\scripts\Complete-CoReviewerRound.ps1 -RoundRoot $roundRoot -WorkflowLedger "<latest prepared Workflow Ledger>" -RevisionLedger "plan\revision_ledger.json" -ManuscriptTitle "Manuscript title" -Author "Corresponding Author" -PythonExe "<path-to-python.exe>"
 ```
 
 The finalizer reuses only a complete hash-current Working Clean set; otherwise it creates the projections once. It displays final Marked/Clean paths and hashes, asks for complete semantic review, performs Word COM pagination/PDF export and location mapping, records manual table/non-body locators when required, completes ResponseUnits, synchronizes Workflow task states and creates or resumes a Release Package. It reconciles outstanding batch and Workflow transactions before consuming active state.
@@ -258,10 +259,10 @@ python scripts/co_reviewer_cli.py preflight-plan --plan (Join-Path $batchDir "re
 Review the preflight output, exact target operations, parent document hashes and planned Marked output paths. If preflight succeeds, approve the exact **Patch IDs** (not the Workflow task IDs) from the preflighted snapshot:
 
 ```powershell
-python scripts/co_reviewer_cli.py approve-plan --plan (Join-Path $batchDir "revision_plan.preflighted.json") --ids P-T1 --revision-ledger $revisionLedger --actor "Human Author"
+python scripts/co_reviewer_cli.py approve-plan --plan (Join-Path $batchDir "revision_plan.preflighted.json") --ids <patch-id> --revision-ledger $revisionLedger --actor "Human Author"
 ```
 
-Replace `P-T1` with the IDs printed in the batch plan. Both task-scope authorization and exact Patch approval are required. Neither command edits a DOCX. If the source file or operands change, rebuild and re-authorize the affected task scope; do not reuse stale approval.
+Replace `<patch-id>` with the IDs printed in the batch plan. Both task-scope authorization and exact Patch approval are required. Neither command edits a DOCX. If the source file or operands change, rebuild and re-authorize the affected task scope; do not reuse stale approval.
 
 ### Stage 4 — Low-level CLI alternative: apply approved changes using native Word Track Changes
 
@@ -288,7 +289,7 @@ Mechanical verification checks exact revision IDs and deleted/inserted text, who
 Only after the author has reviewed the revised Manuscript/SI and confirmed scientific meaning/cross-document consistency, record verification against the exact Patch IDs:
 
 ```powershell
-python scripts/co_reviewer_cli.py confirm-verified --plan (Join-Path $batchDir "revision_plan.applied.json") --revision-ledger $revisionLedger --ids P-T1 --semantic-review-confirmed
+python scripts/co_reviewer_cli.py confirm-verified --plan (Join-Path $batchDir "revision_plan.applied.json") --revision-ledger $revisionLedger --ids <patch-id> --semantic-review-confirmed
 python scripts/co_reviewer_cli.py sync-workflow-ledger --workflow-ledger $preparedWorkflow --revision-ledger $revisionLedger
 python scripts/co_reviewer_cli.py publish-batch --workflow-ledger $preparedWorkflow --revision-ledger $revisionLedger --batch-dir $batchDir
 ```
@@ -313,7 +314,7 @@ This is an intermediate Working Clean View, not the final publication Clean DOCX
 
 Review the complete cross-document result: Manuscript, SI, figures/tables/references, numerical values, units, sample identifiers, and every proposed reviewer response. Only after the author confirms the response wording and its semantic consistency, record that review:
 
-    python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-T1-1 RU-T2-2 --semantic-review-confirmed --actor "Human Author"
+    python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids <response-unit-id-1> <response-unit-id-2> --semantic-review-confirmed --actor "Human Author"
 
 Use the actual ResponseUnit IDs. A semantically reviewed ResponseUnit is not yet a submission-ready response.
 
@@ -325,7 +326,7 @@ This step requires the hash-bound Working Clean Views and real Microsoft Word CO
 
 Only after every required ResponseUnit has semantic review and final PDF location evidence, and the author confirms readiness, mark the selected units complete:
 
-    python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-T1-1 RU-T2-2 --ready-for-submission-confirmed --actor "Human Author"
+    python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids <response-unit-id-1> <response-unit-id-2> --ready-for-submission-confirmed --actor "Human Author"
 
 Render the editable Response Letter from the RevisionLedger:
 
@@ -383,9 +384,9 @@ When a target cannot safely receive an automatic body-line locator (for example,
     {
       "response_units": [
         {
-          "response_unit_id": "RU-T1-C1",
-          "operation_id": "OP-1",
-          "locator_text": "Table S2, Supplementary Information",
+          "response_unit_id": "<response-unit-id>",
+          "operation_id": "<patch-operation-id>",
+          "locator_text": "<author-confirmed locator text>",
           "page": null,
           "line_start": null,
           "line_end": null
@@ -400,7 +401,7 @@ Then record the author-confirmed locators against the Word-exported artifacts:
 The command requires exact operation coverage for every manual-required ResponseUnit, validates the output DOCX/PDF and current Working Clean hashes, and stores mapping_method=manual with a stable locator ID. locator_text is mandatory. Page is optional; line numbers may be supplied only when the author has checked them. When line numbers are supplied, page, line_start and line_end must all be positive integers. Do not fill uncertain line numbers with estimates. A manual locator is visibly distinct from a Word COM location in the ledger and Response Letter.
 
 
-A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id (for example, anchor:E-ANCHOR-2), not operation_id; it records a locator, never an executable Patch.
+A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id (for example, anchor:<anchor-id>), not operation_id; it records a locator, never an executable Patch.
 
 
 For a `no_change/manual_required` unit, the input uses the confirmed anchor key rather than a PatchOperation:
@@ -409,9 +410,9 @@ For a `no_change/manual_required` unit, the input uses the confirmed anchor key 
 {
   "response_units": [
     {
-      "response_unit_id": "RU-T2-C3",
-      "locator_id": "anchor:E-ANCHOR-2",
-      "locator_text": "Table 2, Methods, row 3"
+      "response_unit_id": "<response-unit-id>",
+      "locator_id": "anchor:<anchor-id>",
+      "locator_text": "<author-confirmed locator text>"
     }
   ]
 }
@@ -428,7 +429,7 @@ Every document-changing ready batch is assigned a unique `runs/batch-{id}/` dire
 1. Build the batch. The command prints the unique batch ID, directory and `batch_intent.json` path:
 
 ```powershell
-python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --task-ids T1 T2 --out revision_ledger.json
+python scripts/co_reviewer_cli.py build-revision-ledger --workflow-ledger workflow_ledger.json --task-ids <task-id-1> <task-id-2> --out revision_ledger.json
 ```
 
 2. Export and preflight the immutable batch plan:
@@ -449,20 +450,20 @@ revision_plan.verified.json
 ```
 
 ```powershell
-python scripts/co_reviewer_cli.py approve-plan --plan "runs/batch-<id>/revision_plan.preflighted.json" --revision-ledger revision_ledger.json --ids P1
+python scripts/co_reviewer_cli.py approve-plan --plan "runs/batch-<id>/revision_plan.preflighted.json" --revision-ledger revision_ledger.json --ids <patch-id>
 python scripts/co_reviewer_cli.py apply --plan "runs/batch-<id>/revision_plan.approved.json" --revision-ledger revision_ledger.json
 python scripts/co_reviewer_cli.py verify --plan "runs/batch-<id>/revision_plan.applied.json"
-python scripts/co_reviewer_cli.py confirm-verified --plan "runs/batch-<id>/revision_plan.applied.json" --revision-ledger revision_ledger.json --ids P1 --semantic-review-confirmed
+python scripts/co_reviewer_cli.py confirm-verified --plan "runs/batch-<id>/revision_plan.applied.json" --revision-ledger revision_ledger.json --ids <patch-id> --semantic-review-confirmed
 ```
 
 4. After every document-changing batch for the round has been published, create the final Working Clean projections, confirm ResponseUnit text and map final Word locations. Do not perform final page/line mapping between intermediate batches because later batches can shift the whole document's pagination:
 
 ```powershell
 python scripts/co_reviewer_cli.py create-working-clean-views --ledger revision_ledger.json
-python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids RU-P1-C1 --verification-report-id "semantic-review-P1-C1" --semantic-review-confirmed
+python scripts/co_reviewer_cli.py confirm-response-units --ledger revision_ledger.json --ids <response-unit-id> --verification-report-id "semantic-review-<response-unit-id>" --semantic-review-confirmed
 python scripts/co_reviewer_cli.py map-response-locations --ledger revision_ledger.json --out-dir word_pdf_final
 python scripts/co_reviewer_cli.py record-response-locations --ledger revision_ledger.json --location-map word_pdf_final/response_location_map.json
-python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids RU-P1-C1 --ready-for-submission-confirmed
+python scripts/co_reviewer_cli.py complete-response-units --ledger revision_ledger.json --ids <response-unit-id> --ready-for-submission-confirmed
 ```
 
 For `manual_required` table/non-body locators, use `record-manual-response-locations` against the final Word/PDF map with the exact author-confirmed locator input described above. `reply_only` units with `not_required` location can be completed after semantic review without generating fake document locations.
@@ -519,7 +520,7 @@ A limited, deterministic LaTeX-to-OMML converter is available for a synthetic Wo
 Create a preview outside the round's source folders:
 
 \`\`\`powershell
-python scripts/co_reviewer_cli.py preview-omml-docx --expression "E=mc^{2}" --out "$roundRoot\reports\equation_preview.docx"
+python scripts/co_reviewer_cli.py preview-omml-docx --expression "<supported-LaTeX-expression>" --out "$roundRoot\reports\equation_preview.docx"
 \`\`\`
 
 Open the preview in Microsoft Word and inspect formula rendering, save/close/reopen it, and preserve the preview as a separate test artifact. This is not an edit of Manuscript/SI, contains no Track Changes, and does not enable formula replacement in production. The OMML structure classifier must continue to block edits to existing formulas until a separate whole-formula revision wrapper passes the supported Word-version acceptance.
