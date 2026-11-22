@@ -7004,6 +7004,72 @@ def cmd_compile_plan(args):
     return 0
 
 
+def cmd_final_gate(args):
+    from co_reviewer.final_gate import evaluate_final_gate, write_final_gate_reports
+
+    plan_path = Path(args.plan).expanduser().resolve() if args.plan else None
+    plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path else None
+
+    round_root_path = Path(args.round_root).expanduser().resolve() if args.round_root else None
+
+    apply_reports = None
+    if args.apply_report:
+        apply_path = Path(args.apply_report).expanduser().resolve()
+        loaded_apply = json.loads(apply_path.read_text(encoding="utf-8"))
+        apply_reports = loaded_apply if isinstance(loaded_apply, list) else [loaded_apply]
+    else:
+        search_dirs = []
+        if plan_path is not None:
+            search_dirs.append(plan_path.parent)
+        if round_root_path is not None and round_root_path not in search_dirs:
+            search_dirs.append(round_root_path)
+        for base_dir in search_dirs:
+            for candidate_name in ("apply_report.json", "revision_apply_report.json"):
+                candidate = base_dir / candidate_name
+                if candidate.is_file():
+                    loaded_apply = json.loads(candidate.read_text(encoding="utf-8"))
+                    apply_reports = loaded_apply if isinstance(loaded_apply, list) else [loaded_apply]
+                    break
+            if apply_reports is not None:
+                break
+
+    verify_report = None
+    if args.verify_report:
+        verify_path = Path(args.verify_report).expanduser().resolve()
+        verify_report = json.loads(verify_path.read_text(encoding="utf-8"))
+    elif plan is not None and apply_reports is not None:
+        verify_report = verify_apply_report(plan, apply_reports)
+
+    report = evaluate_final_gate(
+        plan=plan,
+        verify_report=verify_report,
+        apply_reports=apply_reports,
+        docs=args.docs,
+        round_root=round_root_path,
+        waive_fallback_reason=args.waive_fallback_reason,
+        quality_profile=args.profile,
+        skip_word_com=False,
+    )
+    out_json = Path(args.out_json).expanduser().resolve()
+    out_md = Path(args.out_md).expanduser().resolve()
+    write_final_gate_reports(report, out_json, out_md)
+
+    rec = report["reconciliation"]
+    print(
+        f"[FINAL GATE] {report['verdict']} "
+        f"(input_items={rec['input_items']}, "
+        f"applied_text_edits={rec['applied_text_edits']}, "
+        f"applied_format_changes={rec['applied_format_changes']}, "
+        f"failed={rec['failed']}, "
+        f"manual_fallback={rec['manual_fallback']}, "
+        f"quality_status={rec['quality_status']}, "
+        f"pdf_render_status={rec['pdf_render_status']})"
+    )
+    print(f"[FINAL GATE JSON] {out_json}")
+    print(f"[FINAL GATE MD] {out_md}")
+    return 0 if report["verdict"] == "READY" else 1
+
+
 def cmd_commit_document_package(args):
     outputs = {}
     for item in args.document:
@@ -7146,6 +7212,21 @@ def build_parser():
     cp_plan.add_argument("--out", default="revision_plan.json", help="Output revision_plan.json path.")
     cp_plan.add_argument("--doc-map", help="Optional JSON mapping doc_role to {input_file, output_file}.")
     cp_plan.set_defaults(func=cmd_compile_plan)
+    fg = sub.add_parser("final-gate", help="Run Final Delivery Hard Gate checks and emit JSON/Markdown reconciliation reports.")
+    fg.add_argument("--plan", help="Optional revision plan JSON path.")
+    fg.add_argument("--verify-report", help="Optional verification report JSON path.")
+    fg.add_argument("--apply-report", help="Optional apply report JSON path.")
+    fg.add_argument("--docs", nargs="+", help="Optional delivered DOCX file paths.")
+    fg.add_argument("--round-root", help="Optional round workspace directory.")
+    fg.add_argument(
+        "--profile",
+        choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],
+        help="Optional DOCX quality profile override.",
+    )
+    fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
+    fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")
+    fg.add_argument("--waive-fallback-reason", help="Explicit user-approved waiver reason for manual fallbacks or skipped format ops.")
+    fg.set_defaults(func=cmd_final_gate)
     brm = sub.add_parser(
         "begin-qa-remediation",
         help="Start the one permitted QA remediation using one approved formal Patch against the exact active Marked DOCX.",
