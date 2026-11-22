@@ -1447,7 +1447,7 @@ def _verify_paragraph_format_integrity(
     p_idx: int,
 ) -> dict[str, Any]:
     """Prove unchanged characters retain source formatting and mapped insertions use approved source Runs."""
-    from co_reviewer.document_engine import _apply_format_properties
+    from co_reviewer.document_engine import _apply_format_properties, _script_character, _set_run_property
 
     source_rows = _paragraph_character_formats(source_paragraph)
     source_text = "".join(row["character"] for row in source_rows)
@@ -1538,6 +1538,31 @@ def _verify_paragraph_format_integrity(
         if not isinstance(replacement, str):
             replacement = edit.get("replace", "")
         replacement_map = edit.get("replacement_format_map")
+        authored_replacement = edit.get("replace", replacement)
+        reset_uniform_sentence_script = False
+        if (
+            isinstance(anchor, str)
+            and any(character.isspace() for character in anchor)
+            and isinstance(authored_replacement, str)
+            and not any(_script_character(character) is not None for character in authored_replacement)
+        ):
+            source_vertical_alignments: list[str | None] = []
+            for mapped in working[start:end]:
+                source_index = mapped.get("source_index")
+                if not isinstance(source_index, int):
+                    source_vertical_alignments = []
+                    break
+                source_run = source_rows[source_index].get("run_node")
+                vertical_node = source_run.find("w:rPr/w:vertAlign", NS) if source_run is not None else None
+                source_vertical_alignments.append(
+                    vertical_node.get(qn("val")) if vertical_node is not None else None
+                )
+            reset_uniform_sentence_script = (
+                len(source_vertical_alignments) == len(anchor)
+                and bool(source_vertical_alignments)
+                and len(set(source_vertical_alignments)) == 1
+                and source_vertical_alignments[0] in {"subscript", "superscript"}
+            )
         insert_id = edit.get("insert_revision_id")
         if replacement and insert_id is not None:
             actual_insertions = [
@@ -1550,12 +1575,17 @@ def _verify_paragraph_format_integrity(
                 expected_runs: list[ET.Element] = []
 
                 def expected_run_node(
-                    source_index: int, vertical_alignment: str | None, apply_script_alignment: bool
+                    source_index: int,
+                    vertical_alignment: str | None,
+                    apply_script_alignment: bool,
+                    reset_script_alignment: bool,
                 ) -> ET.Element:
                     source_run = source_rows[source_index].get("run_node")
                     if source_run is None:
                         raise ValueError("source character is not inside an ordinary Run.")
                     expected_run = copy.deepcopy(source_run)
+                    if reset_script_alignment:
+                        _set_run_property(expected_run, "vertAlign", "baseline")
                     if apply_script_alignment:
                         _set_run_property(expected_run, "vertAlign", vertical_alignment)
                     return expected_run
@@ -1570,7 +1600,10 @@ def _verify_paragraph_format_integrity(
                         script = _script_character(character)
                         alignment = script[0] if script else None
                         expected_runs.append(
-                            expected_run_node(source_index, alignment, has_explicit_script)
+                            expected_run_node(
+                                source_index, alignment, has_explicit_script,
+                                reset_uniform_sentence_script,
+                            )
                         )
 
                 if replacement_map:

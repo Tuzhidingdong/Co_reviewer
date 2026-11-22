@@ -17,6 +17,29 @@ class WorkflowPreparationError(ValueError):
     """An author-reviewed execution scope cannot be safely merged."""
 
 
+def _validate_vertical_alignment_source_range(
+    operation_id: str,
+    format_index: int,
+    raw_format: Mapping[str, Any],
+    source_occurrence: Mapping[str, Any],
+    source_properties: Mapping[str, Any],
+) -> None:
+    """Require script formatting to cite the exact same local token as its source occurrence."""
+    if source_properties.get("vertAlign") not in {"subscript", "superscript"}:
+        return
+    target_text = raw_format.get("find")
+    source_text = source_occurrence.get("text")
+    label = f"PatchOperation {operation_id} format_operations[{format_index}]"
+    if not isinstance(target_text, str) or not target_text or target_text != source_text:
+        raise WorkflowPreparationError(
+            f"{label} vertical alignment must target the exact text of its source occurrence."
+        )
+    if any(character.isspace() for character in target_text):
+        raise WorkflowPreparationError(
+            f"{label} vertical alignment source occurrence is multiword; sentence-level subscript/superscript is refused."
+        )
+
+
 _MUTATING = {"replace", "add", "remove", "renumber", "reference_update"}
 _OPERATION_FIELDS = {
     "operation_id", "document", "part", "p_idx", "find", "replace",
@@ -656,6 +679,9 @@ def prepare_workflow_execution(
                         raise WorkflowPreparationError(
                             f"PatchOperation {op_id} format source occurrence has no directly-applied character properties."
                         )
+                    _validate_vertical_alignment_source_range(
+                        op_id, format_index, raw_format, source_occurrence, source_properties
+                    )
                     resolved = dict(raw_format)
                     # Ignore model-supplied properties; the exact source occurrence is authoritative.
                     resolved["properties"] = copy.deepcopy(dict(source_properties))

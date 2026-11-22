@@ -175,6 +175,31 @@ class FormatPreservationTests(unittest.TestCase):
             self.assertEqual("".join(r.find("w:t", NS).text for r in italic_runs), "θ")
             self.assertEqual("".join(r.find("w:t", NS).text for r in sub_runs), "20")
 
+    def test_multiword_replacement_resets_uniform_source_subscript_to_baseline(self):
+        original = "–5) and decreases to approximately 10 Å ps-1 at higher NHB (20–25)."
+        replacement = "–5) and decreases rapidly to approximately 10 Å ps-1 at higher NHB (20–25)."
+        make_styled_docx(self.input, [[(original, {"vertAlign": "subscript"})]])
+
+        results = cli.apply_document(self.input, self.output, [{
+            "p_idx": 0,
+            "find": original,
+            "replace": replacement,
+            "authorized_change": {"intent": "Clarify the sentence without changing its script role"},
+        }], "Test Author")
+        self.assertEqual(len(results), 1)
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            para = root.find(".//w:p", NS)
+            self.assertEqual(visible_text(para), replacement)
+            insertion = para.find(".//w:ins", NS)
+            self.assertIsNotNone(insertion)
+            inserted_text = "".join(node.text or "" for node in insertion.findall(".//w:t", NS))
+            self.assertEqual(inserted_text, replacement)
+            for run in insertion.findall(".//w:r", NS):
+                vertical = run.find("w:rPr/w:vertAlign", NS)
+                self.assertIsNotNone(vertical)
+                self.assertEqual(vertical.get(q("val")), "baseline")
+
     def test_ambiguous_mixed_style_replacement_still_rejected(self):
         make_styled_docx(self.input, [[
             ("old ", {"b": True}),

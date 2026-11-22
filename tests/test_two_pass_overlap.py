@@ -147,6 +147,28 @@ class TwoPassOverlapTests(unittest.TestCase):
         verification = cli.verify_apply_report(plan, results)
         self.assertTrue(verification["passed"], verification)
 
+    def test_apply_format_operation_rejects_multiword_subscript_target(self):
+        p = ET.Element(q("p"))
+        run = ET.SubElement(p, q("r"))
+        ET.SubElement(run, q("t")).text = "The whole sentence must remain on the baseline."
+        doc_xml = ET.tostring(ET.Element(q("document")), encoding="utf-8")
+        ok, next_id, changes, reason = apply_format_operation(
+            p,
+            "The whole sentence must remain on the baseline.",
+            {"vertAlign": "subscript"},
+            document_xml=doc_xml,
+            styles_xml=None,
+            theme_xml=None,
+            author="Author",
+            date="2026-01-01T00:00:00Z",
+            next_revision_id=1,
+        )
+        self.assertFalse(ok)
+        self.assertIn("VERTICAL_ALIGNMENT_TARGET_TOO_BROAD", reason)
+        self.assertEqual(next_id, 1)
+        self.assertEqual(changes, [])
+        self.assertIsNone(run.find("w:rPr/w:vertAlign", NS))
+
     def test_apply_format_operation_include_inserted_runs_skips_del_and_splits_ins(self):
         p = ET.Element(q("p"))
         r_pre = ET.SubElement(p, q("r"))

@@ -13,6 +13,7 @@ import co_reviewer_cli as cli
 from co_reviewer.workflow_engine import build_workflow_ledger
 from co_reviewer.workflow_preparation import (
     WorkflowPreparationError,
+    _validate_vertical_alignment_source_range,
     prepare_workflow_execution,
 )
 
@@ -129,6 +130,27 @@ class WorkflowPreparationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_vertical_alignment_source_must_be_exact_local_occurrence(self):
+        source = {
+            "text": "HB",
+            "format_properties": {"vertAlign": "subscript"},
+        }
+        _validate_vertical_alignment_source_range(
+            "OP-1", 0, {"find": "HB"}, source, source["format_properties"]
+        )
+        with self.assertRaisesRegex(WorkflowPreparationError, "exact text of its source occurrence"):
+            _validate_vertical_alignment_source_range(
+                "OP-1", 0, {"find": "entire sentence"}, source, source["format_properties"]
+            )
+        long_source = {
+            "text": "The entire sentence is subscript.",
+            "format_properties": {"vertAlign": "subscript"},
+        }
+        with self.assertRaisesRegex(WorkflowPreparationError, "multiword"):
+            _validate_vertical_alignment_source_range(
+                "OP-1", 1, {"find": long_source["text"]}, long_source, long_source["format_properties"]
+            )
 
     def test_stable_identity_is_the_default_and_never_silently_falls_back_to_p_idx(self):
         scope = json.loads(json.dumps(self.scope))

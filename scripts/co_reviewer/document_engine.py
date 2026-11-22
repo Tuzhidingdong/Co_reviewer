@@ -692,6 +692,11 @@ def apply_format_operation(
         return False, next_revision_id, [], "FormatChange find text must be non-empty."
     if any(character in find_text for character in "\t\r\n"):
         return False, next_revision_id, [], "FormatChange cannot cross tabs or paragraph breaks."
+    if properties.get("vertAlign") in {"subscript", "superscript"} and any(character.isspace() for character in find_text):
+        return (
+            False, next_revision_id, [],
+            "VERTICAL_ALIGNMENT_TARGET_TOO_BROAD: subscript/superscript must target an exact local token, not a multiword phrase or sentence."
+        )
     if any(ancestor.tag == qn("tbl") for ancestor in paragraph.iterancestors()):
         return False, next_revision_id, [], "FORMAT_CHANGE_TABLE_STYLE_RESOLUTION_REQUIRED"
     ppr = paragraph.find("w:pPr", NS)
@@ -1019,6 +1024,7 @@ def replace_in_paragraph(
     first_matched = None
     last_matched = None
     matched_format_signatures: list[bytes] = []
+    matched_vertical_alignments: list[str | None] = []
     for run_start, run_end, source, value in spans:
         overlap_start = max(match_start, run_start)
         overlap_end = min(match_end, run_end)
@@ -1027,6 +1033,9 @@ def replace_in_paragraph(
             deleted_text = value[overlap_start - run_start:overlap_end - run_start]
             suffix_text = value[overlap_end - run_start:]
             matched_format_signatures.append(_run_format_signature(source))
+            vertical_node = source.find("w:rPr/w:vertAlign", NS)
+            vertical_value = vertical_node.get(qn("val")) if vertical_node is not None else None
+            matched_vertical_alignments.extend([vertical_value] * (overlap_end - overlap_start))
         elif run_end <= match_start:
             prefix_text, deleted_text, suffix_text = value, "", ""
         elif run_start >= match_end:
@@ -1098,6 +1107,21 @@ def replace_in_paragraph(
             )
     else:
         insert_runs = make_insert_runs(first_matched, new)
+    # Never propagate a paragraph-sized sub/superscript Run onto a replacement sentence.
+    # A script style may be retained for a short token, but a multiword replacement
+    # requires explicit Unicode script characters or a scoped Pass-2 FormatChange.
+    has_uniform_sentence_script = (
+        any(character.isspace() for character in old)
+        and len(matched_vertical_alignments) == len(old)
+        and bool(matched_vertical_alignments)
+        and len(set(matched_vertical_alignments)) == 1
+        and matched_vertical_alignments[0] in {"subscript", "superscript"}
+    )
+    replacement_has_explicit_script = any(_script_character(character) is not None for character in new)
+    if has_uniform_sentence_script and not replacement_has_explicit_script:
+        for inserted_run in insert_runs:
+            _set_run_property(inserted_run, "vertAlign", "baseline")
+
     child_pos_map = {child: idx for idx, child in enumerate(children)}
     first_matched_idx = child_pos_map[first_matched]
     last_matched_idx = child_pos_map[last_matched]
