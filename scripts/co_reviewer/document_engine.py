@@ -87,6 +87,9 @@ def map_target_text_to_xml_nodes(
     if occurrences > 1:
         raise ValueError("Target is ambiguous: it occurs more than once in the paragraph visible-text projection.")
 
+    from .bounded_safe_span import collect_internal_bookmark_ids, is_transparent_paragraph_child
+
+    internal_bookmark_ids = collect_internal_bookmark_ids(root)
     containers = [paragraph]
     containers.extend(
         node for node in paragraph.iter()
@@ -102,13 +105,19 @@ def map_target_text_to_xml_nodes(
                 continue
             runs = []
             values = []
-            while index < len(children) and children[index].tag == qn("r"):
-                value = run_plain_text(children[index])
-                if value is None:
+            while index < len(children):
+                child = children[index]
+                if child.tag == qn("r"):
+                    value = run_plain_text(child)
+                    if value is None:
+                        break
+                    runs.append(child)
+                    values.append(value)
+                    index += 1
+                elif runs and is_transparent_paragraph_child(child, internal_bookmark_ids):
+                    index += 1
+                else:
                     break
-                runs.append(children[index])
-                values.append(value)
-                index += 1
             if not runs:
                 index += 1
                 continue
@@ -348,7 +357,7 @@ def extract_native_script_runs(paragraph: ET.Element) -> list[dict[str, str]]:
     return result
 
 def run_plain_text(run: ET.Element) -> str | None:
-    allowed = {qn("rPr"), qn("t")}
+    allowed = {qn("rPr"), qn("t"), qn("lastRenderedPageBreak")}
     if any(child.tag not in allowed for child in list(run)):
         return None
     nodes = run.findall("w:t", NS)
@@ -748,6 +757,10 @@ def replace_in_paragraph(
     para: ET.Element, old: str, new: str, author: str, date: str, next_id: int,
     replacement_format_map: list[dict[str, Any]] | None = None,
 ):
+    from .bounded_safe_span import collect_internal_bookmark_ids, is_transparent_paragraph_child
+
+    tree_root = para.getroottree().getroot() if para.getparent() is not None else para
+    internal_bookmark_ids = collect_internal_bookmark_ids(tree_root)
     children = list(para)
     blocks = []
     i = 0
@@ -756,13 +769,23 @@ def replace_in_paragraph(
             i += 1
             continue
         start, runs, texts = i, [], []
-        while i < len(children) and children[i].tag == qn("r"):
-            value = run_plain_text(children[i])
-            if value is None:
+        last_run_idx = i
+        while i < len(children):
+            child = children[i]
+            if child.tag == qn("r"):
+                value = run_plain_text(child)
+                if value is None:
+                    break
+                runs.append(child)
+                texts.append(value)
+                last_run_idx = i
+                i += 1
+            elif runs and is_transparent_paragraph_child(child, internal_bookmark_ids):
+                i += 1
+            else:
                 break
-            runs.append(children[i]); texts.append(value); i += 1
         if runs:
-            blocks.append((start, start + len(runs), runs, "".join(texts)))
+            blocks.append((start, last_run_idx + 1, runs, "".join(texts)))
         else:
             i += 1
     matches = []
@@ -805,6 +828,7 @@ def replace_in_paragraph(
         cursor += len(value)
     prefixes, deletions, suffixes = [], [], []
     first_matched = None
+    last_matched = None
     matched_format_signatures: list[bytes] = []
     for run_start, run_end, source, value in spans:
         overlap_start = max(match_start, run_start)
@@ -824,11 +848,12 @@ def replace_in_paragraph(
         if frag is not None: prefixes.append(frag)
         if deleted_text:
             if first_matched is None: first_matched = source
+            last_matched = source
             frag = make_run(source, deleted_text, deleted=True)
             if frag is not None: deletions.append(frag)
         frag = make_run(source, suffix_text)
         if frag is not None: suffixes.append(frag)
-    if first_matched is None:
+    if first_matched is None or last_matched is None:
         return False, next_id, "target could not be mapped to runs"
     if replacement_format_map is not None:
         try:
@@ -849,12 +874,29 @@ def replace_in_paragraph(
         )
     else:
         insert_runs = make_insert_runs(first_matched, new)
-    replacements = list(prefixes)
+    child_pos_map = {child: idx for idx, child in enumerate(children)}
+    first_matched_idx = child_pos_map[first_matched]
+    last_matched_idx = child_pos_map[last_matched]
+    transparent_before: list[ET.Element] = []
+    transparent_within: list[ET.Element] = []
+    transparent_after: list[ET.Element] = []
+    for idx in range(start, end):
+        node = children[idx]
+        if is_transparent_paragraph_child(node, internal_bookmark_ids):
+            if idx < first_matched_idx:
+                transparent_before.append(node)
+            elif idx < last_matched_idx:
+                transparent_within.append(node)
+            else:
+                transparent_after.append(node)
+    replacements = list(prefixes) + transparent_before
     if deletions:
         replacements.append(revision_wrapper("del", next_id, author, date, deletions)); next_id += 1
     if insert_runs:
         replacements.append(revision_wrapper("ins", next_id, author, date, insert_runs)); next_id += 1
+    replacements.extend(transparent_within)
     replacements.extend(suffixes)
+    replacements.extend(transparent_after)
     # Only the selected contiguous run block is replaced. All other children of
     # the current container remain intact; hyperlinks are edited inside their
     # existing wrapper so relationship IDs and link attributes are preserved.

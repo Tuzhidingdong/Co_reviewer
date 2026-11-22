@@ -421,8 +421,10 @@ class StructureClassifierTests(unittest.TestCase):
             ),
             (
                 "embedded drawing",
-                '<w:p><w:r><w:drawing/></w:r>'
-                '<w:r><w:t>target wording</w:t></w:r></w:p>',
+                '<w:p><w:r><w:drawing>'
+                '<w:txbxContent><w:p><w:r><w:t>target wording</w:t></w:r></w:p></w:txbxContent>'
+                '</w:drawing></w:r>'
+                '<w:r><w:t>caption text</w:t></w:r></w:p>',
             ),
         ]
         for label, body in fixtures:

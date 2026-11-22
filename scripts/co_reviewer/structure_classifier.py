@@ -517,11 +517,24 @@ def _pair_ranges(
     start_tag, end_tag = f"{{{W}}}{start_local}", f"{{{W}}}{end_local}"
     starts: dict[str, list[ET._Element]] = defaultdict(list)
     ends: dict[str, list[ET._Element]] = defaultdict(list)
+    internal_bookmark_ids: set[str] = set()
+    if kind == "bookmark_range":
+        from .bounded_safe_span import collect_internal_bookmark_ids, is_internal_bookmark_name
+        internal_bookmark_ids = collect_internal_bookmark_ids(root)
     for node in root.iter():
         if node.tag == start_tag:
-            starts[node.get(f"{{{W}}}id", "")].append(node)
+            marker_id = node.get(f"{{{W}}}id", "")
+            if kind == "bookmark_range" and (
+                is_internal_bookmark_name(node.get(f"{{{W}}}name"))
+                or marker_id in internal_bookmark_ids
+            ):
+                continue
+            starts[marker_id].append(node)
         elif node.tag == end_tag:
-            ends[node.get(f"{{{W}}}id", "")].append(node)
+            marker_id = node.get(f"{{{W}}}id", "")
+            if kind == "bookmark_range" and marker_id in internal_bookmark_ids:
+                continue
+            ends[marker_id].append(node)
     # Word range markers may legally be direct children of containers such
     # as w:body, not only descendants of w:p. Resolve their actual XML order
     # and intersect the marker interval with each paragraph's full subtree.
@@ -1319,6 +1332,8 @@ def _classify_members(
             q = _qname(node.tag)
             local, namespace = q.localname, q.namespace or ""
             ancestors = _ancestor_names(node)
+            if any(anc in {"drawing", "pict", "object"} for anc in ancestors):
+                continue
             status: str | None = None
             kind = ""
             reason = ""
@@ -1328,9 +1343,18 @@ def _classify_members(
                 kind, status, reason = "markup_compatibility_alternate_content", BLOCKED, "Markup-compatibility Choice/Fallback branches must be interpreted before editing the containing paragraph."
             elif namespace == W:
                 if local in {"bookmarkStart", "bookmarkEnd"}:
+                    from .bounded_safe_span import collect_internal_bookmark_ids, is_internal_bookmark_name
+
                     kind, status, reason = "bookmark_marker", GUARDED, "Bookmark ranges must not be split or rebalanced without a bookmark-aware adapter."
                     details["bookmark_id"] = node.get(f"{{{W}}}id")
                     details["bookmark_name"] = node.get(f"{{{W}}}name")
+                    if local == "bookmarkStart":
+                        details["is_internal_bookmark"] = is_internal_bookmark_name(details["bookmark_name"])
+                    else:
+                        internal_ids = collect_internal_bookmark_ids(root)
+                        details["is_internal_bookmark"] = bool(
+                            details["bookmark_id"] and details["bookmark_id"] in internal_ids
+                        )
                 elif local in {"commentRangeStart", "commentRangeEnd"}:
                     kind, status, reason = "comment_range_marker", GUARDED, "Comment ranges must not be split or rebalanced without a comment-aware adapter."
                     details["comment_id"] = node.get(f"{{{W}}}id")
@@ -1718,6 +1742,7 @@ def assert_edit_target_supported_with_bounded_safe_span(
         "custom_xml_delete_range",
         "custom_xml_move_from_range",
         "custom_xml_move_to_range",
+        "embedded_object",
     }
     if blocking_issues or not relevant or any(
         item.get("kind") not in safe_boundary_kinds

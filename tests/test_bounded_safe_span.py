@@ -376,6 +376,84 @@ class BoundedSafeSpanTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertIn("not unique", result["reason"])
 
+    def test_prooferr_interleaved_between_runs_including_orphan_prooferr_is_allowed(self):
+        root, paragraph = _document(
+            '<w:p>'
+            '<w:proofErr w:type="gramStart"/>'
+            + _run("capillary ")
+            + '<w:proofErr w:type="spellStart"/>'
+            + _run("brige")
+            + '<w:proofErr w:type="spellEnd"/>'
+            + _run(" model")
+            + '</w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "capillary brige model")
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["status"], "ALLOW_CANDIDATE")
+        self.assertEqual(len(result["run_map"]), 3)
+
+    def test_last_rendered_page_break_in_paragraph_and_run_is_transparent(self):
+        root, paragraph = _document(
+            '<w:p>'
+            + _run("capillary ")
+            + '<w:lastRenderedPageBreak/>'
+            '<w:r><w:lastRenderedPageBreak/><w:t>bridge</w:t></w:r>'
+            + _run(" model")
+            + '</w:p>'
+        )
+        result = analyze_bounded_safe_span(root, paragraph, "capillary bridge model")
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["status"], "ALLOW_CANDIDATE")
+        self.assertEqual(len(result["run_map"]), 3)
+
+    def test_internal_bookmarks_are_transparent_while_semantic_bookmark_blocks(self):
+        root, paragraph = _document(
+            '<w:p>'
+            '<w:bookmarkStart w:id="10" w:name="_GoBack"/>'
+            + _run("capillary ")
+            + '<w:bookmarkStart w:id="11" w:name="_Hlk12345"/>'
+            + _run("bridge ")
+            + '<w:bookmarkEnd w:id="11"/>'
+            + '<w:bookmarkStart w:id="12" w:name="_Toc67890"/>'
+            + _run("and ")
+            + '<w:bookmarkEnd w:id="12"/>'
+            + '<w:bookmarkStart w:id="13" w:name="OLE_LINK1"/>'
+            + _run("droplet")
+            + '<w:bookmarkEnd w:id="13"/>'
+            + '</w:p>'
+        )
+        allowed_result = analyze_bounded_safe_span(root, paragraph, "capillary bridge and droplet")
+        self.assertTrue(allowed_result["allowed"])
+
+        semantic_root, semantic_para = _document(
+            '<w:p>'
+            + _run("capillary ")
+            + '<w:bookmarkStart w:id="20" w:name="FigureRef1"/>'
+            + _run("bridge")
+            + '<w:bookmarkEnd w:id="20"/>'
+            + '</w:p>'
+        )
+        blocked_result = analyze_bounded_safe_span(semantic_root, semantic_para, "capillary bridge")
+        self.assertFalse(blocked_result["allowed"])
+        self.assertEqual(blocked_result["status"], "BLOCKED")
+
+    def test_embedded_drawing_allows_caption_text_outside_and_blocks_txbx_content(self):
+        root, paragraph = _document(
+            '<w:p>'
+            '<w:r><w:drawing>'
+            '<w:txbxContent><w:p><w:r><w:t>Box label</w:t></w:r></w:p></w:txbxContent>'
+            '</w:drawing></w:r>'
+            + _run("Figure 1. Capillary bridge.")
+            + '</w:p>'
+        )
+        caption_result = analyze_bounded_safe_span(root, paragraph, "Figure 1. Capillary bridge.")
+        self.assertTrue(caption_result["allowed"])
+        self.assertEqual(caption_result["status"], "ALLOW_CANDIDATE")
+
+        txbx_result = analyze_bounded_safe_span(root, paragraph, "Box label")
+        self.assertFalse(txbx_result["allowed"])
+        self.assertEqual(txbx_result["status"], "BLOCKED")
+
 
 if __name__ == "__main__":
     unittest.main()

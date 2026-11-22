@@ -20,8 +20,50 @@ def _q(local: str) -> str:
     return f"{{{W}}}{local}"
 
 
+_EMBEDDED_OBJECT_TAGS = frozenset({_q("drawing"), _q("pict"), _q("object")})
+
+
+def is_internal_bookmark_name(name: str | None) -> bool:
+    """Return True for Word internal non-semantic bookmarks (_GoBack, _Hlk*, _Toc*, OLE_LINK*)."""
+    if not isinstance(name, str) or not name:
+        return False
+    return (
+        name == "_GoBack"
+        or name.startswith("_Hlk")
+        or name.startswith("_Toc")
+        or name.startswith("OLE_LINK")
+    )
+
+
+def collect_internal_bookmark_ids(root: ET._Element) -> set[str]:
+    """Collect w:id values for internal non-semantic bookmarkStart elements in tree."""
+    ids: set[str] = set()
+    for node in root.iter(_q("bookmarkStart")):
+        if is_internal_bookmark_name(node.get(_q("name"))):
+            marker_id = node.get(_q("id"), "")
+            if marker_id:
+                ids.add(marker_id)
+    return ids
+
+
+def is_transparent_paragraph_child(
+    node: ET._Element,
+    internal_bookmark_ids: set[str],
+) -> bool:
+    """Return True for non-semantic XML noise markers that may sit between ordinary runs."""
+    if not isinstance(node.tag, str):
+        return False
+    if node.tag in {_q("proofErr"), _q("lastRenderedPageBreak")}:
+        return True
+    if node.tag == _q("bookmarkStart"):
+        return is_internal_bookmark_name(node.get(_q("name")))
+    if node.tag == _q("bookmarkEnd"):
+        return node.get(_q("id"), "") in internal_bookmark_ids
+    return False
+
+
 def _run_text(run: ET._Element) -> str | None:
-    allowed = {_q("rPr"), _q("t")}
+    allowed = {_q("rPr"), _q("t"), _q("lastRenderedPageBreak")}
     if any(child.tag not in allowed for child in list(run)):
         return None
     nodes = run.findall("w:t", NS)
@@ -40,8 +82,14 @@ def _visible_text(paragraph: ET._Element) -> str:
     return "".join(pieces)
 
 
-def _run_blocks(paragraph: ET._Element) -> list[tuple[list[ET._Element], str]]:
-    """Return maximal direct-child sequences of ordinary, text-only Runs."""
+def _run_blocks(
+    paragraph: ET._Element,
+    internal_bookmark_ids: set[str] | None = None,
+) -> list[tuple[list[ET._Element], str]]:
+    """Return maximal direct-child sequences of ordinary, text-only Runs, bridging transparent noise."""
+    if internal_bookmark_ids is None:
+        tree_root = paragraph.getroottree().getroot() if paragraph.getparent() is not None else paragraph
+        internal_bookmark_ids = collect_internal_bookmark_ids(tree_root)
     children = list(paragraph)
     blocks: list[tuple[list[ET._Element], str]] = []
     index = 0
@@ -51,13 +99,19 @@ def _run_blocks(paragraph: ET._Element) -> list[tuple[list[ET._Element], str]]:
             continue
         runs: list[ET._Element] = []
         texts: list[str] = []
-        while index < len(children) and children[index].tag == _q("r"):
-            value = _run_text(children[index])
-            if value is None:
+        while index < len(children):
+            child = children[index]
+            if child.tag == _q("r"):
+                value = _run_text(child)
+                if value is None:
+                    break
+                runs.append(child)
+                texts.append(value)
+                index += 1
+            elif runs and is_transparent_paragraph_child(child, internal_bookmark_ids):
+                index += 1
+            else:
                 break
-            runs.append(children[index])
-            texts.append(value)
-            index += 1
         if runs:
             blocks.append((runs, "".join(texts)))
         else:
@@ -95,6 +149,7 @@ def _part_text_positions(
     }
     cursor = 0
     paragraph_count = 0
+    internal_bookmark_ids = collect_internal_bookmark_ids(root)
     proofing_stacks: dict[str, list[str]] = defaultdict(list)
     proofing_counts: dict[str, int] = defaultdict(int)
     proofing_orphan_end_count: dict[str, int] = defaultdict(int)
@@ -116,10 +171,17 @@ def _part_text_positions(
         if local in marker_pairs:
             _, range_kind = marker_pairs[local]
             marker_id = node.get(_q("id"), "")
+            if local == "bookmarkStart" and (
+                is_internal_bookmark_name(node.get(_q("name")))
+                or marker_id in internal_bookmark_ids
+            ):
+                continue
             markers[(range_kind, marker_id)]["start"].append(cursor)
         elif local in reverse_pairs:
             _, range_kind = reverse_pairs[local]
             marker_id = node.get(_q("id"), "")
+            if local == "bookmarkEnd" and marker_id in internal_bookmark_ids:
+                continue
             markers[(range_kind, marker_id)]["end"].append(cursor)
         elif local == "proofErr":
             marker_type = node.get(_q("type"), "")
@@ -146,13 +208,12 @@ def _part_text_positions(
                 })
         elif local in {
             "commentReference", "footnoteReference",
-            "endnoteReference", "lastRenderedPageBreak",
+            "endnoteReference",
         }:
             marker_kind = {
                 "commentReference": "comment_reference",
                 "footnoteReference": "footnote_reference",
                 "endnoteReference": "endnote_reference",
-                "lastRenderedPageBreak": "rendered_page_break",
             }[local]
             point_markers.append({
                 "marker_kind": marker_kind,
@@ -177,6 +238,21 @@ def analyze_bounded_safe_span(
     if not isinstance(target_text, str) or not target_text or any(ch in target_text for ch in "\t\r\n"):
         raise ValueError("target_text must be non-empty and cannot contain tabs or paragraph breaks.")
 
+    if any(ancestor.tag in _EMBEDDED_OBJECT_TAGS for ancestor in paragraph.iterancestors()):
+        return {
+            "status": "BLOCKED",
+            "allowed": False,
+            "reason": "Paragraph sits inside an embedded drawing/pict/object container.",
+        }
+
+    for embedded in paragraph.iter():
+        if embedded.tag in _EMBEDDED_OBJECT_TAGS and target_text in _visible_text(embedded):
+            return {
+                "status": "BLOCKED",
+                "allowed": False,
+                "reason": "Target text occurs inside an embedded drawing/pict/object subtree.",
+            }
+
     visible = _visible_text(paragraph)
     if visible.count(target_text) != 1:
         return {
@@ -185,8 +261,9 @@ def analyze_bounded_safe_span(
             "reason": "Target is not unique in the paragraph's visible text.",
         }
 
+    internal_bookmark_ids = collect_internal_bookmark_ids(root)
     matches: list[tuple[list[ET._Element], str, int]] = []
-    for runs, joined in _run_blocks(paragraph):
+    for runs, joined in _run_blocks(paragraph, internal_bookmark_ids=internal_bookmark_ids):
         position = joined.find(target_text)
         while position >= 0:
             matches.append((runs, joined, position))
@@ -224,6 +301,8 @@ def analyze_bounded_safe_span(
             not marker_id or len(starts) != 1 or len(ends) != 1
             or starts[0] > ends[0]
         ):
+            if range_kind == "proofing_range":
+                continue
             return {
                 "status": "BLOCKED",
                 "allowed": False,
@@ -256,12 +335,13 @@ def analyze_bounded_safe_span(
             or target_start < range_end < target_end
             or (range_start == range_end and target_start < range_start < target_end)
         )
-        if (range_kind != "proofing_range" and overlaps) or crosses_boundary:
+        if range_kind != "proofing_range" and (overlaps or crosses_boundary):
             protected_ranges.append(dict(boundary))
 
     crossed_points = [
         row for row in point_markers
-        if target_start < row["position"] < target_end
+        if row.get("marker_kind") != "proofing_marker"
+        and target_start < row["position"] < target_end
     ]
     if crossed_points:
         protected_ranges.extend({
@@ -341,6 +421,30 @@ def analyze_bounded_safe_span(
     mapped_run_indices = sorted({
         row["run_index_in_safe_block"] for row in run_map
     })
+    if mapped_run_indices:
+        matched_child_positions = [
+            paragraph_child_positions[runs[run_index]] for run_index in mapped_run_indices
+        ]
+        span_child_min = min(matched_child_positions)
+        span_child_max = max(matched_child_positions)
+        paragraph_children = list(paragraph)
+        for child_pos in range(span_child_min, span_child_max + 1):
+            child_node = paragraph_children[child_pos]
+            if child_node.tag in _EMBEDDED_OBJECT_TAGS or any(
+                desc.tag in _EMBEDDED_OBJECT_TAGS for desc in child_node.iter()
+            ):
+                return {
+                    "status": "BLOCKED",
+                    "allowed": False,
+                    "reason": "Matched span crosses or touches an embedded drawing/pict/object node.",
+                }
+        for run_index in mapped_run_indices:
+            if any(anc.tag in _EMBEDDED_OBJECT_TAGS for anc in runs[run_index].iterancestors()):
+                return {
+                    "status": "BLOCKED",
+                    "allowed": False,
+                    "reason": "Matched run sits inside an embedded drawing/pict/object node.",
+                }
     run_property_signatures = set()
     for run_index in mapped_run_indices:
         rpr = runs[run_index].find("w:rPr", NS)

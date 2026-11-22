@@ -266,6 +266,134 @@ class BoundedSafeSpanProductionTests(unittest.TestCase):
             self.assertEqual(suggestion["source_excerpt"], "protected one")
             self.assertFalse(output.exists())
 
+    def test_replaces_target_split_across_prooferr_page_break_and_internal_bookmarks_while_preserving_markers(self):
+        from co_reviewer.document_engine import replace_in_paragraph
+        from co_reviewer.structure_classifier import (
+            assert_edit_target_supported_with_bounded_safe_span,
+            classify_docx_structure,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            docx_path = Path(tmp) / "noisy.docx"
+            doc = Document()
+            doc.add_paragraph("placeholder")
+            doc.save(docx_path)
+            with zipfile.ZipFile(docx_path, "r") as src:
+                members = {name: src.read(name) for name in src.namelist()}
+            doc_xml = (
+                f'<w:document xmlns:w="{W}"><w:body>'
+                '<w:p>'
+                '<w:bookmarkStart w:id="90" w:name="_GoBack"/>'
+                '<w:r><w:t>Capillary </w:t></w:r>'
+                '<w:proofErr w:type="spellStart"/>'
+                '<w:r><w:t>brige</w:t></w:r>'
+                '<w:proofErr w:type="spellEnd"/>'
+                '<w:lastRenderedPageBreak/>'
+                '<w:bookmarkStart w:id="91" w:name="_Hlk12345"/>'
+                '<w:r><w:lastRenderedPageBreak/><w:t> model</w:t></w:r>'
+                '<w:bookmarkEnd w:id="91"/>'
+                '</w:p>'
+                '</w:body></w:document>'
+            ).encode("utf-8")
+            members["word/document.xml"] = doc_xml
+            with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as dst:
+                for name, payload in members.items():
+                    dst.writestr(name, payload)
+
+            inventory = classify_docx_structure(docx_path)
+            root = ET.fromstring(doc_xml)
+            paragraph = root.find(".//w:p", NS)
+            analysis = assert_edit_target_supported_with_bounded_safe_span(
+                inventory,
+                part="word/document.xml",
+                paragraph_index=0,
+                paragraph=paragraph,
+                part_root=root,
+                target_text="Capillary brige model",
+            )
+            self.assertTrue(analysis["allowed"])
+
+            ok, _next_id, message = replace_in_paragraph(
+                paragraph, "Capillary brige model", "Capillary bridge model",
+                author="Test Author", date="2026-11-22T00:00:00Z", next_id=1,
+            )
+            self.assertTrue(ok, message)
+            self.assertEqual(
+                [node.get(f"{{{W}}}type") for node in paragraph.findall(f"{{{W}}}proofErr")],
+                ["spellStart", "spellEnd"],
+            )
+            self.assertEqual(len(paragraph.findall(f"{{{W}}}lastRenderedPageBreak")), 1)
+            self.assertEqual(
+                [node.get(f"{{{W}}}name") for node in paragraph.findall(f"{{{W}}}bookmarkStart")],
+                ["_GoBack", "_Hlk12345"],
+            )
+            self.assertEqual(len(paragraph.findall(f"{{{W}}}bookmarkEnd")), 1)
+            self.assertIsNotNone(paragraph.find(f"{{{W}}}del"))
+            self.assertIsNotNone(paragraph.find(f"{{{W}}}ins"))
+
+    def test_figure_caption_edit_alongside_drawing_succeeds_and_leaves_drawing_intact(self):
+        from co_reviewer.document_engine import replace_in_paragraph
+        from co_reviewer.structure_classifier import (
+            StructureClassificationError,
+            assert_edit_target_supported_with_bounded_safe_span,
+            classify_docx_structure,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            docx_path = Path(tmp) / "caption.docx"
+            doc = Document()
+            doc.add_paragraph("placeholder")
+            doc.save(docx_path)
+            with zipfile.ZipFile(docx_path, "r") as src:
+                members = {name: src.read(name) for name in src.namelist()}
+            doc_xml = (
+                f'<w:document xmlns:w="{W}"><w:body>'
+                '<w:p>'
+                '<w:r><w:drawing>'
+                '<w:txbxContent><w:p><w:r><w:t>Box label</w:t></w:r></w:p></w:txbxContent>'
+                '</w:drawing></w:r>'
+                '<w:r><w:t>Figure 1. Capillary brige.</w:t></w:r>'
+                '</w:p>'
+                '</w:body></w:document>'
+            ).encode("utf-8")
+            members["word/document.xml"] = doc_xml
+            with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as dst:
+                for name, payload in members.items():
+                    dst.writestr(name, payload)
+
+            inventory = classify_docx_structure(docx_path)
+            root = ET.fromstring(doc_xml)
+            paragraph = root.find(".//w:p", NS)
+            drawing_before = ET.tostring(paragraph.find(f".//{{{W}}}drawing"), encoding="utf-8")
+
+            analysis = assert_edit_target_supported_with_bounded_safe_span(
+                inventory,
+                part="word/document.xml",
+                paragraph_index=0,
+                paragraph=paragraph,
+                part_root=root,
+                target_text="Capillary brige.",
+            )
+            self.assertTrue(analysis["allowed"])
+
+            ok, _next_id, message = replace_in_paragraph(
+                paragraph, "Capillary brige.", "Capillary bridge.",
+                author="Test Author", date="2026-11-22T00:00:00Z", next_id=1,
+            )
+            self.assertTrue(ok, message)
+            drawing_after = ET.tostring(paragraph.find(f".//{{{W}}}drawing"), encoding="utf-8")
+            self.assertEqual(drawing_after, drawing_before)
+
+            with self.assertRaises(StructureClassificationError):
+                assert_edit_target_supported_with_bounded_safe_span(
+                    inventory,
+                    part="word/document.xml",
+                    paragraph_index=0,
+                    paragraph=paragraph,
+                    part_root=root,
+                    target_text="Box label",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
