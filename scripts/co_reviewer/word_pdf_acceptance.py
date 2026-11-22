@@ -63,7 +63,22 @@ def build_word_pdf_acceptance_ledger(
     ):
         if not path.is_file():
             raise FileNotFoundError(f"Required {label} is missing: {path}")
-    _load_verified_roundtrip_report(verification_path)
+    report = _load_verified_roundtrip_report(verification_path)
+    verified_revision_ids: list[str] = []
+    seen_revision_ids: set[str] = set()
+    for item in report.get("results", []):
+        if not isinstance(item, dict):
+            continue
+        checks = item.get("checks")
+        if not isinstance(checks, dict):
+            continue
+        for key in ("delete_revision_id", "insert_revision_id"):
+            rev_id = checks.get(key)
+            if rev_id is not None:
+                rev_str = str(rev_id)
+                if rev_str and rev_str not in seen_revision_ids:
+                    seen_revision_ids.add(rev_str)
+                    verified_revision_ids.append(rev_str)
 
     if source.suffix.casefold() != ".docx" or marked.suffix.casefold() != ".docx":
         raise ValueError("Synthetic Word acceptance inputs must both be DOCX files.")
@@ -109,6 +124,17 @@ def build_word_pdf_acceptance_ledger(
         preflight_report_id="WORD-QA-COM-PREFLIGHT",
         approval_fingerprint=hashlib.sha256(b"synthetic-word-com-approval").hexdigest(),
         apply_report_ids=["WORD-QA-COM-APPLY"],
+        applied_revision_ids=(
+            [{
+                "input_file": str(source),
+                "output_file": str(marked),
+                "input_sha256": source_sha,
+                "output_sha256": marked_sha,
+                "revision_ids": verified_revision_ids,
+            }]
+            if verified_revision_ids
+            else []
+        ),
         verification_report_id="WORD-QA-COM-VERIFY-POST-WORD",
         verified_output_hashes=[{"path": str(marked), "sha256": marked_sha}],
     )

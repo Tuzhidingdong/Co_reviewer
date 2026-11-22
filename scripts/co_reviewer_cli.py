@@ -648,6 +648,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "author_decision_ref": target.get("author_decision_ref"),
                 "authorized_change": target.get("authorized_change"),
                 "protected_spans": list(target.get("protected_spans", [])),
+                "replacement_format_map": list(target.get("replacement_format_map", []))
+                    if target.get("replacement_format_map") is not None else None,
+                "format_authorization": target.get("format_authorization"),
+                "format_operations": list(target.get("format_operations", [])),
                 "target_ref": target.get("target_ref"),
                 "target_identity_mode": target.get("target_identity_mode"),
                 "source_sha256": target.get("source_sha256") or sha256_file(target["input_file"]),

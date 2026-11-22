@@ -753,6 +753,56 @@ class RevisionWorkflowTests(unittest.TestCase):
         for source_path, original_bytes in original_inputs.items():
             self.assertEqual(source_path.read_bytes(), original_bytes)
 
+    def test_preflight_plan_forwards_format_fields_on_each_target_edit(self):
+        from unittest import mock
+
+        make_docx(self.input, [[("old phrase", False)], [("context before and pure format", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        text_target = item["targets"][0]
+        text_target["replacement_format_map"] = [
+            {"replacement_start": 0, "replacement_end": len("revised phrase"), "source_offset": 0}
+        ]
+        format_target = {
+            "document": "Manuscript",
+            "input_file": str(self.input),
+            "output_file": str(self.output),
+            "p_idx": 1,
+            "location": "Section 1",
+            "find": "context before",
+            "replace": "context before",
+            "format_authorization": {"intent": "Italicize technical term"},
+            "format_operations": [{"find": "pure format", "properties": {"i": True}}],
+        }
+        item["targets"].append(format_target)
+
+        captured_edits = []
+        original_prepare = cli.prepare_document
+
+        def _capture_prepare(inp, out, edits, author):
+            captured_edits.extend(edits)
+            return original_prepare(inp, out, edits, author)
+
+        with mock.patch.object(cli, "prepare_document", side_effect=_capture_prepare):
+            report = cli.preflight_plan(plan)
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(len(captured_edits), 2)
+        self.assertEqual(
+            captured_edits[0]["replacement_format_map"],
+            [{"replacement_start": 0, "replacement_end": len("revised phrase"), "source_offset": 0}],
+        )
+        self.assertEqual(captured_edits[1]["format_authorization"], {"intent": "Italicize technical term"})
+        self.assertEqual(
+            captured_edits[1]["format_operations"],
+            [{"find": "pure format", "properties": {"i": True}}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -110,6 +110,35 @@ class WordPdfAcceptanceFixtureTests(unittest.TestCase):
             build_word_pdf_acceptance_ledger(self.fixture_dir, ledger_path)
         self.assertEqual(ledger_path.read_text(encoding="utf-8"), "preserve-me")
 
+    def test_populates_applied_revision_ids_from_verified_roundtrip_results(self) -> None:
+        self.verification.write_text(
+            json.dumps({
+                "passed": True,
+                "targets_total": 5,
+                "targets_verified": 5,
+                "targets_failed": 0,
+                "untracked_text_audit": {"passed": True, "violations": []},
+                "results": [
+                    {"checks": {"delete_revision_id": 101, "insert_revision_id": 102}},
+                    {"checks": {"delete_revision_id": "102", "insert_revision_id": "103"}},
+                    {"checks": {"delete_revision_id": None, "insert_revision_id": ""}},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        ledger_path = self.root / "acceptance" / "revision_ledger_with_revs.json"
+
+        build_word_pdf_acceptance_ledger(self.fixture_dir, ledger_path)
+
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger = revision_ledger_from_mapping(payload)
+        ledger.validate_or_raise()
+        self.assertEqual(len(ledger.patches[0].applied_revision_ids), 1)
+        self.assertEqual(
+            ledger.patches[0].applied_revision_ids[0]["revision_ids"],
+            ["101", "102", "103"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
