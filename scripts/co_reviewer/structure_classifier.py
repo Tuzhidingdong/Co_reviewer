@@ -69,7 +69,7 @@ sdtContentDocPartList sdtContentDropDownList sdtContentComboBox
 sdtContentDate sdtContentPicture sdtContentRichText sdtContentText
 p pPr r rPr t delText instrText delInstrText tab br cr
 noBreakHyphen softHyphen lastRenderedPageBreak sym
-pStyle rStyle sectPr sectPrChange
+pStyle rStyle sectPr sectPrChange pgSz pgMar cols pgNumType headerReference footerReference titlePg
 rFonts b bCs i iCs caps smallCaps strike dstrike outline shadow emboss imprint
 noProof snapToGrid vanish webHidden color spacing w kern position sz szCs
 highlight u effect bdr shd fitText vertAlign rtl cs em lang eastAsianLayout
@@ -1671,6 +1671,7 @@ def assert_edit_target_supported_with_bounded_safe_span(
     paragraph: ET._Element,
     part_root: ET._Element,
     target_text: str,
+    allow_mixed_format: bool = False,
 ) -> dict[str, Any]:
     """Permit a precise ordinary-Run span outside supported paired range markers.
 
@@ -1752,7 +1753,9 @@ def assert_edit_target_supported_with_bounded_safe_span(
 
     from .bounded_safe_span import analyze_bounded_safe_span
 
-    analysis = analyze_bounded_safe_span(part_root, paragraph, target_text)
+    analysis = analyze_bounded_safe_span(
+        part_root, paragraph, target_text, allow_mixed_format=allow_mixed_format,
+    )
     if not analysis.get("allowed"):
         raise StructureClassificationError(
             f"Refusing edit in {part} P[{paragraph_index}]: bounded safe-span analysis blocked "

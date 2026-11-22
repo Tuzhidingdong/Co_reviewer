@@ -103,6 +103,24 @@ class FormatPreservationTests(unittest.TestCase):
             build_auto_replacement_format_map(u_spans, match_start=0, old="Hello world", new="Hello earth")
         )
 
+        # Mixed-format replace slice returns None by default, or dominant signature when fallback enabled
+        self.assertIsNone(
+            build_auto_replacement_format_map(
+                spans,
+                match_start=0,
+                old="The contact angle θ is 10°",
+                new="The contact angle_phi_is 20°",
+            )
+        )
+        mixed_replace_map = build_auto_replacement_format_map(
+            spans,
+            match_start=0,
+            old="The contact angle θ is 10°",
+            new="The contact angle_phi_is 20°",
+            allow_dominant_replace_fallback=True,
+        )
+        self.assertIsNotNone(mixed_replace_map)
+
     def test_auto_inherit_format_map_end_to_end_apply_and_verify(self):
         make_styled_docx(self.input, [[
             ("The contact angle ", {}),

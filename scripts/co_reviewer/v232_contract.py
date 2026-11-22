@@ -203,8 +203,29 @@ def validate_immutable_token_lock(original: str, proposed: str,
                     })
             continue
 
-        # Replacements remain ordered and one-to-one. Unequal groups are blocked.
+        # Replacements remain ordered and one-to-one unless every deleted and
+        # inserted token in the group is explicitly authorized.
         if len(old_group) != len(new_group):
+            del_snapshot = dict(allowed_deletions)
+            ins_snapshot = dict(allowed_insertions)
+            all_old_ok = all(
+                _consume_exact_token_authorization(
+                    del_snapshot, token["kind"], token["normalized"]
+                )
+                for token in old_group
+            )
+            all_new_ok = all(
+                _consume_exact_token_authorization(
+                    ins_snapshot, token["kind"], token["normalized"]
+                )
+                for token in new_group
+            )
+            if all_old_ok and all_new_ok:
+                allowed_deletions.clear()
+                allowed_deletions.update(del_snapshot)
+                allowed_insertions.clear()
+                allowed_insertions.update(ins_snapshot)
+                continue
             conflicts.append({
                 "old_tokens": old_group,
                 "new_tokens": new_group,
@@ -567,6 +588,10 @@ def build_rpr_change_snapshot(effective_before: Mapping[str, Any],
             if name in {"b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike"}:
                 child = ET.SubElement(old, qn(name))
                 child.set(qn("val"), "0")
+                continue
+            if name == "vertAlign":
+                child = ET.SubElement(old, qn("vertAlign"))
+                child.set(qn("val"), "baseline")
                 continue
             raise ContractError(
                 "Cannot snapshot an unknown effective old value for format dimension "

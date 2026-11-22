@@ -464,6 +464,7 @@ def build_auto_replacement_format_map(
     match_start: int,
     old: str,
     new: str,
+    allow_dominant_replace_fallback: bool = False,
 ) -> list[dict[str, int]] | None:
     """Compute a deterministic replacement_format_map from mixed-style source runs.
 
@@ -498,12 +499,22 @@ def build_auto_replacement_format_map(
             for k in range(i2 - i1):
                 mapped_offsets[j1 + k] = i1 + k
         elif tag == "replace":
-            slice_sigs = set(char_sigs[i1:i2])
-            if len(slice_sigs) == 1:
-                for j in range(j1, j2):
-                    mapped_offsets[j] = i1
+            slice_sigs = char_sigs[i1:i2]
+            if len(set(slice_sigs)) == 1:
+                dominant_offset = i1
+            elif allow_dominant_replace_fallback:
+                counts: dict[bytes, int] = {}
+                first_pos: dict[bytes, int] = {}
+                for offset_idx, sig in enumerate(slice_sigs, start=i1):
+                    counts[sig] = counts.get(sig, 0) + 1
+                    if sig not in first_pos:
+                        first_pos[sig] = offset_idx
+                dominant_sig = max(counts, key=lambda s: (counts[s], -first_pos[s]))
+                dominant_offset = first_pos[dominant_sig]
             else:
                 return None
+            for j in range(j1, j2):
+                mapped_offsets[j] = dominant_offset
         elif tag == "insert":
             anchor = max(0, i1 - 1) if i1 > 0 else 0
             for j in range(j1, j2):
@@ -667,6 +678,8 @@ def apply_format_operation(
     date: str,
     next_revision_id: int,
     include_inserted_runs: bool = False,
+    scope_find: str | None = None,
+    scope_offset: int | None = None,
 ) -> tuple[bool, int, list[dict[str, Any]], str]:
     """Apply one explicitly authorized FormatChange to existing ordinary (or optionally inserted) text Runs."""
     if not isinstance(find_text, str) or not find_text:
@@ -740,17 +753,33 @@ def apply_format_operation(
         elif index == start:
             index += 1
 
-    matches = []
-    for start, end, entries, text in blocks:
-        position = text.find(find_text)
-        while position >= 0:
-            matches.append((start, end, entries, text, position))
-            position = text.find(find_text, position + 1)
-    if not matches:
-        return False, next_revision_id, [], "FormatChange target not found in an ordinary Run sequence."
-    if len(matches) != 1:
-        return False, next_revision_id, [], "FormatChange target is ambiguous."
-    start, end, entries, joined, match_start = matches[0]
+    if scope_find is not None and scope_offset is not None:
+        scope_matches = []
+        for start, end, entries, text in blocks:
+            position = text.find(scope_find)
+            while position >= 0:
+                scope_matches.append((start, end, entries, text, position))
+                position = text.find(scope_find, position + 1)
+        if not scope_matches:
+            return False, next_revision_id, [], "FormatChange scope_find not found in an ordinary Run sequence."
+        if len(scope_matches) != 1:
+            return False, next_revision_id, [], "FormatChange scope_find is ambiguous."
+        start, end, entries, joined, scope_pos = scope_matches[0]
+        match_start = scope_pos + scope_offset
+        if joined[match_start:match_start + len(find_text)] != find_text:
+            return False, next_revision_id, [], "FormatChange scope_offset does not match find text."
+    else:
+        matches = []
+        for start, end, entries, text in blocks:
+            position = text.find(find_text)
+            while position >= 0:
+                matches.append((start, end, entries, text, position))
+                position = text.find(find_text, position + 1)
+        if not matches:
+            return False, next_revision_id, [], "FormatChange target not found in an ordinary Run sequence."
+        if len(matches) != 1:
+            return False, next_revision_id, [], "FormatChange target is ambiguous."
+        start, end, entries, joined, match_start = matches[0]
     match_end = match_start + len(find_text)
 
     def _format_single_run(
@@ -1202,7 +1231,11 @@ def _resolve_target_ref_paragraph(
     }
 
 def _compute_auto_format_map_for_paragraph(
-    para: ET.Element, old: str, new: str
+    para: ET.Element,
+    old: str,
+    new: str,
+    *,
+    allow_dominant_replace_fallback: bool = False,
 ) -> list[dict[str, int]] | None:
     """Resolve unique plain-text run block in `para` and compute auto replacement_format_map."""
     from .bounded_safe_span import collect_internal_bookmark_ids, is_transparent_paragraph_child
@@ -1256,7 +1289,13 @@ def _compute_auto_format_map_for_paragraph(
         value = run_plain_text(run) or ""
         spans.append((cursor, cursor + len(value), run, value))
         cursor += len(value)
-    return build_auto_replacement_format_map(spans, match_start=match_start, old=old, new=new)
+    return build_auto_replacement_format_map(
+        spans,
+        match_start=match_start,
+        old=old,
+        new=new,
+        allow_dominant_replace_fallback=allow_dominant_replace_fallback,
+    )
 
 
 def prepare_document(input_file: str, output_file: str, edits: list[dict[str, Any]], author: str):
@@ -1429,6 +1468,11 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         paragraph=para,
                         part_root=root,
                         target_text=old,
+                        allow_mixed_format=(
+                            (old == new and bool(edit.get("format_operations")))
+                            or bool(edit.get("replacement_format_map"))
+                            or bool(edit.get("allow_format_flatten"))
+                        ),
                     )
                 except StructureClassificationError as exc:
                     paragraph_text = visible_text(para)
@@ -1545,16 +1589,32 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             for format_index, format_operation in enumerate(format_operations):
                 format_find = format_operation["find"]
                 format_properties = format_operation["properties"]
-                if visible_text(para).count(format_find) != 1:
-                    raise ValueError(
-                        f"FormatChange target {format_find[:80]!r} is not unique in paragraph P[{idx}]."
-                    )
-                format_history_target = {"part": part, "p_idx": idx}
+                scope_find = format_operation.get("scope_find")
+                scope_offset = format_operation.get("scope_offset")
                 format_paragraph_text = visible_text(para)
-                format_offset = format_paragraph_text.find(format_find)
-                if format_offset >= 0 and format_paragraph_text.count(format_find) == 1:
-                    format_history_target["start_offset"] = format_offset
-                    format_history_target["end_offset"] = format_offset + len(format_find)
+                if scope_find is not None and scope_offset is not None:
+                    if format_paragraph_text.count(scope_find) != 1:
+                        raise ValueError(
+                            f"FormatChange scope_find {scope_find[:80]!r} is not unique in paragraph P[{idx}]."
+                        )
+                    scope_pos = format_paragraph_text.find(scope_find)
+                    format_offset = scope_pos + scope_offset
+                    if format_paragraph_text[format_offset:format_offset + len(format_find)] != format_find:
+                        raise ValueError(
+                            f"FormatChange scope_offset does not match {format_find[:80]!r} in paragraph P[{idx}]."
+                        )
+                else:
+                    if format_paragraph_text.count(format_find) != 1:
+                        raise ValueError(
+                            f"FormatChange target {format_find[:80]!r} is not unique in paragraph P[{idx}]."
+                        )
+                    format_offset = format_paragraph_text.find(format_find)
+                format_history_target = {
+                    "part": part,
+                    "p_idx": idx,
+                    "start_offset": format_offset,
+                    "end_offset": format_offset + len(format_find),
+                }
                 format_gate = targeted_revision_gate(
                     revision_inventory, [format_history_target]
                 )
@@ -1576,6 +1636,8 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     date=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     next_revision_id=rid,
                     include_inserted_runs=True,
+                    scope_find=scope_find,
+                    scope_offset=scope_offset,
                 )
                 if not ok_format:
                     raise ValueError(

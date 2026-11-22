@@ -29,7 +29,11 @@ _MARKUP_TOKENS = (
 )
 
 
-def parse_inline_format_markup(text: str) -> tuple[str, list[dict[str, Any]]]:
+def parse_inline_format_markup(
+    text: str,
+    *,
+    include_offsets: bool = False,
+) -> tuple[str, list[dict[str, Any]]]:
     """Parse deterministic inline markup (*italic*, **bold**, ^sup^, ~sub~).
 
     Supports backslash-escaped delimiters (`\\*`, `\\^`, `\\~`, `\\\\`) and leaves
@@ -40,12 +44,14 @@ def parse_inline_format_markup(text: str) -> tuple[str, list[dict[str, Any]]]:
 
     out: list[str] = []
     operations: list[dict[str, Any]] = []
+    out_len = 0
     i = 0
     n = len(text)
     while i < n:
         ch = text[i]
         if ch == "\\" and i + 1 < n and text[i + 1] in {"\\", "*", "^", "~"}:
             out.append(text[i + 1])
+            out_len += 1
             i += 2
             continue
 
@@ -72,15 +78,20 @@ def parse_inline_format_markup(text: str) -> tuple[str, list[dict[str, Any]]]:
                 inner_raw = text[i + len(matched_delim):close_idx]
                 inner_plain, _nested = parse_inline_format_markup(inner_raw)
                 if inner_plain:
-                    out.append(inner_plain)
-                    operations.append({
+                    op: dict[str, Any] = {
                         "find": inner_plain,
                         "properties": dict(matched_props),
-                    })
+                    }
+                    if include_offsets:
+                        op["_offset"] = out_len
+                    out.append(inner_plain)
+                    out_len += len(inner_plain)
+                    operations.append(op)
                     i = close_idx + len(matched_delim)
                     continue
 
         out.append(ch)
+        out_len += 1
         i += 1
 
     return "".join(out), operations
@@ -340,8 +351,19 @@ def compile_revision_plan(
             sha_cache[input_file] = hashlib.sha256(Path(input_file).read_bytes()).hexdigest()
         source_sha256 = sha_cache[input_file]
 
-        plain_replace, inline_ops = parse_inline_format_markup(replace_raw)
+        plain_replace, inline_ops = parse_inline_format_markup(replace_raw, include_offsets=True)
         explicit_ops = _normalize_format_intent(intent.get("format_intent"), plain_replace)
+        after_para_text = visible_text(para).replace(find_raw, plain_replace, 1)
+        scope_is_unique = after_para_text.count(plain_replace) == 1
+        for op in inline_ops:
+            offset = op.pop("_offset", None)
+            if scope_is_unique and offset is not None:
+                op["scope_find"] = plain_replace
+                op["scope_offset"] = offset
+        for op in explicit_ops:
+            if scope_is_unique and plain_replace.count(op["find"]) == 1:
+                op["scope_find"] = plain_replace
+                op["scope_offset"] = plain_replace.index(op["find"])
         format_ops = inline_ops + explicit_ops
 
         if find_raw == plain_replace and not format_ops:
@@ -370,7 +392,9 @@ def compile_revision_plan(
                 "replace": plain_replace,
                 "authorized_change": token_auth,
             }
-            auto_map = _compute_auto_format_map_for_paragraph(para, find_raw, plain_replace)
+            auto_map = _compute_auto_format_map_for_paragraph(
+                para, find_raw, plain_replace, allow_dominant_replace_fallback=True,
+            )
             if auto_map is not None:
                 text_target["replacement_format_map"] = auto_map
             targets.append(text_target)

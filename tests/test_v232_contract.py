@@ -584,6 +584,21 @@ class V232ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "unknown effective old value"):
             build_rpr_change_snapshot({"properties": {}}, ["color"])
 
+    def test_format_snapshot_defaults_vert_align_to_baseline(self):
+        snapshot = build_rpr_change_snapshot({"properties": {}}, ["vertAlign"])
+        vert_align = snapshot.find(qn("vertAlign"))
+        self.assertIsNotNone(vert_align)
+        self.assertEqual(vert_align.get(qn("val")), "baseline")
+
+    def test_unequal_token_group_allowed_when_all_deletions_and_insertions_authorized(self):
+        from co_reviewer.v232_contract import validate_immutable_token_lock
+        from co_reviewer.plan_compiler import compute_token_authorizations
+        old = "after ~60 min and 40 to 100 min"
+        new = "after ~40 min and 40 to 80 min, stabilizing by 100 min"
+        auth = compute_token_authorizations(old, new)
+        res = validate_immutable_token_lock(old, new, auth)
+        self.assertEqual(res["status"], "PASS", res)
+
 
     def _revision_docx(self, directory: Path) -> Path:
         path = directory / "historical.docx"

@@ -231,6 +231,8 @@ def analyze_bounded_safe_span(
     root: ET._Element,
     paragraph: ET._Element,
     target_text: str,
+    *,
+    allow_mixed_format: bool = False,
 ) -> dict[str, Any]:
     """Locate one target in a single ordinary Run block and prove it avoids protected intervals."""
     if not isinstance(root, ET._Element) or not isinstance(paragraph, ET._Element):
@@ -451,7 +453,7 @@ def analyze_bounded_safe_span(
         run_property_signatures.add(
             ET.tostring(rpr, encoding="utf-8") if rpr is not None else b""
         )
-    if len(run_property_signatures) > 1:
+    if len(run_property_signatures) > 1 and not allow_mixed_format:
         return {
             "status": "BLOCKED",
             "allowed": False,

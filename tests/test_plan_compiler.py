@@ -177,6 +177,35 @@ class PlanCompilerTests(unittest.TestCase):
         verification = cli.verify_apply_report(plan, results)
         self.assertTrue(verification["passed"], verification)
 
+    def test_compile_and_apply_scoped_ambiguous_format_tokens(self):
+        plan = compile_revision_plan(
+            {
+                "documents": {
+                    "Manuscript": {
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                    }
+                },
+                "intents": [
+                    {
+                        "id": "REV-SCOPE-01",
+                        "doc_role": "Manuscript",
+                        "find": "The contact angle θ is 10 degrees.",
+                        "replace": "The contact angle *θ* (*L*/*S* = 1.2) is 10 degrees.",
+                        "intent": "Add L/S with italic L and S even though S/L/t appear elsewhere in paragraph",
+                    }
+                ],
+            }
+        )
+        cli.preflight_plan(plan)
+        plan["approved"] = True
+        plan["revision_items"][0]["status"] = "approved"
+        plan["revision_items"][0]["approval_fingerprint"] = cli.revision_item_fingerprint(plan["revision_items"][0])
+        results = cli.apply_plan(plan, "Compiler Scope Test")
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, results)
+        self.assertTrue(verification["passed"], verification)
+
 
 if __name__ == "__main__":
     unittest.main()

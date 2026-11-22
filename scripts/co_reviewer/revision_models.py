@@ -227,8 +227,21 @@ class PatchOperation:
                     raise RevisionModelError(f"format_operations[{index}].find must be non-empty.")
                 if not isinstance(operation.get("properties"), Mapping) or not operation.get("properties"):
                     raise RevisionModelError(f"format_operations[{index}].properties must be a non-empty object.")
-                if set(operation) != {"find", "properties"}:
+                allowed_keys = {"find", "properties", "scope_find", "scope_offset"}
+                if not set(operation).issubset(allowed_keys):
                     raise RevisionModelError(f"format_operations[{index}] contains unsupported fields.")
+                if "scope_find" in operation or "scope_offset" in operation:
+                    scope_find = operation.get("scope_find")
+                    scope_offset = operation.get("scope_offset")
+                    if not isinstance(scope_find, str) or not scope_find:
+                        raise RevisionModelError(f"format_operations[{index}].scope_find must be a non-empty string.")
+                    if isinstance(scope_offset, bool) or not isinstance(scope_offset, int) or scope_offset < 0:
+                        raise RevisionModelError(f"format_operations[{index}].scope_offset must be a non-negative integer.")
+                    find_val = operation["find"]
+                    if scope_find[scope_offset:scope_offset + len(find_val)] != find_val:
+                        raise RevisionModelError(
+                            f"format_operations[{index}].scope_offset does not match find inside scope_find."
+                        )
         elif self.format_authorization is not None:
             raise RevisionModelError("format_authorization is valid only when format_operations are present.")
         if self.target_ref is not None:

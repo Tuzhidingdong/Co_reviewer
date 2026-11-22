@@ -521,17 +521,35 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 errors.append(f"{tp}.format_operations must be an array.")
             else:
                 for format_index, format_operation in enumerate(format_operations):
+                    has_scope = isinstance(format_operation, dict) and (
+                        "scope_find" in format_operation or "scope_offset" in format_operation
+                    )
+                    scope_valid = True
+                    if has_scope:
+                        sf = format_operation.get("scope_find")
+                        so = format_operation.get("scope_offset")
+                        find_val = format_operation.get("find", "")
+                        scope_valid = (
+                            isinstance(sf, str)
+                            and bool(sf)
+                            and not isinstance(so, bool)
+                            and isinstance(so, int)
+                            and so >= 0
+                            and isinstance(find_val, str)
+                            and sf[so:so + len(find_val)] == find_val
+                        )
                     valid_format = (
                         isinstance(format_operation, dict)
                         and isinstance(format_operation.get("find"), str)
                         and bool(format_operation.get("find", "").strip())
                         and isinstance(format_operation.get("properties"), dict)
                         and bool(format_operation.get("properties"))
-                        and not (set(format_operation) - {"find", "properties"})
+                        and not (set(format_operation) - {"find", "properties", "scope_find", "scope_offset"})
+                        and scope_valid
                     )
                     if not valid_format:
                         errors.append(
-                            f"{tp}.format_operations[{format_index}] requires exact find and non-empty properties only."
+                            f"{tp}.format_operations[{format_index}] requires exact find and non-empty properties (plus valid optional scope_find/scope_offset)."
                         )
             format_authorization = t.get("format_authorization")
             if format_operations:
@@ -1104,6 +1122,8 @@ def _format_change_snapshot_matches(
     }
     if old is None and name in boolean_names:
         return previous is not None and previous.get(qn("val")) == "0"
+    if old is None and name == "vertAlign":
+        return previous is not None and previous.get(qn("val")) == "baseline"
     expected_attributes = dict(old) if isinstance(old, Mapping) else None
     if expected_attributes is None:
         return False
@@ -1265,11 +1285,25 @@ def _verify_paragraph_format_integrity(
             for operation in operations:
                 format_anchor = operation.get("find") if isinstance(operation, dict) else None
                 format_props = operation.get("properties") if isinstance(operation, dict) else None
+                scope_find = operation.get("scope_find") if isinstance(operation, dict) else None
+                scope_offset = operation.get("scope_offset") if isinstance(operation, dict) else None
                 replay_text = "".join(item["character"] for item in working)
-                if not isinstance(format_anchor, str) or not format_anchor or replay_text.count(format_anchor) != 1:
+                if not isinstance(format_anchor, str) or not format_anchor:
                     errors.append("FormatChange target is not unique during source-format mapping.")
                     continue
-                format_start = replay_text.index(format_anchor)
+                if isinstance(scope_find, str) and scope_find and isinstance(scope_offset, int) and not isinstance(scope_offset, bool):
+                    if replay_text.count(scope_find) != 1:
+                        errors.append("FormatChange scope_find is not unique during source-format mapping.")
+                        continue
+                    format_start = replay_text.index(scope_find) + scope_offset
+                    if replay_text[format_start:format_start + len(format_anchor)] != format_anchor:
+                        errors.append("FormatChange scope_offset does not match find during source-format mapping.")
+                        continue
+                else:
+                    if replay_text.count(format_anchor) != 1:
+                        errors.append("FormatChange target is not unique during source-format mapping.")
+                        continue
+                    format_start = replay_text.index(format_anchor)
                 for mapped in working[format_start:format_start + len(format_anchor)]:
                     source_index = mapped.get("source_index")
                     if isinstance(source_index, int):
@@ -6944,12 +6978,17 @@ def cmd_compile_clean_from_marked(args):
         for report in reports:
             if not isinstance(report, dict):
                 raise ValueError("--apply-report entries must be objects.")
-            revision_ids = sorted({
+            rev_id_set = {
                 str(result[key])
                 for result in report.get("results", [])
                 for key in ("delete_revision_id", "insert_revision_id")
                 if result.get(key) is not None
-            })
+            }
+            for result in report.get("results", []):
+                for fc in result.get("format_changes", []):
+                    if isinstance(fc, dict) and fc.get("revision_id") is not None:
+                        rev_id_set.add(str(fc["revision_id"]))
+            revision_ids = sorted(rev_id_set)
             records.append({
                 "input_file": report.get("input_file"),
                 "input_sha256": report.get("input_sha256"),
