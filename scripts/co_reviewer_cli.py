@@ -389,8 +389,19 @@ _RUN_PROPERTY_ORDER = (
 )
 
 
+def _cached_sha256(path: str | Path, cache: dict[str, str]) -> str:
+    """Compute and cache a file's SHA-256 within a single validation or command pass."""
+    key = os.path.normcase(str(Path(path).expanduser().resolve()))
+    digest = cache.get(key)
+    if digest is None:
+        digest = sha256_file(key)
+        cache[key] = digest
+    return digest
+
+
 def validate_plan(plan: Any, require_approval: bool = True, check_approval_integrity: bool = True, require_authorized_change: bool = False) -> list[str]:
     errors = []
+    verified_output_hash_cache: dict[str, str] = {}
     if not isinstance(plan, dict): return ["Plan must be a JSON object."]
     if plan.get("schema_version") != "1.0": errors.append("schema_version must be '1.0'.")
     if not isinstance(plan.get("approved"), bool): errors.append("approved must be a boolean.")
@@ -631,7 +642,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                     try:
                         if not Path(resolved_path).is_file():
                             errors.append(f"{at}.verified_output_hashes references a missing DOCX: {resolved_path}")
-                        elif sha256_file(resolved_path) != digest:
+                        elif _cached_sha256(resolved_path, verified_output_hash_cache) != digest:
                             errors.append(f"{at}.verified_output_hashes is stale; revised DOCX changed after verification: {resolved_path}")
                     except OSError as exc:
                         errors.append(f"{at}.verified_output_hashes cannot read {resolved_path}: {exc}")
@@ -654,6 +665,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
 
     grouped = defaultdict(list)
     target_refs = []
+    source_hash_cache: dict[str, str] = {}
     for item in eligible_items:
         for target in item["targets"]:
             edit = {
@@ -676,7 +688,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "format_operations": list(target.get("format_operations", [])),
                 "target_ref": target.get("target_ref"),
                 "target_identity_mode": target.get("target_identity_mode"),
-                "source_sha256": target.get("source_sha256") or sha256_file(target["input_file"]),
+                "source_sha256": target.get("source_sha256") or _cached_sha256(target["input_file"], source_hash_cache),
             }
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
@@ -879,6 +891,7 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     # Verify each preflighted source file before and after preparing the edits.
     # The approval fingerprint covers source_sha256 when it is present.
     source_hashes = {}
+    pre_prepare_hash_cache: dict[str, str] = {}
     for item in approved_items:
         expected_preflight = item.get("preflight_fingerprint")
         if expected_preflight is not None and (
@@ -894,7 +907,7 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
             if expected is None:
                 continue  # Backward compatibility for plans created before source preflight.
             source_path = str(Path(target["input_file"]).expanduser().resolve())
-            actual = sha256_file(source_path)
+            actual = _cached_sha256(source_path, pre_prepare_hash_cache)
             if actual != expected:
                 raise ValueError(
                     f"Source DOCX changed since preflight for {item['id']}: {source_path}. "
@@ -2163,6 +2176,7 @@ def cmd_approve_plan(args):
     if unknown:
         raise ValueError("Unknown revision item ID(s): " + ", ".join(unknown))
 
+    source_hash_cache: dict[str, str] = {}
     for item_id in requested:
         item = by_id[item_id]
         expected_preflight = item.get("preflight_fingerprint")
@@ -2181,7 +2195,7 @@ def cmd_approve_plan(args):
                     f"{item_id} has not passed source DOCX preflight. "
                     "Run preflight-plan and review its report before requesting approval."
                 )
-            actual = sha256_file(target["input_file"])
+            actual = _cached_sha256(target["input_file"], source_hash_cache)
             if actual != expected:
                 raise ValueError(
                     f"Source DOCX changed after preflight for {item_id}: {target['input_file']}. "
