@@ -692,7 +692,8 @@ def apply_format_operation(
         return False, next_revision_id, [], "FormatChange find text must be non-empty."
     if any(character in find_text for character in "\t\r\n"):
         return False, next_revision_id, [], "FormatChange cannot cross tabs or paragraph breaks."
-    if properties.get("vertAlign") in {"subscript", "superscript"} and any(character.isspace() for character in find_text):
+    requested_vertical_alignment = properties.get("vertAlign") if isinstance(properties, Mapping) else None
+    if requested_vertical_alignment in {"subscript", "superscript"} and any(character.isspace() for character in find_text):
         return (
             False, next_revision_id, [],
             "VERTICAL_ALIGNMENT_TARGET_TOO_BROAD: subscript/superscript must target an exact local token, not a multiword phrase or sentence."

@@ -177,8 +177,8 @@ class FormatPreservationTests(unittest.TestCase):
 
     def test_multiword_replacement_does_not_leak_sentence_subscript_and_keeps_local_scripts(self):
         original = "–5) and decreases to approximately 10 Å ps-1 at higher NHB (20–25)."
-        replacement = "–5) and decreases rapidly to approximately 10 Å ps⁻¹ at higher NHB (20–25)."
-        expected_text = cli.normalize_script_characters(replacement)
+        replacement = "–5) and decreases rapidly to approximately 10 Å ps-1 at higher NHB (20–25)."
+        expected_text = replacement
         make_styled_docx(self.input, [[(original, {"vertAlign": "subscript"})]])
         plan = {
             "schema_version": "1.0",
@@ -201,6 +201,7 @@ class FormatPreservationTests(unittest.TestCase):
                     "format_operations": [
                         {"find": "N", "properties": {"i": True}},
                         {"find": "HB", "properties": {"vertAlign": "subscript"}},
+                        {"find": "-1", "properties": {"vertAlign": "superscript"}},
                     ],
                 }],
             }],
@@ -233,12 +234,12 @@ class FormatPreservationTests(unittest.TestCase):
                 "subscript",
             )
             self.assertEqual(
-                run_by_text["−1"].find("w:rPr/w:vertAlign", NS).get(q("val")),
+                run_by_text["-1"].find("w:rPr/w:vertAlign", NS).get(q("val")),
                 "superscript",
             )
             for text, run in run_by_text.items():
                 vertical = run.find("w:rPr/w:vertAlign", NS)
-                if text not in {"HB", "−1"}:
+                if text not in {"HB", "-1"}:
                     self.assertIn(
                         vertical.get(q("val")) if vertical is not None else None,
                         {None, "baseline"},
