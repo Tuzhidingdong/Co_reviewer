@@ -134,6 +134,21 @@ if ($LASTEXITCODE -ne 0) {
     throw "Co_Reviewer audit failed with exit code $LASTEXITCODE. Preserve this workspace for diagnosis: $workspace"
 }
 
+# The semantic/format profile is built from the just-created inventory; it never reopens the DOCX.
+$semanticProfilePath = Join-Path $reportsDir "document_semantic_format_profile.json"
+Write-Host "[SEMANTIC PROFILE] Building body/reference style and occurrence archive from the existing inventory."
+$profileArgs = @(
+    (Join-Path $repoRoot "scripts/co_reviewer/semantic_profile.py"),
+    "--inventory", $inventoryPath,
+    "--out", $semanticProfilePath
+)
+& $pythonResolved @profileArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Semantic/format profile generation failed with exit code $LASTEXITCODE. Preserve this workspace: $workspace"
+}
+$semanticProfileSha = Get-Sha256 $semanticProfilePath
+$inventoryShaAfterProfile = Get-Sha256 $inventoryPath
+
 $revisionBaselineRows = @()
 $baselineInputs = @(
     [pscustomobject]@{ role = "Reviewers"; file = $reviewersCopy },
@@ -208,6 +223,7 @@ $manifest = [ordered]@{
         review_audit_report = $auditJsonPath
         review_audit_markdown = $auditMarkdownPath
         decision_queue = $decisionQueuePath
+        semantic_format_profile = $semanticProfilePath
         revision_baselines = $revisionBaselineRows
     }
     artifact_sha256 = [ordered]@{
@@ -216,6 +232,7 @@ $manifest = [ordered]@{
         review_audit_report = (Get-Sha256 $auditJsonPath)
         review_audit_markdown = (Get-Sha256 $auditMarkdownPath)
         decision_queue = (Get-Sha256 $decisionQueuePath)
+        semantic_format_profile = $semanticProfileSha
         revision_baselines = $revisionBaselineHashes
     }
     revision_baselines = $revisionBaselineRows
@@ -234,6 +251,8 @@ Write-Host ""
 Write-Host "[ROUND READY] $roundId"
 Write-Host "[WORKSPACE] $workspace"
 Write-Host "[INVENTORY] $inventoryPath"
+Write-Host "[SEMANTIC PROFILE] $semanticProfilePath"
+Write-Host "[SEMANTIC PROFILE SHA-256] $semanticProfileSha"
 Write-Host "[DECISION QUEUE] $decisionQueuePath"
 Write-Host "[AUDIT REPORT] $auditJsonPath"
 Write-Host "[REVISION BASELINES] $($revisionBaselineRows.Count) role(s); reports in $reportsDir"

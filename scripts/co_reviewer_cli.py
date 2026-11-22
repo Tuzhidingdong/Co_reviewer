@@ -104,6 +104,166 @@ PLACEHOLDER_RE = re.compile(
 CAPTION_RE = re.compile(r"^(?:Fig(?:ure)?\.?|Table)\s*(?:S?\d+|S?[xX]+)", re.I)
 CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
 
+
+def _xml_element_snapshot(element: ET.Element | None) -> dict[str, Any]:
+    """Serialise a Word property subtree without losing nested values or attributes."""
+    if element is None:
+        return {}
+    def visit(node: ET.Element) -> dict[str, Any]:
+        return {
+            "tag": ET.QName(node).localname,
+            "attributes": {
+                ET.QName(key).localname: value
+                for key, value in sorted(node.attrib.items())
+            },
+            "children": [visit(child) for child in list(node)],
+        }
+    return {child["tag"]: child for child in (visit(item) for item in list(element))}
+
+
+def _run_format_properties(run: ET.Element) -> dict[str, Any]:
+    """Expose directly-applied character properties in the vocabulary used by FormatChange."""
+    rpr = run.find("w:rPr", NS)
+    if rpr is None:
+        return {}
+    result: dict[str, Any] = {}
+    boolean_properties = {
+        "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+        "outline", "shadow", "emboss", "imprint",
+    }
+    scalar_properties = {
+        "vertAlign", "sz", "szCs", "color", "highlight", "u", "position",
+        "spacing", "rStyle",
+    }
+    for child in list(rpr):
+        name = ET.QName(child).localname
+        value = child.get(qn("val"))
+        if name in boolean_properties:
+            result[name] = value not in {"0", "false", "off", "no"}
+        elif name == "rFonts":
+            result["rFonts"] = {
+                ET.QName(key).localname: val
+                for key, val in sorted(child.attrib.items())
+                if ET.QName(key).localname not in {"hint", "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"}
+            }
+        elif name in scalar_properties:
+            if value is not None:
+                if name in {"sz", "szCs", "position", "spacing"}:
+                    try:
+                        result[name] = int(value)
+                    except ValueError:
+                        result[name] = value
+                else:
+                    result[name] = value
+            elif child.attrib:
+                result[name] = {
+                    ET.QName(key).localname: val
+                    for key, val in sorted(child.attrib.items())
+                }
+    return result
+
+
+def _unsupported_run_format_properties(run: ET.Element) -> list[str]:
+    """List direct Word character properties that the current FormatChange adapter cannot reproduce."""
+    rpr = run.find("w:rPr", NS)
+    if rpr is None:
+        return []
+    boolean_properties = {
+        "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+        "outline", "shadow", "emboss", "imprint",
+    }
+    scalar_properties = {
+        "vertAlign", "sz", "szCs", "color", "highlight", "u", "position",
+        "spacing", "rStyle",
+    }
+    allowed_values = {
+        "vertAlign": {"baseline", "superscript", "subscript"},
+        "u": {"single", "double", "dotted", "dash", "wave", "none"},
+        "highlight": {
+            "black", "blue", "cyan", "green", "magenta", "red", "yellow",
+            "white", "darkBlue", "darkCyan", "darkGreen", "darkMagenta",
+            "darkRed", "darkYellow", "darkGray", "lightGray", "none",
+        },
+    }
+    unsupported: list[str] = []
+    for child in list(rpr):
+        name = ET.QName(child).localname
+        value = child.get(qn("val"))
+        if name in boolean_properties or name == "rPrChange":
+            continue
+        if name == "rFonts":
+            faces = {
+                ET.QName(key).localname: val
+                for key, val in child.attrib.items()
+                if ET.QName(key).localname in {"ascii", "hAnsi", "eastAsia", "cs"}
+            }
+            if not faces:
+                unsupported.append(name)
+            continue
+        if name in scalar_properties:
+            if name in allowed_values and value not in allowed_values[name]:
+                unsupported.append(name)
+            elif name == "color" and (
+                not isinstance(value, str)
+                or re.fullmatch(r"(?:[0-9A-Fa-f]{6}|auto)", value) is None
+            ):
+                unsupported.append(name)
+            elif name in {"sz", "szCs"}:
+                try:
+                    if int(value or "") < 1:
+                        unsupported.append(name)
+                except ValueError:
+                    unsupported.append(name)
+            elif name in {"position", "spacing"}:
+                try:
+                    int(value or "")
+                except ValueError:
+                    unsupported.append(name)
+            elif name == "rStyle" and not value:
+                unsupported.append(name)
+            continue
+        unsupported.append(name)
+    return sorted(set(unsupported))
+
+
+def _paragraph_format_inventory(paragraph: ET.Element) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Capture Run-level format instances and exact visible-text offsets during the initial parse."""
+    raw_paragraph_text = visible_text(paragraph)
+    paragraph_text = raw_paragraph_text.strip()
+    trim_start = raw_paragraph_text.find(paragraph_text) if paragraph_text else 0
+    trim_end = trim_start + len(paragraph_text)
+    spans: list[dict[str, Any]] = []
+    search_from = 0
+    for run_index, run in enumerate(paragraph.findall(".//w:r", NS)):
+        run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
+        if not run_text:
+            continue
+        raw_start = raw_paragraph_text.find(run_text, search_from)
+        if raw_start < 0:
+            start_offset = end_offset = None
+        else:
+            raw_end = raw_start + len(run_text)
+            start_offset = max(0, raw_start - trim_start)
+            end_offset = min(len(paragraph_text), raw_end - trim_start)
+            if raw_end <= trim_start or raw_start >= trim_end or end_offset <= start_offset:
+                start_offset = end_offset = None
+            search_from = raw_end
+        rpr = run.find("w:rPr", NS)
+        rstyle = rpr.find("w:rStyle", NS) if rpr is not None else None
+        spans.append({
+            "run_index": run_index,
+            "text": run_text,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+            "run_style": rstyle.get(qn("val"), "") if rstyle is not None else "",
+            "format_properties": _run_format_properties(run),
+            "unsupported_format_properties": _unsupported_run_format_properties(run),
+            "run_properties": _xml_element_snapshot(rpr),
+        })
+    ppr = paragraph.find("w:pPr", NS)
+    return spans, _xml_element_snapshot(ppr)
+
+
 def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]:
     p = Path(path)
     report = {
@@ -179,9 +339,12 @@ def inspect_docx(path: str, comment_author: str | None = None) -> dict[str, Any]
                     paragraph_style = style_node.get(qn("val"), "") if style_node is not None else ""
                     paragraph_has_drawing = has_drawing(para)
                     if txt:
+                        format_spans, paragraph_format = _paragraph_format_inventory(para)
                         report["paragraphs"].append({
                             "part": part, "p_idx": idx, "para_id": para_id, "text": txt,
                             "paragraph_style": paragraph_style,
+                            "paragraph_format": paragraph_format,
+                            "format_spans": format_spans,
                             "native_script_runs": extract_native_script_runs(para)
                         })
                         paragraph_lookup[(part, idx)] = txt
@@ -555,7 +718,12 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         and bool(format_operation.get("find", "").strip())
                         and isinstance(format_operation.get("properties"), dict)
                         and bool(format_operation.get("properties"))
-                        and not (set(format_operation) - {"find", "properties", "scope_find", "scope_offset"})
+                        and not (set(format_operation) - {"find", "properties", "scope_find", "scope_offset", "source_occurrence_id"})
+                        and (
+                            "source_occurrence_id" not in format_operation
+                            or (isinstance(format_operation.get("source_occurrence_id"), str)
+                                and bool(format_operation.get("source_occurrence_id", "").strip()))
+                        )
                         and scope_valid
                     )
                     if not valid_format:
@@ -564,19 +732,48 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         )
             format_authorization = t.get("format_authorization")
             if format_operations:
-                if t.get("find") != t.get("replace") and not (t.get("two_pass") or t.get("allow_two_pass_overlap")):
+                two_pass = t.get("two_pass", False)
+                if not isinstance(two_pass, bool):
+                    errors.append(f"{tp}.two_pass must be a boolean.")
+                if t.get("find") != t.get("replace") and not two_pass:
                     errors.append(
-                        f"{tp} FormatChange must be a pure format operation; text replacement requires a separate target."
+                        f"{tp} text replacement plus FormatChange requires explicit two_pass=true."
                     )
+                if two_pass and t.get("find") == t.get("replace"):
+                    errors.append(f"{tp}.two_pass is only valid when text is replaced.")
+                allowed_auth_keys = (
+                    {"intent", "semantic_profile_sha256", "format_zone"}
+                    if two_pass else {"intent"}
+                )
+                profile_auth_keys = {"intent", "semantic_profile_sha256", "format_zone"}
                 if (
                     not isinstance(format_authorization, dict)
                     or not isinstance(format_authorization.get("intent"), str)
                     or not format_authorization.get("intent", "").strip()
-                    or set(format_authorization) != {"intent"}
+                    or (
+                        set(format_authorization) != profile_auth_keys
+                        and set(format_authorization) != {"intent"}
+                    )
+                    or (two_pass and set(format_authorization) != allowed_auth_keys)
                 ):
                     errors.append(
-                        f"{tp}.format_authorization.intent is required and may only contain intent."
+                        f"{tp}.format_authorization has missing or unsupported fields for this FormatChange mode."
                     )
+                elif set(format_authorization) == profile_auth_keys and (
+                    not isinstance(format_authorization.get("semantic_profile_sha256"), str)
+                    or re.fullmatch(r"[a-f0-9]{64}", format_authorization["semantic_profile_sha256"]) is None
+                    or format_authorization.get("format_zone") not in {"body", "references"}
+                ):
+                    errors.append(f"{tp}.format_authorization must bind the profile SHA-256 and body/reference zone.")
+                if two_pass:
+                    for format_index, format_operation in enumerate(format_operations):
+                        if (
+                            isinstance(format_operation, dict)
+                            and format_operation.get("scope_find") != t.get("replace")
+                        ):
+                            errors.append(
+                                f"{tp}.format_operations[{format_index}].scope_find must equal the exact replacement text in two-pass mode."
+                            )
             elif format_authorization is not None:
                 errors.append(f"{tp}.format_authorization requires format_operations.")
             if t.get("find") == t.get("replace") and not format_operations:

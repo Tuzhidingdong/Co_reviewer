@@ -311,17 +311,15 @@
         },
         "format_authorization": {
           "type": "object",
-          "required": [
-            "intent"
-          ],
+          "required": ["intent"],
           "properties": {
-            "intent": {
-              "type": "string",
-              "minLength": 1
-            }
+            "intent": {"type": "string", "minLength": 1},
+            "semantic_profile_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "format_zone": {"enum": ["body", "references"]}
           },
           "additionalProperties": false
         },
+        "two_pass": {"type": "boolean"},
         "format_operations": {
           "type": "array",
           "items": {
@@ -334,6 +332,18 @@
               "find": {
                 "type": "string",
                 "minLength": 1
+              },
+              "source_occurrence_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope_find": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope_offset": {
+                "type": "integer",
+                "minimum": 0
               },
               "properties": {
                 "type": "object",
@@ -384,12 +394,14 @@
                     "minimum": 1
                   },
                   "position": {
-                    "type": "integer",
-                    "minimum": 1
+                    "type": "integer"
                   },
                   "spacing": {
-                    "type": "integer",
-                    "minimum": 1
+                    "type": "integer"
+                  },
+                  "rStyle": {
+                    "type": "string",
+                    "minLength": 1
                   },
                   "color": {
                     "type": "string",
@@ -448,6 +460,26 @@
       },
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "required": ["two_pass"],
+            "properties": {"two_pass": {"const": true}}
+          },
+          "then": {
+            "required": ["format_authorization", "format_operations"],
+            "properties": {
+              "format_authorization": {
+                "required": ["intent", "semantic_profile_sha256", "format_zone"]
+              },
+              "format_operations": {
+                "minItems": 1,
+                "items": {
+                  "required": ["find", "properties", "source_occurrence_id", "scope_find", "scope_offset"]
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "required": [

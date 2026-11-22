@@ -21,6 +21,7 @@ _MUTATING = {"replace", "add", "remove", "renumber", "reference_update"}
 _OPERATION_FIELDS = {
     "operation_id", "document", "part", "p_idx", "find", "replace",
     "location", "evidence_ids", "source_comment_ids", "author_decision_ref", "location_phrase", "target_ref",
+    "two_pass", "format_authorization", "format_operations", "replacement_format_map",
 }
 _TASK_FIELDS = {
     "task_id", "patch_id", "proposed_response", "patch_operations",
@@ -574,6 +575,92 @@ def prepare_workflow_execution(
             if target_index in matched_targets:
                 raise WorkflowPreparationError(f"Task {task_id} maps multiple operations to the same Decision target.")
             matched_targets.add(target_index)
+
+            # FormatChange sources are resolved from the one-time source profile, never guessed from
+            # the replaced text or copied from a neighbouring Run.
+            raw_format_operations = operation.get("format_operations", [])
+            if raw_format_operations:
+                if not isinstance(raw_format_operations, list) or not raw_format_operations:
+                    raise WorkflowPreparationError(f"PatchOperation {op_id} format_operations must be a non-empty array.")
+                profile = inventory_by_role.get(role, {}).get("semantic_format_profile")
+                if not isinstance(profile, Mapping):
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} needs the initial semantic/format profile for {role}; rerun the round inventory."
+                    )
+                if profile.get("source_sha256") != pointers[role].get("sha256"):
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} semantic/format profile is stale for {role}."
+                    )
+                authorization = operation.get("format_authorization")
+                if not isinstance(authorization, Mapping):
+                    raise WorkflowPreparationError(f"PatchOperation {op_id} requires format_authorization.")
+                if authorization.get("semantic_profile_sha256") != profile.get("profile_fingerprint"):
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} semantic_profile_sha256 does not match the current {role} profile."
+                    )
+                profile_zone = authorization.get("format_zone")
+                paragraph_regions = profile.get("paragraph_regions", [])
+                target_region = next((
+                    row for row in paragraph_regions
+                    if isinstance(row, Mapping)
+                    and row.get("part") == part and row.get("p_idx") == p_idx
+                ), None)
+                if not isinstance(target_region, Mapping):
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} target is missing from the semantic profile."
+                    )
+                target_zone = target_region.get("zone")
+                if target_zone not in {"body", "references"} or profile_zone != target_zone:
+                    raise WorkflowPreparationError(
+                        f"PatchOperation {op_id} format source zone must match the target zone ({target_zone})."
+                    )
+                occurrences = [
+                    item for key in ("body_occurrences", "reference_occurrences")
+                    for item in profile.get(key, [])
+                    if isinstance(item, Mapping)
+                ]
+                occurrence_by_id = {
+                    str(item.get("occurrence_id")): item
+                    for item in occurrences
+                    if isinstance(item.get("occurrence_id"), str)
+                }
+                resolved_format_operations = []
+                for format_index, raw_format in enumerate(raw_format_operations):
+                    if not isinstance(raw_format, Mapping):
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} format_operations[{format_index}] must be an object."
+                        )
+                    source_id = raw_format.get("source_occurrence_id")
+                    source_occurrence = occurrence_by_id.get(str(source_id))
+                    if source_occurrence is None:
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} format_operations[{format_index}] references an unknown source occurrence."
+                        )
+                    if source_occurrence.get("zone") != target_zone:
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} cannot borrow formatting across body/reference zones."
+                        )
+                    if source_occurrence.get("paragraph_style", "") != target_region.get("paragraph_style", ""):
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} format source must use the target paragraph style; "
+                            "a different paragraph-style inheritance chain is not silently copied."
+                        )
+                    unsupported_properties = source_occurrence.get("unsupported_format_properties", [])
+                    if unsupported_properties:
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} source occurrence contains character properties "
+                            f"the current deterministic FormatChange adapter cannot reproduce: {unsupported_properties}."
+                        )
+                    source_properties = source_occurrence.get("format_properties")
+                    if not isinstance(source_properties, Mapping) or not source_properties:
+                        raise WorkflowPreparationError(
+                            f"PatchOperation {op_id} format source occurrence has no directly-applied character properties."
+                        )
+                    resolved = dict(raw_format)
+                    # Ignore model-supplied properties; the exact source occurrence is authoritative.
+                    resolved["properties"] = copy.deepcopy(dict(source_properties))
+                    resolved_format_operations.append(resolved)
+                operation["format_operations"] = resolved_format_operations
 
             task_target_refs = task.get("target_refs", [])
             if not isinstance(task_target_refs, list):

@@ -642,7 +642,7 @@ def _apply_format_properties(run: ET.Element, properties: dict[str, Any]) -> Non
             "darkRed", "darkYellow", "darkGray", "lightGray", "none",
         },
     }
-    allowed = boolean_names | set(value_names) | {"sz", "szCs", "color", "position", "spacing", "rFonts"}
+    allowed = boolean_names | set(value_names) | {"sz", "szCs", "color", "position", "spacing", "rFonts", "rStyle"}
     if not isinstance(properties, dict) or not properties or set(properties) - allowed:
         raise ValueError("FormatChange contains an unsupported or empty property set.")
     for name, value in properties.items():
@@ -653,9 +653,15 @@ def _apply_format_properties(run: ET.Element, properties: dict[str, Any]) -> Non
                 raise ValueError(f"FormatChange {name} requires a boolean value.")
             _set_run_property(run, name, "1" if value else "0")
         elif name in {"sz", "szCs", "position", "spacing"}:
-            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"FormatChange {name} requires an integer OOXML value.")
+            if name in {"sz", "szCs"} and value < 1:
                 raise ValueError(f"FormatChange {name} requires a positive integer OOXML value.")
             _set_run_property(run, name, str(value))
+        elif name == "rStyle":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("FormatChange rStyle requires a non-empty character-style ID.")
+            _set_run_property(run, name, value)
         elif name == "color":
             if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9A-Fa-f]{6}|auto)", value):
                 raise ValueError("FormatChange color requires six hex digits or 'auto'.")

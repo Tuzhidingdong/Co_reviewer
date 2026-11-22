@@ -393,7 +393,7 @@ def compile_revision_plan(
                 "authorized_change": token_auth,
             }
             auto_map = _compute_auto_format_map_for_paragraph(
-                para, find_raw, plain_replace, allow_dominant_replace_fallback=True,
+                para, find_raw, plain_replace, allow_dominant_replace_fallback=False,
             )
             if auto_map is not None:
                 text_target["replacement_format_map"] = auto_map

@@ -125,8 +125,76 @@
                 },
                 "author_decision_ref": {
                   "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                },
+                "two_pass": {
+                  "type": "boolean",
+                  "description": "Explicitly authorizes text insertion followed by FormatChange on the newly inserted substring in the same operation."
+                },
+                "format_authorization": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["intent", "semantic_profile_sha256", "format_zone"],
+                  "properties": {
+                    "intent": {"type": "string", "minLength": 1},
+                    "semantic_profile_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                    "format_zone": {"enum": ["body", "references"]}
+                  }
+                },
+                "format_operations": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["find", "source_occurrence_id"],
+                    "properties": {
+                      "find": {"type": "string", "minLength": 1},
+                      "source_occurrence_id": {"type": "string", "minLength": 1},
+                      "properties": {"type": "object"},
+                      "scope_find": {"type": "string", "minLength": 1},
+                      "scope_offset": {"type": "integer", "minimum": 0}
+                    },
+                    "allOf": [
+                      {
+                        "if": {"required": ["scope_find"]},
+                        "then": {"required": ["scope_offset"]}
+                      },
+                      {
+                        "if": {"required": ["scope_offset"]},
+                        "then": {"required": ["scope_find"]}
+                      }
+                    ]
+                  }
+                },
+                "replacement_format_map": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["replacement_start", "replacement_end", "source_offset"],
+                    "properties": {
+                      "replacement_start": {"type": "integer", "minimum": 0},
+                      "replacement_end": {"type": "integer", "minimum": 1},
+                      "source_offset": {"type": "integer", "minimum": 0}
+                    }
+                  }
                 }
-              }
+              },
+              "allOf": [
+                {
+                  "if": {"properties": {"two_pass": {"const": true}}, "required": ["two_pass"]},
+                  "then": {
+                    "required": ["format_authorization", "format_operations"],
+                    "properties": {
+                      "format_operations": {
+                        "minItems": 1,
+                        "items": {
+                          "required": ["scope_find", "scope_offset"]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "response_unit_specs": {

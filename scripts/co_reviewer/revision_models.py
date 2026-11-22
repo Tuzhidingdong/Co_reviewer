@@ -134,6 +134,7 @@ class PatchOperation:
     replacement_format_map: tuple[Mapping[str, Any], ...] = ()
     format_authorization: Mapping[str, Any] | None = None
     format_operations: tuple[Mapping[str, Any], ...] = ()
+    two_pass: bool = False
 
     def __post_init__(self) -> None:
         _text(self.operation_id, "operation_id")
@@ -206,30 +207,56 @@ class PatchOperation:
                 raise RevisionModelError(f"replacement_format_map[{index}] offsets are invalid or non-contiguous.")
         if self.replacement_format_map and self.replacement_format_map[-1]["replacement_end"] != len(self.replace):
             raise RevisionModelError("replacement_format_map must cover every replacement character.")
+        if not isinstance(self.two_pass, bool):
+            raise RevisionModelError("two_pass must be a boolean.")
         if any(not isinstance(operation, Mapping) for operation in self.format_operations):
             raise RevisionModelError("format_operations must contain objects.")
         if self.format_operations:
-            if self.find != self.replace:
+            if self.find != self.replace and not self.two_pass:
                 raise RevisionModelError(
-                    "FormatChange must be a pure format operation; text replacement requires a separate PatchOperation."
+                    "Text replacement plus FormatChange requires an explicit two_pass PatchOperation."
                 )
+            if self.two_pass and self.find == self.replace:
+                raise RevisionModelError("two_pass is only valid when the PatchOperation also replaces text.")
             if (
                 not isinstance(self.format_authorization, Mapping)
                 or not isinstance(self.format_authorization.get("intent"), str)
                 or not self.format_authorization.get("intent", "").strip()
-                or set(self.format_authorization) != {"intent"}
+            ):
+                raise RevisionModelError("FormatChange requires a separately authorized format_authorization.intent.")
+            auth_keys = set(self.format_authorization)
+            if self.two_pass:
+                if auth_keys != {"intent", "semantic_profile_sha256", "format_zone"}:
+                    raise RevisionModelError(
+                        "Two-pass FormatChange requires intent, semantic_profile_sha256 and format_zone."
+                    )
+                _sha256(self.format_authorization.get("semantic_profile_sha256"), "format_authorization.semantic_profile_sha256")
+                if self.format_authorization.get("format_zone") not in {"body", "references"}:
+                    raise RevisionModelError("format_authorization.format_zone must be body or references.")
+            elif auth_keys not in (
+                {"intent"},
+                {"intent", "semantic_profile_sha256", "format_zone"},
             ):
                 raise RevisionModelError(
-                    "FormatChange requires a separately authorized format_authorization.intent."
+                    "Pure FormatChange authorization must contain intent and may optionally bind a semantic profile/zone."
                 )
+            elif auth_keys == {"intent", "semantic_profile_sha256", "format_zone"}:
+                _sha256(self.format_authorization.get("semantic_profile_sha256"), "format_authorization.semantic_profile_sha256")
+                if self.format_authorization.get("format_zone") not in {"body", "references"}:
+                    raise RevisionModelError("format_authorization.format_zone must be body or references.")
             for index, operation in enumerate(self.format_operations):
                 if not isinstance(operation.get("find"), str) or not operation.get("find", "").strip():
                     raise RevisionModelError(f"format_operations[{index}].find must be non-empty.")
                 if not isinstance(operation.get("properties"), Mapping) or not operation.get("properties"):
                     raise RevisionModelError(f"format_operations[{index}].properties must be a non-empty object.")
-                allowed_keys = {"find", "properties", "scope_find", "scope_offset"}
+                allowed_keys = {"find", "properties", "scope_find", "scope_offset", "source_occurrence_id"}
                 if not set(operation).issubset(allowed_keys):
                     raise RevisionModelError(f"format_operations[{index}] contains unsupported fields.")
+                source_occurrence_id = operation.get("source_occurrence_id")
+                if source_occurrence_id is not None and (
+                    not isinstance(source_occurrence_id, str) or not source_occurrence_id.strip()
+                ):
+                    raise RevisionModelError(f"format_operations[{index}].source_occurrence_id must be non-empty.")
                 if "scope_find" in operation or "scope_offset" in operation:
                     scope_find = operation.get("scope_find")
                     scope_offset = operation.get("scope_offset")
@@ -242,8 +269,16 @@ class PatchOperation:
                         raise RevisionModelError(
                             f"format_operations[{index}].scope_offset does not match find inside scope_find."
                         )
-        elif self.format_authorization is not None:
-            raise RevisionModelError("format_authorization is valid only when format_operations are present.")
+                    if self.two_pass and scope_find != self.replace:
+                        raise RevisionModelError(
+                            f"format_operations[{index}].scope_find must be the exact replacement text in a two-pass Patch."
+                        )
+                elif self.two_pass:
+                    raise RevisionModelError(
+                        f"format_operations[{index}] in a two-pass Patch requires scope_find and scope_offset."
+                    )
+        elif self.format_authorization is not None or self.two_pass:
+            raise RevisionModelError("format_authorization/two_pass is valid only when format_operations are present.")
         if self.target_ref is not None:
             if not isinstance(self.target_ref, Mapping):
                 raise RevisionModelError("target_ref must be an object or null.")
@@ -321,6 +356,7 @@ class PatchOperation:
             replacement_format_map=tuple(data.get("replacement_format_map", [])),
             format_authorization=data.get("format_authorization"),
             format_operations=tuple(data.get("format_operations", [])),
+            two_pass=data.get("two_pass", False),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -348,6 +384,7 @@ class PatchOperation:
             **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
+            **({"two_pass": True} if self.two_pass else {}),
         }
 
     def to_legacy_target(self) -> dict[str, Any]:
@@ -368,6 +405,7 @@ class PatchOperation:
             **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
+            **({"two_pass": True} if self.two_pass else {}),
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx

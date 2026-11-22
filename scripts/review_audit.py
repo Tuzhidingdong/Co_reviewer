@@ -14,7 +14,7 @@ from co_reviewer.identity import sha256_file
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
 
 _CAPTION_RE = re.compile(
     r"^\s*(?P<kind>figure|fig\.?|table)\s*(?P<label>S?\d+[a-z]?)\b(?P<tail>.*)$", re.IGNORECASE)
