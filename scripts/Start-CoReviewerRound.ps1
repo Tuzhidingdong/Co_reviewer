@@ -136,6 +136,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # The semantic/format profile is built from the just-created inventory; it never reopens the DOCX.
 $semanticProfilePath = Join-Path $reportsDir "document_semantic_format_profile.json"
+$semanticAnnotationsPath = Join-Path $reportsDir "document_semantic_annotations.json"
 Write-Host "[SEMANTIC PROFILE] Building body/reference style and occurrence archive from the existing inventory."
 $profileArgs = @(
     (Join-Path $repoRoot "scripts/co_reviewer/semantic_profile.py"),
@@ -236,6 +237,7 @@ $manifest = [ordered]@{
         revision_baselines = $revisionBaselineHashes
     }
     revision_baselines = $revisionBaselineRows
+    semantic_annotations_target = $semanticAnnotationsPath
     workflow_ledger = (Join-Path $planDir "workflow_ledger.json")
     execution_scope = (Join-Path $planDir "workflow_execution_scope.json")
     prepared_workflow_ledger = (Join-Path $planDir "workflow_ledger.prepared.json")
@@ -253,6 +255,7 @@ Write-Host "[WORKSPACE] $workspace"
 Write-Host "[INVENTORY] $inventoryPath"
 Write-Host "[SEMANTIC PROFILE] $semanticProfilePath"
 Write-Host "[SEMANTIC PROFILE SHA-256] $semanticProfileSha"
+Write-Host "[SEMANTIC ANNOTATIONS TARGET] $semanticAnnotationsPath (create during the first manuscript analysis)"
 Write-Host "[DECISION QUEUE] $decisionQueuePath"
 Write-Host "[AUDIT REPORT] $auditJsonPath"
 Write-Host "[REVISION BASELINES] $($revisionBaselineRows.Count) role(s); reports in $reportsDir"

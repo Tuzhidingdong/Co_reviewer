@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Document Semantic Annotations",
+  "description": "Sparse, occurrence-specific semantic annotations created during the initial manuscript analysis and bound to one exact semantic/format profile.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workspace_profile_fingerprint",
+    "documents"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "workspace_profile_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "document_role",
+          "source_sha256",
+          "document_profile_fingerprint",
+          "annotations"
+        ],
+        "properties": {
+          "document_role": {
+            "enum": ["Reviewers", "Manuscript", "SI"]
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "document_profile_fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "occurrence_id",
+                "semantic_role",
+                "evidence",
+                "confidence"
+              ],
+              "properties": {
+                "occurrence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "semantic_role": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Contextual meaning at this exact occurrence, not a global meaning assigned to the glyph."
+                },
+                "semantic_group": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Optional stable concept key for other occurrences with the same contextual meaning."
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Short evidence from the archived context or an explicit definition in the same source document."
+                },
+                "confidence": {
+                  "enum": ["high", "medium", "low"]
+                },
+                "related_occurrence_ids": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

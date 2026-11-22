@@ -6,7 +6,7 @@ Status: frozen implementation direction, 2026-11-22.
 
 Co_Reviewer must not depend on a flagship LLM to rediscover the formatting meaning of every inserted character. The system extracts a reusable occurrence-level archive during the first DOCX inventory pass. Later revision operations refer to a specific source occurrence and let deterministic code recover its supported character-format properties.
 
-The profile is a source-bound evidence archive, not a universal style sheet. Two visually identical characters at different locations remain independent occurrences.
+The profile is a source-bound evidence archive, not a universal style sheet. Two visually identical characters at different locations remain independent occurrences. The first manuscript analysis also creates a sparse semantic-annotation artifact, bound to the profile and source hashes, so contextual roles are recorded once and reused later.
 
 ## One-pass source intake
 
@@ -15,6 +15,7 @@ The profile is a source-bound evidence archive, not a universal style sheet. Two
 3. The starter runs scripts/co_reviewer/semantic_profile.py against that already-created inventory. The profile builder does not open DOCX files.
 4. The profile is written to reports/document_semantic_format_profile.json and its path/hash is recorded in round_manifest.json.
 5. Profile data is embedded in the corresponding document row in workspace_inventory.json so Workflow Preparation can validate format references without another source read.
+6. During the first manuscript analysis, create reports/document_semantic_annotations.json using schemas/document-semantic-annotations.schema.json. Store sparse occurrence-level meanings and evidence, not a global character dictionary and not an annotation for every ordinary prose letter.
 
 The inventory cache schema is bumped when the Run-format payload changes. A cache entry without the current format-span data must not be treated as a valid profile source.
 
@@ -61,7 +62,7 @@ The selected source must:
 
 If no comparable occurrence exists, if the profile is stale, if zone/style differs, or if the source contains unsupported formatting, do not borrow it. The task can continue without adding an ungrounded special-format instruction only when the target's own paragraph/run inheritance already provides the intended appearance. Otherwise it must be treated as unresolved by the revision planner; no fallback to a dominant Run or neighboring text is allowed.
 
-The profile's semantic_role is an occurrence-level annotation slot. It is not inferred from the character itself. The first manuscript analysis may annotate roles from the recorded contexts; it must never assign one global meaning to all identical characters. The source occurrence ID remains the durable link from the revision operation to the actual format evidence.
+The profile's semantic_role is an occurrence-level annotation slot. It is not inferred from the character itself. The first manuscript analysis records contextual meanings in the separate semantic-annotation artifact; the same glyph can have different roles at different occurrence IDs. Reference field roles are separate from body symbol roles. The source occurrence ID remains the durable link from the revision operation to the actual format evidence.
 
 ## Workflow operation contract
 
