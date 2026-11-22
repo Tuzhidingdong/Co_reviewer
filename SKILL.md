@@ -401,7 +401,7 @@ Then record the author-confirmed locators against the Word-exported artifacts:
 The command requires exact operation coverage for every manual-required ResponseUnit, validates the output DOCX/PDF and current Working Clean hashes, and stores mapping_method=manual with a stable locator ID. locator_text is mandatory. Page is optional; line numbers may be supplied only when the author has checked them. When line numbers are supplied, page, line_start and line_end must all be positive integers. Do not fill uncertain line numbers with estimates. A manual locator is visibly distinct from a Word COM location in the ledger and Response Letter.
 
 
-A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses locator_id using the anchor namespace and the current anchor identifier, not operation_id; it records a locator, never an executable Patch.
+A no_change ResponseUnit may use manual_required when its confirmed existing anchor is a table cell or non-body part. The Clean-view step must still re-resolve its paraId or exact source excerpt in the declared Word part. The manual-input row uses `locator_id`, formed from the anchor namespace and the current anchor identifier, not `operation_id`; it records a locator, never an executable Patch.
 
 
 For a `no_change/manual_required` unit, the input uses the confirmed anchor key rather than a PatchOperation:
