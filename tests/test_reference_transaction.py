@@ -35,6 +35,16 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.graph = {
             "schema_version": "1.2",
             "documents": ["Manuscript", "SI"],
+            "document_segments": {
+                "Manuscript": [
+                    {"part": "word/document.xml", "paragraph_index": 0, "in_reference_section": False},
+                    {"part": "word/document.xml", "paragraph_index": 1, "in_reference_section": True},
+                    {"part": "word/document.xml", "paragraph_index": 2, "in_reference_section": True},
+                ],
+                "SI": [
+                    {"part": "word/document.xml", "paragraph_index": 0, "in_reference_section": False},
+                ],
+            },
             "source_files": {
                 "Manuscript": {
                     "path": str(self.manuscript.resolve()),
@@ -178,6 +188,16 @@ class ReferenceTransactionTests(unittest.TestCase):
         document.add_paragraph("[7] New reference entry.")
         document.save(output)
 
+        from co_reviewer.v232_contract import build_package_reference_graph, extract_docx_reference_segments
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(output),
+            "SI": extract_docx_reference_segments(self.si),
+        })
+        linked_mention_ids = sorted(
+            row["id"] for row in output_graph["mentions"]
+            if row.get("kind") == "citation" and str(row.get("number")) == "7"
+        )
         plan = {
             "reference_transaction": {
                 "documents": {
@@ -193,8 +213,13 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "added_definition_expectations": [{
                     "document": "Manuscript",
                     "number": "7",
+                    "operation_id": "REF-ADD-001",
+                    "part": "word/document.xml",
+                    "anchor_p_idx": 1,
+                    "position": "after",
                     "inserted_text": "[7] New reference entry.",
-                    "linked_mention_count": 2,
+                    "linked_mention_ids": linked_mention_ids,
+                    "linked_mention_count": len(linked_mention_ids),
                 }],
                 "updated_definition_expectations": [{
                     "document": "Manuscript",
@@ -213,8 +238,16 @@ class ReferenceTransactionTests(unittest.TestCase):
         report = verify_reference_transaction_outputs(
             plan,
             [{
+                "input_file": str(self.manuscript.resolve()),
+                "output_file": str(output.resolve()),
+                "input_sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
                 "results": [{
                     "document": "Manuscript",
+                    "operation_id": "REF-ADD-001",
+                    "action": "insert_paragraph",
+                    "part": "word/document.xml",
+                    "inserted_p_idx": 3,
                     "status": "applied",
                 }]
             }],
