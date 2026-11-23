@@ -7381,11 +7381,50 @@ def cmd_compile_plan(args):
     return 0
 
 
+def cmd_approve_instruction_coverage(args):
+    from co_reviewer.instruction_coverage import (
+        authorize_instruction_coverage,
+        instruction_coverage_sha256,
+    )
+
+    coverage_path = Path(args.coverage).expanduser().resolve()
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    approval = authorize_instruction_coverage(
+        coverage,
+        args.approved_coverage_sha256,
+        args.approved_by,
+    )
+    out_path = Path(args.out).expanduser().resolve()
+    write_json_atomic(out_path, approval)
+    print(f"[INSTRUCTION COVERAGE APPROVED] {out_path}")
+    print(f"[COVERAGE SHA256] {instruction_coverage_sha256(coverage)}")
+    print(f"[APPROVAL SHA256] {approval['approval_sha256']}")
+    print(f"[APPROVED BY] {approval['approved_by']}")
+    return 0
+
+
 def cmd_final_gate(args):
     from co_reviewer.final_gate import evaluate_final_gate, write_final_gate_reports
 
     plan_path = Path(args.plan).expanduser().resolve() if args.plan else None
     plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path else None
+
+    coverage_path = (
+        Path(args.instruction_coverage).expanduser().resolve()
+        if args.instruction_coverage else None
+    )
+    coverage = (
+        json.loads(coverage_path.read_text(encoding="utf-8"))
+        if coverage_path else None
+    )
+    approval_path = (
+        Path(args.instruction_coverage_approval).expanduser().resolve()
+        if args.instruction_coverage_approval else None
+    )
+    coverage_approval = (
+        json.loads(approval_path.read_text(encoding="utf-8"))
+        if approval_path else None
+    )
 
     round_root_path = Path(args.round_root).expanduser().resolve() if args.round_root else None
 
@@ -7426,6 +7465,8 @@ def cmd_final_gate(args):
         waive_fallback_reason=args.waive_fallback_reason,
         quality_profile=args.profile,
         skip_word_com=False,
+        instruction_coverage=coverage,
+        instruction_coverage_approval=coverage_approval,
     )
     out_json = Path(args.out_json).expanduser().resolve()
     out_md = Path(args.out_md).expanduser().resolve()
@@ -7589,12 +7630,23 @@ def build_parser():
     cp_plan.add_argument("--out", default="revision_plan.json", help="Output revision_plan.json path.")
     cp_plan.add_argument("--doc-map", help="Optional JSON mapping doc_role to {input_file, output_file}.")
     cp_plan.set_defaults(func=cmd_compile_plan)
+    ac = sub.add_parser(
+        "approve-instruction-coverage",
+        help="Record explicit author approval for an exact source-instruction coverage manifest SHA-256.",
+    )
+    ac.add_argument("--coverage", required=True, help="Atomic instruction coverage JSON manifest.")
+    ac.add_argument("--approved-coverage-sha256", required=True, help="Exact coverage_sha256 reviewed by the author.")
+    ac.add_argument("--approved-by", required=True)
+    ac.add_argument("--out", required=True, help="New approval receipt path.")
+    ac.set_defaults(func=cmd_approve_instruction_coverage)
     fg = sub.add_parser("final-gate", help="Run Final Delivery Hard Gate checks and emit JSON/Markdown reconciliation reports.")
     fg.add_argument("--plan", help="Optional revision plan JSON path.")
     fg.add_argument("--verify-report", help="Optional verification report JSON path.")
     fg.add_argument("--apply-report", help="Optional apply report JSON path.")
     fg.add_argument("--docs", nargs="+", help="Optional delivered DOCX file paths.")
     fg.add_argument("--round-root", help="Optional round workspace directory.")
+    fg.add_argument("--instruction-coverage", help="Required atomic coverage manifest for the original task instruction.")
+    fg.add_argument("--instruction-coverage-approval", help="Required separate author approval receipt bound to the exact coverage SHA-256.")
     fg.add_argument(
         "--profile",
         choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],
