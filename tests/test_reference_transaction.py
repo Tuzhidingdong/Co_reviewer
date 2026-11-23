@@ -453,8 +453,12 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(verification["targets_verified"], 3)
         self.assertEqual(verification["reference_transaction"]["unresolved_count"], 0)
 
-        from docx import Document as ReadDocument
-        output_text = [p.text for p in ReadDocument(manuscript_output).paragraphs]
+        import zipfile
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        with zipfile.ZipFile(manuscript_output) as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
         self.assertEqual(output_text[2], "[7] New reference entry.")
         self.assertEqual(output_text[3], "[5] Smith (2020). Journal details.")
         self.assertIn("The claim cites [5] and [7].", output_text)
