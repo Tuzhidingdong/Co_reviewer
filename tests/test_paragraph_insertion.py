@@ -132,6 +132,60 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         ]
         self.assertEqual(len(marker), 1)
 
+    def test_operation_marker_prevents_reapplying_the_same_operation(self):
+        import hashlib
+        from co_reviewer.document_engine import apply_document
+
+        first = self.root / "first_marked.docx"
+        second = self.root / "second_marked.docx"
+        edit = {
+            "action": "insert_paragraph",
+            "operation_id": "INS-IDEMPOTENT-001",
+            "find": "Anchor paragraph used for insertion.",
+            "replace": "One inserted paragraph.",
+            "anchor_text": "Anchor paragraph used for insertion.",
+            "inserted_text": "One inserted paragraph.",
+            "position": "after",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "source_sha256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+            "authorized_change": {"intent": "Insert once.", "explicitly_authorized_insertions": []},
+        }
+        apply_document(str(self.source), str(first), [edit], "Unit Test Author")
+        replay = dict(edit)
+        replay["source_sha256"] = hashlib.sha256(first.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "IDEMPOTENT_INSERTION_BLOCKED"):
+            apply_document(str(first), str(second), [replay], "Unit Test Author")
+
+    def test_patch_operation_insertion_fields_round_trip(self):
+        from co_reviewer.revision_models import PatchOperation
+
+        operation = PatchOperation.from_mapping({
+            "operation_id": "INS-MODEL-001",
+            "document": "Manuscript",
+            "input_file": str(self.source),
+            "output_file": str(self.root / "model_marked.docx"),
+            "part": "word/document.xml",
+            "find": "Anchor paragraph used for insertion.",
+            "replace": "Model-level inserted paragraph.",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "action": "insert_paragraph",
+            "anchor_text": "Anchor paragraph used for insertion.",
+            "position": "before",
+            "inserted_text": "Model-level inserted paragraph.",
+            "source_comment_ids": ["C-INSERT-1"],
+            "authorized_change": {"intent": "Insert one paragraph."},
+        })
+        restored = PatchOperation.from_mapping(operation.to_dict())
+        self.assertEqual(restored.action, "insert_paragraph")
+        self.assertEqual(restored.anchor_text, operation.anchor_text)
+        self.assertEqual(restored.position, "before")
+        self.assertEqual(restored.inserted_text, operation.inserted_text)
+        legacy = restored.to_legacy_target()
+        self.assertEqual(legacy["action"], "insert_paragraph")
+        self.assertEqual(legacy["operation_id"], "INS-MODEL-001")
+
 
 if __name__ == "__main__":
     unittest.main()
