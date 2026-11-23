@@ -250,9 +250,16 @@ def compile_reference_transaction(
                 f"Citation update {mention_id} find must exactly equal its graph-grounded mention text."
             )
         expected_number = str(row.get("new_number", ""))
-        if not expected_number.isdigit() or row.get("replace") != expected_number:
+        replacement_surface = row.get("replace")
+        if (
+            not expected_number.isdigit()
+            or not isinstance(replacement_surface, str)
+            or not replacement_surface
+            or replacement_surface.count(expected_number) != 1
+        ):
             raise ReferenceTransactionError(
-                f"Citation update {mention_id} replace must be the exact new numeric citation label."
+                f"Citation update {mention_id} replace must contain its new numeric label exactly once; "
+                "the exact punctuation/surface form must be supplied, not inferred."
             )
         _exact_role_position(
             mention,
@@ -515,6 +522,10 @@ def compile_reference_transaction(
         "updated_definition_expectations": [
             {
                 "document": row["document"],
+                "operation_id": row["operation_id"],
+                "part": row.get("part", "word/document.xml"),
+                "source_p_idx": row["p_idx"],
+                "find_text": row["find"],
                 "old_number": str(definitions[row["definition_id"]].get("number")),
                 "new_number": str(row.get("new_number", definitions[row["definition_id"]].get("number"))),
                 "updated_entry_text": row["replace"],
@@ -524,6 +535,12 @@ def compile_reference_transaction(
         "updated_mention_expectations": [
             {
                 "document": row["document"],
+                "operation_id": row["operation_id"],
+                "part": row.get("part", "word/document.xml"),
+                "source_p_idx": row["p_idx"],
+                "source_offset": mentions[row["mention_id"]].get("offset"),
+                "find_text": row["find"],
+                "replace_text": row["replace"],
                 "old_number": str(mentions[row["mention_id"]].get("number")),
                 "new_number": str(row["new_number"]),
                 "mention_id": row["mention_id"],
