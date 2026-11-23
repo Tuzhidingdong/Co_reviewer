@@ -1591,18 +1591,43 @@ def _verify_paragraph_format_integrity(
                     return expected_run
 
                 def append_expected_segment(
-                    replacement_start: int, replacement_end: int, source_index: int
+                    replacement_start: int,
+                    replacement_end: int,
+                    source_index: int,
+                    selected_source_length: int | None = None,
                 ) -> None:
                     authored_replacement = edit.get("replace", replacement)
                     authored_segment = authored_replacement[replacement_start:replacement_end]
                     has_explicit_script = any(_script_character(character) for character in authored_segment)
+                    source_run = source_rows[source_index].get("run_node")
+                    source_vertical = (
+                        source_run.find("w:rPr/w:vertAlign", NS)
+                        if source_run is not None else None
+                    )
+                    source_vertical_value = (
+                        source_vertical.get(qn("val")) if source_vertical is not None else None
+                    )
+                    reset_mapped_script = (
+                        source_vertical_value in {"superscript", "subscript"}
+                        and not has_explicit_script
+                        and (
+                            any(character.isspace() for character in authored_segment)
+                            or (
+                                selected_source_length is not None
+                                and len(authored_segment) != selected_source_length
+                            )
+                        )
+                    )
+                    reset_script_alignment = (
+                        reset_uniform_sentence_script or reset_mapped_script
+                    )
                     for character in authored_segment:
                         script = _script_character(character)
                         alignment = script[0] if script else None
                         expected_runs.append(
                             expected_run_node(
                                 source_index, alignment, has_explicit_script,
-                                reset_uniform_sentence_script,
+                                reset_script_alignment,
                             )
                         )
 
@@ -1619,7 +1644,16 @@ def _verify_paragraph_format_integrity(
                                 source_index = source_anchor.get("source_index")
                                 if not isinstance(source_index, int):
                                     raise ValueError("mapped source Run is not an original source character")
-                                append_expected_segment(rep_start, rep_end, source_index)
+                                source_run = source_rows[source_index].get("run_node")
+                                selected_source_length = sum(
+                                    1
+                                    for source_character in working[start:end]
+                                    if isinstance(source_character.get("source_index"), int)
+                                    and source_rows[source_character["source_index"]].get("run_node") is source_run
+                                )
+                                append_expected_segment(
+                                    rep_start, rep_end, source_index, selected_source_length
+                                )
                             except (KeyError, IndexError, TypeError, ValueError) as exc:
                                 errors.append(f"Replacement format map cannot resolve to original source text: {exc}")
                                 expected_runs = []
