@@ -2321,12 +2321,22 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
     passed = sum(1 for item in results if item["status"] == "verified")
     untracked_audit = audit_untracked_text_changes(apply_reports)
     target_passed = bool(results) and passed == len(results)
+    reference_transaction_report = {
+        "passed": True, "checked": False, "errors": [],
+    }
+    if isinstance(plan.get("reference_transaction"), Mapping):
+        from co_reviewer.reference_transaction import verify_reference_transaction_outputs
+        reference_transaction_report = verify_reference_transaction_outputs(plan, apply_reports)
     return {
-        "scope": "Mechanical DOCX Track Changes verification and untracked-text audit only; scientific correctness and cross-document semantic consistency require separate review.",
+        "scope": "Mechanical DOCX Track Changes verification and untracked-text audit, plus package Reference Graph verification when a reference transaction is present; scientific correctness still requires separate review.",
         "targets_total": len(results), "targets_verified": passed,
         "targets_failed": len(results) - passed,
         "untracked_text_audit": untracked_audit,
-        "passed": target_passed and untracked_audit["passed"],
+        "reference_transaction": reference_transaction_report,
+        "passed": (
+            target_passed and untracked_audit["passed"]
+            and reference_transaction_report["passed"]
+        ),
         "results": results
     }
 
