@@ -1976,7 +1976,11 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         raise ValueError("Insertion anchor index is outside the source document.")
                     source_anchor = source_paragraphs[p_idx]
                     anchor_text = target.get("anchor_text")
-                    inserted_text = target.get("inserted_text")
+                    requested_inserted_text = target.get("inserted_text")
+                    inserted_text = (
+                        normalize_script_characters(requested_inserted_text)
+                        if isinstance(requested_inserted_text, str) else None
+                    )
                     position = target.get("position")
                     if not isinstance(anchor_text, str) or not anchor_text or not isinstance(inserted_text, str) or not inserted_text:
                         raise ValueError("Approved paragraph insertion is missing its exact anchor or inserted text.")
