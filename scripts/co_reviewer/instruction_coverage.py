@@ -47,6 +47,8 @@ def _validate_manifest(coverage: Any) -> list[str]:
             or any(character not in "0123456789abcdef" for character in source_sha)
         ):
             errors.append("source_instruction.sha256 must be a lowercase SHA-256.")
+        if isinstance(source_file, str) and source_file.strip() and not Path(source_file).expanduser().is_absolute():
+            errors.append("source_instruction.file must be an absolute path so Final Gate resolves the exact instruction snapshot.")
     requirements = coverage.get("requirements")
     if not isinstance(requirements, list) or not requirements:
         errors.append("requirements must be a non-empty array of atomic source requirements.")
@@ -72,11 +74,26 @@ def _validate_manifest(coverage: Any) -> list[str]:
         if status not in allowed:
             errors.append(f"{label}.status must be one of: {', '.join(sorted(allowed))}.")
         if status == "planned":
-            ids = row.get("revision_item_ids")
-            if not isinstance(ids, list) or not ids or any(
-                not isinstance(item, str) or not item.strip() for item in ids
-            ):
-                errors.append(f"{label}.revision_item_ids must identify compiled plan items.")
+            refs = row.get("revision_targets")
+            if not isinstance(refs, list) or not refs:
+                errors.append(f"{label}.revision_targets must identify exact compiled plan targets.")
+            else:
+                seen_refs: set[tuple[str, int]] = set()
+                for ref_index, target_ref in enumerate(refs):
+                    if not isinstance(target_ref, Mapping):
+                        errors.append(f"{label}.revision_targets[{ref_index}] must be an object.")
+                        continue
+                    item_id = target_ref.get("revision_item_id")
+                    target_index = target_ref.get("target_index")
+                    if not isinstance(item_id, str) or not item_id.strip():
+                        errors.append(f"{label}.revision_targets[{ref_index}].revision_item_id must be non-empty.")
+                    if not isinstance(target_index, int) or isinstance(target_index, bool) or target_index < 0:
+                        errors.append(f"{label}.revision_targets[{ref_index}].target_index must be a non-negative integer.")
+                    elif isinstance(item_id, str) and item_id.strip():
+                        pair = (item_id, target_index)
+                        if pair in seen_refs:
+                            errors.append(f"{label}.revision_targets contains duplicate target reference {pair!r}.")
+                        seen_refs.add(pair)
         elif status == "no_change":
             if not isinstance(row.get("evidence"), str) or not row.get("evidence", "").strip():
                 errors.append(f"{label} no_change requires current-document evidence.")
@@ -85,8 +102,9 @@ def _validate_manifest(coverage: Any) -> list[str]:
                 not isinstance(row.get("evidence_file"), str) or not row.get("evidence_file").strip()
                 or not isinstance(row.get("evidence_sha256"), str)
                 or len(row.get("evidence_sha256", "")) != 64
+                or any(character not in "0123456789abcdef" for character in row.get("evidence_sha256", ""))
             ):
-                errors.append(f"{label} manual_completed requires evidence_file and evidence_sha256.")
+                errors.append(f"{label} manual_completed requires an evidence file and lowercase SHA-256.")
         elif status == "not_applicable":
             if not isinstance(row.get("evidence"), str) or not row.get("evidence", "").strip():
                 errors.append(f"{label} not_applicable requires explicit evidence.")
@@ -154,7 +172,9 @@ def validate_instruction_coverage(
         source_path_value = source.get("file")
         if isinstance(source_path_value, str) and source_path_value.strip():
             source_path = Path(source_path_value).expanduser()
-            if not source_path.is_file():
+            if not source_path.is_absolute():
+                errors.append("Original instruction file path must be absolute.")
+            elif not source_path.is_file():
                 errors.append(f"Original instruction file is missing: {source_path}.")
             else:
                 actual_source_sha = hashlib.sha256(source_path.read_bytes()).hexdigest()
@@ -194,6 +214,11 @@ def validate_instruction_coverage(
                 errors.append(f"Revision plan contains duplicate item ID {item['id']}.")
             plan_ids.add(item["id"])
     linked_plan_ids: set[str] = set()
+    linked_plan_targets: set[tuple[str, int]] = set()
+    plan_items_by_id = {
+        item["id"]: item for item in plan_items
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
     requirements = coverage.get("requirements", [])
     planned_count = no_change_count = manual_count = unresolved_count = 0
     for index, row in enumerate(requirements if isinstance(requirements, list) else []):
@@ -203,14 +228,26 @@ def validate_instruction_coverage(
         req_id = row.get("requirement_id", f"requirements[{index}]")
         if status == "planned":
             planned_count += 1
-            for item_id in row.get("revision_item_ids", []):
-                if item_id not in plan_ids:
+            for target_ref in row.get("revision_targets", []):
+                if not isinstance(target_ref, Mapping):
+                    continue
+                item_id = target_ref.get("revision_item_id")
+                target_index = target_ref.get("target_index")
+                if item_id not in plan_items_by_id:
                     errors.append(f"Requirement {req_id} refers to missing revision item {item_id}.")
                     continue
                 linked_plan_ids.add(item_id)
-                matching = next(item for item in plan_items if item.get("id") == item_id)
-                if not isinstance(matching.get("targets"), list) or not matching.get("targets"):
+                matching = plan_items_by_id[item_id]
+                targets = matching.get("targets")
+                if not isinstance(targets, list) or not targets:
                     errors.append(f"Requirement {req_id} maps to revision item {item_id} without targets.")
+                    continue
+                if not isinstance(target_index, int) or isinstance(target_index, bool) or not 0 <= target_index < len(targets):
+                    errors.append(
+                        f"Requirement {req_id} refers to invalid target index {target_index!r} in revision item {item_id}."
+                    )
+                    continue
+                linked_plan_targets.add((item_id, target_index))
         elif status == "no_change":
             no_change_count += 1
         elif status == "manual_completed":
@@ -235,6 +272,18 @@ def validate_instruction_coverage(
             + ", ".join(unlinked_plan_ids)
             + "."
         )
+    unlinked_targets = sorted(
+        (item_id, target_index)
+        for item_id, item in plan_items_by_id.items()
+        for target_index in range(len(item.get("targets", [])) if isinstance(item.get("targets"), list) else 0)
+        if (item_id, target_index) not in linked_plan_targets
+    )
+    if unlinked_targets:
+        errors.append(
+            "Revision plan target(s) are not linked to any atomic source requirement: "
+            + ", ".join(f"{item_id}[{target_index}]" for item_id, target_index in unlinked_targets)
+            + "."
+        )
     return {
         "passed": not errors,
         "coverage_sha256": coverage.get("coverage_sha256"),
@@ -245,6 +294,11 @@ def validate_instruction_coverage(
         "manual_completed_count": manual_count,
         "unresolved_count": unresolved_count,
         "linked_revision_item_count": len(linked_plan_ids),
+        "linked_revision_target_count": len(linked_plan_targets),
         "unlinked_revision_item_ids": unlinked_plan_ids,
+        "unlinked_revision_targets": [
+            {"revision_item_id": item_id, "target_index": target_index}
+            for item_id, target_index in unlinked_targets
+        ],
         "errors": errors,
     }
