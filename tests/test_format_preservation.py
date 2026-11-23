@@ -306,7 +306,8 @@ class FormatPreservationTests(unittest.TestCase):
         )
         results = cli.apply_plan(plan, "Test Author")
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["status"], "applied")
+        self.assertEqual(len(results[0]["results"]), 1)
+        self.assertEqual(results[0]["results"][0]["status"], "applied")
         plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, results)
         self.assertTrue(verification["passed"], verification)
