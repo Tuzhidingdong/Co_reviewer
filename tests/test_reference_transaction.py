@@ -105,6 +105,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             },
             "additions": [{
                 "operation_id": "REF-ADD-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "document": "Manuscript",
                 "p_idx": 1,
                 "anchor_text": "References",
@@ -119,6 +120,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             }],
             "entry_updates": [{
                 "operation_id": "REF-ENTRY-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "definition_id": "def-4",
                 "document": "Manuscript",
                 "p_idx": 2,
@@ -134,6 +136,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             }],
             "citation_updates": [{
                 "operation_id": "REF-CITE-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "mention_id": "men-4-a",
                 "document": "Manuscript",
                 "p_idx": 0,
