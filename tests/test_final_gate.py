@@ -569,7 +569,7 @@ class DocumentRoleProfileTests(unittest.TestCase):
     def test_cover_letter_role_uses_dedicated_profile_and_overrides_global_profile(self):
         from co_reviewer.final_gate import _infer_quality_profile
 
-        path = self.root / "Cover_Letter_Nature_Water.docx"
+        path = Path("Cover_Letter_Nature_Water.docx")
         self.assertEqual(
             _infer_quality_profile(path, "response-letter", "cover-letter"),
             "cover-letter",
