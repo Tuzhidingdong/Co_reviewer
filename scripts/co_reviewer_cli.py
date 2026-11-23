@@ -1591,18 +1591,43 @@ def _verify_paragraph_format_integrity(
                     return expected_run
 
                 def append_expected_segment(
-                    replacement_start: int, replacement_end: int, source_index: int
+                    replacement_start: int,
+                    replacement_end: int,
+                    source_index: int,
+                    selected_source_length: int | None = None,
                 ) -> None:
                     authored_replacement = edit.get("replace", replacement)
                     authored_segment = authored_replacement[replacement_start:replacement_end]
                     has_explicit_script = any(_script_character(character) for character in authored_segment)
+                    source_run = source_rows[source_index].get("run_node")
+                    source_vertical = (
+                        source_run.find("w:rPr/w:vertAlign", NS)
+                        if source_run is not None else None
+                    )
+                    source_vertical_value = (
+                        source_vertical.get(qn("val")) if source_vertical is not None else None
+                    )
+                    reset_mapped_script = (
+                        source_vertical_value in {"superscript", "subscript"}
+                        and not has_explicit_script
+                        and (
+                            any(character.isspace() for character in authored_segment)
+                            or (
+                                selected_source_length is not None
+                                and len(authored_segment) != selected_source_length
+                            )
+                        )
+                    )
+                    reset_script_alignment = (
+                        reset_uniform_sentence_script or reset_mapped_script
+                    )
                     for character in authored_segment:
                         script = _script_character(character)
                         alignment = script[0] if script else None
                         expected_runs.append(
                             expected_run_node(
                                 source_index, alignment, has_explicit_script,
-                                reset_uniform_sentence_script,
+                                reset_script_alignment,
                             )
                         )
 
@@ -1619,7 +1644,16 @@ def _verify_paragraph_format_integrity(
                                 source_index = source_anchor.get("source_index")
                                 if not isinstance(source_index, int):
                                     raise ValueError("mapped source Run is not an original source character")
-                                append_expected_segment(rep_start, rep_end, source_index)
+                                source_run = source_rows[source_index].get("run_node")
+                                selected_source_length = sum(
+                                    1
+                                    for source_character in working[start:end]
+                                    if isinstance(source_character.get("source_index"), int)
+                                    and source_rows[source_character["source_index"]].get("run_node") is source_run
+                                )
+                                append_expected_segment(
+                                    rep_start, rep_end, source_index, selected_source_length
+                                )
                             except (KeyError, IndexError, TypeError, ValueError) as exc:
                                 errors.append(f"Replacement format map cannot resolve to original source text: {exc}")
                                 expected_runs = []
@@ -1718,6 +1752,88 @@ def _verify_paragraph_format_integrity(
         "replacement_format_maps": insertion_map_checks,
         "errors": errors,
     }
+
+
+def _verify_inserted_script_scope(
+    inserted_runs: list[ET.Element],
+    inserted_text: str,
+    format_operations: Any,
+) -> dict[str, Any]:
+    """Verify that inserted superscript/subscript characters stay inside authorized targets."""
+    if not isinstance(format_operations, list):
+        return {"passed": False, "checked": True, "errors": ["format_operations must be an array."]}
+    script_operations = []
+    for index, operation in enumerate(format_operations):
+        if not isinstance(operation, dict):
+            return {"passed": False, "checked": True, "errors": [f"format_operations[{index}] is malformed."]}
+        properties = operation.get("properties")
+        alignment = properties.get("vertAlign") if isinstance(properties, dict) else None
+        if alignment in {"superscript", "subscript"}:
+            script_operations.append((index, operation, alignment))
+    if not script_operations:
+        return {"passed": True, "checked": False, "errors": []}
+
+    expected_by_offset: dict[int, str] = {}
+    errors: list[str] = []
+    for index, operation, alignment in script_operations:
+        token = operation.get("find")
+        if not isinstance(token, str) or not token:
+            errors.append(f"format_operations[{index}] has no valid script target.")
+            continue
+        scope_find = operation.get("scope_find")
+        scope_offset = operation.get("scope_offset")
+        if scope_find is not None or scope_offset is not None:
+            if (
+                not isinstance(scope_find, str) or not scope_find
+                or not isinstance(scope_offset, int) or isinstance(scope_offset, bool)
+                or inserted_text.count(scope_find) != 1
+            ):
+                errors.append(f"format_operations[{index}] has an invalid or non-unique script scope.")
+                continue
+            scope_start = inserted_text.find(scope_find)
+            start = scope_start + scope_offset
+        else:
+            if inserted_text.count(token) != 1:
+                errors.append(
+                    f"format_operations[{index}] script token is not uniquely locatable in inserted text."
+                )
+                continue
+            start = inserted_text.find(token)
+        if start < 0 or inserted_text[start:start + len(token)] != token:
+            errors.append(f"format_operations[{index}] scope does not select its declared script token.")
+            continue
+        for offset in range(start, start + len(token)):
+            prior = expected_by_offset.get(offset)
+            if prior is not None and prior != alignment:
+                errors.append(f"Conflicting script FormatChange operations overlap at inserted offset {offset}.")
+            expected_by_offset[offset] = alignment
+
+    actual_by_offset: list[str | None] = []
+    actual_text_parts: list[str] = []
+    for run in inserted_runs:
+        run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
+        vertical = run.find("w:rPr/w:vertAlign", NS)
+        alignment = vertical.get(qn("val")) if vertical is not None else None
+        actual_text_parts.append(run_text)
+        actual_by_offset.extend([alignment] * len(run_text))
+    actual_text = "".join(actual_text_parts)
+    if actual_text != inserted_text:
+        errors.append("Inserted Run text differs from the text used to resolve script-format scopes.")
+    if len(actual_by_offset) != len(inserted_text):
+        errors.append("Inserted Run character formatting does not cover the inserted text exactly.")
+    else:
+        for offset, actual in enumerate(actual_by_offset):
+            expected = expected_by_offset.get(offset)
+            if expected is not None:
+                if actual != expected:
+                    errors.append(
+                        f"Script target at offset {offset} expected {expected}, found {actual or 'baseline'}."
+                    )
+            elif actual in {"superscript", "subscript"}:
+                errors.append(
+                    f"Unrequested {actual} formatting at inserted offset {offset} ({inserted_text[offset:offset + 24]!r})."
+                )
+    return {"passed": not errors, "checked": True, "errors": errors}
 
 
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1933,6 +2049,44 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     )
                 else:
                     native_script_format_preserved = True
+                scoped_script_operations = []
+                if insert_id is not None:
+                    for sibling in document_report.get("results", []):
+                        if (
+                            sibling.get("revision_item_id") != item_id
+                            or sibling.get("part", "word/document.xml") != part
+                            or sibling.get("p_idx") != p_idx
+                        ):
+                            continue
+                        for operation in sibling.get("format_operations", []):
+                            if not isinstance(operation, dict):
+                                continue
+                            properties = operation.get("properties")
+                            if not isinstance(properties, dict) or properties.get("vertAlign") not in {"superscript", "subscript"}:
+                                continue
+                            token = operation.get("find")
+                            scope_find = operation.get("scope_find")
+                            scoped_to_insert = (
+                                isinstance(scope_find, str)
+                                and bool(scope_find)
+                                and inserted.count(scope_find) == 1
+                            ) or (
+                                scope_find is None
+                                and isinstance(token, str)
+                                and bool(token)
+                                and inserted.count(token) == 1
+                            )
+                            if scoped_to_insert:
+                                scoped_script_operations.append(operation)
+                script_scope_integrity = (
+                    _verify_inserted_script_scope(
+                        inserted_runs,
+                        inserted,
+                        scoped_script_operations,
+                    )
+                    if insert_id is not None
+                    else {"passed": True, "checked": False, "errors": []}
+                )
                 format_changes_preserved, format_change_details = _verify_format_changes(
                     paragraph,
                     edit.get("format_changes", []),
@@ -1951,13 +2105,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "native_script_format_preserved": native_script_format_preserved,
                     "format_change_preserved": format_changes_preserved,
                     "format_change_details": format_change_details,
+                    "script_scope_integrity": script_scope_integrity,
                     "format_integrity": format_integrity,
                 }
                 result["p_idx"] = p_idx
                 if (
                     old_ok and new_ok and native_script_format_preserved
-                    and format_changes_preserved and format_integrity["passed"]
-                    and exact_target_position
+                    and format_changes_preserved and script_scope_integrity["passed"]
+                    and format_integrity["passed"] and exact_target_position
                 ):
                     result["status"] = "verified"
                 elif not exact_target_position:
@@ -1969,6 +2124,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     result["reason"] = "Inserted Run formatting (font, size, bold, italic, script or direct properties) changed after Apply."
                 elif not format_changes_preserved:
                     result["reason"] = "A FormatChange revision or its old effective-property snapshot does not match the approved operation."
+                elif not script_scope_integrity["passed"]:
+                    result["reason"] = "; ".join(script_scope_integrity["errors"][:4])
                 elif not format_integrity["passed"]:
                     result["reason"] = "; ".join(format_integrity["errors"][:4])
                 else:
@@ -7287,11 +7444,50 @@ def cmd_compile_plan(args):
     return 0
 
 
+def cmd_approve_instruction_coverage(args):
+    from co_reviewer.instruction_coverage import (
+        authorize_instruction_coverage,
+        instruction_coverage_sha256,
+    )
+
+    coverage_path = Path(args.coverage).expanduser().resolve()
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    approval = authorize_instruction_coverage(
+        coverage,
+        args.approved_coverage_sha256,
+        args.approved_by,
+    )
+    out_path = Path(args.out).expanduser().resolve()
+    write_json_atomic(out_path, approval)
+    print(f"[INSTRUCTION COVERAGE APPROVED] {out_path}")
+    print(f"[COVERAGE SHA256] {instruction_coverage_sha256(coverage)}")
+    print(f"[APPROVAL SHA256] {approval['approval_sha256']}")
+    print(f"[APPROVED BY] {approval['approved_by']}")
+    return 0
+
+
 def cmd_final_gate(args):
     from co_reviewer.final_gate import evaluate_final_gate, write_final_gate_reports
 
     plan_path = Path(args.plan).expanduser().resolve() if args.plan else None
     plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path else None
+
+    coverage_path = (
+        Path(args.instruction_coverage).expanduser().resolve()
+        if args.instruction_coverage else None
+    )
+    coverage = (
+        json.loads(coverage_path.read_text(encoding="utf-8"))
+        if coverage_path else None
+    )
+    approval_path = (
+        Path(args.instruction_coverage_approval).expanduser().resolve()
+        if args.instruction_coverage_approval else None
+    )
+    coverage_approval = (
+        json.loads(approval_path.read_text(encoding="utf-8"))
+        if approval_path else None
+    )
 
     round_root_path = Path(args.round_root).expanduser().resolve() if args.round_root else None
 
@@ -7332,6 +7528,8 @@ def cmd_final_gate(args):
         waive_fallback_reason=args.waive_fallback_reason,
         quality_profile=args.profile,
         skip_word_com=False,
+        instruction_coverage=coverage,
+        instruction_coverage_approval=coverage_approval,
     )
     out_json = Path(args.out_json).expanduser().resolve()
     out_md = Path(args.out_md).expanduser().resolve()
@@ -7495,12 +7693,23 @@ def build_parser():
     cp_plan.add_argument("--out", default="revision_plan.json", help="Output revision_plan.json path.")
     cp_plan.add_argument("--doc-map", help="Optional JSON mapping doc_role to {input_file, output_file}.")
     cp_plan.set_defaults(func=cmd_compile_plan)
+    ac = sub.add_parser(
+        "approve-instruction-coverage",
+        help="Record explicit author approval for an exact source-instruction coverage manifest SHA-256.",
+    )
+    ac.add_argument("--coverage", required=True, help="Atomic instruction coverage JSON manifest.")
+    ac.add_argument("--approved-coverage-sha256", required=True, help="Exact coverage_sha256 reviewed by the author.")
+    ac.add_argument("--approved-by", required=True)
+    ac.add_argument("--out", required=True, help="New approval receipt path.")
+    ac.set_defaults(func=cmd_approve_instruction_coverage)
     fg = sub.add_parser("final-gate", help="Run Final Delivery Hard Gate checks and emit JSON/Markdown reconciliation reports.")
     fg.add_argument("--plan", help="Optional revision plan JSON path.")
     fg.add_argument("--verify-report", help="Optional verification report JSON path.")
     fg.add_argument("--apply-report", help="Optional apply report JSON path.")
     fg.add_argument("--docs", nargs="+", help="Optional delivered DOCX file paths.")
     fg.add_argument("--round-root", help="Optional round workspace directory.")
+    fg.add_argument("--instruction-coverage", help="Required atomic coverage manifest for the original task instruction.")
+    fg.add_argument("--instruction-coverage-approval", help="Required separate author approval receipt bound to the exact coverage SHA-256.")
     fg.add_argument(
         "--profile",
         choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],

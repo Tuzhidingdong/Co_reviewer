@@ -10,6 +10,10 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import co_reviewer_cli as cli
 from co_reviewer.final_gate import evaluate_final_gate
+from co_reviewer.instruction_coverage import (
+    authorize_instruction_coverage,
+    instruction_coverage_sha256,
+)
 
 
 def q(local: str) -> str:
@@ -121,6 +125,59 @@ class FinalGateTests(unittest.TestCase):
             "results": [],
         }
 
+        self.instruction_file = self.root / "source_instructions.txt"
+        self.instruction_file.write_text(
+            "Synthetic requirement one.\nSynthetic requirement two.\n",
+            encoding="utf-8",
+        )
+        self.instruction_coverage = {
+            "schema_version": "1.0",
+            "source_instruction": {
+                "file": str(self.instruction_file),
+                "sha256": __import__("hashlib").sha256(
+                    self.instruction_file.read_bytes()
+                ).hexdigest(),
+            },
+            "requirements": [
+                {
+                    "requirement_id": "REQ-1",
+                    "source_locator": "Synthetic instruction line 1",
+                    "instruction_excerpt": "Synthetic requirement one.",
+                    "status": "planned",
+                    "revision_targets": [{"revision_item_id": "REV-1", "target_index": 0}],
+                },
+                {
+                    "requirement_id": "REQ-2",
+                    "source_locator": "Synthetic instruction line 2",
+                    "instruction_excerpt": "Synthetic requirement two.",
+                    "status": "planned",
+                    "revision_targets": [{"revision_item_id": "REV-2", "target_index": 0}],
+                },
+            ],
+        }
+        self.instruction_coverage["coverage_sha256"] = instruction_coverage_sha256(
+            self.instruction_coverage
+        )
+        self.instruction_coverage_approval = authorize_instruction_coverage(
+            self.instruction_coverage,
+            self.instruction_coverage["coverage_sha256"],
+            "Human Author",
+            approved_at_utc="2026-11-23T10:00:00+00:00",
+        )
+
+    def write_instruction_coverage_files(self):
+        coverage_path = self.root / "instruction_coverage.json"
+        approval_path = self.root / "instruction_coverage_approval.json"
+        coverage_path.write_text(
+            json.dumps(self.instruction_coverage, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        approval_path.write_text(
+            json.dumps(self.instruction_coverage_approval, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return coverage_path, approval_path
+
     def tearDown(self) -> None:
         self.temp.cleanup()
 
@@ -132,6 +189,8 @@ class FinalGateTests(unittest.TestCase):
             docs=[self.clean_docx],
             round_root=self.root,
             skip_word_com=True,
+            instruction_coverage=self.instruction_coverage,
+            instruction_coverage_approval=self.instruction_coverage_approval,
         )
         self.assertEqual(report["verdict"], "READY")
         self.assertEqual(report["reconciliation"]["input_items"], 2)
@@ -150,6 +209,7 @@ class FinalGateTests(unittest.TestCase):
         plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
         verify_path.write_text(json.dumps(self.verify_report), encoding="utf-8")
         apply_path.write_text(json.dumps(self.apply_reports), encoding="utf-8")
+        coverage_path, coverage_approval_path = self.write_instruction_coverage_files()
 
         with patch("co_reviewer.final_gate.export_docx_to_pdf_word_com", side_effect=fake_pdf_exporter_ok):
             rc = cli.main([
@@ -159,6 +219,8 @@ class FinalGateTests(unittest.TestCase):
                 "--apply-report", str(apply_path),
                 "--docs", str(self.clean_docx),
                 "--round-root", str(self.root),
+                "--instruction-coverage", str(coverage_path),
+                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])
@@ -175,6 +237,125 @@ class FinalGateTests(unittest.TestCase):
         self.assertIn("| input_items | 2 |", md_text)
         self.assertIn("| applied_text_edits | 1 |", md_text)
         self.assertIn("| applied_format_changes | 1 |", md_text)
+
+    def test_instruction_coverage_approval_cli_requires_exact_hash(self):
+        coverage_path = self.root / "coverage_for_approval.json"
+        approval_path = self.root / "coverage_approval.json"
+        coverage_path.write_text(
+            json.dumps(self.instruction_coverage, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        args = type("Args", (), {
+            "coverage": str(coverage_path),
+            "approved_coverage_sha256": self.instruction_coverage["coverage_sha256"],
+            "approved_by": "Human Author",
+            "out": str(approval_path),
+        })()
+        self.assertEqual(cli.cmd_approve_instruction_coverage(args), 0)
+        approval = json.loads(approval_path.read_text(encoding="utf-8"))
+        self.assertEqual(approval["coverage_sha256"], self.instruction_coverage["coverage_sha256"])
+        self.assertEqual(approval["status"], "approved")
+
+        stale = type("Args", (), {
+            "coverage": str(coverage_path),
+            "approved_coverage_sha256": "0" * 64,
+            "approved_by": "Human Author",
+            "out": str(self.root / "stale_coverage_approval.json"),
+        })()
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            cli.cmd_approve_instruction_coverage(stale)
+        self.assertFalse(Path(stale.out).exists())
+
+    def test_final_gate_blocks_missing_instruction_coverage(self):
+        report = evaluate_final_gate(
+            plan=self.plan,
+            verify_report=self.verify_report,
+            apply_reports=self.apply_reports,
+            docs=[self.clean_docx],
+            skip_word_com=True,
+        )
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
+        self.assertTrue(any("Instruction coverage manifest is missing" in item for item in report["blockers"]))
+
+    def test_final_gate_blocks_requirement_omitted_from_compiled_plan(self):
+        from copy import deepcopy
+
+        coverage = deepcopy(self.instruction_coverage)
+        coverage["requirements"][1]["status"] = "blocked"
+        coverage["requirements"][1].pop("revision_item_ids", None)
+        coverage["requirements"][1]["reason"] = "Reference paragraph insertion is not supported."
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        approval = authorize_instruction_coverage(
+            coverage,
+            coverage["coverage_sha256"],
+            "Human Author",
+            approved_at_utc="2026-11-23T10:00:00+00:00",
+        )
+        report = evaluate_final_gate(
+            plan=self.plan,
+            verify_report=self.verify_report,
+            apply_reports=self.apply_reports,
+            docs=[self.clean_docx],
+            skip_word_com=True,
+            instruction_coverage=coverage,
+            instruction_coverage_approval=approval,
+        )
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
+        self.assertTrue(any("remains blocked" in item for item in report["blockers"]))
+
+    def test_final_gate_blocks_unlinked_target_inside_mapped_revision_item(self):
+        from copy import deepcopy
+
+        coverage = deepcopy(self.instruction_coverage)
+        coverage["requirements"][1]["revision_targets"] = [
+            {"revision_item_id": "REV-2", "target_index": 5}
+        ]
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        approval = authorize_instruction_coverage(
+            coverage,
+            coverage["coverage_sha256"],
+            "Human Author",
+            approved_at_utc="2026-11-23T10:00:00+00:00",
+        )
+        report = evaluate_final_gate(
+            plan=self.plan,
+            verify_report=self.verify_report,
+            apply_reports=self.apply_reports,
+            docs=[self.clean_docx],
+            skip_word_com=True,
+            instruction_coverage=coverage,
+            instruction_coverage_approval=approval,
+        )
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
+        self.assertTrue(any("invalid target index 5" in item for item in report["blockers"]))
+
+    def test_final_gate_blocks_unlinked_compiled_plan_item(self):
+        from copy import deepcopy
+
+        coverage = deepcopy(self.instruction_coverage)
+        coverage["requirements"][1]["revision_targets"] = [{"revision_item_id": "REV-UNKNOWN", "target_index": 0}]
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        approval = authorize_instruction_coverage(
+            coverage,
+            coverage["coverage_sha256"],
+            "Human Author",
+            approved_at_utc="2026-11-23T10:00:00+00:00",
+        )
+        report = evaluate_final_gate(
+            plan=self.plan,
+            verify_report=self.verify_report,
+            apply_reports=self.apply_reports,
+            docs=[self.clean_docx],
+            skip_word_com=True,
+            instruction_coverage=coverage,
+            instruction_coverage_approval=approval,
+        )
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
+        self.assertTrue(any("missing revision item REV-UNKNOWN" in item for item in report["blockers"]))
 
     def test_final_gate_blocked_on_verify_failure(self):
         bad_verify = {
@@ -274,17 +455,23 @@ class FinalGateTests(unittest.TestCase):
             encoding="utf-8",
         )
         verify_path = self.root / "verify.json"
+        plan_path = self.root / "revision_plan.json"
         out_json = self.root / "fg_waived.json"
         out_md = self.root / "fg_waived.md"
         verify_path.write_text(json.dumps(self.verify_report), encoding="utf-8")
+        plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
+        coverage_path, coverage_approval_path = self.write_instruction_coverage_files()
 
         reason = "Approved by author for manual table edit"
         with patch("co_reviewer.final_gate.export_docx_to_pdf_word_com", side_effect=fake_pdf_exporter_ok):
             rc = cli.main([
                 "final-gate",
+                "--plan", str(plan_path),
                 "--verify-report", str(verify_path),
                 "--docs", str(self.clean_docx),
                 "--round-root", str(self.root),
+                "--instruction-coverage", str(coverage_path),
+                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--waive-fallback-reason", reason,
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
@@ -327,6 +514,7 @@ class FinalGateTests(unittest.TestCase):
         out_md = self.root / "fg_recompute.md"
         plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
         apply_path.write_text(json.dumps(self.apply_reports), encoding="utf-8")
+        coverage_path, coverage_approval_path = self.write_instruction_coverage_files()
 
         with (
             patch("co_reviewer_cli.verify_apply_report", return_value=self.verify_report) as mock_verify,
@@ -337,6 +525,8 @@ class FinalGateTests(unittest.TestCase):
                 "--plan", str(plan_path),
                 "--apply-report", str(apply_path),
                 "--docs", str(self.clean_docx),
+                "--instruction-coverage", str(coverage_path),
+                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])

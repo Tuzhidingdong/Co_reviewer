@@ -133,10 +133,14 @@ class TwoPassOverlapTests(unittest.TestCase):
                     "replace": "tension gamma0",
                     "two_pass": True,
                     "authorized_change": {"intent": "Update symbol to gamma0"},
-                    "format_authorization": {"intent": "Style gamma0 with Times New Roman, color, and subscript 0"},
+                    "format_authorization": {
+                        "intent": "Style gamma0 with Times New Roman, color, and subscript 0",
+                        "semantic_profile_sha256": "b" * 64,
+                        "format_zone": "body",
+                    },
                     "format_operations": [
-                        {"find": "gamma", "properties": {"rFonts": {"ascii": "Times New Roman", "hAnsi": "Times New Roman"}, "color": "1F4E79"}},
-                        {"find": "0", "properties": {"vertAlign": "subscript"}},
+                        {"find": "gamma", "scope_find": "tension gamma0", "scope_offset": "tension gamma0".index("gamma"), "properties": {"rFonts": {"ascii": "Times New Roman", "hAnsi": "Times New Roman"}, "color": "1F4E79"}},
+                        {"find": "0", "scope_find": "tension gamma0", "scope_offset": "tension gamma0".index("0"), "properties": {"vertAlign": "subscript"}},
                     ],
                 }],
             }],

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from co_reviewer.docx_quality import DocxQualityError, audit_docx_quality
+from co_reviewer.instruction_coverage import validate_instruction_coverage
 
 _WD_EXPORT_FORMAT_PDF = 17
 _CHECKLIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+(?:\[[ xX ]\]\s*)?\S+")
@@ -336,9 +337,26 @@ def evaluate_final_gate(
     quality_profile: str | None = None,
     skip_word_com: bool = False,
     pdf_exporter: Callable[[Path, Path], dict[str, Any]] | None = None,
+    instruction_coverage: dict[str, Any] | None = None,
+    instruction_coverage_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate all Final Delivery Hard Gate checks and return structured report."""
     blockers: list[str] = []
+
+    # Check 0: Original instruction coverage. This gate is intentionally
+    # independent of the compiled plan so requirements excluded before
+    # compilation remain visible and block a false READY.
+    instruction_coverage_report = validate_instruction_coverage(
+        instruction_coverage,
+        instruction_coverage_approval,
+        plan,
+    )
+    instruction_coverage_status = "PASS" if instruction_coverage_report["passed"] else "FAIL"
+    if instruction_coverage_status != "PASS":
+        blockers.extend(
+            "Instruction coverage gate failed: " + str(error)
+            for error in instruction_coverage_report.get("errors", [])
+        )
 
     # Check A: Verify Gate
     if not isinstance(verify_report, dict):
@@ -537,12 +555,14 @@ def evaluate_final_gate(
         "skipped_format_ops": fallback_metrics["skipped_format_ops"],
         "quality_status": quality_status,
         "pdf_render_status": pdf_render_status,
+        "instruction_coverage_status": instruction_coverage_status,
     }
 
     verdict = (
         "READY"
         if (
-            verify_gate_status == "PASS"
+            instruction_coverage_status == "PASS"
+            and verify_gate_status == "PASS"
             and quality_status == "PASS"
             and pdf_render_status in {"PASS", "SKIPPED_TEST_ONLY"}
             and fallback_gate_status in {"PASS", "WAIVED"}
@@ -556,6 +576,7 @@ def evaluate_final_gate(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "verdict": verdict,
         "gates": {
+            "instruction_coverage": instruction_coverage_status,
             "verify": verify_gate_status,
             "docx_quality": quality_status,
             "word_com_pdf": pdf_render_status,
@@ -565,6 +586,7 @@ def evaluate_final_gate(
         "waive_fallback_reason": waive_reason if waived else None,
         "reconciliation": reconciliation,
         "fallback_details": fallback_metrics["details"],
+        "instruction_coverage": instruction_coverage_report,
         "documents": doc_results,
         "blockers": blockers,
     }
@@ -592,6 +614,16 @@ def render_final_gate_markdown(report: dict[str, Any]) -> str:
         f"| skipped_format_ops | {rec.get('skipped_format_ops', 0)} |",
         f"| quality_status | {rec.get('quality_status', 'FAIL')} |",
         f"| pdf_render_status | {rec.get('pdf_render_status', 'FAIL')} |",
+        f"| instruction_coverage_status | {rec.get('instruction_coverage_status', 'FAIL')} |",
+        "",
+        "## Original Instruction Coverage",
+        "",
+        f"- Status: {report.get('gates', {}).get('instruction_coverage', 'FAIL')}",
+        f"- Requirements: {report.get('instruction_coverage', {}).get('requirement_count', 0)}",
+        f"- Planned: {report.get('instruction_coverage', {}).get('planned_count', 0)}",
+        f"- No change / not applicable: {report.get('instruction_coverage', {}).get('no_change_count', 0)}",
+        f"- Manually completed: {report.get('instruction_coverage', {}).get('manual_completed_count', 0)}",
+        f"- Unresolved: {report.get('instruction_coverage', {}).get('unresolved_count', 0)}",
         "",
         "## Document Quality & PDF Render",
         "",

@@ -61,6 +61,8 @@ Native Word `REF`, `PAGEREF`, `NOTEREF`, `SEQ`, `CITATION`, `ADDIN` and other un
 
 For renumbering, use a typed key that identifies the document role, reference kind and identifier. Accept a legacy untyped key only when it resolves uniquely to one reference kind. Never rely on an untyped key when different reference kinds can share an identifier.
 
+A reference-list paragraph insertion limitation does **not** justify excluding the entire reference task. Decompose it into separate atomic requirements: bibliography paragraph insertion, existing bibliography-label changes, each in-text citation occurrence update, grouped/ranged citation handling, and any affected cross-document occurrence. Use `build-package-reference-graph` to inventory static citation definitions and mentions, then use the hash-bound `create-numbering-impact-plan` / author-approval / package-transaction path where its exact source-document, identity and Workflow prerequisites are satisfied. The graph supports citation definitions/mentions; it does not itself write DOCX files or insert new bibliography paragraphs. Translate supported updates into exact, non-overlapping PatchOperations and verify the published DOCX graph. Unresolved ranges, ambiguous mappings and native Word citation fields remain individually blocked. Do not use the deprecated `renumber-package-graph` shortcut; it is disabled. Never omit independently executable label/citation updates merely because insertion of new bibliography paragraphs is unsupported.
+
 ## Workflow
 
 ### Stage 1 — Start a review round and inventory
@@ -538,8 +540,8 @@ Do not use an LLM after Apply to re-judge whether the same semantic/format decis
 - Standard Word metadata exemptions are bound to exact package part, Word namespace, and parent-child context in the V2.3.2 engineering contract. This includes the registered `footnotePr`, `endnotePr`, `compat`, `docVars` and `doNotIncludeSubdocsInStats` settings subtrees, plus `w:hidden` only as a direct child of a `w:style` in `word/styles.xml`. These parts remain byte-identical. Unknown children, unregistered compatibility options, misplaced elements, and document-protection/revision-generation settings remain fail-closed.
 - A mixed-format replacement may use the official `replacement_format_map` only when every replacement character is explicitly mapped to a source character offset. Each segment has exactly `replacement_start`, `replacement_end`, and `source_offset`; segments must be ordered, contiguous, non-overlapping, and cover the complete replacement. `source_offset` is an offset into the exact `find` text and selects the source Run whose direct formatting will be inherited by that replacement segment. If an author cannot justify the map character-by-character, the operation must fail closed rather than copy the first Run's formatting.
 - For a text replacement that requires special formatting on newly inserted characters, use one explicit `two_pass: true` PatchOperation: Pass 1 inserts the exact replacement under native Track Changes; Pass 2 applies FormatChange only to exact `scope_find`/`scope_offset` spans inside that replacement. Every FormatChange must cite a `source_occurrence_id` from the current semantic/format profile. Workflow Preparation resolves its property values from that source occurrence and rejects stale profiles, unknown occurrences, body/reference cross-borrowing, and paragraph-style mismatches. The engine stores the old effective property snapshot in native `w:rPrChange`. Pure format-only operations with `find == replace` remain supported for existing text.
-- A replacement spanning multiple words must never inherit subscript/superscript across the whole sentence merely because the matched source Run has that vertical alignment. When every selected source character has the same sub/superscript setting, ordinary replacement text is reset to baseline; preserve script only through explicit Unicode script characters or separate token-level Pass-2 FormatChanges. A sub/superscript FormatChange over any whitespace-containing target is refused by the engine.
-- The verifier compares the complete target paragraph in accepted-text order and checks direct Run formatting per character: unchanged source characters retain their original formatting, mapped insertions inherit their declared source Run, and approved FormatChange spans are validated against their historical snapshots. It also checks the exact inserted revision IDs, text, and script alignment. A passing substring-presence check is not sufficient.
+- A replacement spanning multiple words must never inherit subscript/superscript across the whole sentence merely because the matched source Run has that vertical alignment. A mapped replacement segment may retain implicit superscript/subscript only when it is whitespace-free and its length exactly matches the selected source span from that Run. Longer, whitespace-containing or length-mismatched replacement text must be baseline for vertical alignment; restore required script only through explicit Unicode script characters or separate token-level Pass-2 FormatChanges. A sub/superscript FormatChange over any whitespace-containing target is refused by the engine.
+- Verify must independently compare actual inserted character-level vertical alignment against the exact authorized Pass-2 script targets. Any unrequested superscript/subscript character outside those target spans fails Verify, even if the Apply report records the same unexpected formatting. It also checks exact inserted revision IDs, text, full paragraph position, and historical format snapshots. A passing substring-presence check is not sufficient.
 
 ### One-round QA remediation (Phase 7)
 
@@ -559,6 +561,28 @@ python scripts/co_reviewer_cli.py complete-qa-remediation --state "runs/qa-remed
 
 - This command regenerates the accepted-changes projection from the exact published Marked bytes, verifies it against the deterministic compiler, updates the RevisionLedger Clean pointer/hash/fingerprint, and performs the second QA pass. A PASS or PASS_WITH_WARNINGS completes remediation. A second QA FAIL records `BLOCKED`; there is no third attempt. The final Release Gate rejects missing, duplicate, incomplete, failed, or hash-mismatched remediation history.
 
+### Original instruction coverage and approval (mandatory)
+
+Before Apply, split the original task instruction into **atomic requirements**, not merely comment IDs or paragraph-level intents. A single source comment can contain several independent actions (for example, insert two bibliography entries, update a new in-text citation, renumber old bibliography labels, and update every affected in-text occurrence). Record each independently. An unsupported operation must not cause related, independently executable operations to disappear.
+
+After compiling the plan, create `instruction_coverage.json` with:
+- `schema_version: "1.0"`;
+- `source_instruction: {file, sha256}` bound to the exact original instruction file; `file` must be an absolute path.
+- one unique `requirement_id` per atomic requirement;
+- `source_locator` and `instruction_excerpt` pointing to the original wording;
+- `status`: `planned`, `no_change`, `manual_completed`, `not_applicable`, `blocked`, or `deferred`;
+- for `planned`, `revision_targets` must list every exact `{revision_item_id, target_index}` that implements the atomic requirement. Do not link only at revision-item level: an item may contain multiple independent Targets, and every Plan Target must be linked to at least one atomic source requirement;
+- for `no_change` / `not_applicable`, evidence; for `manual_completed`, an evidence file and its SHA-256; for `blocked` / `deferred`, a specific reason;
+- `coverage_sha256`, calculated by `co_reviewer.instruction_coverage.instruction_coverage_sha256` over the manifest excluding the `coverage_sha256` field.
+
+The coverage manifest must enumerate every requested text, format, citation, bibliography, table/figure and cross-document operation. Every compiled Plan Target (not merely each RevisionItem) must link back to at least one `planned` requirement. The manifest validator checks exact target indices and rejects unlinked targets. Show the complete atomic requirement table, disposition, revision-item links, and coverage SHA-256 to the author. Obtain explicit author review of that exact manifest before producing an approval receipt:
+
+```powershell
+python scripts/co_reviewer_cli.py approve-instruction-coverage --coverage "$roundRoot\instruction_coverage.json" --approved-coverage-sha256 <reviewed-coverage-sha256> --approved-by "Human Author" --out "$roundRoot\instruction_coverage_approval.json"
+```
+
+Do not create or claim this approval without the author's explicit approval of the displayed coverage. Any `blocked` or `deferred` requirement remains unresolved and must block Final Gate. A paragraph-insertion limitation may be recorded as one blocked requirement, but independent existing citation/label renumbering must still be assessed and planned separately wherever the package graph and safe Patch workflow support it.
+
 ### Standard Plan Compilation (`compile-plan`)
 
 - Use `compile-plan` as the standard high-level plan compilation path to convert concise edit intents (including inline formatting `*italic*`, `^sup^`, `~sub~`, `**bold**` and explicit `FormatChange` intents) into a validated `revision_plan.json` with two-pass `Text` + `FormatChange` orchestration:
@@ -572,11 +596,13 @@ python scripts/co_reviewer_cli.py compile-plan --intents "$roundRoot\intents.jso
 - Before declaring any deliverable complete, you MUST run `final-gate` and obtain `READY` (exit code `0`):
 
 ```powershell
-python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.json" --verify-report "$roundRoot\verify_report.json" --docs "$roundRoot\manuscript_marked.docx" --out-json "$roundRoot\final_gate_report.json" --out-md "$roundRoot\final_gate_report.md"
+python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.json" --verify-report "$roundRoot\verify_report.json" --instruction-coverage "$roundRoot\instruction_coverage.json" --instruction-coverage-approval "$roundRoot\instruction_coverage_approval.json" --docs "$roundRoot\manuscript_marked.docx" --out-json "$roundRoot\final_gate_report.json" --out-md "$roundRoot\final_gate_report.md"
 ```
 
+- `final-gate` now requires the source-instruction coverage manifest and a separate author-approval receipt. It checks the original instruction file SHA-256, coverage/approval hashes, every atomic disposition, all mapped plan IDs, and that no compiled plan item is unlinked. Missing approval, omitted/unlinked requirements, or any `blocked`/`deferred` requirement returns `BLOCKED`, even when every submitted plan target passes.
 - `final-gate` deterministically enforces:
-  1. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`).
+  1. original instruction coverage is author-approved and complete;
+  2. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`).
   2. `audit-docx-quality` passed (`summary.failures == 0`) on every delivered DOCX.
   3. Microsoft Word COM PDF rendering succeeded with a non-empty `%PDF-` file beside each delivered DOCX.
   4. **Zero-Silent-Fallback**: silent fallback to `manual_fallback_checklist.md`, unapplied `manual_suggestions/*.json`, `blocked`/`failed` targets, or skipped `FormatChange` operations is strictly forbidden. Any non-zero `manual_fallback_count`, `blocked_count`, or `skipped_format_ops` causes `final-gate` to return `BLOCKED` (exit code `1`) unless the user has explicitly approved the waiver and `--waive-fallback-reason` is recorded in both `final_gate_report.json` and `final_gate_report.md`.

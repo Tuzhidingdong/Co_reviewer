@@ -73,6 +73,43 @@ class NumberingTransactionTests(unittest.TestCase):
         )
         return plan, sources
 
+    def test_citation_numbering_graph_maps_bibliography_labels_and_inline_mentions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manuscript = root / "Manuscript.docx"
+            self._document(manuscript, [
+                "This spectral assignment is supported by [1].",
+                "References",
+                "[1] Example Author. Journal of Synthetic Results (1997).",
+            ])
+            graph = build_package_reference_graph({
+                "Manuscript": extract_docx_reference_segments(manuscript),
+            })
+            citation_definitions = [
+                row for row in graph["definitions"]
+                if row.get("kind") == "citation" and row.get("number") == "1"
+            ]
+            citation_mentions = [
+                row for row in graph["mentions"]
+                if row.get("kind") == "citation" and row.get("number") == "1"
+            ]
+            self.assertEqual(len(citation_definitions), 1)
+            self.assertEqual(len(citation_mentions), 1)
+            self.assertEqual(citation_mentions[0]["resolution"], "resolved")
+
+            plan = build_numbering_impact_plan(
+                graph,
+                {"Manuscript::citation::1": "3"},
+                {"Manuscript": manuscript},
+            )
+            self.assertEqual(plan["change_counts"]["definitions"], 1)
+            self.assertEqual(plan["change_counts"]["mentions"], 1)
+            self.assertEqual(plan["definition_updates"][0]["old_number"], "1")
+            self.assertEqual(plan["definition_updates"][0]["new_number"], "3")
+            self.assertEqual(plan["mention_updates"][0]["old_number"], "1")
+            self.assertEqual(plan["mention_updates"][0]["new_number"], "3")
+            self.assertFalse(plan["numbering_mutation_authorized"])
+
     def test_numbering_impact_plan_and_authorization_cli_commands_are_connected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
