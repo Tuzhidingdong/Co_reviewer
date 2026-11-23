@@ -604,6 +604,19 @@ python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.js
 ```
 
 - `final-gate` now requires the source-instruction coverage manifest and a separate author-approval receipt. It checks the original instruction file SHA-256, coverage/approval hashes, every atomic disposition, all mapped plan IDs, and that no compiled plan item is unlinked. Missing approval, omitted/unlinked requirements, or any `blocked`/`deferred` requirement returns `BLOCKED`, even when every submitted plan target passes.
+
+- Bind the semantic role of every delivered DOCX explicitly with repeatable `--document-role PATH=ROLE` arguments. The explicit role determines the QA profile and takes precedence over filename hints and the global `--profile`; filename inference is retained only as a legacy fallback when no role binding is supplied. Do not use `generic` or a filename rename to bypass the role-appropriate gate.
+- Supported roles and profile mappings:
+  - `marked` / `marked-manuscript` → `marked-manuscript` (validate the authorized Marked Track Changes state).
+  - `clean` / `clean-manuscript` → `clean-manuscript` (validate that the final Clean document has no unresolved tracked revisions).
+  - `cover-letter` / `response-letter` → `response-letter`.
+  - `si` / `supplementary-information` → `generic` (the document role remains explicit even though the current QA profile is the generic profile).
+  - `word-final-clean` → `word-final-clean`; `generic` → `generic`.
+- Example for a multi-document delivery (use the actual output paths, not source filenames):
+
+```powershell
+python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot/revision_plan.json" --instruction-coverage "$roundRoot/instruction_coverage.json" --instruction-coverage-approval "$roundRoot/instruction_coverage_approval.json" --docs $markedDocx $cleanDocx $coverLetterDocx $siDocx --document-role "$markedDocx=marked-manuscript" --document-role "$cleanDocx=clean-manuscript" --document-role "$coverLetterDocx=cover-letter" --document-role "$siDocx=si" --out-json "$roundRoot/final_gate_report.json" --out-md "$roundRoot/final_gate_report.md"
+```
 - `final-gate` deterministically enforces:
   1. original instruction coverage is author-approved and complete;
   2. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`).
