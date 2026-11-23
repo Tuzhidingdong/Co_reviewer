@@ -24,6 +24,7 @@ def revision_targets_fingerprint(item: dict[str, Any]) -> str:
         "document", "input_file", "output_file", "part", "p_idx", "find",
         "replace", "location", "operation_id", "source_comment_ids",
         "author_decision_ref", "location_phrase", "source_sha256", "target_ref", "target_identity_mode",
+        "action", "anchor_text", "position", "inserted_text",
     )
     targets = [
         {key: target.get(key) for key in target_fields if key in target}
@@ -31,6 +32,8 @@ def revision_targets_fingerprint(item: dict[str, Any]) -> str:
         if isinstance(target, dict)
     ]
     payload = {"targets": targets}
+    if "reference_transaction_sha256" in item:
+        payload["reference_transaction_sha256"] = item.get("reference_transaction_sha256")
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -43,6 +46,8 @@ def revision_item_fingerprint(item: dict[str, Any]) -> str:
         "proposed_response": item.get("proposed_response", ""),
         "targets": item.get("targets", []),
     }
+    if "reference_transaction_sha256" in item:
+        payload["reference_transaction_sha256"] = item.get("reference_transaction_sha256")
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
