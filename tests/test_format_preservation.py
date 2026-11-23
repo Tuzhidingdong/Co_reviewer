@@ -262,33 +262,43 @@ class FormatPreservationTests(unittest.TestCase):
                 "reviewer": "R1",
                 "comment": "Revise the sentence while keeping only ps-1 exponent superscript",
                 "status": "approved",
-                "targets": [{
-                    "document": "Manuscript",
-                    "input_file": str(self.input),
-                    "output_file": str(self.output),
-                    "p_idx": 0,
-                    "find": old,
-                    "replace": new,
-                    "replacement_format_map": [{
-                        "replacement_start": 0,
-                        "replacement_end": len(new),
-                        "source_offset": script_offset,
-                    }],
-                    "two_pass": True,
-                    "authorized_change": {
-                        **cli.compute_token_authorizations(old, new),
-                        "intent": "Revise the sentence wording",
+                "targets": [
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                        "p_idx": 0,
+                        "find": old,
+                        "replace": new,
+                        "replacement_format_map": [{
+                            "replacement_start": 0,
+                            "replacement_end": len(new),
+                            "source_offset": script_offset,
+                        }],
+                        "authorized_change": {
+                            **cli.compute_token_authorizations(old, new),
+                            "intent": "Revise the sentence wording",
+                        },
                     },
-                    "format_authorization": {
-                        "intent": "Only the two-character -1 exponent in ps-1 is superscript",
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(self.input),
+                        "output_file": str(self.output),
+                        "p_idx": 0,
+                        "find": new,
+                        "replace": new,
+                        "authorized_change": {"intent": "Preserve revised sentence wording"},
+                        "format_authorization": {
+                            "intent": "Only the two-character -1 exponent in ps-1 is superscript",
+                        },
+                        "format_operations": [{
+                            "find": "-1",
+                            "scope_find": new,
+                            "scope_offset": new.index("-1"),
+                            "properties": {"vertAlign": "superscript"},
+                        }],
                     },
-                    "format_operations": [{
-                        "find": "-1",
-                        "scope_find": new,
-                        "scope_offset": new.index("-1"),
-                        "properties": {"vertAlign": "superscript"},
-                    }],
-                }],
+                ],
             }],
         }
         plan["revision_items"][0]["approval_fingerprint"] = cli.revision_item_fingerprint(
