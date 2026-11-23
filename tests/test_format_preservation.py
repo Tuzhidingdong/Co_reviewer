@@ -320,6 +320,28 @@ class FormatPreservationTests(unittest.TestCase):
                     scripted.append((run_text, alignment))
             self.assertEqual(scripted, [("-1", "superscript")])
 
+    def test_verify_rejects_script_inherited_outside_authorized_target(self):
+        inserted_text = "The entire sentence is superscript including -1"
+        run = ET.Element(q("r"))
+        rpr = ET.SubElement(run, q("rPr"))
+        vertical = ET.SubElement(rpr, q("vertAlign"))
+        vertical.set(q("val"), "superscript")
+        text_node = ET.SubElement(run, q("t"))
+        text_node.text = inserted_text
+        result = cli._verify_inserted_script_scope(
+            [run],
+            inserted_text,
+            [{
+                "find": "-1",
+                "scope_find": inserted_text,
+                "scope_offset": inserted_text.index("-1"),
+                "properties": {"vertAlign": "superscript"},
+            }],
+        )
+        self.assertFalse(result["passed"])
+        self.assertTrue(result["checked"])
+        self.assertTrue(any("Unrequested superscript" in error for error in result["errors"]))
+
     def test_ambiguous_mixed_style_replacement_still_rejected(self):
         make_styled_docx(self.input, [[
             ("old ", {"b": True}),
