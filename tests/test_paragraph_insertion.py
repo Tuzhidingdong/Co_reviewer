@@ -86,15 +86,27 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         self.assertTrue(verification["passed"], verification)
         self.assertEqual(verification["targets_verified"], 1)
 
-        revised = Document(self.output)
-        visible = [paragraph.text for paragraph in revised.paragraphs]
+        import zipfile
+        from co_reviewer.document_engine import NS, parse_xml, qn, visible_text
+
+        with zipfile.ZipFile(self.output) as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", NS)
+        visible = [visible_text(paragraph) for paragraph in paragraphs]
         self.assertEqual(visible, [
             "Anchor paragraph used for insertion.",
             "New approved paragraph content.",
             "Unchanged trailing paragraph.",
         ])
-        self.assertEqual(revised.paragraphs[1].style.name, "Heading 2")
-        self.assertTrue(revised.paragraphs[1].runs[0].bold)
+        inserted = paragraphs[1]
+        style = inserted.find("w:pPr/w:pStyle", NS)
+        self.assertIsNotNone(style)
+        self.assertEqual(style.get(qn("val")), "Heading2")
+        insertion = inserted.find("w:ins", NS)
+        self.assertIsNotNone(insertion)
+        inserted_run = insertion.find("w:r", NS)
+        bold = inserted_run.find("w:rPr/w:b", NS)
+        self.assertIsNotNone(bold)
 
     def test_before_insertion_is_ordered_before_anchor(self):
         from co_reviewer.document_engine import apply_document, parse_xml, qn
@@ -120,12 +132,11 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
             }],
             "Unit Test Author",
         )
-        revised = Document(output)
-        self.assertEqual(revised.paragraphs[0].text, "Before anchor.")
-        self.assertEqual(revised.paragraphs[1].text, "Anchor paragraph used for insertion.")
-
         with zipfile.ZipFile(output) as archive:
             root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+        self.assertEqual(visible_text(paragraphs[0]), "Before anchor.")
+        self.assertEqual(visible_text(paragraphs[1]), "Anchor paragraph used for insertion.")
         marker = [
             node for node in root.findall(".//w:bookmarkStart", {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
             if (node.get(qn("name")) or "").startswith("_CR_OP_")
