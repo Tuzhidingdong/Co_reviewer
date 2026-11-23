@@ -7038,14 +7038,23 @@ def cmd_compile_reference_transaction(args):
 
 def cmd_build_package_reference_graph(args):
     documents = {}
+    source_files = {}
     for item in args.document:
         if "=" not in item:
             raise ValueError("--document must use ROLE=PATH")
         role, filename = item.split("=", 1)
         if not role or role in documents:
             raise ValueError("Document roles must be non-empty and unique")
-        documents[role] = extract_docx_reference_segments(filename)
+        source_path = Path(filename).expanduser().resolve()
+        if not source_path.is_file() or source_path.suffix.casefold() != ".docx":
+            raise ValueError(f"Reference Graph source must be an existing DOCX: {source_path}")
+        documents[role] = extract_docx_reference_segments(source_path)
+        source_files[role] = {
+            "path": str(source_path),
+            "sha256": sha256_file(source_path),
+        }
     report = build_package_reference_graph(documents)
+    report["source_files"] = source_files
     if args.out:
         write_json_atomic(Path(args.out), report)
         print(f"[REFERENCE GRAPH] {Path(args.out).resolve()}")
