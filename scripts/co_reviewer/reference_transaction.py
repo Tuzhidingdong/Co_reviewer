@@ -194,6 +194,10 @@ def compile_reference_transaction(
         blocked_mentions = {
             item_id: item for item_id, item in matching_mentions.items()
             if item.get("resolution") in {"ambiguous", "manual_review_required"}
+            or (
+                item.get("resolution") in {"resolved", "confirmed_by_user"}
+                and item.get("resolution_scope") == "package"
+            )
             or item.get("group_kind") is not None
             or item.get("panel_range") is not None
             or item.get("reference_mechanism") in {"native_word_field", "footnote_reference"}
@@ -205,7 +209,7 @@ def compile_reference_transaction(
             )
         candidates = {
             item_id for item_id, item in matching_mentions.items()
-            if item.get("resolution") in {"unresolved", "resolved", "confirmed_by_user"}
+            if item.get("resolution") == "unresolved"
         }
         linked_raw = row.get("linked_mention_ids", [])
         if not isinstance(linked_raw, list) or any(not isinstance(x, str) for x in linked_raw):
@@ -480,6 +484,7 @@ def compile_reference_transaction(
                     "document": row["document"],
                     "number": str(row["reference_number"]),
                     "inserted_text": row["inserted_text"],
+                    "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
                     "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
                 }
                 for index, row in enumerate(additions)
@@ -585,16 +590,27 @@ def verify_reference_transaction_outputs(
                     f"Added bibliography definition {role}::{number} resolves to {len(definitions_found)} output definitions."
                 )
                 continue
-            linked_mentions = [
-                row for row in output_graph["mentions"]
-                if row.get("kind") == "citation"
-                and str(row.get("number")) == number
-                and row.get("resolution") in {"resolved", "confirmed_by_user"}
-            ]
-            if len(linked_mentions) != expected.get("linked_mention_count", 0):
+            expected_mention_ids = expected.get("linked_mention_ids", [])
+            output_mentions_by_id = {
+                row.get("id"): row for row in output_graph["mentions"]
+                if isinstance(row, Mapping) and isinstance(row.get("id"), str)
+            }
+            unresolved_links = []
+            for mention_id in expected_mention_ids:
+                mention = output_mentions_by_id.get(mention_id)
+                if (
+                    mention is None
+                    or mention.get("resolution") not in {"resolved", "confirmed_by_user"}
+                    or definitions_found[0]["id"] not in (mention.get("target_definition_ids") or [])
+                ):
+                    unresolved_links.append(mention_id)
+            if (
+                len(expected_mention_ids) != expected.get("linked_mention_count", 0)
+                or unresolved_links
+            ):
                 errors.append(
-                    f"Added definition {role}::{number} resolves to {len(linked_mentions)} citation mention(s); "
-                    f"expected {expected.get('linked_mention_count', 0)}."
+                    f"Added definition {role}::{number} did not resolve the exact expected mention IDs: "
+                    + ", ".join(unresolved_links or ["expected mention ID/count mismatch"])
                 )
 
         for expected in transaction.get("updated_definition_expectations", []):
