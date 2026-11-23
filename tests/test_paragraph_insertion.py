@@ -168,6 +168,67 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "IDEMPOTENT_INSERTION_BLOCKED"):
             apply_document(str(first), str(second), [replay], "Unit Test Author")
 
+    def test_replacement_after_inserted_paragraph_is_verified_at_shifted_output_index(self):
+        plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.source),
+                    "output_file": str(self.output),
+                }
+            },
+            "intents": [
+                {
+                    "id": "INS-SHIFT-001",
+                    "document": "Manuscript",
+                    "action": "insert_paragraph",
+                    "anchor_text": "Anchor paragraph used for insertion.",
+                    "position": "after",
+                    "inserted_text": "Inserted before the original trailing paragraph.",
+                    "p_idx": 0,
+                    "intent": "Insert a new paragraph after the first source paragraph.",
+                },
+                {
+                    "id": "REP-SHIFT-001",
+                    "document": "Manuscript",
+                    "find": "Unchanged trailing paragraph.",
+                    "replace": "Revised trailing paragraph.",
+                    "p_idx": 1,
+                    "intent": "Revise the original trailing paragraph after insertion.",
+                },
+            ],
+        })
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+        self.plan_path.write_text(
+            json.dumps(plan, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(self.plan_path),
+            ids=["INS-SHIFT-001", "REP-SHIFT-001"],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(rc, 0)
+        plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+
+        apply_reports = cli.apply_plan(plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 1)
+        for item in plan["revision_items"]:
+            item["status"] = "applied"
+
+        verification = cli.verify_apply_report(plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_verified"], 2)
+
+        replacement_result = next(
+            row for row in verification["results"]
+            if row.get("action") == "replace"
+        )
+        self.assertEqual(replacement_result["source_p_idx"], 1)
+        self.assertEqual(replacement_result["p_idx"], 2)
+
     def test_patch_operation_insertion_fields_round_trip(self):
         from co_reviewer.revision_models import PatchOperation
 

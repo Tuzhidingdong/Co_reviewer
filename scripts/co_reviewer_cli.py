@@ -2183,18 +2183,53 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         )
                     results.append(result)
                     continue
-                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or not 0 <= p_idx < len(paragraphs):
-                    raise ValueError("Paragraph index from apply report is outside the output document.")
-                paragraph = paragraphs[p_idx]
-                if p_idx >= len(source_paragraphs):
+                source_p_idx = p_idx
+                if (
+                    not isinstance(source_p_idx, int)
+                    or isinstance(source_p_idx, bool)
+                    or not 0 <= source_p_idx < len(source_paragraphs)
+                ):
                     raise ValueError("Paragraph index from apply report is outside the source document.")
-                expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[p_idx])
+
+                # Apply inserts paragraphs into the output package without changing
+                # source-relative p_idx values on subsequent PatchOperations. Map
+                # every original paragraph to its output index before inspecting it.
+                insertions_before_target = 0
+                for insertion_edit in document_report.get("results", []):
+                    if (
+                        insertion_edit.get("status") != "applied"
+                        or insertion_edit.get("action") != "insert_paragraph"
+                        or insertion_edit.get("part", "word/document.xml") != part
+                    ):
+                        continue
+                    anchor_p_idx = insertion_edit.get("p_idx")
+                    insertion_position = insertion_edit.get("position")
+                    if (
+                        not isinstance(anchor_p_idx, int)
+                        or isinstance(anchor_p_idx, bool)
+                        or anchor_p_idx < 0
+                        or insertion_position not in {"before", "after"}
+                    ):
+                        raise ValueError(
+                            "Apply report contains an insertion without a valid source anchor/position; "
+                            "source-to-output paragraph mapping is blocked."
+                        )
+                    if (
+                        anchor_p_idx < source_p_idx
+                        or (anchor_p_idx == source_p_idx and insertion_position == "before")
+                    ):
+                        insertions_before_target += 1
+                output_p_idx = source_p_idx + insertions_before_target
+                if not 0 <= output_p_idx < len(paragraphs):
+                    raise ValueError("Mapped output paragraph index is outside the revised document.")
+                paragraph = paragraphs[output_p_idx]
+                expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[source_p_idx])
                 for batch_edit in document_report.get("results", []):
                     if batch_edit.get("status") != "applied":
                         continue
                     if (
                         batch_edit.get("part", "word/document.xml") != part
-                        or batch_edit.get("p_idx") != p_idx
+                        or batch_edit.get("p_idx") != source_p_idx
                     ):
                         continue
                     anchor_text = batch_edit.get("find")
@@ -2380,7 +2415,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "script_scope_integrity": script_scope_integrity,
                     "format_integrity": format_integrity,
                 }
-                result["p_idx"] = p_idx
+                result["source_p_idx"] = source_p_idx
+                result["p_idx"] = output_p_idx
                 if (
                     old_ok and new_ok and native_script_format_preserved
                     and format_changes_preserved and script_scope_integrity["passed"]
