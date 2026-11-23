@@ -429,6 +429,27 @@ def compile_reference_transaction(
         role_documents = graph.get("documents", [])
         if role not in role_documents:
             raise ReferenceTransactionError(f"Reference Graph does not contain document role {role}.")
+        part = str(raw.get("part") or "word/document.xml")
+        p_idx = _require_index(raw.get("p_idx"), f"additions[{index}].p_idx")
+        document_segments = graph.get("document_segments")
+        if not isinstance(document_segments, Mapping):
+            raise ReferenceTransactionError(
+                "Reference Graph lacks document_segments; rebuild the graph before adding bibliography paragraphs."
+            )
+        role_segments = document_segments.get(role)
+        if not isinstance(role_segments, list):
+            raise ReferenceTransactionError(f"Reference Graph has no paragraph-segment inventory for {role}.")
+        reference_anchor_rows = [
+            segment for segment in role_segments
+            if isinstance(segment, Mapping)
+            and segment.get("part") == part
+            and segment.get("paragraph_index") == p_idx
+            and segment.get("in_reference_section") is True
+        ]
+        if len(reference_anchor_rows) != 1 or part != "word/document.xml":
+            raise ReferenceTransactionError(
+                f"Bibliography insertion {role}/{part}/P[{p_idx}] is not uniquely inside a detected reference section."
+            )
         add_operation(raw, action="insert_paragraph", label=f"additions[{index}]")
 
     for index, row in enumerate(entry_updates):
@@ -483,6 +504,10 @@ def compile_reference_transaction(
                 {
                     "document": row["document"],
                     "number": str(row["reference_number"]),
+                    "operation_id": row["operation_id"],
+                    "part": row.get("part", "word/document.xml"),
+                    "anchor_p_idx": row["p_idx"],
+                    "position": row["position"],
                     "inserted_text": row["inserted_text"],
                     "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
                     "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
