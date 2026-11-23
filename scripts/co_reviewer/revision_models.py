@@ -135,8 +135,29 @@ class PatchOperation:
     format_authorization: Mapping[str, Any] | None = None
     format_operations: tuple[Mapping[str, Any], ...] = ()
     two_pass: bool = False
+    action: str = "replace"
+    anchor_text: str | None = None
+    position: str | None = None
+    inserted_text: str | None = None
 
     def __post_init__(self) -> None:
+        if self.action not in {"replace", "insert_paragraph"}:
+            raise RevisionModelError("PatchOperation action must be replace or insert_paragraph.")
+        if self.action == "insert_paragraph":
+            _text(self.anchor_text, "anchor_text")
+            _text(self.inserted_text, "inserted_text")
+            if self.find != self.anchor_text or self.replace != self.inserted_text:
+                raise RevisionModelError(
+                    "insert_paragraph requires find=anchor_text and replace=inserted_text for legacy plan compatibility."
+                )
+            if self.position not in {"before", "after"}:
+                raise RevisionModelError("insert_paragraph position must be before or after.")
+            if self.part != "word/document.xml":
+                raise RevisionModelError("insert_paragraph is currently supported only in word/document.xml.")
+            if self.format_operations or self.replacement_format_map or self.two_pass:
+                raise RevisionModelError("insert_paragraph cannot be combined with replacement or FormatChange operations.")
+        elif any(value is not None for value in (self.anchor_text, self.position, self.inserted_text)):
+            raise RevisionModelError("Paragraph-insertion fields are valid only for action=insert_paragraph.")
         _text(self.operation_id, "operation_id")
         _text(self.document, "document")
         _safe_docx_path(self.input_file, "input_file")
@@ -357,6 +378,10 @@ class PatchOperation:
             format_authorization=data.get("format_authorization"),
             format_operations=tuple(data.get("format_operations", [])),
             two_pass=data.get("two_pass", False),
+            action=data.get("action", "replace"),
+            anchor_text=data.get("anchor_text"),
+            position=data.get("position"),
+            inserted_text=data.get("inserted_text"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -385,6 +410,9 @@ class PatchOperation:
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
+            **({"action": self.action, "anchor_text": self.anchor_text,
+                "position": self.position, "inserted_text": self.inserted_text}
+               if self.action == "insert_paragraph" else {}),
         }
 
     def to_legacy_target(self) -> dict[str, Any]:
@@ -406,6 +434,9 @@ class PatchOperation:
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
+            **({"action": self.action, "anchor_text": self.anchor_text,
+                "position": self.position, "inserted_text": self.inserted_text}
+               if self.action == "insert_paragraph" else {}),
         }
         if self.p_idx is not None:
             target["p_idx"] = self.p_idx
