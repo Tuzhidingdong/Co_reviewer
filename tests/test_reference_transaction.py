@@ -322,6 +322,14 @@ class ReferenceTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed after the Reference Graph was built"):
             cli.preflight_plan(plan)
 
+    def test_reference_operation_needs_targetref_or_explicit_migration_mode(self):
+        self.spec["entry_updates"][0].pop("target_identity_mode")
+        with self.assertRaisesRegex(
+            ReferenceTransactionError,
+            "must supply a registered TargetRef or explicitly declare",
+        ):
+            compile_reference_transaction(self.spec, self.graph)
+
 
 if __name__ == "__main__":
     unittest.main()
