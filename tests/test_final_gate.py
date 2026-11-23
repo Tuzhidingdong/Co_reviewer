@@ -565,3 +565,19 @@ class DocumentRoleProfileTests(unittest.TestCase):
             _infer_quality_profile(path, "generic", "marked-manuscript"),
             "marked-manuscript",
         )
+
+    def test_cli_accepts_every_declared_document_role_alias(self):
+        bindings = cli._parse_document_roles([
+            "marked.docx=marked-manuscript",
+            "clean.docx=clean",
+            "cover.docx=cover-letter",
+            "si.docx=si",
+            "final.docx=word-final-clean",
+            "other.docx=generic",
+        ])
+        self.assertEqual(bindings[str(Path("cover.docx").resolve())], "cover-letter")
+        self.assertEqual(bindings[str(Path("si.docx").resolve())], "si")
+
+    def test_cli_rejects_roles_not_supported_by_quality_profile_map(self):
+        with self.assertRaisesRegex(ValueError, "Invalid --document-role"):
+            cli._parse_document_roles(["document.docx=unknown-role"])

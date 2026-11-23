@@ -7817,7 +7817,9 @@ def cmd_approve_instruction_coverage(args):
 def _parse_document_roles(values: list[str] | None) -> dict[str, str]:
     """Parse explicit Final Gate document role bindings without filename guessing."""
     result: dict[str, str] = {}
-    allowed = {"marked-manuscript", "clean-manuscript", "response-letter", "supplementary-information", "generic"}
+    from co_reviewer.final_gate import _DOCUMENT_ROLE_PROFILES
+
+    allowed = set(_DOCUMENT_ROLE_PROFILES)
     for value in values or []:
         if "=" not in value:
             raise ValueError("--document-role must use PATH=ROLE.")
@@ -8090,7 +8092,7 @@ def build_parser():
     fg.add_argument(
         "--document-role", action="append", default=[],
         metavar="PATH=ROLE",
-        help="Explicit delivered-document role (repeatable); roles: marked-manuscript, clean-manuscript, response-letter, supplementary-information, generic.",
+        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, cover-letter/response-letter, si/supplementary-information, word-final-clean and generic.",
     )
     fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
     fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")
