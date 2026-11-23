@@ -256,8 +256,9 @@ class FormatPreservationTests(unittest.TestCase):
         new = "The rate reached approximately 19 Å ps-1 in the final ensemble."
         script_offset = old.index("-1")
         make_styled_docx(self.input, [[
-            (old[:-2], {}),
+            (old[:script_offset], {}),
             ("-1", {"vertAlign": "superscript"}),
+            (old[script_offset + 2:], {}),
         ]])
         plan = {
             "schema_version": "1.0",
