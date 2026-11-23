@@ -160,14 +160,30 @@ def compile_reference_transaction(
             raise ReferenceTransactionError(
                 f"Cannot add citation definition {role}::{number}; the Reference Graph already contains that label."
             )
-        candidates = {
-            item_id for item_id, item in mentions.items()
+        matching_mentions = {
+            item_id: item for item_id, item in mentions.items()
             if item.get("kind") == "citation"
             and item.get("document") == role
-            and str(item.get("number")) == number
-            and item.get("resolution") == "unresolved"
-            and not item.get("group_kind")
-            and item.get("reference_mechanism") not in {"native_word_field", "footnote_reference"}
+            and (
+                str(item.get("number")) == number
+                or number in [str(value) for value in item.get("numbers", [])]
+            )
+        }
+        blocked_mentions = {
+            item_id: item for item_id, item in matching_mentions.items()
+            if item.get("resolution") in {"ambiguous", "manual_review_required"}
+            or item.get("group_kind") is not None
+            or item.get("panel_range") is not None
+            or item.get("reference_mechanism") in {"native_word_field", "footnote_reference"}
+        }
+        if blocked_mentions:
+            raise ReferenceTransactionError(
+                f"Cannot add {role}::{number} while same-number citation mentions are ambiguous, grouped, ranged or field-generated: "
+                + ", ".join(sorted(blocked_mentions))
+            )
+        candidates = {
+            item_id for item_id, item in matching_mentions.items()
+            if item.get("resolution") in {"unresolved", "resolved", "confirmed_by_user"}
         }
         linked_raw = row.get("linked_mention_ids", [])
         if not isinstance(linked_raw, list) or any(not isinstance(x, str) for x in linked_raw):
@@ -206,6 +222,11 @@ def compile_reference_transaction(
             raise ReferenceTransactionError(
                 f"Citation update {mention_id} find must exactly equal its graph-grounded mention text."
             )
+        expected_number = str(row.get("new_number", ""))
+        if not expected_number.isdigit() or row.get("replace") != expected_number:
+            raise ReferenceTransactionError(
+                f"Citation update {mention_id} replace must be the exact new numeric citation label."
+            )
         _exact_role_position(
             mention,
             document=str(row.get("document") or ""),
@@ -239,7 +260,22 @@ def compile_reference_transaction(
             )
         old_number = str(definition.get("number"))
         new_number = str(row.get("new_number", old_number))
+        if not new_number.isdigit():
+            raise ReferenceTransactionError(
+                f"Entry update {definition_id} new_number must be a numeric citation label."
+            )
         if new_number != old_number:
+            old_surface = str(definition.get("surface_text") or definition.get("text") or "")
+            if old_number not in old_surface:
+                raise ReferenceTransactionError(
+                    f"Reference Graph definition {definition_id} has no exact old-number surface to relabel."
+                )
+            expected_surface = old_surface.replace(old_number, new_number, 1)
+            if expected_surface not in replace_text:
+                raise ReferenceTransactionError(
+                    f"Entry update {definition_id} replacement does not contain the graph-style relabelled definition "
+                    f"{expected_surface!r}."
+                )
             linked_mentions = {
                 mention_id for mention_id, mention in mentions.items()
                 if definition_id in (mention.get("target_definition_ids") or [])
@@ -265,6 +301,37 @@ def compile_reference_transaction(
                         f"Citation update {mention_id} does not declare new_number={new_number}."
                     )
             changed_definition_ids.add(definition_id)
+
+    # Validate the entire post-transaction label namespace, not only each local
+    # edit. Duplicate labels would make the output graph ambiguous even if every
+    # individual PatchOperation passed its text and token checks.
+    update_by_definition = {
+        str(row.get("definition_id")): str(row.get("new_number"))
+        for row in entry_updates
+        if isinstance(row, Mapping)
+    }
+    final_labels: dict[tuple[str, str], list[str]] = {}
+    for definition_id, definition in definitions.items():
+        if definition.get("kind") != "citation":
+            continue
+        role = str(definition.get("document"))
+        number = update_by_definition.get(definition_id, str(definition.get("number")))
+        final_labels.setdefault((role, number), []).append(definition_id)
+    for index, row in enumerate(additions):
+        key = (str(row.get("document")), str(row.get("reference_number")))
+        final_labels.setdefault(key, []).append(f"addition:{index}")
+    collisions_after_transaction = {
+        key: identifiers for key, identifiers in final_labels.items()
+        if len(identifiers) > 1
+    }
+    if collisions_after_transaction:
+        detail = "; ".join(
+            f"{role}::{number} -> {', '.join(sorted(ids))}"
+            for (role, number), ids in sorted(collisions_after_transaction.items())
+        )
+        raise ReferenceTransactionError(
+            "Reference transaction would produce duplicate bibliography labels: " + detail
+        )
 
     operations: list[PatchOperation] = []
     operation_ids: set[str] = set()
