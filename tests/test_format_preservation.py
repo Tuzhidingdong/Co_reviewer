@@ -14,6 +14,7 @@ from co_reviewer.document_engine import (
     replace_in_paragraph,
     visible_text,
 )
+from co_reviewer.plan_compiler import compute_token_authorizations
 
 
 def q(local: str) -> str:
@@ -197,11 +198,15 @@ class FormatPreservationTests(unittest.TestCase):
                     "replace": replacement,
                     "two_pass": True,
                     "authorized_change": {"intent": "Revise sentence wording"},
-                    "format_authorization": {"intent": "Italicize N and subscript HB only"},
+                    "format_authorization": {
+                        "intent": "Italicize N and subscript HB only",
+                        "semantic_profile_sha256": "a" * 64,
+                        "format_zone": "body",
+                    },
                     "format_operations": [
-                        {"find": "N", "properties": {"i": True}},
-                        {"find": "HB", "properties": {"vertAlign": "subscript"}},
-                        {"find": "-1", "properties": {"vertAlign": "superscript"}},
+                        {"find": "N", "scope_find": replacement, "scope_offset": replacement.index("N"), "properties": {"i": True}},
+                        {"find": "HB", "scope_find": replacement, "scope_offset": replacement.index("HB"), "properties": {"vertAlign": "subscript"}},
+                        {"find": "-1", "scope_find": replacement, "scope_offset": replacement.index("-1"), "properties": {"vertAlign": "superscript"}},
                     ],
                 }],
             }],
@@ -276,7 +281,7 @@ class FormatPreservationTests(unittest.TestCase):
                             "source_offset": script_offset,
                         }],
                         "authorized_change": {
-                            **cli.compute_token_authorizations(old, new),
+                            **compute_token_authorizations(old, new),
                             "intent": "Revise the sentence wording",
                         },
                     },
