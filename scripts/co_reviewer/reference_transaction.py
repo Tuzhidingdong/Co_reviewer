@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from .document_engine import normalize_script_characters
 from .revision_models import Patch, PatchOperation, RevisionModelError
 from .v232_contract import ContractError, narrow_revision
 
@@ -509,6 +510,7 @@ def compile_reference_transaction(
                     "anchor_p_idx": row["p_idx"],
                     "position": row["position"],
                     "inserted_text": row["inserted_text"],
+                    "visible_inserted_text": normalize_script_characters(row["inserted_text"]),
                     "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
                     "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
                 }
@@ -659,7 +661,7 @@ def verify_reference_transaction_outputs(
                 definition.get("part") != inserted_part
                 or definition.get("paragraph_index") != inserted_p_idx
                 or not isinstance(paragraph_segment, Mapping)
-                or paragraph_segment.get("text") != expected.get("inserted_text")
+                or paragraph_segment.get("text") != expected.get("visible_inserted_text", expected.get("inserted_text"))
             ):
                 errors.append(
                     f"Added bibliography definition {role}::{number} is not at the exact inserted paragraph "
