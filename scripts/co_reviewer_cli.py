@@ -8162,7 +8162,7 @@ def build_parser():
     fg.add_argument(
         "--document-role", action="append", default=[],
         metavar="PATH=ROLE",
-        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, cover-letter, response-letter, si/supplementary-information, word-final-clean and generic.",
+        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, marked-si/marked-supplementary-information, clean-si/clean-supplementary-information, cover-letter, response-letter, si/supplementary-information, word-final-clean and generic.",
     )
     fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
     fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")

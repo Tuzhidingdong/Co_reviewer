@@ -575,17 +575,45 @@ class DocumentRoleProfileTests(unittest.TestCase):
             "cover-letter",
         )
 
+    def test_clean_and_marked_si_roles_apply_state_gates_without_imposing_manuscript_typography(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("supporting-information.docx")
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "clean-si"),
+            "clean-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-si"),
+            "marked-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "clean-supplementary-information"),
+            "clean-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-supplementary-information"),
+            "marked-manuscript",
+        )
     def test_cli_accepts_every_declared_document_role_alias(self):
         bindings = cli._parse_document_roles([
             "marked.docx=marked-manuscript",
             "clean.docx=clean",
             "cover.docx=cover-letter",
             "si.docx=si",
+            "clean-si.docx=clean-si",
+            "marked-si.docx=marked-si",
+            "clean-si-full.docx=clean-supplementary-information",
+            "marked-si-full.docx=marked-supplementary-information",
             "final.docx=word-final-clean",
             "other.docx=generic",
         ])
         self.assertEqual(bindings[str(Path("cover.docx").resolve())], "cover-letter")
         self.assertEqual(bindings[str(Path("si.docx").resolve())], "si")
+        self.assertEqual(bindings[str(Path("clean-si.docx").resolve())], "clean-si")
+        self.assertEqual(bindings[str(Path("marked-si.docx").resolve())], "marked-si")
+        self.assertEqual(bindings[str(Path("clean-si-full.docx").resolve())], "clean-supplementary-information")
+        self.assertEqual(bindings[str(Path("marked-si-full.docx").resolve())], "marked-supplementary-information")
 
     def test_cli_rejects_roles_not_supported_by_quality_profile_map(self):
         with self.assertRaisesRegex(ValueError, "Invalid --document-role"):

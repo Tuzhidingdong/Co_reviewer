@@ -43,6 +43,10 @@ _DOCUMENT_ROLE_PROFILES = {
     "response-letter": "response-letter",
     "si": "generic",
     "supplementary-information": "generic",
+    "clean-si": "clean-manuscript",
+    "clean-supplementary-information": "clean-manuscript",
+    "marked-si": "marked-manuscript",
+    "marked-supplementary-information": "marked-manuscript",
     "generic": "generic",
 }
 

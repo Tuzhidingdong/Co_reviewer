@@ -611,12 +611,14 @@ python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.js
   - `clean` / `clean-manuscript` → `clean-manuscript` (validate that the final Clean document has no unresolved tracked revisions).
   - `cover-letter` → `cover-letter` (requires no tracked revisions and no Word comments; does not impose a journal-specific Normal-style font or size).
   - `response-letter` → `response-letter` (retains the dedicated Response Letter typography checks).
-  - `si` / `supplementary-information` → `generic` (the document role remains explicit even though the current QA profile is the generic profile).
+  - `si` / `supplementary-information` → `generic` for an SI source whose Clean/Marked state is not being asserted at this gate.
+  - `clean-si` / `clean-supplementary-information` → `clean-manuscript` (reject unresolved tracked revisions and Word comments without imposing manuscript typography).
+  - `marked-si` / `marked-supplementary-information` → `marked-manuscript` (inventory the authorized Marked revisions without imposing manuscript typography).
   - `word-final-clean` → `word-final-clean`; `generic` → `generic`.
 - Example for a multi-document delivery (use the actual output paths, not source filenames):
 
 ```powershell
-python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot/revision_plan.json" --instruction-coverage "$roundRoot/instruction_coverage.json" --instruction-coverage-approval "$roundRoot/instruction_coverage_approval.json" --docs $markedDocx $cleanDocx $coverLetterDocx $siDocx --document-role "$markedDocx=marked-manuscript" --document-role "$cleanDocx=clean-manuscript" --document-role "$coverLetterDocx=cover-letter" --document-role "$siDocx=si" --out-json "$roundRoot/final_gate_report.json" --out-md "$roundRoot/final_gate_report.md"
+python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot/revision_plan.json" --verify-report "$roundRoot/verify_report.json" --instruction-coverage "$roundRoot/instruction_coverage.json" --instruction-coverage-approval "$roundRoot/instruction_coverage_approval.json" --docs $markedDocx $cleanDocx $coverLetterDocx $siDocx --document-role "$markedDocx=marked-manuscript" --document-role "$cleanDocx=clean-manuscript" --document-role "$coverLetterDocx=cover-letter" --document-role "$siDocx=clean-si" --out-json "$roundRoot/final_gate_report.json" --out-md "$roundRoot/final_gate_report.md"
 ```
 - `final-gate` deterministically enforces:
   1. original instruction coverage is author-approved and complete;
