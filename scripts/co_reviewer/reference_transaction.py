@@ -602,6 +602,20 @@ def verify_reference_transaction_outputs(
             extracted_documents[str(role)] = extract_docx_reference_segments(candidate)
         output_graph = build_package_reference_graph(extracted_documents)
         errors: list[str] = []
+        applied_operations = [
+            row
+            for report in apply_reports
+            for row in report.get("results", [])
+            if isinstance(row, Mapping) and isinstance(row.get("operation_id"), str)
+        ]
+        segments_by_document = {
+            role: {
+                (row.get("part"), row.get("paragraph_index")): row
+                for row in segments
+                if isinstance(row, Mapping)
+            }
+            for role, segments in extracted_documents.items()
+        }
 
         for expected in transaction.get("added_definition_expectations", []):
             role, number = expected.get("document"), str(expected.get("number"))
@@ -613,6 +627,43 @@ def verify_reference_transaction_outputs(
             if len(definitions_found) != 1:
                 errors.append(
                     f"Added bibliography definition {role}::{number} resolves to {len(definitions_found)} output definitions."
+                )
+                continue
+            operation_id = expected.get("operation_id")
+            operation_results = [
+                row for row in applied_operations
+                if row.get("operation_id") == operation_id
+            ]
+            if len(operation_results) != 1:
+                errors.append(
+                    f"Bibliography insertion operation {operation_id} has {len(operation_results)} Apply results; expected exactly one."
+                )
+                continue
+            operation_result = operation_results[0]
+            inserted_p_idx = operation_result.get("inserted_p_idx")
+            inserted_part = operation_result.get("part", "word/document.xml")
+            if (
+                operation_result.get("action") != "insert_paragraph"
+                or operation_result.get("status") != "applied"
+                or not isinstance(inserted_p_idx, int)
+                or isinstance(inserted_p_idx, bool)
+                or inserted_p_idx < 0
+            ):
+                errors.append(
+                    f"Bibliography insertion operation {operation_id} lacks a verified inserted paragraph location."
+                )
+                continue
+            definition = definitions_found[0]
+            paragraph_segment = segments_by_document.get(role, {}).get((inserted_part, inserted_p_idx))
+            if (
+                definition.get("part") != inserted_part
+                or definition.get("paragraph_index") != inserted_p_idx
+                or not isinstance(paragraph_segment, Mapping)
+                or paragraph_segment.get("text") != expected.get("inserted_text")
+            ):
+                errors.append(
+                    f"Added bibliography definition {role}::{number} is not at the exact inserted paragraph "
+                    f"reported by operation {operation_id}."
                 )
                 continue
             expected_mention_ids = expected.get("linked_mention_ids", [])
