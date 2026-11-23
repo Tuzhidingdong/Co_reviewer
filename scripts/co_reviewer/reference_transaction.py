@@ -482,60 +482,68 @@ def compile_reference_transaction(
     graph_digest = hashlib.sha256(
         json.dumps(graph, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    transaction_record = {
+        "transaction_id": transaction_id,
+        "reference_graph_sha256": graph_digest,
+        "definition_ids_added": [
+            {
+                "document": row["document"],
+                "number": str(row["reference_number"]),
+                "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
+            }
+            for index, row in enumerate(additions)
+        ],
+        "definition_ids_updated": sorted(changed_definition_ids),
+        "citation_mention_ids_updated": sorted(citation_rows_by_mention),
+        "operation_ids": [operation.operation_id for operation in operations],
+        "documents": copy.deepcopy(normalized_documents),
+        "added_definition_expectations": [
+            {
+                "document": row["document"],
+                "number": str(row["reference_number"]),
+                "operation_id": row["operation_id"],
+                "part": row.get("part", "word/document.xml"),
+                "anchor_p_idx": row["p_idx"],
+                "position": row["position"],
+                "inserted_text": row["inserted_text"],
+                "visible_inserted_text": normalize_script_characters(row["inserted_text"]),
+                "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
+                "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
+            }
+            for index, row in enumerate(additions)
+        ],
+        "updated_definition_expectations": [
+            {
+                "document": row["document"],
+                "old_number": str(definitions[row["definition_id"]].get("number")),
+                "new_number": str(row.get("new_number", definitions[row["definition_id"]].get("number"))),
+                "updated_entry_text": row["replace"],
+            }
+            for row in entry_updates
+        ],
+        "updated_mention_expectations": [
+            {
+                "document": row["document"],
+                "old_number": str(mentions[row["mention_id"]].get("number")),
+                "new_number": str(row["new_number"]),
+                "mention_id": row["mention_id"],
+            }
+            for row in citation_updates
+        ],
+        "status": "pending_author_approval",
+    }
+    transaction_fingerprint = hashlib.sha256(
+        json.dumps(
+            transaction_record, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    transaction_record["transaction_fingerprint"] = transaction_fingerprint
+    item["reference_transaction_sha256"] = transaction_fingerprint
     return {
         "schema_version": "1.0",
         "approved": False,
         "revision_items": [item],
-        "reference_transaction": {
-            "transaction_id": transaction_id,
-            "reference_graph_sha256": graph_digest,
-            "definition_ids_added": [
-                {
-                    "document": row["document"],
-                    "number": str(row["reference_number"]),
-                    "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
-                }
-                for index, row in enumerate(additions)
-            ],
-            "definition_ids_updated": sorted(changed_definition_ids),
-            "citation_mention_ids_updated": sorted(citation_rows_by_mention),
-            "operation_ids": [operation.operation_id for operation in operations],
-            "documents": copy.deepcopy(normalized_documents),
-            "added_definition_expectations": [
-                {
-                    "document": row["document"],
-                    "number": str(row["reference_number"]),
-                    "operation_id": row["operation_id"],
-                    "part": row.get("part", "word/document.xml"),
-                    "anchor_p_idx": row["p_idx"],
-                    "position": row["position"],
-                    "inserted_text": row["inserted_text"],
-                    "visible_inserted_text": normalize_script_characters(row["inserted_text"]),
-                    "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
-                    "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
-                }
-                for index, row in enumerate(additions)
-            ],
-            "updated_definition_expectations": [
-                {
-                    "document": row["document"],
-                    "old_number": str(definitions[row["definition_id"]].get("number")),
-                    "new_number": str(row.get("new_number", definitions[row["definition_id"]].get("number"))),
-                    "updated_entry_text": row["replace"],
-                }
-                for row in entry_updates
-            ],
-            "updated_mention_expectations": [
-                {
-                    "document": row["document"],
-                    "old_number": str(mentions[row["mention_id"]].get("number")),
-                    "new_number": str(row["new_number"]),
-                    "mention_id": row["mention_id"],
-                }
-                for row in citation_updates
-            ],
-            "status": "pending_author_approval",
-        },
+        "reference_transaction": transaction_record,
     }
 
 
