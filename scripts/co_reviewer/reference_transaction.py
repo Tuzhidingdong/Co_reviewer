@@ -139,6 +139,26 @@ def compile_reference_transaction(
         if not isinstance(rows, list):
             raise ReferenceTransactionError(f"{name} must be an array.")
 
+    graph_sources = graph.get("source_files")
+    if not isinstance(graph_sources, Mapping):
+        raise ReferenceTransactionError(
+            "Reference Graph is not source-hash-bound. Rebuild it with build-package-reference-graph before compiling a transaction."
+        )
+    for role, document in normalized_documents.items():
+        graph_source = graph_sources.get(role)
+        if not isinstance(graph_source, Mapping):
+            raise ReferenceTransactionError(f"Reference Graph has no source-file record for document role {role}.")
+        graph_path = Path(_require_text(graph_source.get("path"), f"graph.source_files.{role}.path")).expanduser().resolve()
+        input_path = Path(document["input_file"]).expanduser().resolve()
+        if graph_path != input_path:
+            raise ReferenceTransactionError(
+                f"Reference Graph source path for {role} differs from the transaction input DOCX."
+            )
+        if graph_source.get("sha256") != document["source_sha256"]:
+            raise ReferenceTransactionError(
+                f"Reference Graph source SHA-256 for {role} is stale; rebuild the graph from the exact transaction input."
+            )
+
     # A new definition can only be linked to the exact unresolved static mentions
     # that already carry the same citation number in that document. Native fields,
     # grouped/ranged citations and ambiguous mentions remain manual-review items.
@@ -501,24 +521,49 @@ def verify_reference_transaction_outputs(
         document_registry = transaction.get("documents")
         if not isinstance(document_registry, Mapping) or not document_registry:
             raise ReferenceTransactionError("Reference transaction has no document path registry.")
-        applied_roles = {
-            row.get("document")
-            for report in apply_reports
-            for row in report.get("results", [])
-            if isinstance(row, Mapping)
-        }
+        reports_by_role: dict[str, list[Mapping[str, Any]]] = {}
+        for report in apply_reports:
+            if not isinstance(report, Mapping):
+                continue
+            for row in report.get("results", []):
+                if isinstance(row, Mapping) and isinstance(row.get("document"), str):
+                    reports_by_role.setdefault(row["document"], []).append(report)
         extracted_documents: dict[str, Any] = {}
         selected_paths: dict[str, str] = {}
         for role, paths in document_registry.items():
             if not isinstance(paths, Mapping):
                 raise ReferenceTransactionError(f"Reference transaction path entry for {role} is invalid.")
-            candidate = (
-                str(paths.get("output_file"))
-                if role in applied_roles and Path(str(paths.get("output_file", ""))).is_file()
-                else str(paths.get("input_file"))
-            )
-            if not Path(candidate).is_file():
-                raise ReferenceTransactionError(f"Reference transaction document is missing: {candidate}")
+            input_path = Path(_require_text(paths.get("input_file"), f"transaction.documents.{role}.input_file")).expanduser().resolve()
+            output_path = Path(_require_text(paths.get("output_file"), f"transaction.documents.{role}.output_file")).expanduser().resolve()
+            expected_source_sha = _require_text(paths.get("source_sha256"), f"transaction.documents.{role}.source_sha256")
+            if not input_path.is_file() or _source_hash(str(input_path)) != expected_source_sha:
+                raise ReferenceTransactionError(
+                    f"Reference transaction input DOCX for {role} no longer matches its graph-bound source SHA-256."
+                )
+            role_reports = reports_by_role.get(str(role), [])
+            if role_reports:
+                if len(role_reports) != 1:
+                    raise ReferenceTransactionError(
+                        f"Reference transaction role {role} maps to {len(role_reports)} Apply reports; expected exactly one."
+                    )
+                report = role_reports[0]
+                reported_input = Path(_require_text(report.get("input_file"), f"Apply report {role}.input_file")).expanduser().resolve()
+                reported_output = Path(_require_text(report.get("output_file"), f"Apply report {role}.output_file")).expanduser().resolve()
+                if reported_input != input_path or reported_output != output_path:
+                    raise ReferenceTransactionError(
+                        f"Apply report paths for {role} differ from its graph-bound transaction paths."
+                    )
+                if report.get("input_sha256") != expected_source_sha:
+                    raise ReferenceTransactionError(
+                        f"Apply report input SHA-256 for {role} differs from the graph-bound transaction source."
+                    )
+                if not output_path.is_file() or report.get("output_sha256") != _source_hash(str(output_path)):
+                    raise ReferenceTransactionError(
+                        f"Applied output DOCX for {role} is missing or its SHA-256 differs from the Apply report."
+                    )
+                candidate = str(output_path)
+            else:
+                candidate = str(input_path)
             selected_paths[str(role)] = candidate
             extracted_documents[str(role)] = extract_docx_reference_segments(candidate)
         output_graph = build_package_reference_graph(extracted_documents)
