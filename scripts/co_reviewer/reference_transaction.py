@@ -385,6 +385,141 @@ def compile_reference_transaction(
             "definition_ids_updated": sorted(changed_definition_ids),
             "citation_mention_ids_updated": sorted(citation_rows_by_mention),
             "operation_ids": [operation.operation_id for operation in operations],
+            "documents": copy.deepcopy(normalized_documents),
+            "added_definition_expectations": [
+                {
+                    "document": row["document"],
+                    "number": str(row["reference_number"]),
+                    "inserted_text": row["inserted_text"],
+                    "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
+                }
+                for index, row in enumerate(additions)
+            ],
+            "updated_definition_expectations": [
+                {
+                    "document": row["document"],
+                    "old_number": str(definitions[row["definition_id"]].get("number")),
+                    "new_number": str(row.get("new_number", definitions[row["definition_id"]].get("number"))),
+                    "updated_entry_text": row["replace"],
+                }
+                for row in entry_updates
+            ],
+            "updated_mention_expectations": [
+                {
+                    "document": row["document"],
+                    "old_number": str(mentions[row["mention_id"]].get("number")),
+                    "new_number": str(row["new_number"]),
+                    "mention_id": row["mention_id"],
+                }
+                for row in citation_updates
+            ],
             "status": "pending_author_approval",
         },
     }
+
+
+def verify_reference_transaction_outputs(
+    plan: Mapping[str, Any],
+    apply_reports: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild the package Reference Graph from output DOCX files and verify the transaction."""
+    transaction = plan.get("reference_transaction")
+    if not isinstance(transaction, Mapping):
+        return {"passed": True, "checked": False, "errors": []}
+    try:
+        from .v232_contract import build_package_reference_graph, extract_docx_reference_segments
+
+        document_registry = transaction.get("documents")
+        if not isinstance(document_registry, Mapping) or not document_registry:
+            raise ReferenceTransactionError("Reference transaction has no document path registry.")
+        applied_roles = {
+            row.get("document")
+            for report in apply_reports
+            for row in report.get("results", [])
+            if isinstance(row, Mapping)
+        }
+        extracted_documents: dict[str, Any] = {}
+        selected_paths: dict[str, str] = {}
+        for role, paths in document_registry.items():
+            if not isinstance(paths, Mapping):
+                raise ReferenceTransactionError(f"Reference transaction path entry for {role} is invalid.")
+            candidate = (
+                str(paths.get("output_file"))
+                if role in applied_roles and Path(str(paths.get("output_file", ""))).is_file()
+                else str(paths.get("input_file"))
+            )
+            if not Path(candidate).is_file():
+                raise ReferenceTransactionError(f"Reference transaction document is missing: {candidate}")
+            selected_paths[str(role)] = candidate
+            extracted_documents[str(role)] = extract_docx_reference_segments(candidate)
+        output_graph = build_package_reference_graph(extracted_documents)
+        errors: list[str] = []
+
+        for expected in transaction.get("added_definition_expectations", []):
+            role, number = expected.get("document"), str(expected.get("number"))
+            definitions_found = [
+                row for row in output_graph["definitions"]
+                if row.get("document") == role and row.get("kind") == "citation"
+                and str(row.get("number")) == number
+            ]
+            if len(definitions_found) != 1:
+                errors.append(
+                    f"Added bibliography definition {role}::{number} resolves to {len(definitions_found)} output definitions."
+                )
+                continue
+            linked_mentions = [
+                row for row in output_graph["mentions"]
+                if row.get("document") == role and row.get("kind") == "citation"
+                and str(row.get("number")) == number and row.get("resolution") == "resolved"
+            ]
+            if len(linked_mentions) != expected.get("linked_mention_count", 0):
+                errors.append(
+                    f"Added definition {role}::{number} resolves to {len(linked_mentions)} citation mention(s); "
+                    f"expected {expected.get('linked_mention_count', 0)}."
+                )
+
+        for expected in transaction.get("updated_definition_expectations", []):
+            role = expected.get("document")
+            new_number = str(expected.get("new_number"))
+            definitions_found = [
+                row for row in output_graph["definitions"]
+                if row.get("document") == role and row.get("kind") == "citation"
+                and str(row.get("number")) == new_number
+            ]
+            if len(definitions_found) != 1:
+                errors.append(
+                    f"Updated bibliography definition {role}::{new_number} resolves to {len(definitions_found)} output definitions."
+                )
+
+        expected_mentions_by_key: dict[tuple[str, str], int] = {}
+        for expected in transaction.get("updated_mention_expectations", []):
+            key = (str(expected.get("document")), str(expected.get("new_number")))
+            expected_mentions_by_key[key] = expected_mentions_by_key.get(key, 0) + 1
+        for (role, number), count in expected_mentions_by_key.items():
+            actual = [
+                row for row in output_graph["mentions"]
+                if row.get("document") == role and row.get("kind") == "citation"
+                and str(row.get("number")) == number
+                and row.get("resolution") in {"resolved", "confirmed_by_user"}
+            ]
+            if len(actual) < count:
+                errors.append(
+                    f"Output Reference Graph has {len(actual)} resolved mention(s) for {role}::{number}; "
+                    f"at least {count} were expected after the transaction."
+                )
+
+        graph_digest = hashlib.sha256(
+            json.dumps(output_graph, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "passed": not errors,
+            "checked": True,
+            "errors": errors,
+            "output_reference_graph_sha256": graph_digest,
+            "definition_count": len(output_graph["definitions"]),
+            "mention_count": len(output_graph["mentions"]),
+            "unresolved_count": output_graph["unresolved_count"],
+            "documents": selected_paths,
+        }
+    except (OSError, KeyError, TypeError, ValueError, ContractError) as exc:
+        return {"passed": False, "checked": True, "errors": [str(exc)]}
