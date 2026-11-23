@@ -53,13 +53,13 @@ def _infer_quality_profile(
     explicit_role: str | None = None,
 ) -> str:
     """Resolve QA profile from explicit document role before legacy filename hints."""
-    if explicit_profile:
-        return explicit_profile
     if explicit_role:
         role = explicit_role.strip().lower()
         if role not in _DOCUMENT_ROLE_PROFILES:
             raise ValueError(f"Unsupported document role: {explicit_role!r}")
         return _DOCUMENT_ROLE_PROFILES[role]
+    if explicit_profile:
+        return explicit_profile
     stem = docx_path.stem.lower()
     if "marked" in stem:
         return "marked-manuscript"
