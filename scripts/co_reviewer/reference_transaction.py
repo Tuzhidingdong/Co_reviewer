@@ -442,7 +442,20 @@ def compile_reference_transaction(
         if not isinstance(evidence_ids, list) or any(not isinstance(x, str) or not x.strip() for x in evidence_ids):
             raise ReferenceTransactionError(f"{label}.evidence_ids must be a string array.")
         target_ref = raw.get("target_ref")
-        target_identity_mode = "stable_target_ref" if target_ref is not None else "legacy_p_idx_explicit"
+        requested_identity_mode = raw.get("target_identity_mode")
+        if target_ref is not None:
+            if requested_identity_mode not in {None, "stable_target_ref"}:
+                raise ReferenceTransactionError(
+                    f"{label}.target_ref requires target_identity_mode=stable_target_ref."
+                )
+            target_identity_mode = "stable_target_ref"
+        else:
+            if requested_identity_mode != "legacy_p_idx_explicit":
+                raise ReferenceTransactionError(
+                    f"{label} must supply a registered TargetRef or explicitly declare "
+                    "target_identity_mode=legacy_p_idx_explicit for migration-only paragraph-index compatibility."
+                )
+            target_identity_mode = "legacy_p_idx_explicit"
         data: dict[str, Any] = {
             "operation_id": operation_id,
             "document": role,
