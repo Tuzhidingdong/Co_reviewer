@@ -144,14 +144,14 @@ class FinalGateTests(unittest.TestCase):
                     "source_locator": "Synthetic instruction line 1",
                     "instruction_excerpt": "Synthetic requirement one.",
                     "status": "planned",
-                    "revision_item_ids": ["REV-1"],
+                    "revision_targets": [{"revision_item_id": "REV-1", "target_index": 0}],
                 },
                 {
                     "requirement_id": "REQ-2",
                     "source_locator": "Synthetic instruction line 2",
                     "instruction_excerpt": "Synthetic requirement two.",
                     "status": "planned",
-                    "revision_item_ids": ["REV-2"],
+                    "revision_targets": [{"revision_item_id": "REV-2", "target_index": 0}],
                 },
             ],
         }
@@ -305,11 +305,38 @@ class FinalGateTests(unittest.TestCase):
         self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
         self.assertTrue(any("remains blocked" in item for item in report["blockers"]))
 
+    def test_final_gate_blocks_unlinked_target_inside_mapped_revision_item(self):
+        from copy import deepcopy
+
+        coverage = deepcopy(self.instruction_coverage)
+        coverage["requirements"][1]["revision_targets"] = [
+            {"revision_item_id": "REV-2", "target_index": 5}
+        ]
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        approval = authorize_instruction_coverage(
+            coverage,
+            coverage["coverage_sha256"],
+            "Human Author",
+            approved_at_utc="2026-11-23T10:00:00+00:00",
+        )
+        report = evaluate_final_gate(
+            plan=self.plan,
+            verify_report=self.verify_report,
+            apply_reports=self.apply_reports,
+            docs=[self.clean_docx],
+            skip_word_com=True,
+            instruction_coverage=coverage,
+            instruction_coverage_approval=approval,
+        )
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
+        self.assertTrue(any("invalid target index 5" in item for item in report["blockers"]))
+
     def test_final_gate_blocks_unlinked_compiled_plan_item(self):
         from copy import deepcopy
 
         coverage = deepcopy(self.instruction_coverage)
-        coverage["requirements"][1]["revision_item_ids"] = ["REV-UNKNOWN"]
+        coverage["requirements"][1]["revision_targets"] = [{"revision_item_id": "REV-UNKNOWN", "target_index": 0}]
         coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
         approval = authorize_instruction_coverage(
             coverage,
