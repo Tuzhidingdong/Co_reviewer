@@ -716,34 +716,162 @@ def verify_reference_transaction_outputs(
                     + ", ".join(unresolved_links or ["expected mention ID/count mismatch"])
                 )
 
+        def _operation_result_for(expected: Mapping[str, Any], label: str) -> Mapping[str, Any] | None:
+            operation_id = expected.get("operation_id")
+            matches = [
+                row for row in applied_operations
+                if row.get("operation_id") == operation_id
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"{label} operation {operation_id} has {len(matches)} Apply results; expected exactly one."
+                )
+                return None
+            result = matches[0]
+            expected_role = expected.get("document")
+            expected_part = expected.get("part", "word/document.xml")
+            source_p_idx = expected.get("source_p_idx")
+            if (
+                result.get("status") != "applied"
+                or result.get("action", "replace") != "replace"
+                or result.get("document") != expected_role
+                or result.get("part", "word/document.xml") != expected_part
+                or result.get("p_idx") != source_p_idx
+                or result.get("find") != expected.get("find_text")
+                or result.get("replace") != expected.get("updated_entry_text", expected.get("replace_text"))
+            ):
+                errors.append(
+                    f"{label} operation {operation_id} Apply result does not match its approved source paragraph/find/replace scope."
+                )
+                return None
+            return result
+
+        insertion_results_by_role: dict[str, list[Mapping[str, Any]]] = {}
+        for row in applied_operations:
+            if row.get("action") == "insert_paragraph":
+                insertion_results_by_role.setdefault(str(row.get("document")), []).append(row)
+
+        def _output_paragraph_index(role: str, source_p_idx: Any) -> int:
+            if not isinstance(source_p_idx, int) or isinstance(source_p_idx, bool) or source_p_idx < 0:
+                raise ReferenceTransactionError(
+                    f"Reference update for {role} has an invalid source paragraph index."
+                )
+            mapped = source_p_idx
+            insertions = sorted(
+                insertion_results_by_role.get(role, []),
+                key=lambda row: int(row.get("inserted_p_idx", -1)),
+            )
+            for insertion in insertions:
+                inserted_index = insertion.get("inserted_p_idx")
+                if (
+                    insertion.get("status") != "applied"
+                    or not isinstance(inserted_index, int)
+                    or isinstance(inserted_index, bool)
+                    or inserted_index < 0
+                ):
+                    raise ReferenceTransactionError(
+                        f"Paragraph insertion {insertion.get('operation_id')} lacks a final output index."
+                    )
+                if inserted_index <= mapped:
+                    mapped += 1
+            return mapped
+
         for expected in transaction.get("updated_definition_expectations", []):
-            role = expected.get("document")
+            role = str(expected.get("document"))
+            part = str(expected.get("part") or "word/document.xml")
             new_number = str(expected.get("new_number"))
+            operation_result = _operation_result_for(expected, "Bibliography update")
+            if operation_result is None:
+                continue
+            output_p_idx = _output_paragraph_index(role, expected.get("source_p_idx"))
+            paragraph_segment = segments_by_document.get(role, {}).get((part, output_p_idx))
+            if (
+                not isinstance(paragraph_segment, Mapping)
+                or paragraph_segment.get("text") != expected.get("updated_entry_text")
+            ):
+                errors.append(
+                    f"Bibliography update {expected.get('operation_id')} did not produce its exact approved entry text "
+                    f"at {role}/{part}/P[{output_p_idx}]."
+                )
+                continue
             definitions_found = [
                 row for row in output_graph["definitions"]
-                if row.get("document") == role and row.get("kind") == "citation"
+                if row.get("document") == role
+                and row.get("kind") == "citation"
                 and str(row.get("number")) == new_number
+                and row.get("part") == part
+                and row.get("paragraph_index") == output_p_idx
             ]
             if len(definitions_found) != 1:
                 errors.append(
-                    f"Updated bibliography definition {role}::{new_number} resolves to {len(definitions_found)} output definitions."
+                    f"Updated bibliography definition {role}::{new_number} has {len(definitions_found)} "
+                    f"definitions at the exact updated entry paragraph; expected exactly one."
                 )
 
-        expected_mentions_by_key: dict[tuple[str, str], int] = {}
-        for expected in transaction.get("updated_mention_expectations", []):
-            key = (str(expected.get("document")), str(expected.get("new_number")))
-            expected_mentions_by_key[key] = expected_mentions_by_key.get(key, 0) + 1
-        for (role, number), count in expected_mentions_by_key.items():
-            actual = [
+        mention_expectations = transaction.get("updated_mention_expectations", [])
+        for expected in mention_expectations:
+            role = str(expected.get("document"))
+            part = str(expected.get("part") or "word/document.xml")
+            new_number = str(expected.get("new_number"))
+            operation_result = _operation_result_for(expected, "In-text citation update")
+            if operation_result is None:
+                continue
+            output_p_idx = _output_paragraph_index(role, expected.get("source_p_idx"))
+            source_offset = expected.get("source_offset")
+            find_text = expected.get("find_text")
+            replace_text = expected.get("replace_text")
+            if (
+                not isinstance(source_offset, int)
+                or isinstance(source_offset, bool)
+                or source_offset < 0
+                or not isinstance(find_text, str)
+                or not find_text
+                or not isinstance(replace_text, str)
+                or not replace_text
+            ):
+                errors.append(
+                    f"In-text citation update {expected.get('operation_id')} lacks an exact graph offset/find/replace contract."
+                )
+                continue
+            output_offset = source_offset
+            for earlier in mention_expectations:
+                if (
+                    earlier.get("document") == role
+                    and earlier.get("part", "word/document.xml") == part
+                    and earlier.get("source_p_idx") == expected.get("source_p_idx")
+                    and isinstance(earlier.get("source_offset"), int)
+                    and earlier["source_offset"] < source_offset
+                ):
+                    earlier_find = earlier.get("find_text")
+                    earlier_replace = earlier.get("replace_text")
+                    if isinstance(earlier_find, str) and isinstance(earlier_replace, str):
+                        output_offset += len(earlier_replace) - len(earlier_find)
+            paragraph_segment = segments_by_document.get(role, {}).get((part, output_p_idx))
+            if (
+                not isinstance(paragraph_segment, Mapping)
+                or paragraph_segment.get("text", "")[
+                    output_offset:output_offset + len(replace_text)
+                ] != replace_text
+            ):
+                errors.append(
+                    f"In-text citation update {expected.get('operation_id')} did not produce its exact replacement "
+                    f"at {role}/{part}/P[{output_p_idx}] offset {output_offset}."
+                )
+                continue
+            graph_mentions = [
                 row for row in output_graph["mentions"]
-                if row.get("document") == role and row.get("kind") == "citation"
-                and str(row.get("number")) == number
+                if row.get("document") == role
+                and row.get("kind") == "citation"
+                and row.get("part") == part
+                and row.get("paragraph_index") == output_p_idx
+                and row.get("offset") == output_offset
+                and str(row.get("number")) == new_number
                 and row.get("resolution") in {"resolved", "confirmed_by_user"}
             ]
-            if len(actual) < count:
+            if len(graph_mentions) != 1:
                 errors.append(
-                    f"Output Reference Graph has {len(actual)} resolved mention(s) for {role}::{number}; "
-                    f"at least {count} were expected after the transaction."
+                    f"In-text citation update {expected.get('operation_id')} resolves to {len(graph_mentions)} "
+                    f"Reference Graph mentions at its exact output occurrence; expected exactly one."
                 )
 
         graph_digest = hashlib.sha256(
