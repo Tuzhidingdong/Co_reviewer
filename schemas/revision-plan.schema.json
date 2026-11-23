@@ -456,6 +456,27 @@
                 },
                 "author_decision_ref": {
                   "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                },
+                "action": {
+                  "enum": [
+                    "replace",
+                    "insert_paragraph"
+                  ],
+                  "default": "replace"
+                },
+                "anchor_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                },
+                "inserted_text": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "additionalProperties": false,
@@ -539,6 +560,30 @@
                       "p_idx": {
                         "type": "integer",
                         "minimum": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action": {
+                        "const": "insert_paragraph"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "anchor_text",
+                      "position",
+                      "inserted_text"
+                    ],
+                    "properties": {
+                      "part": {
+                        "const": "word/document.xml"
                       }
                     }
                   }
