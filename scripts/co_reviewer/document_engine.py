@@ -1411,7 +1411,14 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             "DOCX package structure preflight is blocked: " + "; ".join(blocking[:12])
         )
     groups = defaultdict(list)
-    for edit in edits: groups[safe_part(edit.get("part", "word/document.xml"))].append(edit)
+    seen_operation_ids: set[str] = set()
+    for edit in edits:
+        operation_id = edit.get("operation_id")
+        if isinstance(operation_id, str) and operation_id.strip():
+            if operation_id in seen_operation_ids:
+                raise ValueError(f"DUPLICATE_OPERATION_ID: operation_id {operation_id!r} occurs more than once in one DOCX Apply.")
+            seen_operation_ids.add(operation_id)
+        groups[safe_part(edit.get("part", "word/document.xml"))].append(edit)
     changed, edit_results = {}, []
     rid = 1
     bookmark_id = 1
