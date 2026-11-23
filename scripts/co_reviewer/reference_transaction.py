@@ -268,6 +268,21 @@ def compile_reference_transaction(
             p_idx=row.get("p_idx"),
             label=f"Citation update {mention_id}",
         )
+        same_text_same_paragraph = [
+            other_id for other_id, other in mentions.items()
+            if other_id != mention_id
+            and other.get("document") == mention.get("document")
+            and other.get("part") == mention.get("part")
+            and other.get("paragraph_index") == mention.get("paragraph_index")
+            and other.get("text") == mention.get("text")
+            and other.get("kind") == "citation"
+        ]
+        if same_text_same_paragraph:
+            raise ReferenceTransactionError(
+                f"Citation update {mention_id} shares the same exact find text with another occurrence in its paragraph; "
+                "the current text adapter cannot distinguish those occurrences safely: "
+                + ", ".join(sorted(same_text_same_paragraph))
+            )
         citation_rows_by_mention[mention_id] = row
 
     changed_definition_ids: set[str] = set()
@@ -293,6 +308,30 @@ def compile_reference_transaction(
                 f"Entry update {definition_id} find does not contain its graph-grounded citation label."
             )
         old_number = str(definition.get("number"))
+        unresolved_related_mentions = [
+            mention_id
+            for mention_id, mention in mentions.items()
+            if mention.get("kind") == "citation"
+            and (
+                str(mention.get("number")) == old_number
+                or old_number in [str(value) for value in mention.get("numbers", [])]
+            )
+            and (
+                definition_id in (mention.get("candidate_definition_ids") or [])
+                or mention.get("document") == role
+            )
+            and (
+                mention.get("resolution") not in {"resolved", "confirmed_by_user"}
+                or mention.get("group_kind") is not None
+                or mention.get("panel_range") is not None
+                or mention.get("reference_mechanism") in {"native_word_field", "footnote_reference"}
+            )
+        ]
+        if unresolved_related_mentions:
+            raise ReferenceTransactionError(
+                f"Definition {definition_id} has citation occurrences that the Reference Graph cannot map safely: "
+                + ", ".join(sorted(unresolved_related_mentions))
+            )
         new_number = str(row.get("new_number", old_number))
         if not new_number.isdigit():
             raise ReferenceTransactionError(
