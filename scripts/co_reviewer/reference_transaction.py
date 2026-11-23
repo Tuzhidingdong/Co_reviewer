@@ -525,9 +525,13 @@ def verify_reference_transaction_outputs(
         for report in apply_reports:
             if not isinstance(report, Mapping):
                 continue
-            for row in report.get("results", []):
-                if isinstance(row, Mapping) and isinstance(row.get("document"), str):
-                    reports_by_role.setdefault(row["document"], []).append(report)
+            roles_in_report = {
+                row.get("document")
+                for row in report.get("results", [])
+                if isinstance(row, Mapping) and isinstance(row.get("document"), str)
+            }
+            for role in roles_in_report:
+                reports_by_role.setdefault(role, []).append(report)
         extracted_documents: dict[str, Any] = {}
         selected_paths: dict[str, str] = {}
         for role, paths in document_registry.items():
