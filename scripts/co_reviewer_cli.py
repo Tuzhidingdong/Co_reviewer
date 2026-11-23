@@ -996,6 +996,19 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     source_hashes_before = {
         key: sha256_file(path) for key, path in source_paths.items()
     }
+    reference_transaction = plan.get("reference_transaction")
+    if isinstance(reference_transaction, Mapping):
+        transaction_documents = reference_transaction.get("documents", {})
+        for role, record in transaction_documents.items():
+            if not isinstance(record, Mapping):
+                raise ValueError(f"Reference transaction source record for {role} is invalid.")
+            key = _canonical_artifact_path(record.get("input_file", ""))
+            actual_source_hash = source_hashes_before.get(key)
+            if actual_source_hash != record.get("source_sha256"):
+                raise ValueError(
+                    f"Reference transaction source DOCX for {role} changed after the Reference Graph was built. "
+                    "Rebuild the package graph and compile a new transaction; preflight will not silently rebind it."
+                )
 
     prepared = []
     for (inp, out), edits in grouped.items():
