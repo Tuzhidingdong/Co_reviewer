@@ -1002,8 +1002,15 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         for role, record in transaction_documents.items():
             if not isinstance(record, Mapping):
                 raise ValueError(f"Reference transaction source record for {role} is invalid.")
-            key = _canonical_artifact_path(record.get("input_file", ""))
+            input_path = str(Path(record.get("input_file", "")).expanduser().resolve())
+            key = _canonical_artifact_path(input_path)
             actual_source_hash = source_hashes_before.get(key)
+            if actual_source_hash is None:
+                if not Path(input_path).is_file():
+                    raise ValueError(
+                        f"Reference transaction source DOCX for {role} is missing: {input_path}"
+                    )
+                actual_source_hash = sha256_file(input_path)
             if actual_source_hash != record.get("source_sha256"):
                 raise ValueError(
                     f"Reference transaction source DOCX for {role} changed after the Reference Graph was built. "
