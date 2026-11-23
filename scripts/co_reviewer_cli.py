@@ -2015,11 +2015,40 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     )
                 else:
                     native_script_format_preserved = True
+                scoped_script_operations = []
+                if insert_id is not None:
+                    for sibling in document_report.get("results", []):
+                        if (
+                            sibling.get("revision_item_id") != item_id
+                            or sibling.get("part", "word/document.xml") != part
+                            or sibling.get("p_idx") != p_idx
+                        ):
+                            continue
+                        for operation in sibling.get("format_operations", []):
+                            if not isinstance(operation, dict):
+                                continue
+                            properties = operation.get("properties")
+                            if not isinstance(properties, dict) or properties.get("vertAlign") not in {"superscript", "subscript"}:
+                                continue
+                            token = operation.get("find")
+                            scope_find = operation.get("scope_find")
+                            scoped_to_insert = (
+                                isinstance(scope_find, str)
+                                and bool(scope_find)
+                                and inserted.count(scope_find) == 1
+                            ) or (
+                                scope_find is None
+                                and isinstance(token, str)
+                                and bool(token)
+                                and inserted.count(token) == 1
+                            )
+                            if scoped_to_insert:
+                                scoped_script_operations.append(operation)
                 script_scope_integrity = (
                     _verify_inserted_script_scope(
                         inserted_runs,
                         inserted,
-                        edit.get("format_operations", target.get("format_operations", [])),
+                        scoped_script_operations,
                     )
                     if insert_id is not None
                     else {"passed": True, "checked": False, "errors": []}
