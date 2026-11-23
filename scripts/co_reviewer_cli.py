@@ -1370,18 +1370,18 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "reason": "Applied target cannot be mapped to the source paragraph for untracked-edit audit."
                 })
                 continue
-            if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
-                violations.append({
-                    "input_file": str(source_path), "output_file": str(output_path),
-                    "part": part, "p_idx": p_idx,
-                    "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
-                })
-                continue
             if action == "insert_paragraph":
                 # A tracked paragraph insertion leaves the source anchor intact.
                 # Its new paragraph contributes an empty untracked-text slot because
                 # the entire visible content is inside w:ins. Use the final output
                 # index recorded by Apply to align source/output paragraph sequences.
+                if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "p_idx": p_idx,
+                        "reason": "The insertion anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
+                    })
+                    continue
                 inserted_p_idx = edit.get("inserted_p_idx")
                 if (
                     not isinstance(inserted_p_idx, int)
@@ -1402,7 +1402,17 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                 and edit.get("delete_revision_id") is None
                 and edit.get("insert_revision_id") is None
             )
+            # A Pass-2 FormatChange may target text introduced by the same
+            # operation. That text is intentionally absent from the original
+            # source baseline and is already accounted for by its Pass-1 change.
             if pure_format_change and any(find_text in ins_txt for ins_txt in pass1_inserted_by_para.get((part, p_idx), [])):
+                continue
+            if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part, "p_idx": p_idx,
+                    "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
+                })
                 continue
             if not pure_format_change:
                 paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
