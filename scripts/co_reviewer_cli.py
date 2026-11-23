@@ -609,6 +609,24 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 elif not t[field].strip(): errors.append(f"{tp}.{field} cannot be empty.")
             if not isinstance(t.get("replace"), str):
                 errors.append(f"{tp}.replace must be a string; use an empty string to delete text.")
+            action = t.get("action", "replace")
+            if action not in {"replace", "insert_paragraph"}:
+                errors.append(f"{tp}.action must be replace or insert_paragraph.")
+            if action == "insert_paragraph":
+                if t.get("part", "word/document.xml") != "word/document.xml":
+                    errors.append(f"{tp}: insert_paragraph currently supports word/document.xml only.")
+                if t.get("anchor_text") != t.get("find") or not isinstance(t.get("anchor_text"), str) or not t.get("anchor_text", "").strip():
+                    errors.append(f"{tp}.anchor_text must exactly equal the non-empty find anchor.")
+                if t.get("inserted_text") != t.get("replace") or not isinstance(t.get("inserted_text"), str) or not t.get("inserted_text", "").strip():
+                    errors.append(f"{tp}.inserted_text must exactly equal a non-empty replace value.")
+                if t.get("position") not in {"before", "after"}:
+                    errors.append(f"{tp}.position must be before or after.")
+                if not isinstance(t.get("operation_id"), str) or not t.get("operation_id", "").strip():
+                    errors.append(f"{tp}.operation_id is required for idempotent paragraph insertion.")
+                if t.get("format_operations") or t.get("replacement_format_map") or t.get("two_pass"):
+                    errors.append(f"{tp}: insert_paragraph cannot be combined with replacement or FormatChange.")
+            elif any(key in t for key in ("anchor_text", "position", "inserted_text")):
+                errors.append(f"{tp}: insertion-only fields require action=insert_paragraph.")
             authorization = t.get("authorized_change")
             if authorization is None and (
                 not require_authorized_change
@@ -867,6 +885,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         for target in item["targets"]:
             edit = {
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -949,6 +971,36 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             if operation_id not in targets_by_operation:
                 raise ValueError(f"Prepared target has unknown operation_id {operation_id!r}.")
             target = targets_by_operation[operation_id]
+            if target.get("action") == "insert_paragraph":
+                if result.get("action") != "insert_paragraph":
+                    raise ValueError(f"Preflight did not prepare paragraph insertion for {operation_id}.")
+                bookmark_name = result.get("bookmark_name")
+                if not isinstance(bookmark_name, str) or not bookmark_name:
+                    raise ValueError(f"Preflight insertion {operation_id} has no idempotence marker.")
+                with zipfile.ZipFile(io.BytesIO(prepared_entry["payload"]), "r") as prepared_archive:
+                    prepared_root = parse_xml(prepared_archive.read("word/document.xml"))
+                marker_nodes = [
+                    node for node in prepared_root.findall(".//w:bookmarkStart", NS)
+                    if node.get(qn("name")) == bookmark_name
+                ]
+                if len(marker_nodes) != 1 or marker_nodes[0].getparent() is None:
+                    raise ValueError(f"Preflight insertion marker for {operation_id} is missing or ambiguous.")
+                inserted_paragraph = marker_nodes[0].getparent()
+                prepared_paragraphs = prepared_root.findall(".//w:body//w:p", NS)
+                inserted_index = next(
+                    (idx for idx, paragraph in enumerate(prepared_paragraphs) if paragraph is inserted_paragraph),
+                    None,
+                )
+                if inserted_index is None:
+                    raise ValueError(f"Preflight insertion paragraph for {operation_id} is not in document body.")
+                prepared_texts = [_accepted_paragraph_text(paragraph) for paragraph in prepared_paragraphs]
+                inserted_value = str(result.get("inserted_text", ""))
+                if prepared_texts[inserted_index] != inserted_value:
+                    raise ValueError(f"Preflight inserted text mismatch for {operation_id}.")
+                target["location_phrase"] = build_unique_location_phrase(
+                    prepared_texts, inserted_index, 0, len(inserted_value)
+                )
+                continue
             if target.get("part", "word/document.xml") != "word/document.xml":
                 # Header/footer and other non-body parts are kept eligible for
                 # exact revision application, but their locators are entered
@@ -1058,6 +1110,10 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
         for target in item["targets"]:
             edit = {
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -1863,6 +1919,10 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                 "revision_item_id": item_id, "document": target["document"],
                 "output_file": output_path, "part": part, "location": target.get("location", ""),
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
                 "status": "failed", "checks": {}
             }
             if len(matches) != 1:
