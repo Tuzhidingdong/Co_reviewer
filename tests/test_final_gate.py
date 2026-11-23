@@ -536,3 +536,23 @@ class FinalGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentRoleProfileTests(unittest.TestCase):
+    def test_explicit_marked_role_overrides_clean_source_filename(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("art_file_water_WangChunli_clean.revised.docx")
+        self.assertEqual(_infer_quality_profile(path, None, "marked-manuscript"), "marked-manuscript")
+
+    def test_explicit_clean_role_is_not_inferred_from_filename(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("manuscript_revised.docx")
+        self.assertEqual(_infer_quality_profile(path, None, "clean-manuscript"), "clean-manuscript")
+
+    def test_unknown_explicit_role_fails_closed(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        with self.assertRaises(ValueError):
+            _infer_quality_profile(Path("anything.docx"), None, "guess")

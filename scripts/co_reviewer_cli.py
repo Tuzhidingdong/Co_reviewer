@@ -7466,6 +7466,24 @@ def cmd_approve_instruction_coverage(args):
     return 0
 
 
+def _parse_document_roles(values: list[str] | None) -> dict[str, str]:
+    """Parse explicit Final Gate document role bindings without filename guessing."""
+    result: dict[str, str] = {}
+    allowed = {"marked-manuscript", "clean-manuscript", "response-letter", "supplementary-information", "generic"}
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError("--document-role must use PATH=ROLE.")
+        path, role = value.rsplit("=", 1)
+        path = str(Path(path).expanduser().resolve())
+        role = role.strip().lower()
+        if not path or role not in allowed:
+            raise ValueError(f"Invalid --document-role binding: {value!r}")
+        if path in result and result[path] != role:
+            raise ValueError(f"Conflicting document roles for {path}.")
+        result[path] = role
+    return result
+
+
 def cmd_final_gate(args):
     from co_reviewer.final_gate import evaluate_final_gate, write_final_gate_reports
 
@@ -7530,6 +7548,7 @@ def cmd_final_gate(args):
         skip_word_com=False,
         instruction_coverage=coverage,
         instruction_coverage_approval=coverage_approval,
+        document_roles=_parse_document_roles(args.document_role),
     )
     out_json = Path(args.out_json).expanduser().resolve()
     out_md = Path(args.out_md).expanduser().resolve()
@@ -7714,6 +7733,11 @@ def build_parser():
         "--profile",
         choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],
         help="Optional DOCX quality profile override.",
+    )
+    fg.add_argument(
+        "--document-role", action="append", default=[],
+        metavar="PATH=ROLE",
+        help="Explicit delivered-document role (repeatable); roles: marked-manuscript, clean-manuscript, response-letter, supplementary-information, generic.",
     )
     fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
     fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")
