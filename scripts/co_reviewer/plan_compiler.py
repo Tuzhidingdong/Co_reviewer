@@ -422,6 +422,7 @@ def compile_revision_plan(
                 "find": find_raw,
                 "replace": plain_replace,
                 "operation_id": str(intent.get("operation_id") or f"{item_id}-OP001"),
+                "target_identity_mode": "legacy_p_idx_explicit",
                 "action": "insert_paragraph",
                 "anchor_text": find_raw,
                 "position": intent["position"],
