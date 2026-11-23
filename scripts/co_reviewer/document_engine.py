@@ -573,18 +573,53 @@ def _build_mapped_insert_runs(
         if source_offset < 0 or source_offset >= source_length:
             raise ValueError(f"replacement_format_map[{index}].source_offset is outside the deleted source anchor.")
         absolute_source_offset = match_start + source_offset
-        source_run = next(
+        source_record = next(
             (
-                run for run_start, run_end, run, _ in spans
+                (run_start, run_end, run)
+                for run_start, run_end, run, _ in spans
                 if run_start <= absolute_source_offset < run_end
             ),
             None,
         )
-        if source_run is None:
+        if source_record is None:
             raise ValueError(
                 f"replacement_format_map[{index}] does not resolve to an ordinary source Run."
             )
-        inserted.extend(make_insert_runs(source_run, replacement[start:end]))
+        source_run_start, source_run_end, source_run = source_record
+        segment_text = replacement[start:end]
+        mapped_runs = make_insert_runs(source_run, segment_text)
+
+        # A mixed-format map may anchor a long replacement segment to a very
+        # short superscript/subscript source Run (for example, the two-character
+        # exponent "-1"). Copying that Run's rPr would promote the entire
+        # replacement sentence to script formatting. Only retain implicit
+        # vertical alignment when the mapped replacement is token-local: it
+        # contains no whitespace and has exactly the same selected source span
+        # length. Longer or multiword text must use baseline formatting and
+        # receive any required script through explicit Unicode characters or
+        # a separately scoped Pass-2 FormatChange.
+        source_vertical = source_run.find("w:rPr/w:vertAlign", NS)
+        source_vertical_value = (
+            source_vertical.get(qn("val")) if source_vertical is not None else None
+        )
+        selected_source_start = max(match_start, source_run_start)
+        selected_source_end = min(match_start + source_length, source_run_end)
+        selected_source_length = max(0, selected_source_end - selected_source_start)
+        has_explicit_script = any(
+            _script_character(character) is not None for character in segment_text
+        )
+        if (
+            source_vertical_value in {"superscript", "subscript"}
+            and not has_explicit_script
+            and (
+                any(character.isspace() for character in segment_text)
+                or len(segment_text) != selected_source_length
+            )
+        ):
+            for inserted_run in mapped_runs:
+                _set_run_property(inserted_run, "vertAlign", "baseline")
+
+        inserted.extend(mapped_runs)
         cursor = end
     if cursor != len(replacement):
         raise ValueError(
