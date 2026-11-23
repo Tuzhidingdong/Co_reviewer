@@ -182,7 +182,7 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         output = self.root / "manuscript_marked.docx"
         document = Document()
-        document.add_paragraph("The previous citation is [5]. The newly linked citation is [7].")
+        document.add_paragraph("The claim is supported by [5]. The newly linked citation is [7].")
         document.add_paragraph("References")
         document.add_paragraph("[7] New reference entry.")
         document.add_paragraph("[5] Smith (2020). Journal details.")
