@@ -25,7 +25,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.si = self.root / "si.docx"
         for path, paragraphs in (
             (self.manuscript, ["The claim is supported by 4.", "References", "[4] Smith (2020). Journal details."]),
-            (self.si, ["Supporting information."]),
+            (self.si, ["Supporting information cites [7]."]),
         ):
             document = Document()
             for value in paragraphs:
@@ -57,6 +57,12 @@ class ReferenceTransactionTests(unittest.TestCase):
                     "kind": "citation", "number": "7", "text": "7",
                     "target_definition_ids": [], "resolution": "unresolved",
                 },
+                {
+                    "id": "men-7-si", "document": "SI",
+                    "part": "word/document.xml", "paragraph_index": 0,
+                    "kind": "citation", "number": "7", "text": "7",
+                    "target_definition_ids": [], "resolution": "unresolved",
+                },
             ],
         }
         self.spec = {
@@ -84,7 +90,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "position": "after",
                 "inserted_text": "[7] New reference entry.",
                 "reference_number": "7",
-                "linked_mention_ids": ["men-7-new"],
+                "linked_mention_ids": ["men-7-new", "men-7-si"],
                 "authorized_change": {
                     "intent": "Add the approved bibliography entry.",
                     "explicitly_authorized_insertions": [{"kind": "citation", "text": "[7]"}],
@@ -138,7 +144,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         transaction = plan["reference_transaction"]
         self.assertEqual(transaction["definition_ids_updated"], ["def-4"])
         self.assertEqual(transaction["citation_mention_ids_updated"], ["men-4-a"])
-        self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], ["men-7-new"])
+        self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], ["men-7-new", "men-7-si"])
 
     def test_blocks_a_partial_citation_renumbering(self):
         self.spec["citation_updates"] = []
@@ -177,7 +183,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                     "document": "Manuscript",
                     "number": "7",
                     "inserted_text": "[7] New reference entry.",
-                    "linked_mention_count": 1,
+                    "linked_mention_count": 2,
                 }],
                 "updated_definition_expectations": [{
                     "document": "Manuscript",
