@@ -590,6 +590,11 @@
                 }
               ]
             }
+          },
+          "reference_transaction_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Binds all graph-linked bibliography/citation expectations into the ordinary revision-item approval fingerprint."
           }
         },
         "allOf": [
@@ -642,6 +647,232 @@
         ],
         "additionalProperties": false
       }
+    },
+    "reference_transaction": {
+      "type": "object",
+      "required": [
+        "transaction_id",
+        "reference_graph_sha256",
+        "transaction_fingerprint",
+        "operation_ids",
+        "documents",
+        "status"
+      ],
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_graph_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "transaction_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "definition_ids_added": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "linked_mention_ids"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "definition_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "citation_mention_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "operation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "documents": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "input_file",
+              "output_file",
+              "source_sha256"
+            ],
+            "properties": {
+              "input_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "output_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "added_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "operation_id",
+              "part",
+              "anchor_p_idx",
+              "position",
+              "inserted_text",
+              "visible_inserted_text",
+              "linked_mention_ids",
+              "linked_mention_count"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "part": {
+                "type": "string",
+                "const": "word/document.xml"
+              },
+              "anchor_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position": {
+                "enum": [
+                  "before",
+                  "after"
+                ]
+              },
+              "inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "visible_inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "linked_mention_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "old_number",
+              "new_number",
+              "updated_entry_text"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "updated_entry_text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_mention_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "old_number",
+              "new_number",
+              "mention_id"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "mention_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "status": {
+          "enum": [
+            "pending_author_approval"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
