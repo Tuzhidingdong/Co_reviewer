@@ -109,7 +109,7 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         self.assertIsNotNone(bold)
 
     def test_before_insertion_is_ordered_before_anchor(self):
-        from co_reviewer.document_engine import apply_document, parse_xml, qn
+        from co_reviewer.document_engine import apply_document, parse_xml, qn, visible_text
         import hashlib
         import zipfile
 
