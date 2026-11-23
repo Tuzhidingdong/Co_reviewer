@@ -1667,7 +1667,10 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 inserted_paragraph = ET.Element(qn("p"))
                 if source_ppr is not None:
                     inserted_paragraph.append(copy.deepcopy(source_ppr))
-                inserted_runs = make_insert_runs(para, new)
+                # Paragraph-level formatting is copied separately through pPr.
+                # Character-level formatting must come from the already validated
+                # unambiguous ordinary-text Run, not from the paragraph element.
+                inserted_runs = make_insert_runs(source_runs[0], new)
                 if not inserted_runs:
                     raise ValueError("PARAGRAPH_INSERTION_FAILED: no insertable Word Runs were generated.")
                 marker_start = ET.Element(qn("bookmarkStart"), {
