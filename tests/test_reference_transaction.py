@@ -207,10 +207,12 @@ class ReferenceTransactionTests(unittest.TestCase):
                     "Manuscript": {
                         "input_file": str(self.manuscript),
                         "output_file": str(output),
+                        "source_sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
                     },
                     "SI": {
                         "input_file": str(self.si),
                         "output_file": str(self.root / "si_marked.docx"),
+                        "source_sha256": hashlib.sha256(self.si.read_bytes()).hexdigest(),
                     },
                 },
                 "added_definition_expectations": [{

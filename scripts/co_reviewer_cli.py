@@ -2248,7 +2248,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     and target["find"] in actual_paragraph_text
                     if pure_format_change else len(delete_nodes) == 1 and deleted == target["find"]
                 )
-                new_text = edit.get("inserted_text", target["replace"])
+                new_text = normalize_script_characters(edit.get("replace", target["replace"]))
                 new_ok = (
                     not insert_nodes and new_text == target["find"]
                     if pure_format_change else (

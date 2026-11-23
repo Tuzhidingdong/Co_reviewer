@@ -410,7 +410,8 @@ class PatchOperation:
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
-            **({"action": self.action, "anchor_text": self.anchor_text,
+            "action": self.action,
+            **({"anchor_text": self.anchor_text,
                 "position": self.position, "inserted_text": self.inserted_text}
                if self.action == "insert_paragraph" else {}),
         }
@@ -434,7 +435,8 @@ class PatchOperation:
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
-            **({"action": self.action, "anchor_text": self.anchor_text,
+            "action": self.action,
+            **({"anchor_text": self.anchor_text,
                 "position": self.position, "inserted_text": self.inserted_text}
                if self.action == "insert_paragraph" else {}),
         }

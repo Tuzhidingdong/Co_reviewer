@@ -1614,7 +1614,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     })
                     raise ManualFallbackRequired(suggestion, str(exc)) from exc
             if action == "insert_paragraph":
-                if any(ch in old for ch in "\\t\\r\\n") or any(ch in new for ch in "\\t\\r\\n"):
+                if any(ch in old for ch in "\t\r\n") or any(ch in new for ch in "\t\r\n"):
                     raise ValueError("Paragraph insertion text must be a single-line string without tabs.")
                 parent = para.getparent()
                 if parent is None or parent.tag not in {qn("body"), qn("tc")}:
