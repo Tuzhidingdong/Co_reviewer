@@ -238,6 +238,34 @@ class FinalGateTests(unittest.TestCase):
         self.assertIn("| applied_text_edits | 1 |", md_text)
         self.assertIn("| applied_format_changes | 1 |", md_text)
 
+    def test_instruction_coverage_approval_cli_requires_exact_hash(self):
+        coverage_path = self.root / "coverage_for_approval.json"
+        approval_path = self.root / "coverage_approval.json"
+        coverage_path.write_text(
+            json.dumps(self.instruction_coverage, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        args = type("Args", (), {
+            "coverage": str(coverage_path),
+            "approved_coverage_sha256": self.instruction_coverage["coverage_sha256"],
+            "approved_by": "Human Author",
+            "out": str(approval_path),
+        })()
+        self.assertEqual(cli.cmd_approve_instruction_coverage(args), 0)
+        approval = json.loads(approval_path.read_text(encoding="utf-8"))
+        self.assertEqual(approval["coverage_sha256"], self.instruction_coverage["coverage_sha256"])
+        self.assertEqual(approval["status"], "approved")
+
+        stale = type("Args", (), {
+            "coverage": str(coverage_path),
+            "approved_coverage_sha256": "0" * 64,
+            "approved_by": "Human Author",
+            "out": str(self.root / "stale_coverage_approval.json"),
+        })()
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            cli.cmd_approve_instruction_coverage(stale)
+        self.assertFalse(Path(stale.out).exists())
+
     def test_final_gate_blocks_missing_instruction_coverage(self):
         report = evaluate_final_gate(
             plan=self.plan,
@@ -248,7 +276,7 @@ class FinalGateTests(unittest.TestCase):
         )
         self.assertEqual(report["verdict"], "BLOCKED")
         self.assertEqual(report["gates"]["instruction_coverage"], "FAIL")
-        self.assertTrue(any("author approval receipt" in item for item in report["blockers"]))
+        self.assertTrue(any("Instruction coverage manifest is missing" in item for item in report["blockers"]))
 
     def test_final_gate_blocks_requirement_omitted_from_compiled_plan(self):
         from copy import deepcopy
