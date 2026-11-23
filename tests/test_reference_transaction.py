@@ -25,7 +25,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.manuscript = self.root / "manuscript.docx"
         self.si = self.root / "si.docx"
         for path, paragraphs in (
-            (self.manuscript, ["The claim is supported by 4.", "References", "[4] Smith (2020). Journal details."]),
+            (self.manuscript, ["The claim is supported by [4].", "References", "[4] Smith (2020). Journal details."]),
             (self.si, ["Supporting information cites [7]."]),
         ):
             document = Document()
@@ -182,10 +182,10 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         output = self.root / "manuscript_marked.docx"
         document = Document()
-        document.add_paragraph("The previous citation is [5] and the newly linked citation is [7].")
+        document.add_paragraph("The previous citation is [5]. The newly linked citation is [7].")
         document.add_paragraph("References")
-        document.add_paragraph("[5] Smith (2020). Journal details.")
         document.add_paragraph("[7] New reference entry.")
+        document.add_paragraph("[5] Smith (2020). Journal details.")
         document.save(output)
 
         from co_reviewer.v232_contract import build_package_reference_graph, extract_docx_reference_segments
@@ -223,12 +223,22 @@ class ReferenceTransactionTests(unittest.TestCase):
                 }],
                 "updated_definition_expectations": [{
                     "document": "Manuscript",
+                    "operation_id": "REF-ENTRY-001",
+                    "part": "word/document.xml",
+                    "source_p_idx": 2,
+                    "find_text": "[4] Smith (2020). Journal details.",
                     "old_number": "4",
                     "new_number": "5",
                     "updated_entry_text": "[5] Smith (2020). Journal details.",
                 }],
                 "updated_mention_expectations": [{
                     "document": "Manuscript",
+                    "operation_id": "REF-CITE-001",
+                    "part": "word/document.xml",
+                    "source_p_idx": 0,
+                    "source_offset": "The claim is supported by [4].".index("4"),
+                    "find_text": "4",
+                    "replace_text": "5",
                     "old_number": "4",
                     "new_number": "5",
                     "mention_id": "men-4-a",
@@ -242,14 +252,37 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "output_file": str(output.resolve()),
                 "input_sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
                 "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-                "results": [{
-                    "document": "Manuscript",
-                    "operation_id": "REF-ADD-001",
-                    "action": "insert_paragraph",
-                    "part": "word/document.xml",
-                    "inserted_p_idx": 3,
-                    "status": "applied",
-                }]
+                "results": [
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-ADD-001",
+                        "action": "insert_paragraph",
+                        "part": "word/document.xml",
+                        "p_idx": 1,
+                        "inserted_p_idx": 2,
+                        "status": "applied",
+                    },
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-ENTRY-001",
+                        "action": "replace",
+                        "part": "word/document.xml",
+                        "p_idx": 2,
+                        "find": "[4] Smith (2020). Journal details.",
+                        "replace": "[5] Smith (2020). Journal details.",
+                        "status": "applied",
+                    },
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-CITE-001",
+                        "action": "replace",
+                        "part": "word/document.xml",
+                        "p_idx": 0,
+                        "find": "4",
+                        "replace": "5",
+                        "status": "applied",
+                    }
+                ]
             }],
         )
         self.assertTrue(report["checked"])
