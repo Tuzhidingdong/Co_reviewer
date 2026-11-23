@@ -2040,9 +2040,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
         output_path = str(Path(document_report.get("output_file", "")).expanduser().resolve())
         for edit in document_report.get("results", []):
             key = (
-                edit.get("revision_item_id"), edit.get("operation_id"),
-                edit.get("document"), output_path,
-                edit.get("part", "word/document.xml"), edit.get("p_idx"),
+                edit.get("revision_item_id"), edit.get("document"),
+                output_path, edit.get("part", "word/document.xml"),
                 edit.get("find"), edit.get("replace")
             )
             report_index.setdefault(key, []).append((document_report, edit))
@@ -2055,8 +2054,20 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
         for target in item.get("targets", []):
             output_path = str(Path(target["output_file"]).expanduser().resolve())
             part = target.get("part", "word/document.xml")
-            key = (item_id, target.get("operation_id"), target["document"], output_path, part, target.get("p_idx"), target["find"], target["replace"])
+            key = (item_id, target["document"], output_path, part, target["find"], target["replace"])
             matches = report_index.get(key, [])
+            operation_id = target.get("operation_id")
+            if isinstance(operation_id, str) and operation_id.strip():
+                matches = [
+                    pair for pair in matches
+                    if pair[1].get("operation_id") == operation_id
+                ]
+            source_p_idx = target.get("p_idx")
+            if isinstance(source_p_idx, int) and not isinstance(source_p_idx, bool):
+                matches = [
+                    pair for pair in matches
+                    if pair[1].get("p_idx") == source_p_idx
+                ]
             result = {
                 "revision_item_id": item_id, "document": target["document"],
                 "output_file": output_path, "part": part, "location": target.get("location", ""),
