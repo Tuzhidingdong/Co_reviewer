@@ -256,6 +256,36 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertTrue(report["passed"], report)
         self.assertEqual(report["unresolved_count"], 0)
 
+    def test_transaction_metadata_is_bound_to_standard_plan_approval(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        self.assertEqual(cli.validate_plan(plan, require_approval=False), [])
+
+        tampered = copy.deepcopy(plan)
+        tampered["reference_transaction"]["added_definition_expectations"][0]["linked_mention_ids"].pop()
+        errors = cli.validate_plan(tampered, require_approval=False)
+        self.assertTrue(
+            any("transaction_fingerprint is missing or stale" in error for error in errors),
+            errors,
+        )
+
+        tampered_operations = copy.deepcopy(plan)
+        tampered_operations["revision_items"][0]["targets"][0]["operation_id"] = "OTHER-OP"
+        errors = cli.validate_plan(tampered_operations, require_approval=False)
+        self.assertTrue(any("operation_ids must exactly match" in error for error in errors), errors)
+
+    def test_preflight_refuses_source_changes_after_reference_graph_creation(self):
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        changed = Document(self.manuscript)
+        changed.add_paragraph("A source change after graph creation.")
+        changed.save(self.manuscript)
+        with self.assertRaisesRegex(ValueError, "changed after the Reference Graph was built"):
+            cli.preflight_plan(plan)
+
 
 if __name__ == "__main__":
     unittest.main()
