@@ -150,6 +150,62 @@ class ReferenceTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ReferenceTransactionError, "every unresolved static mention"):
             compile_reference_transaction(self.spec, self.graph)
 
+    def test_rebuilds_output_reference_graph_and_checks_definitions_and_mentions(self):
+        from co_reviewer.reference_transaction import verify_reference_transaction_outputs
+
+        output = self.root / "manuscript_marked.docx"
+        document = Document()
+        document.add_paragraph("The previous citation is [5] and the newly linked citation is [7].")
+        document.add_paragraph("References")
+        document.add_paragraph("[5] Smith (2020). Journal details.")
+        document.add_paragraph("[7] New reference entry.")
+        document.save(output)
+
+        plan = {
+            "reference_transaction": {
+                "documents": {
+                    "Manuscript": {
+                        "input_file": str(self.manuscript),
+                        "output_file": str(output),
+                    },
+                    "SI": {
+                        "input_file": str(self.si),
+                        "output_file": str(self.root / "si_marked.docx"),
+                    },
+                },
+                "added_definition_expectations": [{
+                    "document": "Manuscript",
+                    "number": "7",
+                    "inserted_text": "[7] New reference entry.",
+                    "linked_mention_count": 1,
+                }],
+                "updated_definition_expectations": [{
+                    "document": "Manuscript",
+                    "old_number": "4",
+                    "new_number": "5",
+                    "updated_entry_text": "[5] Smith (2020). Journal details.",
+                }],
+                "updated_mention_expectations": [{
+                    "document": "Manuscript",
+                    "old_number": "4",
+                    "new_number": "5",
+                    "mention_id": "men-4-a",
+                }],
+            }
+        }
+        report = verify_reference_transaction_outputs(
+            plan,
+            [{
+                "results": [{
+                    "document": "Manuscript",
+                    "status": "applied",
+                }]
+            }],
+        )
+        self.assertTrue(report["checked"])
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["unresolved_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
