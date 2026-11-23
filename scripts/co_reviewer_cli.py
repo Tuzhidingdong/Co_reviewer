@@ -4704,7 +4704,7 @@ def cmd_attach_document_identities(args):
         task_id = task.get("task_id")
         expected_count = sum(
             1 for target in task.get("targets", [])
-            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update"}
+            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update", "insert_paragraph"}
         )
         actual_count = len(refs_by_task.get(task_id, []))
         if actual_count != expected_count:
