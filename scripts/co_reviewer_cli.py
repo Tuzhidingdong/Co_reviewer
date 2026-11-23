@@ -7870,11 +7870,12 @@ def _parse_document_roles(values: list[str] | None) -> dict[str, str]:
     for value in values or []:
         if "=" not in value:
             raise ValueError("--document-role must use PATH=ROLE.")
-        path, role = value.rsplit("=", 1)
-        path = str(Path(path).expanduser().resolve())
+        raw_path, role = value.rsplit("=", 1)
+        raw_path = raw_path.strip()
         role = role.strip().lower()
-        if not path or role not in allowed:
+        if not raw_path or role not in allowed:
             raise ValueError(f"Invalid --document-role binding: {value!r}")
+        path = str(Path(raw_path).expanduser().resolve())
         if path in result and result[path] != role:
             raise ValueError(f"Conflicting document roles for {path}.")
         result[path] = role

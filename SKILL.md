@@ -619,9 +619,9 @@ python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot/revision_plan.js
 ```
 - `final-gate` deterministically enforces:
   1. original instruction coverage is author-approved and complete;
-  2. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`).
-  2. `audit-docx-quality` passed (`summary.failures == 0`) on every delivered DOCX.
-  3. Microsoft Word COM PDF rendering succeeded with a non-empty `%PDF-` file beside each delivered DOCX.
-  4. **Zero-Silent-Fallback**: silent fallback to `manual_fallback_checklist.md`, unapplied `manual_suggestions/*.json`, `blocked`/`failed` targets, or skipped `FormatChange` operations is strictly forbidden. Any non-zero `manual_fallback_count`, `blocked_count`, or `skipped_format_ops` causes `final-gate` to return `BLOCKED` (exit code `1`) unless the user has explicitly approved the waiver and `--waive-fallback-reason` is recorded in both `final_gate_report.json` and `final_gate_report.md`.
+  2. `verify` passed (`targets_failed == 0`, `untracked_text_audit.violations == 0`);
+  3. `audit-docx-quality` passed (`summary.failures == 0`) on every delivered DOCX;
+  4. Microsoft Word COM PDF rendering succeeded with a non-empty `%PDF-` file beside each delivered DOCX;
+  5. **Zero-Silent-Fallback**: silent fallback to `manual_fallback_checklist.md`, unapplied `manual_suggestions/*.json`, `blocked`/`failed` targets, or skipped `FormatChange` operations is strictly forbidden. Any non-zero `manual_fallback_count`, `blocked_count`, or `skipped_format_ops` causes `final-gate` to return `BLOCKED` (exit code `1`) unless the user has explicitly approved the waiver and `--waive-fallback-reason` is recorded in both `final_gate_report.json` and `final_gate_report.md`.
 
 - At task start, confirm the actual project root (git rev-parse --show-toplevel), HEAD, working-tree status, and the resolved Skill/workflow paths. Do not assume a hard-coded repository path. If the globally loaded @Co_Reviewer Skill points to a different repository snapshot than the active project, stop and report the mismatch; do not silently use either snapshot.

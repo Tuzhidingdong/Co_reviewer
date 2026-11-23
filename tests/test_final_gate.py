@@ -581,3 +581,6 @@ class DocumentRoleProfileTests(unittest.TestCase):
     def test_cli_rejects_roles_not_supported_by_quality_profile_map(self):
         with self.assertRaisesRegex(ValueError, "Invalid --document-role"):
             cli._parse_document_roles(["document.docx=unknown-role"])
+    def test_cli_rejects_empty_document_role_path(self):
+        with self.assertRaisesRegex(ValueError, "Invalid --document-role"):
+            cli._parse_document_roles(["=si"])
