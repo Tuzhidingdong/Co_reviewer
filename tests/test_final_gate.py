@@ -219,8 +219,6 @@ class FinalGateTests(unittest.TestCase):
                 "--apply-report", str(apply_path),
                 "--docs", str(self.clean_docx),
                 "--round-root", str(self.root),
-                "--instruction-coverage", str(coverage_path),
-                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])
@@ -382,6 +380,7 @@ class FinalGateTests(unittest.TestCase):
         with patch("co_reviewer.final_gate.export_docx_to_pdf_word_com", side_effect=fake_pdf_exporter_ok):
             rc = cli.main([
                 "final-gate",
+                "--plan", str(plan_path),
                 "--verify-report", str(verify_path),
                 "--docs", str(self.clean_docx),
                 "--instruction-coverage", str(coverage_path),
@@ -457,9 +456,11 @@ class FinalGateTests(unittest.TestCase):
             encoding="utf-8",
         )
         verify_path = self.root / "verify.json"
+        plan_path = self.root / "revision_plan.json"
         out_json = self.root / "fg_waived.json"
         out_md = self.root / "fg_waived.md"
         verify_path.write_text(json.dumps(self.verify_report), encoding="utf-8")
+        plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
         coverage_path, coverage_approval_path = self.write_instruction_coverage_files()
 
         reason = "Approved by author for manual table edit"
@@ -524,6 +525,8 @@ class FinalGateTests(unittest.TestCase):
                 "--plan", str(plan_path),
                 "--apply-report", str(apply_path),
                 "--docs", str(self.clean_docx),
+                "--instruction-coverage", str(coverage_path),
+                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])
