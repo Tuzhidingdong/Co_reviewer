@@ -48,7 +48,7 @@ ALLOWED_TRANSITIONS = {
 }
 
 _MUTATING_TARGET_ACTIONS = frozenset({
-    "replace", "add", "remove", "renumber", "reference_update",
+    "replace", "add", "remove", "renumber", "reference_update", "insert_paragraph",
 })
 
 
