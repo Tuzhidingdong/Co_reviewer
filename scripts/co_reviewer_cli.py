@@ -7005,6 +7005,27 @@ def cmd_preview_omml_docx(args):
     print("[BOUNDARY] Synthetic preview only; no manuscript was edited and formula Track Changes remain disabled.")
     return 0
 
+def cmd_compile_reference_transaction(args):
+    from co_reviewer.reference_transaction import compile_reference_transaction
+
+    graph = _read_json_object(args.graph, "Reference Graph")
+    spec = _read_json_object(args.spec, "Reference Transaction Spec")
+    plan = compile_reference_transaction(spec, graph)
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path.exists():
+        raise FileExistsError(
+            f"Reference transaction plan output already exists; choose a new path: {output_path}"
+        )
+    write_json_atomic(output_path, plan)
+    transaction = plan["reference_transaction"]
+    print(f"[REFERENCE TRANSACTION] {transaction['transaction_id']}")
+    print(f"[PLAN] {output_path}")
+    print(f"[OPERATIONS] {len(transaction['operation_ids'])}")
+    print(f"[REFERENCE GRAPH SHA256] {transaction['reference_graph_sha256']}")
+    print("[APPROVAL] Pending explicit author approval through preflight-plan and approve-plan; no DOCX was changed.")
+    return 0
+
+
 def cmd_build_package_reference_graph(args):
     documents = {}
     for item in args.document:
@@ -7850,6 +7871,11 @@ def build_parser():
     vc.add_argument("--authorization", required=True, help="JSON file containing intent and explicitly authorized tokens.")
     vc.add_argument("--out")
     vc.set_defaults(func=cmd_validate_edit_contract)
+    rt = sub.add_parser("compile-reference-transaction", help="Compile a graph-checked bibliography/citation update into one pending Patch transaction.")
+    rt.add_argument("--graph", required=True, help="Reference Graph JSON built from the exact source DOCX inputs.")
+    rt.add_argument("--spec", required=True, help="Explicit insertions, bibliography entry updates and linked citation updates.")
+    rt.add_argument("--out", required=True, help="New pending Revision Plan output; existing files are never overwritten.")
+    rt.set_defaults(func=cmd_compile_reference_transaction)
     rg = sub.add_parser("build-package-reference-graph", help="Build a directed cross-document definition/mention graph from extracted text.")
     rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
