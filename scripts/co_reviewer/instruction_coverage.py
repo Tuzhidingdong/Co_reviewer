@@ -208,11 +208,19 @@ def validate_instruction_coverage(
         errors.append("Revision plan does not contain a revision_items array.")
         plan_items = []
     plan_ids: set[str] = set()
-    for item in plan_items:
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str):
-            if item["id"] in plan_ids:
-                errors.append(f"Revision plan contains duplicate item ID {item['id']}.")
-            plan_ids.add(item["id"])
+    for index, item in enumerate(plan_items):
+        if not isinstance(item, Mapping):
+            errors.append(f"Revision plan revision_items[{index}] is malformed.")
+            continue
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            errors.append(f"Revision plan revision_items[{index}] has no stable item ID.")
+            continue
+        if item_id in plan_ids:
+            errors.append(f"Revision plan contains duplicate item ID {item_id}.")
+        plan_ids.add(item_id)
+        if not isinstance(item.get("targets"), list) or not item.get("targets"):
+            errors.append(f"Revision plan item {item_id} has no compiled targets.")
     linked_plan_ids: set[str] = set()
     linked_plan_targets: set[tuple[str, int]] = set()
     plan_items_by_id = {
@@ -254,7 +262,9 @@ def validate_instruction_coverage(
             manual_count += 1
             evidence_file = row.get("evidence_file")
             evidence_path = Path(str(evidence_file)).expanduser() if evidence_file else None
-            if evidence_path is None or not evidence_path.is_file():
+            if evidence_path is None or not evidence_path.is_absolute():
+                errors.append(f"Requirement {req_id} manual completion evidence file must be an absolute path.")
+            elif not evidence_path.is_file():
                 errors.append(f"Requirement {req_id} manual completion evidence file is missing.")
             elif hashlib.sha256(evidence_path.read_bytes()).hexdigest() != row.get("evidence_sha256"):
                 errors.append(f"Requirement {req_id} manual completion evidence SHA-256 differs.")
