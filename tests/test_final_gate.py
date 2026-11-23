@@ -219,6 +219,8 @@ class FinalGateTests(unittest.TestCase):
                 "--apply-report", str(apply_path),
                 "--docs", str(self.clean_docx),
                 "--round-root", str(self.root),
+                "--instruction-coverage", str(coverage_path),
+                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])
@@ -380,11 +382,8 @@ class FinalGateTests(unittest.TestCase):
         with patch("co_reviewer.final_gate.export_docx_to_pdf_word_com", side_effect=fake_pdf_exporter_ok):
             rc = cli.main([
                 "final-gate",
-                "--plan", str(plan_path),
                 "--verify-report", str(verify_path),
                 "--docs", str(self.clean_docx),
-                "--instruction-coverage", str(coverage_path),
-                "--instruction-coverage-approval", str(coverage_approval_path),
                 "--out-json", str(out_json),
                 "--out-md", str(out_md),
             ])
@@ -467,6 +466,7 @@ class FinalGateTests(unittest.TestCase):
         with patch("co_reviewer.final_gate.export_docx_to_pdf_word_com", side_effect=fake_pdf_exporter_ok):
             rc = cli.main([
                 "final-gate",
+                "--plan", str(plan_path),
                 "--verify-report", str(verify_path),
                 "--docs", str(self.clean_docx),
                 "--round-root", str(self.root),
