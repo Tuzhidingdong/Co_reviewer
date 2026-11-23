@@ -1626,6 +1626,24 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 ]
                 if not source_runs:
                     raise ValueError("PARAGRAPH_INSERTION_NO_FORMAT_SOURCE: anchor has no ordinary text Run.")
+                source_ppr = para.find("w:pPr", NS)
+                if source_ppr is not None and source_ppr.find("w:numPr", NS) is not None:
+                    raise ValueError(
+                        "PARAGRAPH_INSERTION_NUMBERING_AMBIGUOUS: numbered/list paragraphs need an explicit list-continuation adapter."
+                    )
+                source_format_signatures = {
+                    hashlib.sha256(
+                        ET.tostring(_format_run_properties(run), method="c14n")
+                        if _format_run_properties(run) is not None else b""
+                    ).hexdigest()
+                    for run in source_runs
+                }
+                if len(source_format_signatures) > 1:
+                    raise ValueError(
+                        "PARAGRAPH_INSERTION_AMBIGUOUS_CHARACTER_FORMAT: anchor paragraph contains multiple direct Run formats; "
+                        "choose an unambiguous format-source paragraph."
+                    )
+                normalized_inserted_text = normalize_script_characters(new)
                 operation_id = edit["operation_id"]
                 bookmark_name = "_CR_OP_" + hashlib.sha256(operation_id.encode("utf-8")).hexdigest()[:32]
                 for member, member_data in original.items():
@@ -1640,7 +1658,6 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                             f"IDEMPOTENT_INSERTION_BLOCKED: operation {operation_id} already exists in source DOCX."
                         )
                 inserted_paragraph = ET.Element(qn("p"))
-                source_ppr = para.find("w:pPr", NS)
                 if source_ppr is not None:
                     inserted_paragraph.append(copy.deepcopy(source_ppr))
                 inserted_runs = make_insert_runs(para, new)
@@ -1696,7 +1713,9 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 edit_result = {
                     "part": part, "p_idx": idx, "inserted_p_idx": inserted_p_idx,
                     "find": old, "replace": new, "anchor_text": old,
-                    "inserted_text": new, "action": action, "position": edit["position"],
+                    "inserted_text": normalized_inserted_text,
+                    "requested_inserted_text": new,
+                    "action": action, "position": edit["position"],
                     "status": "applied", "delete_revision_id": None,
                     "insert_revision_id": insert_revision_id,
                     "bookmark_name": bookmark_name, "bookmark_id": bookmark_id,
