@@ -1,16 +1,38 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/co-reviewer/instruction-coverage-approval.schema.json",
   "title": "Co_Reviewer Instruction Coverage Approval",
   "type": "object",
-  "required": ["schema_version", "status", "coverage_sha256", "approved_by", "approved_at_utc", "approval_sha256"],
+  "required": [
+    "schema_version",
+    "status",
+    "coverage_sha256",
+    "approved_by",
+    "approved_at_utc",
+    "approval_sha256"
+  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "status": { "const": "approved" },
-    "coverage_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "approved_by": { "type": "string", "minLength": 1 },
-    "approved_at_utc": { "type": "string", "format": "date-time" },
-    "approval_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+    "schema_version": {
+      "const": "1.0"
+    },
+    "status": {
+      "const": "approved"
+    },
+    "coverage_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "approved_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approved_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approval_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
   },
   "additionalProperties": false
 }
