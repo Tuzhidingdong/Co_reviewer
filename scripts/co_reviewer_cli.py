@@ -1720,6 +1720,88 @@ def _verify_paragraph_format_integrity(
     }
 
 
+def _verify_inserted_script_scope(
+    inserted_runs: list[ET.Element],
+    inserted_text: str,
+    format_operations: Any,
+) -> dict[str, Any]:
+    """Verify that inserted superscript/subscript characters stay inside authorized targets."""
+    if not isinstance(format_operations, list):
+        return {"passed": False, "checked": True, "errors": ["format_operations must be an array."]}
+    script_operations = []
+    for index, operation in enumerate(format_operations):
+        if not isinstance(operation, dict):
+            return {"passed": False, "checked": True, "errors": [f"format_operations[{index}] is malformed."]}
+        properties = operation.get("properties")
+        alignment = properties.get("vertAlign") if isinstance(properties, dict) else None
+        if alignment in {"superscript", "subscript"}:
+            script_operations.append((index, operation, alignment))
+    if not script_operations:
+        return {"passed": True, "checked": False, "errors": []}
+
+    expected_by_offset: dict[int, str] = {}
+    errors: list[str] = []
+    for index, operation, alignment in script_operations:
+        token = operation.get("find")
+        if not isinstance(token, str) or not token:
+            errors.append(f"format_operations[{index}] has no valid script target.")
+            continue
+        scope_find = operation.get("scope_find")
+        scope_offset = operation.get("scope_offset")
+        if scope_find is not None or scope_offset is not None:
+            if (
+                not isinstance(scope_find, str) or not scope_find
+                or not isinstance(scope_offset, int) or isinstance(scope_offset, bool)
+                or inserted_text.count(scope_find) != 1
+            ):
+                errors.append(f"format_operations[{index}] has an invalid or non-unique script scope.")
+                continue
+            scope_start = inserted_text.find(scope_find)
+            start = scope_start + scope_offset
+        else:
+            if inserted_text.count(token) != 1:
+                errors.append(
+                    f"format_operations[{index}] script token is not uniquely locatable in inserted text."
+                )
+                continue
+            start = inserted_text.find(token)
+        if start < 0 or inserted_text[start:start + len(token)] != token:
+            errors.append(f"format_operations[{index}] scope does not select its declared script token.")
+            continue
+        for offset in range(start, start + len(token)):
+            prior = expected_by_offset.get(offset)
+            if prior is not None and prior != alignment:
+                errors.append(f"Conflicting script FormatChange operations overlap at inserted offset {offset}.")
+            expected_by_offset[offset] = alignment
+
+    actual_by_offset: list[str | None] = []
+    actual_text_parts: list[str] = []
+    for run in inserted_runs:
+        run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
+        vertical = run.find("w:rPr/w:vertAlign", NS)
+        alignment = vertical.get(qn("val")) if vertical is not None else None
+        actual_text_parts.append(run_text)
+        actual_by_offset.extend([alignment] * len(run_text))
+    actual_text = "".join(actual_text_parts)
+    if actual_text != inserted_text:
+        errors.append("Inserted Run text differs from the text used to resolve script-format scopes.")
+    if len(actual_by_offset) != len(inserted_text):
+        errors.append("Inserted Run character formatting does not cover the inserted text exactly.")
+    else:
+        for offset, actual in enumerate(actual_by_offset):
+            expected = expected_by_offset.get(offset)
+            if expected is not None:
+                if actual != expected:
+                    errors.append(
+                        f"Script target at offset {offset} expected {expected}, found {actual or 'baseline'}."
+                    )
+            elif actual in {"superscript", "subscript"}:
+                errors.append(
+                    f"Unrequested {actual} formatting at inserted offset {offset} ({inserted_text[offset:offset + 24]!r})."
+                )
+    return {"passed": not errors, "checked": True, "errors": errors}
+
+
 def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]]) -> dict[str, Any]:
     """Mechanically verify each planned Track Changes edit in its generated DOCX."""
     report_index = {}
@@ -1933,6 +2015,15 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     )
                 else:
                     native_script_format_preserved = True
+                script_scope_integrity = (
+                    _verify_inserted_script_scope(
+                        inserted_runs,
+                        inserted,
+                        edit.get("format_operations", target.get("format_operations", [])),
+                    )
+                    if insert_id is not None
+                    else {"passed": True, "checked": False, "errors": []}
+                )
                 format_changes_preserved, format_change_details = _verify_format_changes(
                     paragraph,
                     edit.get("format_changes", []),
@@ -1951,13 +2042,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "native_script_format_preserved": native_script_format_preserved,
                     "format_change_preserved": format_changes_preserved,
                     "format_change_details": format_change_details,
+                    "script_scope_integrity": script_scope_integrity,
                     "format_integrity": format_integrity,
                 }
                 result["p_idx"] = p_idx
                 if (
                     old_ok and new_ok and native_script_format_preserved
-                    and format_changes_preserved and format_integrity["passed"]
-                    and exact_target_position
+                    and format_changes_preserved and script_scope_integrity["passed"]
+                    and format_integrity["passed"] and exact_target_position
                 ):
                     result["status"] = "verified"
                 elif not exact_target_position:
@@ -1969,6 +2061,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     result["reason"] = "Inserted Run formatting (font, size, bold, italic, script or direct properties) changed after Apply."
                 elif not format_changes_preserved:
                     result["reason"] = "A FormatChange revision or its old effective-property snapshot does not match the approved operation."
+                elif not script_scope_integrity["passed"]:
+                    result["reason"] = "; ".join(script_scope_integrity["errors"][:4])
                 elif not format_integrity["passed"]:
                     result["reason"] = "; ".join(format_integrity["errors"][:4])
                 else:
