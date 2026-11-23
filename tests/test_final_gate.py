@@ -556,3 +556,12 @@ class DocumentRoleProfileTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             _infer_quality_profile(Path("anything.docx"), None, "guess")
+
+    def test_explicit_role_overrides_global_quality_profile(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("manuscript.docx")
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-manuscript"),
+            "marked-manuscript",
+        )
