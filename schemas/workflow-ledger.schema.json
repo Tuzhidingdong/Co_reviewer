@@ -311,6 +311,7 @@
                   "remove",
                   "renumber",
                   "reference_update",
+                  "insert_paragraph",
                   "keep",
                   "inspect_only",
                   "reply_only"
