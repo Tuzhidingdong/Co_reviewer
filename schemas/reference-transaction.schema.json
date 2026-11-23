@@ -77,7 +77,8 @@
           "inserted_text",
           "reference_number",
           "linked_mention_ids",
-          "authorized_change"
+          "authorized_change",
+          "target_identity_mode"
         ],
         "properties": {
           "operation_id": {
@@ -143,10 +144,35 @@
             "$ref": "#/$defs/authorizedChange"
           },
           "target_ref": {
-            "type": "object"
+            "$ref": "document-identity.schema.json#/$defs/targetRef"
+          },
+          "target_identity_mode": {
+            "enum": [
+              "stable_target_ref",
+              "legacy_p_idx_explicit"
+            ]
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "target_identity_mode": {
+                  "const": "stable_target_ref"
+                }
+              },
+              "required": [
+                "target_identity_mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_ref"
+              ]
+            }
+          }
+        ]
       }
     },
     "entry_updates": {
@@ -160,7 +186,8 @@
           "p_idx",
           "find",
           "replace",
-          "authorized_change"
+          "authorized_change",
+          "target_identity_mode"
         ],
         "properties": {
           "operation_id": {
@@ -218,10 +245,35 @@
             "$ref": "#/$defs/authorizedChange"
           },
           "target_ref": {
-            "type": "object"
+            "$ref": "document-identity.schema.json#/$defs/targetRef"
+          },
+          "target_identity_mode": {
+            "enum": [
+              "stable_target_ref",
+              "legacy_p_idx_explicit"
+            ]
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "target_identity_mode": {
+                  "const": "stable_target_ref"
+                }
+              },
+              "required": [
+                "target_identity_mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_ref"
+              ]
+            }
+          }
+        ]
       }
     },
     "citation_updates": {
@@ -236,7 +288,8 @@
           "find",
           "replace",
           "new_number",
-          "authorized_change"
+          "authorized_change",
+          "target_identity_mode"
         ],
         "properties": {
           "operation_id": {
@@ -294,10 +347,35 @@
             "$ref": "#/$defs/authorizedChange"
           },
           "target_ref": {
-            "type": "object"
+            "$ref": "document-identity.schema.json#/$defs/targetRef"
+          },
+          "target_identity_mode": {
+            "enum": [
+              "stable_target_ref",
+              "legacy_p_idx_explicit"
+            ]
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "target_identity_mode": {
+                  "const": "stable_target_ref"
+                }
+              },
+              "required": [
+                "target_identity_mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_ref"
+              ]
+            }
+          }
+        ]
       }
     }
   },
