@@ -1356,10 +1356,12 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
         documents_checked += 1
         expected_parts = copy.deepcopy(source_parts)
         pass1_inserted_by_para: dict[tuple[str, int], list[str]] = defaultdict(list)
+        inserted_paragraph_positions: dict[str, list[int]] = defaultdict(list)
         for edit in edits:
             part = edit.get("part", "word/document.xml")
             p_idx = edit.get("p_idx")
             find_text = edit.get("find", "")
+            action = edit.get("action", "replace")
             paragraphs = expected_parts.get(part)
             if paragraphs is None or not isinstance(p_idx, int) or isinstance(p_idx, bool) or not (0 <= p_idx < len(paragraphs)):
                 violations.append({
@@ -1367,6 +1369,32 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "part": part, "p_idx": p_idx,
                     "reason": "Applied target cannot be mapped to the source paragraph for untracked-edit audit."
                 })
+                continue
+            if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part, "p_idx": p_idx,
+                    "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
+                })
+                continue
+            if action == "insert_paragraph":
+                # A tracked paragraph insertion leaves the source anchor intact.
+                # Its new paragraph contributes an empty untracked-text slot because
+                # the entire visible content is inside w:ins. Use the final output
+                # index recorded by Apply to align source/output paragraph sequences.
+                inserted_p_idx = edit.get("inserted_p_idx")
+                if (
+                    not isinstance(inserted_p_idx, int)
+                    or isinstance(inserted_p_idx, bool)
+                    or inserted_p_idx < 0
+                ):
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "p_idx": p_idx,
+                        "reason": "Tracked paragraph insertion is missing a valid final inserted_p_idx for untracked-text audit."
+                    })
+                    continue
+                inserted_paragraph_positions[part].append(inserted_p_idx)
                 continue
             pure_format_change = (
                 find_text == edit.get("replace")
@@ -1376,17 +1404,36 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
             )
             if pure_format_change and any(find_text in ins_txt for ins_txt in pass1_inserted_by_para.get((part, p_idx), [])):
                 continue
-            if not isinstance(find_text, str) or paragraphs[p_idx].count(find_text) != 1:
-                violations.append({
-                    "input_file": str(source_path), "output_file": str(output_path),
-                    "part": part, "p_idx": p_idx,
-                    "reason": "The source anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
-                })
-                continue
             if not pure_format_change:
                 paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
                 if isinstance(edit.get("replace"), str) and edit["replace"]:
                     pass1_inserted_by_para[(part, p_idx)].append(edit["replace"])
+
+        for part, positions in inserted_paragraph_positions.items():
+            paragraphs = expected_parts.get(part)
+            if paragraphs is None:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part,
+                    "reason": "Tracked paragraph insertion references a text part missing from the source."
+                })
+                continue
+            if len(positions) != len(set(positions)):
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part,
+                    "reason": "Multiple tracked paragraph insertions report the same final paragraph index."
+                })
+                continue
+            for inserted_p_idx in sorted(positions):
+                if inserted_p_idx > len(paragraphs):
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "inserted_p_idx": inserted_p_idx,
+                        "reason": "Tracked paragraph insertion index is outside the expected output paragraph sequence."
+                    })
+                    continue
+                paragraphs.insert(inserted_p_idx, "")
 
         for part in sorted(set(expected_parts) | set(output_parts)):
             expected = expected_parts.get(part)
