@@ -311,15 +311,30 @@
         },
         "format_authorization": {
           "type": "object",
-          "required": ["intent"],
+          "required": [
+            "intent"
+          ],
           "properties": {
-            "intent": {"type": "string", "minLength": 1},
-            "semantic_profile_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-            "format_zone": {"enum": ["body", "references"]}
+            "intent": {
+              "type": "string",
+              "minLength": 1
+            },
+            "semantic_profile_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "format_zone": {
+              "enum": [
+                "body",
+                "references"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "two_pass": {"type": "boolean"},
+        "two_pass": {
+          "type": "boolean"
+        },
         "format_operations": {
           "type": "array",
           "items": {
@@ -456,25 +471,65 @@
             },
             "additionalProperties": false
           }
+        },
+        "action": {
+          "enum": [
+            "replace",
+            "insert_paragraph"
+          ],
+          "default": "replace"
+        },
+        "anchor_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "inserted_text": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false,
       "allOf": [
         {
           "if": {
-            "required": ["two_pass"],
-            "properties": {"two_pass": {"const": true}}
+            "required": [
+              "two_pass"
+            ],
+            "properties": {
+              "two_pass": {
+                "const": true
+              }
+            }
           },
           "then": {
-            "required": ["format_authorization", "format_operations"],
+            "required": [
+              "format_authorization",
+              "format_operations"
+            ],
             "properties": {
               "format_authorization": {
-                "required": ["intent", "semantic_profile_sha256", "format_zone"]
+                "required": [
+                  "intent",
+                  "semantic_profile_sha256",
+                  "format_zone"
+                ]
               },
               "format_operations": {
                 "minItems": 1,
                 "items": {
-                  "required": ["find", "properties", "source_occurrence_id", "scope_find", "scope_offset"]
+                  "required": [
+                    "find",
+                    "properties",
+                    "source_occurrence_id",
+                    "scope_find",
+                    "scope_offset"
+                  ]
                 }
               }
             }
@@ -533,6 +588,30 @@
               "p_idx": {
                 "type": "integer",
                 "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "insert_paragraph"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "anchor_text",
+              "position",
+              "inserted_text"
+            ],
+            "properties": {
+              "part": {
+                "const": "word/document.xml"
               }
             }
           }
