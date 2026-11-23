@@ -69,7 +69,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                 {
                     "id": "men-4-a", "document": "Manuscript",
                     "part": "word/document.xml", "paragraph_index": 0,
-                    "kind": "citation", "number": "4", "text": "4",
+                    "kind": "citation", "number": "4", "text": "4", "offset": 27,
                     "target_definition_ids": ["def-4"], "resolution": "resolved",
                 },
                 {
