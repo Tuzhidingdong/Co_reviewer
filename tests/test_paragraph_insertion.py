@@ -197,6 +197,107 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         self.assertEqual(legacy["action"], "insert_paragraph")
         self.assertEqual(legacy["operation_id"], "INS-MODEL-001")
 
+    def test_duplicate_operation_ids_are_rejected_before_any_write(self):
+        import hashlib
+        from co_reviewer.document_engine import apply_document
+
+        output = self.root / "duplicate_ids.docx"
+        edit = {
+            "action": "insert_paragraph",
+            "operation_id": "INS-DUPLICATE-001",
+            "find": "Anchor paragraph used for insertion.",
+            "replace": "Duplicate operation.",
+            "anchor_text": "Anchor paragraph used for insertion.",
+            "inserted_text": "Duplicate operation.",
+            "position": "after",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "source_sha256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+            "authorized_change": {"intent": "Insert exactly once."},
+        }
+        with self.assertRaisesRegex(ValueError, "DUPLICATE_OPERATION_ID"):
+            apply_document(
+                str(self.source), str(output), [dict(edit), dict(edit)], "Unit Test Author"
+            )
+        self.assertFalse(output.exists())
+
+    def test_mixed_direct_run_format_anchor_fails_closed(self):
+        import hashlib
+        from co_reviewer.document_engine import apply_document
+
+        source = self.root / "mixed_format.docx"
+        output = self.root / "mixed_format_marked.docx"
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Mixed ")
+        bold = paragraph.add_run("format")
+        bold.bold = True
+        document.save(source)
+        edit = {
+            "action": "insert_paragraph",
+            "operation_id": "INS-MIXED-FORMAT-001",
+            "find": "Mixed format",
+            "replace": "Inserted text.",
+            "anchor_text": "Mixed format",
+            "inserted_text": "Inserted text.",
+            "position": "after",
+            "p_idx": 0,
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "authorized_change": {"intent": "Insert with an explicit format source."},
+        }
+        with self.assertRaisesRegex(ValueError, "PARAGRAPH_INSERTION_AMBIGUOUS_CHARACTER_FORMAT"):
+            apply_document(str(source), str(output), [edit], "Unit Test Author")
+        self.assertFalse(output.exists())
+
+    def test_inserted_native_subscript_text_is_normalized_and_tracked(self):
+        import hashlib
+        import zipfile
+        from co_reviewer.document_engine import NS, apply_document, parse_xml, qn, visible_text
+
+        output = self.root / "native_subscript_marked.docx"
+        inserted = "Na₂SO₄"
+        apply_document(
+            str(self.source),
+            str(output),
+            [{
+                "action": "insert_paragraph",
+                "operation_id": "INS-NATIVE-SCRIPT-001",
+                "find": "Anchor paragraph used for insertion.",
+                "replace": inserted,
+                "anchor_text": "Anchor paragraph used for insertion.",
+                "inserted_text": inserted,
+                "position": "after",
+                "p_idx": 0,
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "source_sha256": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+                "authorized_change": {
+                    "intent": "Insert a formula with exact native subscript tokens.",
+                    "explicitly_authorized_insertions": [
+                        {"kind": "formula", "text": inserted},
+                    ],
+                },
+            }],
+            "Unit Test Author",
+        )
+        with zipfile.ZipFile(output) as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", NS)
+        self.assertEqual(visible_text(paragraphs[1]), "Na2SO4")
+        insertion = paragraphs[1].find("w:ins", NS)
+        self.assertIsNotNone(insertion)
+        subscript_runs = [
+            run for run in insertion.findall(".//w:r", NS)
+            if (
+                (alignment := run.find("w:rPr/w:vertAlign", NS)) is not None
+                and alignment.get(qn("val")) == "subscript"
+            )
+        ]
+        self.assertEqual(
+            ["".join(node.text or "" for node in run.findall("w:t", NS)) for run in subscript_runs],
+            ["2", "4"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
