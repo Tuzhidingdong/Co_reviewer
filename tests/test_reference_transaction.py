@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -34,6 +35,16 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.graph = {
             "schema_version": "1.2",
             "documents": ["Manuscript", "SI"],
+            "source_files": {
+                "Manuscript": {
+                    "path": str(self.manuscript.resolve()),
+                    "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                },
+                "SI": {
+                    "path": str(self.si.resolve()),
+                    "sha256": hashlib.sha256(self.si.read_bytes()).hexdigest(),
+                },
+            },
             "definitions": [{
                 "id": "def-4",
                 "document": "Manuscript",
