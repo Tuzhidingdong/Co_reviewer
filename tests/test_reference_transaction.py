@@ -107,7 +107,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "operation_id": "REF-ADD-001",
                 "target_identity_mode": "legacy_p_idx_explicit",
                 "document": "Manuscript",
-                "p_idx": 1,
+                "p_idx": 2,
                 "anchor_text": "References",
                 "position": "after",
                 "inserted_text": "[7] New reference entry.",
@@ -312,6 +312,7 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         document = Document()
         document.add_paragraph("The claim cites [4] and [7].")
+        document.add_paragraph("A second claim also cites [4].")
         document.add_paragraph("References")
         document.add_paragraph("[4] Smith (2020). Journal details.")
         document.save(manuscript)
@@ -347,13 +348,17 @@ class ReferenceTransactionTests(unittest.TestCase):
             and row.get("kind") == "citation"
             and str(row.get("number")) == "4"
         )
-        mention_four = next(
-            row for row in graph["mentions"]
-            if row.get("document") == "Manuscript"
-            and row.get("kind") == "citation"
-            and str(row.get("number")) == "4"
-            and row.get("resolution") == "resolved"
+        mention_four_rows = sorted(
+            (
+                row for row in graph["mentions"]
+                if row.get("document") == "Manuscript"
+                and row.get("kind") == "citation"
+                and str(row.get("number")) == "4"
+                and row.get("resolution") == "resolved"
+            ),
+            key=lambda row: (row.get("paragraph_index", -1), row.get("offset", -1)),
         )
+        self.assertEqual(len(mention_four_rows), 2)
 
         spec = {
             "transaction_id": "REF-TXN-INTEGRATION-001",
@@ -405,27 +410,30 @@ class ReferenceTransactionTests(unittest.TestCase):
                     ],
                 },
             }],
-            "citation_updates": [{
-                "operation_id": "REF-CITE-INTEGRATION",
-                "target_identity_mode": "legacy_p_idx_explicit",
-                "mention_id": mention_four["id"],
-                "document": "Manuscript",
-                "p_idx": mention_four["paragraph_index"],
-                "find": mention_four["text"],
-                "replace": "5",
-                "new_number": "5",
-                "authorized_change": {
-                    "intent": "Update the exact graph-identified in-text citation occurrence.",
-                    "explicitly_authorized_tokens": [
-                        {"kind": "number", "text": "4", "replacement": "5"},
-                    ],
-                },
-            }],
+            "citation_updates": [
+                {
+                    "operation_id": f"REF-CITE-INTEGRATION-{index + 1}",
+                    "target_identity_mode": "legacy_p_idx_explicit",
+                    "mention_id": mention["id"],
+                    "document": "Manuscript",
+                    "p_idx": mention["paragraph_index"],
+                    "find": mention["text"],
+                    "replace": "5",
+                    "new_number": "5",
+                    "authorized_change": {
+                        "intent": "Update the exact graph-identified in-text citation occurrence.",
+                        "explicitly_authorized_tokens": [
+                            {"kind": "number", "text": "4", "replacement": "5"},
+                        ],
+                    },
+                }
+                for index, mention in enumerate(mention_four_rows)
+            ],
         }
 
         plan = compile_reference_transaction(spec, graph)
         self.assertFalse(plan["approved"])
-        self.assertEqual(len(plan["revision_items"][0]["targets"]), 3)
+        self.assertEqual(len(plan["revision_items"][0]["targets"]), 4)
         preflight = cli.preflight_plan(plan)
         self.assertTrue(preflight["passed"], preflight)
 
@@ -450,7 +458,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertTrue(verification["passed"], verification)
         self.assertTrue(verification["reference_transaction"]["checked"])
         self.assertTrue(verification["reference_transaction"]["passed"])
-        self.assertEqual(verification["targets_verified"], 3)
+        self.assertEqual(verification["targets_verified"], 4)
         self.assertEqual(verification["reference_transaction"]["unresolved_count"], 0)
 
         import zipfile
@@ -459,9 +467,10 @@ class ReferenceTransactionTests(unittest.TestCase):
             output_root = parse_xml(archive.read("word/document.xml"))
         output_paragraphs = output_root.findall(".//w:body//w:p", NS)
         output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
-        self.assertEqual(output_text[2], "[7] New reference entry.")
-        self.assertEqual(output_text[3], "[5] Smith (2020). Journal details.")
         self.assertIn("The claim cites [5] and [7].", output_text)
+        self.assertIn("A second claim also cites [5].", output_text)
+        self.assertEqual(output_text[3], "[7] New reference entry.")
+        self.assertEqual(output_text[4], "[5] Smith (2020). Journal details.")
 
     def test_transaction_metadata_is_bound_to_standard_plan_approval(self):
         import copy
