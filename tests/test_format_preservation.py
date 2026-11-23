@@ -246,6 +246,80 @@ class FormatPreservationTests(unittest.TestCase):
                         f"Unexpected script formatting leaked into {text!r}",
                     )
 
+    def test_mapped_long_replacement_does_not_inherit_two_character_script_run(self):
+        old = "The rate was 18 Å ps-1 in the initial run."
+        new = "The rate reached approximately 19 Å ps-1 in the final ensemble."
+        script_offset = old.index("-1")
+        make_styled_docx(self.input, [[
+            (old[:-2], {}),
+            ("-1", {"vertAlign": "superscript"}),
+        ]])
+        plan = {
+            "schema_version": "1.0",
+            "approved": True,
+            "revision_items": [{
+                "id": "REV-MIXED-SCRIPT-01",
+                "reviewer": "R1",
+                "comment": "Revise the sentence while keeping only ps-1 exponent superscript",
+                "status": "approved",
+                "targets": [{
+                    "document": "Manuscript",
+                    "input_file": str(self.input),
+                    "output_file": str(self.output),
+                    "p_idx": 0,
+                    "find": old,
+                    "replace": new,
+                    "replacement_format_map": [{
+                        "replacement_start": 0,
+                        "replacement_end": len(new),
+                        "source_offset": script_offset,
+                    }],
+                    "two_pass": True,
+                    "authorized_change": {
+                        **cli.compute_token_authorizations(old, new),
+                        "intent": "Revise the sentence wording",
+                    },
+                    "format_authorization": {
+                        "intent": "Only the two-character -1 exponent in ps-1 is superscript",
+                    },
+                    "format_operations": [{
+                        "find": "-1",
+                        "scope_find": new,
+                        "scope_offset": new.index("-1"),
+                        "properties": {"vertAlign": "superscript"},
+                    }],
+                }],
+            }],
+        }
+        plan["revision_items"][0]["approval_fingerprint"] = cli.revision_item_fingerprint(
+            plan["revision_items"][0]
+        )
+        results = cli.apply_plan(plan, "Test Author")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status"], "applied")
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, results)
+        self.assertTrue(verification["passed"], verification)
+
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:p", NS)
+            insertion = paragraph.find(".//w:ins", NS)
+            self.assertIsNotNone(insertion)
+            inserted_runs = insertion.findall(".//w:r", NS)
+            inserted_text = "".join(
+                node.text or "" for node in insertion.findall(".//w:t", NS)
+            )
+            self.assertEqual(inserted_text, new)
+            scripted = []
+            for run in inserted_runs:
+                run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
+                vertical = run.find("w:rPr/w:vertAlign", NS)
+                alignment = vertical.get(q("val")) if vertical is not None else None
+                if alignment in {"superscript", "subscript"}:
+                    scripted.append((run_text, alignment))
+            self.assertEqual(scripted, [("-1", "superscript")])
+
     def test_ambiguous_mixed_style_replacement_still_rejected(self):
         make_styled_docx(self.input, [[
             ("old ", {"b": True}),
