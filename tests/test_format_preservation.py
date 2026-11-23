@@ -275,6 +275,7 @@ class FormatPreservationTests(unittest.TestCase):
                         "p_idx": 0,
                         "find": old,
                         "replace": new,
+                        "two_pass": True,
                         "replacement_format_map": [{
                             "replacement_start": 0,
                             "replacement_end": len(new),
@@ -284,17 +285,10 @@ class FormatPreservationTests(unittest.TestCase):
                             **compute_token_authorizations(old, new),
                             "intent": "Revise the sentence wording",
                         },
-                    },
-                    {
-                        "document": "Manuscript",
-                        "input_file": str(self.input),
-                        "output_file": str(self.output),
-                        "p_idx": 0,
-                        "find": new,
-                        "replace": new,
-                        "authorized_change": {"intent": "Preserve revised sentence wording"},
                         "format_authorization": {
                             "intent": "Only the two-character -1 exponent in ps-1 is superscript",
+                            "semantic_profile_sha256": "c" * 64,
+                            "format_zone": "body",
                         },
                         "format_operations": [{
                             "find": "-1",
