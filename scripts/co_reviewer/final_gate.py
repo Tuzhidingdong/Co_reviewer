@@ -39,7 +39,7 @@ _DOCUMENT_ROLE_PROFILES = {
     "clean": "clean-manuscript",
     "clean-manuscript": "clean-manuscript",
     "word-final-clean": "word-final-clean",
-    "cover-letter": "response-letter",
+    "cover-letter": "cover-letter",
     "response-letter": "response-letter",
     "si": "generic",
     "supplementary-information": "generic",

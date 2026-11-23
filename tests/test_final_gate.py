@@ -566,6 +566,15 @@ class DocumentRoleProfileTests(unittest.TestCase):
             "marked-manuscript",
         )
 
+    def test_cover_letter_role_uses_dedicated_profile_and_overrides_global_profile(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = self.root / "Cover_Letter_Nature_Water.docx"
+        self.assertEqual(
+            _infer_quality_profile(path, "response-letter", "cover-letter"),
+            "cover-letter",
+        )
+
     def test_cli_accepts_every_declared_document_role_alias(self):
         bindings = cli._parse_document_roles([
             "marked.docx=marked-manuscript",

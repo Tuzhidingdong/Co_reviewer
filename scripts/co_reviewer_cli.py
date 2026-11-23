@@ -8144,13 +8144,13 @@ def build_parser():
     fg.add_argument("--instruction-coverage-approval", help="Required separate author approval receipt bound to the exact coverage SHA-256.")
     fg.add_argument(
         "--profile",
-        choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],
+        choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter", "cover-letter"],
         help="Optional DOCX quality profile override.",
     )
     fg.add_argument(
         "--document-role", action="append", default=[],
         metavar="PATH=ROLE",
-        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, cover-letter/response-letter, si/supplementary-information, word-final-clean and generic.",
+        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, cover-letter, response-letter, si/supplementary-information, word-final-clean and generic.",
     )
     fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
     fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")
@@ -8419,7 +8419,7 @@ def build_parser():
     est.set_defaults(func=cmd_estimate_usage)
     dq = sub.add_parser("audit-docx-quality", help="Audit DOCX package, revision state, placeholders, typography profile and optional PDF.")
     dq.add_argument("--docx", required=True)
-    dq.add_argument("--profile", choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"], default="generic")
+    dq.add_argument("--profile", choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter", "cover-letter"], default="generic")
     dq.add_argument("--pdf", help="Optional related PDF for signature/page-integrity metadata.")
     dq.add_argument("--expected-font", help="Optional required Normal-style font name.")
     dq.add_argument("--out", help="Optional JSON report path.")

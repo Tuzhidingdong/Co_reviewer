@@ -19,7 +19,7 @@ _COMMENT_PARTS = {
     "word/commentsextensible.xml",
     "word/people.xml",
 }
-PROFILES = {"generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"}
+PROFILES = {"generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter", "cover-letter"}
 PLACEHOLDER_RE = re.compile(
     r"(\[\[(?:TODO|TBD|XX|REF|FIG|TABLE)[^\]]*\]\]|\[(?:TODO|TBD|XX|REF|INSERT[^\]]*)\]|"
     r"\b(?:TODO|TBD|PLACEHOLDER)\b|Fig(?:ure)?\.?\s*S?[xX]+|Table\s*S?[xX]+|"
@@ -185,7 +185,7 @@ def audit_docx_quality(
                 "Potential draft placeholders were found." if placeholders else "No common draft placeholders detected.",
                 placeholders,
             )
-            if profile in {"clean-manuscript", "word-final-clean", "response-letter"}:
+            if profile in {"clean-manuscript", "word-final-clean", "response-letter", "cover-letter"}:
                 remaining = sum(tracked.values())
                 _check(checks, "no_tracked_revisions", "FAIL" if remaining else "PASS",
                        "error" if remaining else "info",
@@ -199,7 +199,7 @@ def audit_docx_quality(
                 comments_count or comment_anchor_count or comment_package_parts
                 or comment_content_type_entries or comment_relationships or relationship_scan_errors
             )
-            comments_failure = has_comments and profile in {"clean-manuscript", "word-final-clean", "response-letter"}
+            comments_failure = has_comments and profile in {"clean-manuscript", "word-final-clean", "response-letter", "cover-letter"}
             _check(
                 checks, "comments",
                 "FAIL" if comments_failure else ("WARN" if has_comments else "PASS"),

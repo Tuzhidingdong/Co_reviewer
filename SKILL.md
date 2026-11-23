@@ -359,7 +359,7 @@ When running `inspect` or `audit`, optionally pass `--usage-ledger .co-reviewer-
 
 Actual model-call usage is not intercepted automatically in P1. Record usage only from trusted provider/agent metadata exports using `record-usage-event`; do not infer model input from file reads or token counts from text length. `audit-usage` reports recorded token buckets and programmatic document-read events separately. `estimate-usage` requires an explicit pricing file with disjoint bucket accounting and complete measurements.
 
-Run `audit-docx-quality --docx <file.docx> --profile <profile> --out <report.json>` for structural/typography checks. Supported profiles are `generic`, `clean-manuscript`, `marked-manuscript`, `word-final-clean` and `response-letter`. `render-response-docx` and `map-response-locations` also emit deterministic quality reports automatically.
+Run `audit-docx-quality --docx <file.docx> --profile <profile> --out <report.json>` for structural/typography checks. Supported profiles are `generic`, `clean-manuscript`, `marked-manuscript`, `word-final-clean`, `response-letter` and `cover-letter`. `render-response-docx` and `map-response-locations` also emit deterministic quality reports automatically.
 
 A DOCX quality report is not proof of visual correctness. Final pagination and page/line locations must still come from Microsoft Word COM and the corresponding exported PDF; scientific correctness requires human semantic review.
 
@@ -609,7 +609,8 @@ python scripts/co_reviewer_cli.py final-gate --plan "$roundRoot\revision_plan.js
 - Supported roles and profile mappings:
   - `marked` / `marked-manuscript` → `marked-manuscript` (validate the authorized Marked Track Changes state).
   - `clean` / `clean-manuscript` → `clean-manuscript` (validate that the final Clean document has no unresolved tracked revisions).
-  - `cover-letter` / `response-letter` → `response-letter`.
+  - `cover-letter` → `cover-letter` (requires no tracked revisions and no Word comments; does not impose a journal-specific Normal-style font or size).
+  - `response-letter` → `response-letter` (retains the dedicated Response Letter typography checks).
   - `si` / `supplementary-information` → `generic` (the document role remains explicit even though the current QA profile is the generic profile).
   - `word-final-clean` → `word-final-clean`; `generic` → `generic`.
 - Example for a multi-document delivery (use the actual output paths, not source filenames):
