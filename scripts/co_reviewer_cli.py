@@ -1949,9 +1949,6 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     root = parse_xml(archive.read(part))
                 paragraphs = root.findall(".//w:body//w:p", NS) if part == "word/document.xml" else root.findall(".//w:p", NS)
                 p_idx = edit.get("p_idx")
-                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0 or p_idx >= len(paragraphs):
-                    raise ValueError("Paragraph index from apply report is outside the output document.")
-                paragraph = paragraphs[p_idx]
 
                 # Correct revision IDs/text are insufficient if the new text was
                 # inserted at the wrong point in its paragraph.
@@ -1974,6 +1971,133 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     if part == "word/document.xml"
                     else source_root.findall(".//w:p", NS)
                 )
+                if target.get("action", "replace") == "insert_paragraph":
+                    if not isinstance(p_idx, int) or isinstance(p_idx, bool) or not 0 <= p_idx < len(source_paragraphs):
+                        raise ValueError("Insertion anchor index is outside the source document.")
+                    source_anchor = source_paragraphs[p_idx]
+                    anchor_text = target.get("anchor_text")
+                    inserted_text = target.get("inserted_text")
+                    position = target.get("position")
+                    if not isinstance(anchor_text, str) or not anchor_text or not isinstance(inserted_text, str) or not inserted_text:
+                        raise ValueError("Approved paragraph insertion is missing its exact anchor or inserted text.")
+                    source_anchor_text = _accepted_paragraph_text(source_anchor)
+                    if source_anchor_text.count(anchor_text) != 1:
+                        raise ValueError("Insertion anchor is not unique in the exact source paragraph.")
+                    bookmark_name = edit.get("bookmark_name")
+                    bookmark_id = edit.get("bookmark_id")
+                    insert_id = edit.get("insert_revision_id")
+                    if not isinstance(bookmark_name, str) or not bookmark_name:
+                        raise ValueError("Apply report is missing the insertion idempotence marker.")
+                    marker_nodes = [
+                        node for node in root.findall(".//w:bookmarkStart", NS)
+                        if node.get(qn("name")) == bookmark_name
+                    ]
+                    if len(marker_nodes) != 1:
+                        raise ValueError("Insertion operation marker is missing or duplicated.")
+                    inserted_paragraph = marker_nodes[0].getparent()
+                    if inserted_paragraph is None or inserted_paragraph.tag != qn("p"):
+                        raise ValueError("Insertion operation marker is not inside a Word paragraph.")
+                    end_nodes = [
+                        node for node in inserted_paragraph.findall("w:bookmarkEnd", NS)
+                        if node.get(qn("id")) == str(bookmark_id)
+                    ]
+                    if len(end_nodes) != 1:
+                        raise ValueError("Insertion operation bookmark has no unique matching end marker.")
+                    insertion_nodes = [
+                        node for node in inserted_paragraph.findall("w:ins", NS)
+                        if node.get(qn("id")) == str(insert_id)
+                    ]
+                    if len(insertion_nodes) != 1:
+                        raise ValueError("Tracked insertion wrapper is missing or duplicated.")
+                    insertion = insertion_nodes[0]
+                    actual_inserted_text = "".join(
+                        node.text or "" for node in insertion.findall(".//w:t", NS)
+                    )
+                    if actual_inserted_text != inserted_text:
+                        raise ValueError("Tracked paragraph insertion text differs from the approved text.")
+                    output_paragraphs = paragraphs
+                    inserted_index = next(
+                        (idx for idx, candidate in enumerate(output_paragraphs) if candidate is inserted_paragraph),
+                        None,
+                    )
+                    if inserted_index is None:
+                        raise ValueError("Inserted paragraph is not part of the document body.")
+                    para_id_attr = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+                    source_para_id = source_anchor.get(para_id_attr)
+                    if source_para_id:
+                        anchor_matches = [
+                            (idx, candidate) for idx, candidate in enumerate(output_paragraphs)
+                            if candidate.get(para_id_attr) == source_para_id
+                        ]
+                    else:
+                        anchor_matches = [
+                            (idx, candidate) for idx, candidate in enumerate(output_paragraphs)
+                            if _accepted_paragraph_text(candidate) == source_anchor_text
+                        ]
+                    if len(anchor_matches) != 1:
+                        raise ValueError("Original insertion anchor cannot be uniquely located in the output.")
+                    anchor_index, output_anchor = anchor_matches[0]
+                    position_ok = (
+                        inserted_index < anchor_index if position == "before"
+                        else inserted_index > anchor_index if position == "after"
+                        else False
+                    )
+                    source_ppr = source_anchor.find("w:pPr", NS)
+                    inserted_ppr = inserted_paragraph.find("w:pPr", NS)
+                    source_ppr_bytes = ET.tostring(source_ppr, method="c14n") if source_ppr is not None else b""
+                    inserted_ppr_bytes = ET.tostring(inserted_ppr, method="c14n") if inserted_ppr is not None else b""
+                    paragraph_style_ok = source_ppr_bytes == inserted_ppr_bytes
+                    inserted_runs = insertion.findall(".//w:r", NS)
+                    expected_runs = edit.get("inserted_run_format_signatures", [])
+                    actual_runs = []
+                    for run in inserted_runs:
+                        run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
+                        actual_runs.append({
+                            "text": run_text,
+                            "direct_rpr_sha256": _direct_run_format_sha256(run),
+                        })
+                    expected_run_pairs = [
+                        (row.get("text"), row.get("direct_rpr_sha256"))
+                        for row in expected_runs if isinstance(row, dict)
+                    ] if isinstance(expected_runs, list) else []
+                    actual_run_pairs = [
+                        (row["text"], row["direct_rpr_sha256"]) for row in actual_runs
+                    ]
+                    run_format_ok = bool(expected_run_pairs) and expected_run_pairs == actual_run_pairs
+                    accepted_inserted_text = _accepted_paragraph_text(inserted_paragraph)
+                    accepted_text_ok = accepted_inserted_text == inserted_text
+                    result["checks"] = {
+                        "output_exists": True,
+                        "zip_crc": "passed",
+                        "operation_marker_unique": len(marker_nodes) == 1 and len(end_nodes) == 1,
+                        "tracked_insertion_exact": len(insertion_nodes) == 1 and actual_inserted_text == inserted_text,
+                        "accepted_paragraph_text_exact": accepted_text_ok,
+                        "paragraph_position": position_ok,
+                        "paragraph_style_inherited": paragraph_style_ok,
+                        "inserted_run_format_preserved": run_format_ok,
+                        "insert_revision_id": insert_id,
+                        "bookmark_name": bookmark_name,
+                    }
+                    result["p_idx"] = inserted_index
+                    if all((accepted_text_ok, position_ok, paragraph_style_ok, run_format_ok)):
+                        result["status"] = "verified"
+                    else:
+                        result["reason"] = (
+                            "Paragraph insertion verification failed: "
+                            + "; ".join(
+                                name for name, passed in (
+                                    ("accepted text", accepted_text_ok),
+                                    ("before/after position", position_ok),
+                                    ("paragraph style", paragraph_style_ok),
+                                    ("inserted run formatting", run_format_ok),
+                                ) if not passed
+                            )
+                        )
+                    results.append(result)
+                    continue
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or not 0 <= p_idx < len(paragraphs):
+                    raise ValueError("Paragraph index from apply report is outside the output document.")
+                paragraph = paragraphs[p_idx]
                 if p_idx >= len(source_paragraphs):
                     raise ValueError("Paragraph index from apply report is outside the source document.")
                 expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[p_idx])
