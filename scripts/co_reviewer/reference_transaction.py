@@ -160,10 +160,12 @@ def compile_reference_transaction(
             raise ReferenceTransactionError(
                 f"Cannot add citation definition {role}::{number}; the Reference Graph already contains that label."
             )
+        # Numeric citations in SI or another managed document may resolve to
+        # the newly added package bibliography definition. Inventory matches
+        # across the complete graph, not only in the bibliography-owning file.
         matching_mentions = {
             item_id: item for item_id, item in mentions.items()
             if item.get("kind") == "citation"
-            and item.get("document") == role
             and (
                 str(item.get("number")) == number
                 or number in [str(value) for value in item.get("numbers", [])]
@@ -536,8 +538,9 @@ def verify_reference_transaction_outputs(
                 continue
             linked_mentions = [
                 row for row in output_graph["mentions"]
-                if row.get("document") == role and row.get("kind") == "citation"
-                and str(row.get("number")) == number and row.get("resolution") == "resolved"
+                if row.get("kind") == "citation"
+                and str(row.get("number")) == number
+                and row.get("resolution") in {"resolved", "confirmed_by_user"}
             ]
             if len(linked_mentions) != expected.get("linked_mention_count", 0):
                 errors.append(
