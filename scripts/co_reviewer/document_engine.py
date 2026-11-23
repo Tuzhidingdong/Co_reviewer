@@ -1937,6 +1937,35 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 if metadata_key in edit:
                     edit_result[metadata_key] = edit[metadata_key]
             edit_results.append(edit_result)
+        # Later insertions at the same anchor can shift earlier inserted
+        # paragraphs. Resolve every idempotence bookmark against the final
+        # in-memory XML so Apply reports carry final, not intermediate, indices.
+        if part == "word/document.xml":
+            final_paragraphs = root.findall(".//w:body//w:p", NS)
+            for result in edit_results:
+                if result.get("action") != "insert_paragraph":
+                    continue
+                bookmark_name = result.get("bookmark_name")
+                markers = [
+                    node for node in root.findall(".//w:bookmarkStart", NS)
+                    if node.get(qn("name")) == bookmark_name
+                ]
+                if len(markers) != 1 or markers[0].getparent() is None:
+                    raise ValueError(
+                        f"PARAGRAPH_INSERTION_MARKER_LOST: operation {result.get('operation_id')} "
+                        "does not have one final marker after all package edits."
+                    )
+                marker_paragraph = markers[0].getparent()
+                final_index = next(
+                    (index for index, paragraph in enumerate(final_paragraphs) if paragraph is marker_paragraph),
+                    None,
+                )
+                if final_index is None:
+                    raise ValueError(
+                        f"PARAGRAPH_INSERTION_NOT_IN_BODY: operation {result.get('operation_id')} "
+                        "was removed or moved outside the document body."
+                    )
+                result["inserted_p_idx"] = final_index
         changed[part] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     output = dict(original); output.update(changed)
     if set(output) != set(original): raise ValueError("DOCX package member inventory changed.")
