@@ -567,15 +567,15 @@ Before Apply, split the original task instruction into **atomic requirements**, 
 
 After compiling the plan, create `instruction_coverage.json` with:
 - `schema_version: "1.0"`;
-- `source_instruction: {file, sha256}` bound to the exact original instruction file;
+- `source_instruction: {file, sha256}` bound to the exact original instruction file; `file` must be an absolute path.
 - one unique `requirement_id` per atomic requirement;
 - `source_locator` and `instruction_excerpt` pointing to the original wording;
 - `status`: `planned`, `no_change`, `manual_completed`, `not_applicable`, `blocked`, or `deferred`;
-- for `planned`, every exact compiled `revision_item_id` that implements the requirement;
+- for `planned`, `revision_targets` must list every exact `{revision_item_id, target_index}` that implements the atomic requirement. Do not link only at revision-item level: an item may contain multiple independent Targets, and every Plan Target must be linked to at least one atomic source requirement;
 - for `no_change` / `not_applicable`, evidence; for `manual_completed`, an evidence file and its SHA-256; for `blocked` / `deferred`, a specific reason;
 - `coverage_sha256`, calculated by `co_reviewer.instruction_coverage.instruction_coverage_sha256` over the manifest excluding the `coverage_sha256` field.
 
-The coverage manifest must enumerate every requested text, format, citation, bibliography, table/figure and cross-document operation. Every compiled plan item must link back to at least one `planned` requirement. Show the complete atomic requirement table, disposition, revision-item links, and coverage SHA-256 to the author. Obtain explicit author review of that exact manifest before producing an approval receipt:
+The coverage manifest must enumerate every requested text, format, citation, bibliography, table/figure and cross-document operation. Every compiled Plan Target (not merely each RevisionItem) must link back to at least one `planned` requirement. The manifest validator checks exact target indices and rejects unlinked targets. Show the complete atomic requirement table, disposition, revision-item links, and coverage SHA-256 to the author. Obtain explicit author review of that exact manifest before producing an approval receipt:
 
 ```powershell
 python scripts/co_reviewer_cli.py approve-instruction-coverage --coverage "$roundRoot\instruction_coverage.json" --approved-coverage-sha256 <reviewed-coverage-sha256> --approved-by "Human Author" --out "$roundRoot\instruction_coverage_approval.json"
