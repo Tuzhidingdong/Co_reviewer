@@ -21,7 +21,7 @@ from typing import Any, Mapping, Sequence
 from .identity import TargetRef, revision_item_fingerprint, sha256_file
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-_PATCH_ACTIONS = frozenset({"replace"})
+_PATCH_ACTIONS = frozenset({"replace", "insert_paragraph"})
 _PATCH_STATES = frozenset({
     "planned", "preflighted", "approved", "applied",
     "verified", "superseded", "blocked", "abandoned",
