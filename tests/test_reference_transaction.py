@@ -170,6 +170,19 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(transaction["citation_mention_ids_updated"], ["men-4-a"])
         self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], ["men-7-new", "men-7-si"])
 
+    def test_inserted_format_map_flows_through_reference_transaction_patch_and_preflight(self):
+        import co_reviewer_cli as cli
+
+        inserted_text = self.spec["additions"][0]["inserted_text"]
+        expected_map = [{
+            "inserted_start": 0, "inserted_end": len(inserted_text), "source_offset": 0,
+        }]
+        self.spec["additions"][0]["inserted_format_map"] = expected_map
+        plan = compile_reference_transaction(self.spec, self.graph)
+        self.assertEqual(plan["revision_items"][0]["targets"][0]["inserted_format_map"], expected_map)
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
     def test_explicit_format_maps_flow_through_reference_transaction_patch_and_preflight(self):
         import co_reviewer_cli as cli
 

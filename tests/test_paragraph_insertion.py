@@ -246,6 +246,9 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
             "anchor_text": "Anchor paragraph used for insertion.",
             "position": "before",
             "inserted_text": "Model-level inserted paragraph.",
+            "inserted_format_map": [
+                {"inserted_start": 0, "inserted_end": len("Model-level inserted paragraph."), "source_offset": 0},
+            ],
             "source_comment_ids": ["C-INSERT-1"],
             "authorized_change": {"intent": "Insert one paragraph."},
         })
@@ -254,8 +257,14 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         self.assertEqual(restored.anchor_text, operation.anchor_text)
         self.assertEqual(restored.position, "before")
         self.assertEqual(restored.inserted_text, operation.inserted_text)
+        self.assertEqual([dict(row) for row in restored.inserted_format_map], [
+            {"inserted_start": 0, "inserted_end": len("Model-level inserted paragraph."), "source_offset": 0},
+        ])
         legacy = restored.to_legacy_target()
         self.assertEqual(legacy["action"], "insert_paragraph")
+        self.assertEqual(legacy["inserted_format_map"], [
+            {"inserted_start": 0, "inserted_end": len("Model-level inserted paragraph."), "source_offset": 0},
+        ])
         self.assertEqual(legacy["operation_id"], "INS-MODEL-001")
 
     def test_duplicate_operation_ids_are_rejected_before_any_write(self):
@@ -310,6 +319,103 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PARAGRAPH_INSERTION_AMBIGUOUS_CHARACTER_FORMAT"):
             apply_document(str(source), str(output), [edit], "Unit Test Author")
         self.assertFalse(output.exists())
+
+    def test_mixed_format_anchor_insertion_uses_explicit_source_run_map_through_verify(self):
+        import zipfile
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+
+        source = self.root / "mapped_mixed_source.docx"
+        output = self.root / "mapped_mixed_marked.docx"
+        plan_path = self.root / "mapped_mixed_plan.json"
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Author ")
+        italic = paragraph.add_run("Journal Name")
+        italic.italic = True
+        paragraph.add_run(" ")
+        bold = paragraph.add_run("1998")
+        bold.bold = True
+        paragraph.add_run(".").bold = True
+        document.add_paragraph("Next paragraph.")
+        document.save(source)
+
+        anchor_text = "Author Journal Name 1998."
+        inserted_text = "New Author: New Journal, 2024."
+        spans = [
+            {"inserted_start": 0, "inserted_end": 12, "source_offset": 0},
+            {"inserted_start": 12, "inserted_end": 24, "source_offset": 7},
+            {"inserted_start": 24, "inserted_end": len(inserted_text), "source_offset": 20},
+        ]
+        plan = compile_revision_plan({
+            "documents": {"Manuscript": {"input_file": str(source), "output_file": str(output)}},
+            "intents": [{
+                "id": "INS-MAPPED-MIXED-001", "document": "Manuscript",
+                "action": "insert_paragraph", "anchor_text": anchor_text,
+                "position": "after", "inserted_text": inserted_text,
+                "inserted_format_map": spans, "p_idx": 0,
+                "intent": "Insert a paragraph using explicitly selected source Run formatting.",
+            }],
+        })
+        self.assertEqual(plan["revision_items"][0]["targets"][0]["inserted_format_map"], spans)
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path), ids=["INS-MAPPED-MIXED-001"],
+            revision_ledger=None, actor="Unit Test Author",
+        ))
+        self.assertEqual(rc, 0)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(plan, "Unit Test Author")
+        self.assertEqual(apply_reports[0]["results"][0]["inserted_format_map"], spans)
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        checks = verification["results"][0]["checks"]
+        self.assertTrue(checks["inserted_format_map_source_resolved"])
+        self.assertTrue(checks["inserted_format_map_matches_approved_plan"])
+        self.assertTrue(checks["inserted_run_format_preserved"])
+
+        with zipfile.ZipFile(output) as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", NS)
+        runs = paragraphs[1].findall(".//w:ins/w:r", NS)
+        self.assertEqual(
+            "".join(node.text or "" for run in runs for node in run.findall("w:t", NS)),
+            inserted_text,
+        )
+        self.assertTrue(any(run.find("w:rPr/w:i", NS) is not None for run in runs))
+        self.assertTrue(any(run.find("w:rPr/w:b", NS) is not None for run in runs))
+        self.assertEqual(visible_text(paragraphs[1]), inserted_text)
+
+    def test_inserted_format_map_rejects_incomplete_or_out_of_anchor_offsets(self):
+        import hashlib
+        from co_reviewer.document_engine import apply_document
+
+        source = self.root / "mapped_invalid_source.docx"
+        document = Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Regular ")
+        italic = paragraph.add_run("italic")
+        italic.italic = True
+        document.save(source)
+        for suffix, mapping in (
+            ("incomplete", [{"inserted_start": 0, "inserted_end": 4, "source_offset": 0}]),
+            ("out-of-range", [{"inserted_start": 0, "inserted_end": len("Inserted"), "source_offset": 99}]),
+        ):
+            output = self.root / f"invalid_{suffix}.docx"
+            edit = {
+                "action": "insert_paragraph", "operation_id": f"INS-MAP-{suffix}",
+                "find": "Regular italic", "replace": "Inserted",
+                "anchor_text": "Regular italic", "inserted_text": "Inserted",
+                "inserted_format_map": mapping, "position": "after", "p_idx": 0,
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "authorized_change": {"intent": "Test strict insertion format-map validation."},
+            }
+            with self.assertRaises(ValueError):
+                apply_document(str(source), str(output), [edit], "Unit Test Author")
+            self.assertFalse(output.exists())
 
     def test_inserted_native_subscript_text_is_normalized_and_tracked(self):
         import hashlib

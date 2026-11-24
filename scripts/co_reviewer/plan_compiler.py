@@ -436,6 +436,11 @@ def compile_revision_plan(
                 "inserted_text": plain_replace,
                 "authorized_change": insertion_auth,
             })
+            inserted_format_map = intent.get("inserted_format_map")
+            if inserted_format_map is not None:
+                if not isinstance(inserted_format_map, list) or not inserted_format_map:
+                    raise ValueError(f"{item_id}: inserted_format_map must be a non-empty array when supplied.")
+                targets[-1]["inserted_format_map"] = inserted_format_map
         elif find_raw != plain_replace:
             token_auth = compute_token_authorizations(find_raw, plain_replace)
             token_auth["intent"] = intent_desc

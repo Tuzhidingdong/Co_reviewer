@@ -607,6 +607,17 @@ def compile_reference_transaction(
                     f"{label}.replacement_format_map must be a non-empty array."
                 )
             data["replacement_format_map"] = copy.deepcopy(replacement_format_map)
+        inserted_format_map = raw.get("inserted_format_map")
+        if inserted_format_map is not None:
+            if action != "insert_paragraph":
+                raise ReferenceTransactionError(
+                    f"{label}.inserted_format_map is valid only for insert_paragraph operations."
+                )
+            if not isinstance(inserted_format_map, list) or not inserted_format_map:
+                raise ReferenceTransactionError(
+                    f"{label}.inserted_format_map must be a non-empty array."
+                )
+            data["inserted_format_map"] = copy.deepcopy(inserted_format_map)
         if action == "insert_paragraph":
             data.update({
                 "action": "insert_paragraph",
@@ -705,6 +716,7 @@ def compile_reference_transaction(
                 "position": row["position"],
                 "inserted_text": row["inserted_text"],
                 "visible_inserted_text": normalize_script_characters(row["inserted_text"]),
+                "inserted_format_map": copy.deepcopy(row.get("inserted_format_map")),
                 "linked_mention_ids": sorted(addition_links.get(f"additions[{index}]", set())),
                 "linked_mention_count": len(addition_links.get(f"additions[{index}]", set())),
             }
@@ -860,6 +872,10 @@ def verify_reference_transaction_outputs(
             operation_result = operation_results[0]
             inserted_p_idx = operation_result.get("inserted_p_idx")
             inserted_part = operation_result.get("part", "word/document.xml")
+            if operation_result.get("inserted_format_map") != expected.get("inserted_format_map"):
+                errors.append(
+                    f"Bibliography insertion operation {operation_id} inserted_format_map differs from the approved transaction."
+                )
             if (
                 operation_result.get("action") != "insert_paragraph"
                 or operation_result.get("status") != "applied"

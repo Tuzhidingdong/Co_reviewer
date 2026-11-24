@@ -238,6 +238,56 @@ class FinalGateTests(unittest.TestCase):
         self.assertIn("| applied_text_edits | 1 |", md_text)
         self.assertIn("| applied_format_changes | 1 |", md_text)
 
+    def test_instruction_coverage_1_1_requires_exact_task_and_source_line_provenance(self):
+        import hashlib
+        import copy
+        from co_reviewer.instruction_coverage import InstructionCoverageError
+
+        instruction = self.root / "coverage_v11_source.txt"
+        instruction.write_text(
+            "MT-06: revise the exact velocity sentence.\n"
+            "MT-10: add the bibliography entry.\n",
+            encoding="utf-8",
+        )
+        coverage = {
+            "schema_version": "1.1",
+            "source_instruction": {
+                "file": str(instruction),
+                "sha256": hashlib.sha256(instruction.read_bytes()).hexdigest(),
+            },
+            "requirements": [{
+                "requirement_id": "REQ-MT-06-VELOCITY",
+                "task_id": "MT-06",
+                "source_line_start": 1,
+                "source_line_end": 1,
+                "source_locator": "L1–L1",
+                "instruction_excerpt": "MT-06: revise the exact velocity sentence.",
+                "status": "blocked",
+                "reason": "The target must be selected from the exact source sentence.",
+            }],
+        }
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        authorize_instruction_coverage(
+            coverage, coverage["coverage_sha256"], "Human Author",
+            approved_at_utc="2026-11-24T03:00:00+00:00",
+        )
+        wrong_task = copy.deepcopy(coverage)
+        wrong_task["requirements"][0]["task_id"] = "MT-10"
+        wrong_task["coverage_sha256"] = instruction_coverage_sha256(wrong_task)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_task, wrong_task["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+        wrong_excerpt = copy.deepcopy(coverage)
+        wrong_excerpt["requirements"][0]["instruction_excerpt"] = "A generic paraphrase."
+        wrong_excerpt["coverage_sha256"] = instruction_coverage_sha256(wrong_excerpt)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_excerpt, wrong_excerpt["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+
     def test_instruction_coverage_approval_cli_requires_exact_hash(self):
         coverage_path = self.root / "coverage_for_approval.json"
         approval_path = self.root / "coverage_approval.json"

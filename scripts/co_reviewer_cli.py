@@ -772,6 +772,43 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         cursor = end
                     if cursor != len(t.get("replace", "")):
                         errors.append(f"{tp}.replacement_format_map must cover the full replacement text.")
+            inserted_format_map = t.get("inserted_format_map")
+            if inserted_format_map is not None:
+                if action != "insert_paragraph":
+                    errors.append(f"{tp}.inserted_format_map is valid only for action=insert_paragraph.")
+                if not isinstance(inserted_format_map, list) or not inserted_format_map:
+                    errors.append(f"{tp}.inserted_format_map must be a non-empty array when supplied.")
+                else:
+                    cursor = 0
+                    for segment_index, segment in enumerate(inserted_format_map):
+                        valid_segment = (
+                            isinstance(segment, dict)
+                            and set(segment) == {"inserted_start", "inserted_end", "source_offset"}
+                            and all(
+                                isinstance(segment.get(field), int) and not isinstance(segment.get(field), bool)
+                                for field in ("inserted_start", "inserted_end", "source_offset")
+                            )
+                        )
+                        if not valid_segment:
+                            errors.append(
+                                f"{tp}.inserted_format_map[{segment_index}] requires integer "
+                                "inserted_start/inserted_end/source_offset only."
+                            )
+                            continue
+                        start, end, source_offset = (
+                            segment["inserted_start"], segment["inserted_end"], segment["source_offset"]
+                        )
+                        if (
+                            start != cursor or end <= start or end > len(t.get("inserted_text", ""))
+                            or source_offset < 0 or source_offset >= len(t.get("anchor_text", ""))
+                        ):
+                            errors.append(
+                                f"{tp}.inserted_format_map[{segment_index}] is not a contiguous, "
+                                "in-range inserted/source mapping."
+                            )
+                        cursor = end
+                    if cursor != len(t.get("inserted_text", "")):
+                        errors.append(f"{tp}.inserted_format_map must cover the full inserted text.")
             format_operations = t.get("format_operations", [])
             if not isinstance(format_operations, list):
                 errors.append(f"{tp}.format_operations must be an array.")
@@ -953,6 +990,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
                 "anchor_text": target.get("anchor_text"),
                 "position": target.get("position"),
                 "inserted_text": target.get("inserted_text"),
+                "inserted_format_map": copy.deepcopy(target.get("inserted_format_map")),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -1198,6 +1236,7 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
                 "anchor_text": target.get("anchor_text"),
                 "position": target.get("position"),
                 "inserted_text": target.get("inserted_text"),
+                "inserted_format_map": copy.deepcopy(target.get("inserted_format_map")),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -2249,22 +2288,29 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     inserted_ppr_bytes = ET.tostring(inserted_ppr, method="c14n") if inserted_ppr is not None else b""
                     paragraph_style_ok = source_ppr_bytes == inserted_ppr_bytes
                     inserted_runs = insertion.findall(".//w:r", NS)
-                    expected_runs = edit.get("inserted_run_format_signatures", [])
-                    actual_runs = []
-                    for run in inserted_runs:
-                        run_text = "".join(node.text or "" for node in run.findall("w:t", NS))
-                        actual_runs.append({
-                            "text": run_text,
-                            "direct_rpr_sha256": _direct_run_format_sha256(run),
-                        })
+                    from co_reviewer.document_engine import build_paragraph_insertion_runs
+                    independently_expected_runs, inserted_format_map_resolution = (
+                        build_paragraph_insertion_runs(
+                            source_anchor, anchor_text, requested_inserted_text,
+                            target.get("inserted_format_map"),
+                        )
+                    )
                     expected_run_pairs = [
-                        (row.get("text"), row.get("direct_rpr_sha256"))
-                        for row in expected_runs if isinstance(row, dict)
-                    ] if isinstance(expected_runs, list) else []
+                        (
+                            "".join(node.text or "" for node in run.findall("w:t", NS)),
+                            _direct_run_format_sha256(run),
+                        )
+                        for run in independently_expected_runs
+                    ]
                     actual_run_pairs = [
-                        (row["text"], row["direct_rpr_sha256"]) for row in actual_runs
+                        (
+                            "".join(node.text or "" for node in run.findall("w:t", NS)),
+                            _direct_run_format_sha256(run),
+                        )
+                        for run in inserted_runs
                     ]
                     run_format_ok = bool(expected_run_pairs) and expected_run_pairs == actual_run_pairs
+                    inserted_map_matches_plan = edit.get("inserted_format_map") == target.get("inserted_format_map")
                     accepted_inserted_text = _accepted_paragraph_text(inserted_paragraph)
                     accepted_text_ok = accepted_inserted_text == inserted_text
                     result["checks"] = {
@@ -2277,11 +2323,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         "anchor_text_after_approved_edits": anchor_text_after_approved_edits,
                         "paragraph_style_inherited": paragraph_style_ok,
                         "inserted_run_format_preserved": run_format_ok,
+                        "inserted_format_map_source_resolved": True,
+                        "inserted_format_map_matches_approved_plan": inserted_map_matches_plan,
+                        "inserted_format_map_resolution": inserted_format_map_resolution,
                         "insert_revision_id": insert_id,
                         "bookmark_name": bookmark_name,
                     }
                     result["p_idx"] = inserted_index
-                    if all((accepted_text_ok, position_ok, paragraph_style_ok, run_format_ok)):
+                    if all((accepted_text_ok, position_ok, paragraph_style_ok, run_format_ok, inserted_map_matches_plan)):
                         result["status"] = "verified"
                     else:
                         result["reason"] = (
@@ -2292,6 +2341,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                                     ("before/after position", position_ok),
                                     ("paragraph style", paragraph_style_ok),
                                     ("inserted run formatting", run_format_ok),
+                                    ("approved inserted-format map", inserted_map_matches_plan),
                                 ) if not passed
                             )
                         )

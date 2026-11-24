@@ -132,6 +132,7 @@ class PatchOperation:
     authorized_change: Mapping[str, Any] | None = None
     protected_spans: tuple[Mapping[str, Any], ...] = ()
     replacement_format_map: tuple[Mapping[str, Any], ...] = ()
+    inserted_format_map: tuple[Mapping[str, Any], ...] = ()
     format_authorization: Mapping[str, Any] | None = None
     format_operations: tuple[Mapping[str, Any], ...] = ()
     two_pass: bool = False
@@ -158,6 +159,8 @@ class PatchOperation:
                 raise RevisionModelError("insert_paragraph cannot be combined with replacement or FormatChange operations.")
         elif any(value is not None for value in (self.anchor_text, self.position, self.inserted_text)):
             raise RevisionModelError("Paragraph-insertion fields are valid only for action=insert_paragraph.")
+        if self.action != "insert_paragraph" and self.inserted_format_map:
+            raise RevisionModelError("inserted_format_map is valid only for action=insert_paragraph.")
         _text(self.operation_id, "operation_id")
         _text(self.document, "document")
         _safe_docx_path(self.input_file, "input_file")
@@ -228,6 +231,28 @@ class PatchOperation:
                 raise RevisionModelError(f"replacement_format_map[{index}] offsets are invalid or non-contiguous.")
         if self.replacement_format_map and self.replacement_format_map[-1]["replacement_end"] != len(self.replace):
             raise RevisionModelError("replacement_format_map must cover every replacement character.")
+        if any(not isinstance(segment, Mapping) for segment in self.inserted_format_map):
+            raise RevisionModelError("inserted_format_map must contain objects.")
+        for index, segment in enumerate(self.inserted_format_map):
+            if set(segment) != {"inserted_start", "inserted_end", "source_offset"}:
+                raise RevisionModelError(
+                    f"inserted_format_map[{index}] requires only inserted_start, inserted_end and source_offset."
+                )
+            values = [segment.get(key) for key in ("inserted_start", "inserted_end", "source_offset")]
+            if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+                raise RevisionModelError(f"inserted_format_map[{index}] offsets must be integers.")
+            expected_start = self.inserted_format_map[index - 1]["inserted_end"] if index else 0
+            if (
+                self.action != "insert_paragraph"
+                or values[0] != expected_start
+                or values[1] <= values[0]
+                or values[1] > len(self.inserted_text or "")
+                or values[2] < 0
+                or values[2] >= len(self.anchor_text or "")
+            ):
+                raise RevisionModelError(f"inserted_format_map[{index}] offsets are invalid or non-contiguous.")
+        if self.inserted_format_map and self.inserted_format_map[-1]["inserted_end"] != len(self.inserted_text or ""):
+            raise RevisionModelError("inserted_format_map must cover every inserted character.")
         if not isinstance(self.two_pass, bool):
             raise RevisionModelError("two_pass must be a boolean.")
         if any(not isinstance(operation, Mapping) for operation in self.format_operations):
@@ -375,6 +400,7 @@ class PatchOperation:
             authorized_change=data.get("authorized_change"),
             protected_spans=tuple(data.get("protected_spans", [])),
             replacement_format_map=tuple(data.get("replacement_format_map", [])),
+            inserted_format_map=tuple(data.get("inserted_format_map", [])),
             format_authorization=data.get("format_authorization"),
             format_operations=tuple(data.get("format_operations", [])),
             two_pass=data.get("two_pass", False),
@@ -407,6 +433,7 @@ class PatchOperation:
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
             **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
+            **({"inserted_format_map": [dict(x) for x in self.inserted_format_map]} if self.inserted_format_map else {}),
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
@@ -432,6 +459,7 @@ class PatchOperation:
             "authorized_change": dict(self.authorized_change) if self.authorized_change is not None else None,
             "protected_spans": [dict(x) for x in self.protected_spans],
             **({"replacement_format_map": [dict(x) for x in self.replacement_format_map]} if self.replacement_format_map else {}),
+            **({"inserted_format_map": [dict(x) for x in self.inserted_format_map]} if self.inserted_format_map else {}),
             **({"format_authorization": dict(self.format_authorization)} if self.format_authorization is not None else {}),
             **({"format_operations": [dict(x) for x in self.format_operations]} if self.format_operations else {}),
             **({"two_pass": True} if self.two_pass else {}),
@@ -1760,7 +1788,7 @@ class RevisionLedger:
                 "document", "input_file", "output_file", "part", "p_idx", "find",
                 "replace", "location", "operation_id", "source_comment_ids",
                 "author_decision_ref", "location_phrase", "target_ref", "target_identity_mode", "authorized_change", "protected_spans",
-                "replacement_format_map", "format_authorization", "format_operations",
+                "replacement_format_map", "inserted_format_map", "format_authorization", "format_operations",
             )
             for index, (actual_target, expected_target) in enumerate(zip(actual_targets, expected_targets)):
                 if not isinstance(actual_target, Mapping) or any(
