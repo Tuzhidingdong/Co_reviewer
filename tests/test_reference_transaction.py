@@ -170,6 +170,38 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(transaction["citation_mention_ids_updated"], ["men-4-a"])
         self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], ["men-7-new", "men-7-si"])
 
+    def test_explicit_format_maps_flow_through_reference_transaction_patch_and_preflight(self):
+        import co_reviewer_cli as cli
+
+        entry_replacement = self.spec["entry_updates"][0]["replace"]
+        citation_replacement = self.spec["citation_updates"][0]["replace"]
+        self.spec["entry_updates"][0]["replacement_format_map"] = [{
+            "replacement_start": 0,
+            "replacement_end": len(entry_replacement),
+            "source_offset": 0,
+        }]
+        self.spec["citation_updates"][0]["replacement_format_map"] = [{
+            "replacement_start": 0,
+            "replacement_end": len(citation_replacement),
+            "source_offset": 0,
+        }]
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        targets_by_operation = {
+            target["operation_id"]: target
+            for target in plan["revision_items"][0]["targets"]
+        }
+        self.assertEqual(
+            targets_by_operation["REF-ENTRY-001"]["replacement_format_map"],
+            self.spec["entry_updates"][0]["replacement_format_map"],
+        )
+        self.assertEqual(
+            targets_by_operation["REF-CITE-001"]["replacement_format_map"],
+            self.spec["citation_updates"][0]["replacement_format_map"],
+        )
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
     def test_blocks_a_partial_citation_renumbering(self):
         self.spec["citation_updates"] = []
         with self.assertRaisesRegex(ReferenceTransactionError, "every graph-linked citation occurrence"):
