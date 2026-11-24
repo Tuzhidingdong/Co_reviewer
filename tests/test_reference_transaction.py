@@ -74,13 +74,12 @@ class ReferenceTransactionTests(unittest.TestCase):
                     "target_definition_ids": ["def-4"], "resolution": "resolved",
                 },
                 {
-                    "id": "men-7-new", "document": "Manuscript",
-                    "part": "word/document.xml", "paragraph_index": 0,
-                    "kind": "citation", "number": "7", "text": "7",
-                    "target_definition_ids": [], "resolution": "unresolved",
-                },
-                {
-                    "id": "men-7-si", "document": "SI",
+                    "id": "men-" + hashlib.sha1(
+                        ("SIword/document.xml0"
+                         + str("Supporting information cites [7].".index("7"))
+                         + "citation7").encode("utf-8")
+                    ).hexdigest()[:16],
+                    "document": "SI",
                     "part": "word/document.xml", "paragraph_index": 0,
                     "kind": "citation", "number": "7", "text": "7",
                     "target_definition_ids": [], "resolution": "unresolved",
@@ -113,7 +112,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "position": "after",
                 "inserted_text": "[7] New reference entry.",
                 "reference_number": "7",
-                "linked_mention_ids": ["men-7-new", "men-7-si"],
+                "linked_mention_ids": [self.graph["mentions"][-1]["id"]],
                 "authorized_change": {
                     "intent": "Add the approved bibliography entry.",
                     "explicitly_authorized_insertions": [{"kind": "citation", "text": "[7]"}],
@@ -169,7 +168,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         transaction = plan["reference_transaction"]
         self.assertEqual(transaction["definition_ids_updated"], ["def-4"])
         self.assertEqual(transaction["citation_mention_ids_updated"], ["men-4-a"])
-        self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], ["men-7-new", "men-7-si"])
+        self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], [self.graph["mentions"][-1]["id"]])
 
     def test_inserted_format_map_flows_through_reference_transaction_patch_and_preflight(self):
         import co_reviewer_cli as cli
