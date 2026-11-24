@@ -1070,10 +1070,16 @@ def verify_reference_transaction_outputs(
                     normalization = prose_target.get("reference_citation_normalization")
                     if not isinstance(normalization, Mapping):
                         continue
+                    prose_target_p_idx = prose_target.get("p_idx")
+                    if not isinstance(prose_target_p_idx, int) or isinstance(prose_target_p_idx, bool):
+                        target_ref = prose_target.get("target_ref")
+                        location_hint = target_ref.get("location_hint") if isinstance(target_ref, Mapping) else None
+                        candidate = location_hint.get("p_idx") if isinstance(location_hint, Mapping) else None
+                        prose_target_p_idx = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
                     if (
                         prose_target.get("document") != role
                         or prose_target.get("part", "word/document.xml") != part
-                        or prose_target.get("p_idx") != expected.get("source_p_idx")
+                        or prose_target_p_idx != expected.get("source_p_idx")
                         or normalization.get("citation_operation_id") != expected.get("operation_id")
                         or normalization.get("citation_find") != find_text
                     ):
