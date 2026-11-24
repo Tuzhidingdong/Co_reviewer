@@ -1053,6 +1053,92 @@ def verify_reference_transaction_outputs(
                     earlier_replace = earlier.get("replace_text")
                     if isinstance(earlier_find, str) and isinstance(earlier_replace, str):
                         output_offset += len(earlier_replace) - len(earlier_find)
+
+            # A separately authorized prose target may have been narrowed by
+            # Preflight to the exact changed prefix before this graph-linked
+            # citation token. That prefix replacement shifts the output token
+            # offset even though it is not itself a citation update. Reapply
+            # the recorded source-relative delta here so Reference Graph
+            # verification checks the true output occurrence, not the stale
+            # pre-edit offset.
+            for revision_item in plan.get("revision_items", []):
+                if not isinstance(revision_item, Mapping):
+                    continue
+                for prose_target in revision_item.get("targets", []):
+                    if not isinstance(prose_target, Mapping):
+                        continue
+                    normalization = prose_target.get("reference_citation_normalization")
+                    if not isinstance(normalization, Mapping):
+                        continue
+                    if (
+                        prose_target.get("document") != role
+                        or prose_target.get("part", "word/document.xml") != part
+                        or prose_target.get("p_idx") != expected.get("source_p_idx")
+                        or normalization.get("citation_operation_id") != expected.get("operation_id")
+                        or normalization.get("citation_find") != find_text
+                    ):
+                        continue
+                    if normalization.get("mode") != "prefix_before_citation":
+                        continue
+
+                    source_find = normalization.get("source_find")
+                    normalized_find = normalization.get("normalized_find")
+                    normalized_replace = normalization.get("normalized_replace")
+                    if not all(isinstance(value, str) and value for value in (
+                        source_find, normalized_find, normalized_replace
+                    )):
+                        errors.append(
+                            f"Prose normalization for citation update {expected.get('operation_id')} "
+                            "has incomplete offset provenance."
+                        )
+                        continue
+                    if source_find.count(find_text) != 1:
+                        errors.append(
+                            f"Prose normalization for citation update {expected.get('operation_id')} "
+                            "does not contain one exact source citation token."
+                        )
+                        continue
+                    relative_citation_offset = source_find.find(find_text)
+                    source_target_start = source_offset - relative_citation_offset
+                    if source_target_start < 0:
+                        errors.append(
+                            f"Prose normalization for citation update {expected.get('operation_id')} "
+                            "projects before the beginning of its source paragraph."
+                        )
+                        continue
+
+                    normalized_find = prose_target.get("find")
+                    normalized_replace = prose_target.get("replace")
+                    if (
+                        normalized_find != normalization.get("normalized_find")
+                        or normalized_replace != normalization.get("normalized_replace")
+                    ):
+                        errors.append(
+                            f"Prose normalization for citation update {expected.get('operation_id')} "
+                            "differs from the approved normalized target."
+                        )
+                        continue
+                    prose_reports = [
+                        row
+                        for report in apply_reports
+                        for row in report.get("results", [])
+                        if isinstance(row, Mapping)
+                        and row.get("status") == "applied"
+                        and row.get("revision_item_id") == revision_item.get("id")
+                        and row.get("document") == role
+                        and row.get("part", "word/document.xml") == part
+                        and row.get("p_idx") == expected.get("source_p_idx")
+                        and row.get("find") == normalized_find
+                        and row.get("replace") == normalized_replace
+                        and row.get("action", "replace") == "replace"
+                    ]
+                    if len(prose_reports) != 1:
+                        errors.append(
+                            f"Prose normalization for citation update {expected.get('operation_id')} "
+                            f"has {len(prose_reports)} matching Apply results; expected exactly one."
+                        )
+                        continue
+                    output_offset += len(normalized_replace) - len(normalized_find)
             paragraph_segment = segments_by_document.get(role, {}).get((part, output_p_idx))
             if (
                 not isinstance(paragraph_segment, Mapping)
