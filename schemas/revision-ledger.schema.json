@@ -630,6 +630,17 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": ["inserted_format_map"]
+          },
+          "then": {
+            "required": ["action"],
+            "properties": {
+              "action": {"const": "insert_paragraph"}
+            }
+          }
         }
       ]
     },
