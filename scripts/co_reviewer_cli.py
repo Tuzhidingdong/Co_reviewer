@@ -1665,8 +1665,13 @@ def _verify_paragraph_format_integrity(
             isinstance(item, dict) and item.get("status") == "applied"
             and item.get("part", "word/document.xml") == part
             and item.get("p_idx") == p_idx
+            and item.get("action", "replace") != "insert_paragraph"
         )
     ]
+    # Paragraph insertions are verified against their own bookmarked paragraph.
+    # They must not enter the source-character replacement replay for this
+    # original paragraph, otherwise a separate insertion is mistaken for a
+    # text replacement and corrupts exact Run-format verification.
     for edit in relevant:
         current_text = "".join(item["character"] for item in working)
         anchor = edit.get("find")
