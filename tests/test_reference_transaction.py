@@ -609,6 +609,10 @@ class ReferenceTransactionTests(unittest.TestCase):
             item["status"] = "applied"
         verification = cli.verify_apply_report(approved_plan, apply_reports)
         self.assertTrue(verification["passed"], verification)
+        self.assertTrue(
+            verification["reference_transaction"]["passed"],
+            verification["reference_transaction"],
+        )
 
         output_file = self.root / "manuscript_marked.docx"
         accepted_payload = accepted_view_docx_bytes(output_file.read_bytes())
