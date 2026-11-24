@@ -252,6 +252,9 @@
               "stable_target_ref",
               "legacy_p_idx_explicit"
             ]
+          },
+          "replacement_format_map": {
+            "$ref": "#/$defs/replacementFormatMap"
           }
         },
         "additionalProperties": false,
@@ -354,6 +357,9 @@
               "stable_target_ref",
               "legacy_p_idx_explicit"
             ]
+          },
+          "replacement_format_map": {
+            "$ref": "#/$defs/replacementFormatMap"
           }
         },
         "additionalProperties": false,
@@ -474,6 +480,33 @@
         }
       },
       "additionalProperties": false
+    },
+    "replacementFormatMap": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "replacement_start",
+          "replacement_end",
+          "source_offset"
+        ],
+        "properties": {
+          "replacement_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replacement_end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

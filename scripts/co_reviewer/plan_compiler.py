@@ -372,10 +372,17 @@ def compile_revision_plan(
         source_sha256 = sha_cache[input_file]
 
         if is_paragraph_insertion:
+            if intent.get("replacement_format_map") is not None:
+                raise ValueError(f"{item_id}: replacement_format_map is not valid for insert_paragraph.")
             plain_replace, inline_ops, explicit_ops = replace_raw, [], []
         else:
             plain_replace, inline_ops = parse_inline_format_markup(replace_raw, include_offsets=True)
             explicit_ops = _normalize_format_intent(intent.get("format_intent"), plain_replace)
+            if intent.get("replacement_format_map") is not None and find_raw == plain_replace:
+                raise ValueError(
+                    f"{item_id}: replacement_format_map requires an actual text replacement; "
+                    "use a separately scoped FormatChange for format-only edits."
+                )
         after_para_text = (
             visible_text(para).replace(find_raw, plain_replace, 1)
             if not is_paragraph_insertion else ""
@@ -443,11 +450,19 @@ def compile_revision_plan(
                 "replace": plain_replace,
                 "authorized_change": token_auth,
             }
-            auto_map = _compute_auto_format_map_for_paragraph(
-                para, find_raw, plain_replace, allow_dominant_replace_fallback=False,
-            )
-            if auto_map is not None:
-                text_target["replacement_format_map"] = auto_map
+            explicit_map = intent.get("replacement_format_map")
+            if explicit_map is not None:
+                if not isinstance(explicit_map, list) or not explicit_map:
+                    raise ValueError(
+                        f"{item_id}: replacement_format_map must be a non-empty array when explicitly supplied."
+                    )
+                text_target["replacement_format_map"] = explicit_map
+            else:
+                auto_map = _compute_auto_format_map_for_paragraph(
+                    para, find_raw, plain_replace, allow_dominant_replace_fallback=False,
+                )
+                if auto_map is not None:
+                    text_target["replacement_format_map"] = auto_map
             targets.append(text_target)
 
         if format_ops:

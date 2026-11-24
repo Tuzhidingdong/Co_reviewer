@@ -140,6 +140,38 @@ def compile_reference_transaction(
         if not isinstance(rows, list):
             raise ReferenceTransactionError(f"{name} must be an array.")
 
+    # Identify original labels that this transaction will release before
+    # evaluating additions. This is provisional; complete linked-citation and
+    # final-namespace validation still runs before a Patch is emitted.
+    moving_definitions: dict[str, dict[str, str]] = {}
+    seen_entry_update_ids: set[str] = set()
+    for index, row in enumerate(entry_updates):
+        if not isinstance(row, Mapping):
+            raise ReferenceTransactionError(f"entry_updates[{index}] must be an object.")
+        definition_id = _require_text(row.get("definition_id"), f"entry_updates[{index}].definition_id")
+        if definition_id in seen_entry_update_ids:
+            raise ReferenceTransactionError(f"Bibliography definition {definition_id} is updated more than once.")
+        seen_entry_update_ids.add(definition_id)
+        definition = definitions.get(definition_id)
+        if definition is None or definition.get("kind") != "citation":
+            raise ReferenceTransactionError(f"Entry update references an unknown or unsupported citation definition: {definition_id}.")
+        old_number = str(definition.get("number"))
+        new_number = str(row.get("new_number", old_number))
+        if new_number != old_number and not new_number.isdigit():
+            raise ReferenceTransactionError(f"Entry update {definition_id} new_number must be a numeric citation label.")
+        if new_number != old_number and row.get("document") == definition.get("document"):
+            moving_definitions[definition_id] = {
+                "document": str(definition.get("document")),
+                "old_number": old_number,
+                "new_number": new_number,
+            }
+
+    scheduled_citation_update_ids = {
+        row.get("mention_id")
+        for row in citation_updates
+        if isinstance(row, Mapping) and isinstance(row.get("mention_id"), str)
+    }
+
     graph_sources = graph.get("source_files")
     if not isinstance(graph_sources, Mapping):
         raise ReferenceTransactionError(
@@ -177,9 +209,20 @@ def compile_reference_transaction(
             and item.get("document") == role
             and str(item.get("number")) == number
         ]
-        if collisions:
+        unreleased_collisions = [
+            item for item in collisions
+            if (
+                item.get("id") not in moving_definitions
+                or moving_definitions[item.get("id")]["document"] != role
+                or moving_definitions[item.get("id")]["old_number"] != number
+                or moving_definitions[item.get("id")]["new_number"] == number
+            )
+        ]
+        if unreleased_collisions:
             raise ReferenceTransactionError(
-                f"Cannot add citation definition {role}::{number}; the Reference Graph already contains that label."
+                f"Cannot add citation definition {role}::{number}; the Reference Graph already contains "
+                "that label and the conflicting definition is not moved away in this transaction: "
+                + ", ".join(sorted(str(item.get("id")) for item in unreleased_collisions))
             )
         # Numeric citations in SI or another managed document may resolve to
         # the newly added package bibliography definition. Inventory matches
@@ -192,12 +235,22 @@ def compile_reference_transaction(
                 or number in [str(value) for value in item.get("numbers", [])]
             )
         }
+        def _targets_only_released_definitions(mention: Mapping[str, Any]) -> bool:
+            target_ids = mention.get("target_definition_ids") or []
+            return bool(target_ids) and all(
+                definition_id in moving_definitions
+                and moving_definitions[definition_id]["old_number"] == number
+                and moving_definitions[definition_id]["new_number"] != number
+                for definition_id in target_ids
+            )
+
         blocked_mentions = {
             item_id: item for item_id, item in matching_mentions.items()
             if item.get("resolution") in {"ambiguous", "manual_review_required"}
             or (
                 item.get("resolution") in {"resolved", "confirmed_by_user"}
                 and item.get("resolution_scope") == "package"
+                and not _targets_only_released_definitions(item)
             )
             or item.get("group_kind") is not None
             or item.get("panel_range") is not None
@@ -211,6 +264,11 @@ def compile_reference_transaction(
         candidates = {
             item_id for item_id, item in matching_mentions.items()
             if item.get("resolution") == "unresolved"
+            or (
+                item_id not in scheduled_citation_update_ids
+                and item.get("resolution") in {"resolved", "confirmed_by_user"}
+                and _targets_only_released_definitions(item)
+            )
         }
         linked_raw = row.get("linked_mention_ids", [])
         if not isinstance(linked_raw, list) or any(not isinstance(x, str) for x in linked_raw):
@@ -218,10 +276,24 @@ def compile_reference_transaction(
         linked = set(linked_raw)
         if linked != candidates:
             raise ReferenceTransactionError(
-                f"Addition {role}::{number} must explicitly link every unresolved static mention of that number. "
+                f"Addition {role}::{number} must explicitly link every unresolved static mention and every "
+                "rebindable occurrence released from the old definition. "
                 f"Missing={sorted(candidates - linked)}; extra={sorted(linked - candidates)}."
             )
+        previously_linked = set().union(*addition_links.values()) if addition_links else set()
+        duplicate_links = linked & previously_linked
+        if duplicate_links:
+            raise ReferenceTransactionError(
+                "A citation mention cannot be rebound to more than one added definition: "
+                + ", ".join(sorted(duplicate_links))
+            )
         addition_links[f"additions[{index}]"] = linked
+
+    # Mentions explicitly reassigned to additions are not old-definition
+    # occurrences that must be renumbered in the same transaction.
+    reassigned_mention_ids = (
+        set().union(*addition_links.values()) if addition_links else set()
+    )
 
     citation_rows_by_mention: dict[str, Mapping[str, Any]] = {}
     for index, row in enumerate(citation_updates):
@@ -352,6 +424,7 @@ def compile_reference_transaction(
             linked_mentions = {
                 mention_id for mention_id, mention in mentions.items()
                 if definition_id in (mention.get("target_definition_ids") or [])
+                and mention_id not in reassigned_mention_ids
             }
             supplied_mentions = {
                 mention_id for mention_id, mention_row in citation_rows_by_mention.items()
@@ -473,6 +546,17 @@ def compile_reference_transaction(
             "target_ref": copy.deepcopy(dict(target_ref)) if isinstance(target_ref, Mapping) else None,
             "authorized_change": copy.deepcopy(dict(authorization)),
         }
+        replacement_format_map = raw.get("replacement_format_map")
+        if replacement_format_map is not None:
+            if action != "replace":
+                raise ReferenceTransactionError(
+                    f"{label}.replacement_format_map is valid only for replace operations."
+                )
+            if not isinstance(replacement_format_map, list) or not replacement_format_map:
+                raise ReferenceTransactionError(
+                    f"{label}.replacement_format_map must be a non-empty array."
+                )
+            data["replacement_format_map"] = copy.deepcopy(replacement_format_map)
         if action == "insert_paragraph":
             data.update({
                 "action": "insert_paragraph",
