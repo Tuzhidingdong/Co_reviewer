@@ -279,6 +279,16 @@ class FinalGateTests(unittest.TestCase):
                 wrong_task, wrong_task["coverage_sha256"], "Human Author",
                 approved_at_utc="2026-11-24T03:00:00+00:00",
             )
+        wrong_both_task_and_id = copy.deepcopy(coverage)
+        wrong_both_task_and_id["requirements"][0]["task_id"] = "MT-10"
+        wrong_both_task_and_id["requirements"][0]["requirement_id"] = "REQ-MT-10-VELOCITY"
+        wrong_both_task_and_id["coverage_sha256"] = instruction_coverage_sha256(wrong_both_task_and_id)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_both_task_and_id, wrong_both_task_and_id["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+
         wrong_excerpt = copy.deepcopy(coverage)
         wrong_excerpt["requirements"][0]["instruction_excerpt"] = "A generic paraphrase."
         wrong_excerpt["coverage_sha256"] = instruction_coverage_sha256(wrong_excerpt)
