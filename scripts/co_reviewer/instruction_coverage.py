@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,6 +114,14 @@ def _validate_manifest(coverage: Any) -> list[str]:
                             errors.append(
                                 f"{label}.instruction_excerpt must exactly reproduce the original source lines "
                                 f"{line_start}-{line_end}; generic or paraphrased excerpts are not valid provenance."
+                            )
+                        elif isinstance(task_id, str) and not re.search(
+                            rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])",
+                            exact_excerpt,
+                        ):
+                            errors.append(
+                                f"{label}.task_id {task_id!r} does not appear in its cited original instruction lines; "
+                                "task/line attribution is inconsistent."
                             )
         status = row.get("status")
         if status not in allowed:
