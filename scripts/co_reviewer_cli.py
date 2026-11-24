@@ -999,10 +999,10 @@ def _schedule_plan_item_dependencies(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Order cross-item edits whose same-paragraph anchors can affect each other.
 
-    The same schedule is used by Preflight and Apply. An operation that replaces
-    a containing span must run before an inner operation only when its proposed
-    replacement preserves that inner exact anchor once. If no safe order can
-    preserve both approved anchors, fail closed before preparing any DOCX.
+    The same schedule is used by Preflight and Apply. An operation must precede
+    another only when its resulting paragraph preserves the latter's exact
+    anchor once. If no safe order can preserve both approved anchors, fail
+    closed before preparing any DOCX.
     Target order inside one revision item is intentionally preserved because a
     transaction compiler may have authored a meaningful atomic operation order.
     """
@@ -1061,6 +1061,12 @@ def _schedule_plan_item_dependencies(
                     if isinstance(candidate, int) and not isinstance(candidate, bool):
                         p_idx = candidate
                         break
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool):
+                    location_hint = target_ref.get("location_hint")
+                    if isinstance(location_hint, Mapping):
+                        candidate = location_hint.get("p_idx")
+                        if isinstance(candidate, int) and not isinstance(candidate, bool):
+                            p_idx = candidate
         if isinstance(p_idx, int) and not isinstance(p_idx, bool):
             if p_idx < 0 or p_idx >= len(paragraph_texts):
                 return None
