@@ -747,7 +747,10 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                             or not citation_find or not citation_replace
                         ):
                             errors.append(f"{tp}.reference_citation_normalization contains invalid values.")
-                        elif source_find.count(citation_find) != 1 or source_replace.count(citation_find) != 1:
+                        elif (
+                            len(_exact_token_positions(source_find, citation_find)) != 1
+                            or len(_exact_token_positions(source_replace, citation_find)) != 1
+                        ):
                             errors.append(f"{tp}.reference_citation_normalization must retain one original citation token on both sides of the prose replacement.")
                         else:
                             old_at = source_find.find(citation_find)
