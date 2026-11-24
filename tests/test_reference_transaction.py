@@ -818,16 +818,25 @@ class ReferenceTransactionTests(unittest.TestCase):
             if row.get("document") == "Manuscript" and row.get("kind") == "citation"
         }
         self.assertEqual(set(output_definitions), {"33", "34", "35", "36", "37"})
-        output_mentions = {row["id"]: row for row in output_graph["mentions"]}
+        # Mention IDs are content-derived and therefore change when a citation
+        # is renumbered. Re-identify output mentions by stable document/number
+        # coordinates instead of carrying source IDs across the transformation.
+        output_si_mentions = {
+            str(row["number"]): row
+            for row in output_graph["mentions"]
+            if row.get("document") == "SI" and row.get("kind") == "citation"
+        }
+        self.assertIn("33", output_si_mentions)
+        self.assertIn("36", output_si_mentions)
         self.assertEqual(
-            output_mentions[si_mentions["33"]["id"]]["target_definition_ids"],
+            output_si_mentions["33"]["target_definition_ids"],
             [output_definitions["33"]["id"]],
         )
         self.assertEqual(
-            output_mentions[si_mentions["34"]["id"]]["target_definition_ids"],
+            output_si_mentions["36"]["target_definition_ids"],
             [output_definitions["36"]["id"]],
         )
-        self.assertEqual(output_mentions[si_mentions["34"]["id"]]["number"], "36")
+        self.assertEqual(output_si_mentions["36"]["number"], "36")
 
     def test_reference_operation_needs_targetref_or_explicit_migration_mode(self):
         self.spec["entry_updates"][0].pop("target_identity_mode")
