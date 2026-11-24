@@ -2269,6 +2269,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                         "tracked_insertion_exact": len(insertion_nodes) == 1 and actual_inserted_text == inserted_text,
                         "accepted_paragraph_text_exact": accepted_text_ok,
                         "paragraph_position": position_ok,
+                        "anchor_text_after_approved_edits": anchor_text_after_approved_edits,
                         "paragraph_style_inherited": paragraph_style_ok,
                         "inserted_run_format_preserved": run_format_ok,
                         "insert_revision_id": insert_id,
