@@ -1756,9 +1756,9 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 if source_ppr is not None:
                     inserted_paragraph.append(copy.deepcopy(source_ppr))
                 # Paragraph-level formatting is copied separately through pPr.
-                # Character-level formatting must come from the already validated
-                # unambiguous ordinary-text Run, not from the paragraph element.
-,                marker_start = ET.Element(qn("bookmarkStart"), {
+                # Character-level formatting comes only from the approved insertion map
+                # or the explicit uniform-format fallback, never an implicit first Run.
+                marker_start = ET.Element(qn("bookmarkStart"), {
                     qn("id"): str(bookmark_id), qn("name"): bookmark_name,
                 })
                 marker_end = ET.Element(qn("bookmarkEnd"), {qn("id"): str(bookmark_id)})
