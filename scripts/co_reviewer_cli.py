@@ -753,8 +753,8 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         ):
                             errors.append(f"{tp}.reference_citation_normalization must retain one original citation token on both sides of the prose replacement.")
                         else:
-                            old_at = source_find.find(citation_find)
-                            new_at = source_replace.find(citation_find)
+                            old_at = _exact_token_positions(source_find, citation_find)[0]
+                            new_at = _exact_token_positions(source_replace, citation_find)[0]
                             old_prefix, old_suffix = source_find[:old_at], source_find[old_at + len(citation_find):]
                             new_prefix, new_suffix = source_replace[:new_at], source_replace[new_at + len(citation_find):]
                             if mode == "prefix_before_citation":

@@ -1155,7 +1155,7 @@ def verify_reference_transaction_outputs(
                         f"Delegated citation operation {expected.get('operation_id')} cannot be mapped to one exact output prose replacement and citation occurrence."
                     )
                     continue
-                output_offset = paragraph_text.find(prose_replace) + prose_replace.find(replace_text)
+                output_offset = paragraph_text.find(prose_replace) + _exact_token_positions(prose_replace, replace_text)[0]
             else:
                 output_offset = source_offset
             for earlier in mention_expectations:
@@ -1219,13 +1219,13 @@ def verify_reference_transaction_outputs(
                             "has incomplete offset provenance."
                         )
                         continue
-                    if source_find.count(find_text) != 1:
+                    if len(_exact_token_positions(source_find, find_text)) != 1:
                         errors.append(
                             f"Prose normalization for citation update {expected.get('operation_id')} "
                             "does not contain one exact source citation token."
                         )
                         continue
-                    relative_citation_offset = source_find.find(find_text)
+                    relative_citation_offset = _exact_token_positions(source_find, find_text)[0]
                     source_target_start = source_offset - relative_citation_offset
                     if source_target_start < 0:
                         errors.append(
