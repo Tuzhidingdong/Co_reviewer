@@ -621,7 +621,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             "documents": {
                 "Manuscript": {
                     "input_file": str(self.manuscript),
-                    "output_file": str(self.root / "blocked_marked.docx"),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
                 }
             },
             "intents": [{
@@ -640,7 +640,7 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE"):
             cli.preflight_plan(merged_plan)
-        self.assertFalse((self.root / "blocked_marked.docx").exists())
+        self.assertFalse((self.root / "manuscript_marked.docx").exists())
 
     def test_merged_plan_validates_transaction_targets_without_unbound_operation_ids(self):
         import copy
