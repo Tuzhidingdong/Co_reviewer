@@ -1204,6 +1204,10 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
     if len(tx_items) != 1:
         raise ValueError("REFERENCE_CITATION_NORMALIZATION_BLOCKED: the transaction must bind exactly one revision item.")
     tx_item = tx_items[0]
+    transaction_targets = [
+        target for target in tx_item.get("targets", [])
+        if isinstance(target, Mapping)
+    ]
     records: list[dict[str, Any]] = []
     source_reference_segments: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
@@ -1362,6 +1366,114 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                         raise ValueError(
                             "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
                         )
+                    operation_id = str(expectation.get("operation_id", ""))
+                    transaction_targets_for_operation = [
+                        row for row in transaction_targets
+                        if row.get("operation_id") == operation_id
+                    ]
+                    if len(transaction_targets_for_operation) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_SOURCE_MISSING: "
+                            f"transaction operation {operation_id} does not resolve exactly once."
+                        )
+                    transaction_authorization = transaction_targets_for_operation[0].get("authorized_change")
+                    transaction_tokens = (
+                        transaction_authorization.get("explicitly_authorized_tokens", [])
+                        if isinstance(transaction_authorization, Mapping) else None
+                    )
+                    matching_transaction_tokens = [
+                        copy.deepcopy(dict(row))
+                        for row in transaction_tokens
+                        if isinstance(row, Mapping)
+                        and row.get("text") == token
+                        and row.get("replacement") == token_new
+                    ] if isinstance(transaction_tokens, list) else []
+                    if len(matching_transaction_tokens) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_MISSING: "
+                            f"transaction operation {operation_id} does not carry one exact {token!r}->{token_new!r} token authorization."
+                        )
+
+                    prose_authorization = target.get("authorized_change")
+                    if (
+                        not isinstance(prose_authorization, Mapping)
+                        or not isinstance(prose_authorization.get("intent"), str)
+                        or not prose_authorization.get("intent", "").strip()
+                    ):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_PROSE_INTENT_MISSING: the prose target needs its own explicit author intent."
+                        )
+                    merged_authorization = copy.deepcopy(dict(prose_authorization))
+                    existing_tokens = merged_authorization.get("explicitly_authorized_tokens", [])
+                    if not isinstance(existing_tokens, list):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_CONFLICT: prose explicitly_authorized_tokens must be an array."
+                        )
+                    conflicting_tokens = [
+                        row for row in existing_tokens
+                        if isinstance(row, Mapping)
+                        and row.get("text") == token
+                        and row.get("replacement") != token_new
+                    ]
+                    if conflicting_tokens:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_CONFLICT: prose authorization already assigns a different replacement to this exact citation token."
+                        )
+                    inherited_token = matching_transaction_tokens[0]
+                    if inherited_token not in existing_tokens:
+                        existing_tokens.append(inherited_token)
+                    merged_authorization["explicitly_authorized_tokens"] = existing_tokens
+
+                    existing_authorized_spans = merged_authorization.get("explicitly_authorized_spans", [])
+                    if not isinstance(existing_authorized_spans, list):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_SPAN_AUTHORIZATION_CONFLICT: prose explicitly_authorized_spans must be an array."
+                        )
+                    old_token_start = old_token_at
+                    old_token_end = old_token_start + len(token)
+                    for protected_span in target.get("protected_spans", []):
+                        if not isinstance(protected_span, Mapping):
+                            raise ValueError("REFERENCE_CITATION_DELEGATION_INVALID_PROTECTED_SPAN.")
+                        span_start = protected_span.get("start")
+                        span_end = protected_span.get("end")
+                        if (
+                            not isinstance(span_start, int) or isinstance(span_start, bool)
+                            or not isinstance(span_end, int) or isinstance(span_end, bool)
+                            or span_start < 0 or span_end <= span_start
+                            or span_end > len(old_find)
+                        ):
+                            raise ValueError("REFERENCE_CITATION_DELEGATION_INVALID_PROTECTED_SPAN.")
+                        if span_start >= old_token_end or span_end <= old_token_start:
+                            continue
+                        relative_left = old_token_start - span_start
+                        relative_right = span_end - old_token_end
+                        new_span_start = new_token_at - relative_left
+                        new_span_end = new_token_at + len(token_new) + relative_right
+                        if new_span_start < 0 or new_span_end > len(old_replace):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_PROTECTED_SPAN_CONTEXT_MISMATCH: the delegated token does not fit the exact protected source span."
+                            )
+                        old_surface = old_find[span_start:span_end]
+                        new_surface = old_replace[new_span_start:new_span_end]
+                        if (
+                            old_surface[:relative_left] != new_surface[:relative_left]
+                            or old_surface[relative_left + len(token):]
+                            != new_surface[relative_left + len(token_new):]
+                        ):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_PROTECTED_CONTEXT_CHANGED: protected characters outside the citation number also change; a broader approval is required."
+                            )
+                        exact_span = {"start": span_start, "end": span_end}
+                        if not any(
+                            isinstance(row, Mapping)
+                            and row.get("start") == span_start
+                            and row.get("end") == span_end
+                            for row in existing_authorized_spans
+                        ):
+                            existing_authorized_spans.append(exact_span)
+                    merged_authorization["explicitly_authorized_spans"] = existing_authorized_spans
+                    target["authorized_change"] = merged_authorization
+
                     delegation = {
                         "citation_operation_id": str(expectation.get("operation_id", "")),
                         "source_find": old_find,

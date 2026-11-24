@@ -659,11 +659,11 @@ class ReferenceTransactionTests(unittest.TestCase):
             }],
         })
         ordinary_plan["revision_items"][0]["targets"][0]["authorized_change"] = {
-            "intent": "Revise the sentence and change its graph-linked citation label from 4 to 5.",
-            "explicitly_authorized_tokens": [
-                {"kind": "number", "text": "4", "replacement": "5"}
-            ],
+            "intent": "Revise the sentence while applying the separately approved reference renumbering."
         }
+        ordinary_plan["revision_items"][0]["targets"][0]["protected_spans"] = [
+            {"start": 27, "end": 28}
+        ]
         transaction_plan = compile_reference_transaction(self.spec, self.graph)
 
         merged_plan = copy.deepcopy(transaction_plan)
@@ -684,6 +684,14 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(
             prose_target["reference_citation_delegations"][0]["citation_operation_id"],
             "REF-CITE-001",
+        )
+        self.assertIn(
+            {"kind": "number", "text": "4", "replacement": "5"},
+            prose_target["authorized_change"]["explicitly_authorized_tokens"],
+        )
+        self.assertIn(
+            {"start": 27, "end": 28},
+            prose_target["authorized_change"]["explicitly_authorized_spans"],
         )
         self.assertEqual(preflight["execution_dependencies"], [])
 
