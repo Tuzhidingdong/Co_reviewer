@@ -2517,8 +2517,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     edit.get("format_operations", []),
                 )
                 format_integrity = _verify_paragraph_format_integrity(
-                    source_paragraphs[p_idx], paragraph,
-                    document_report.get("results", []), part=part, p_idx=p_idx,
+                    source_paragraphs[source_p_idx], paragraph,
+                    document_report.get("results", []), part=part, p_idx=source_p_idx,
                 )
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
