@@ -488,15 +488,6 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         verification = cli.verify_apply_report(plan, apply_reports)
         self.assertTrue(verification["passed"], verification)
-        inserted_before_renumbered_entry = next(
-            row for row in verification["results"]
-            if row.get("action") == "insert_paragraph"
-            and row.get("anchor_text") == "[33] Synthetic old reference A."
-        )
-        self.assertTrue(
-            inserted_before_renumbered_entry["checks"]["anchor_text_after_approved_edits"],
-            inserted_before_renumbered_entry,
-        )
         self.assertTrue(verification["reference_transaction"]["checked"])
         self.assertTrue(verification["reference_transaction"]["passed"])
         self.assertEqual(verification["targets_verified"], 4)
@@ -805,6 +796,15 @@ class ReferenceTransactionTests(unittest.TestCase):
         plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, apply_reports)
         self.assertTrue(verification["passed"], verification)
+        inserted_before_renumbered_entry = next(
+            row for row in verification["results"]
+            if row.get("action") == "insert_paragraph"
+            and row.get("anchor_text") == "[33] Synthetic old reference A."
+        )
+        self.assertTrue(
+            inserted_before_renumbered_entry["checks"]["anchor_text_after_approved_edits"],
+            inserted_before_renumbered_entry,
+        )
         self.assertTrue(verification["reference_transaction"]["checked"])
         self.assertTrue(verification["reference_transaction"]["passed"], verification["reference_transaction"])
 
