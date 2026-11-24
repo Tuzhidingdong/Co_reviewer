@@ -617,7 +617,9 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "position": "after" if number == "33" else "before",
                 "inserted_text": f"[{number}] Synthetic new reference {number}.",
                 "reference_number": number,
-                "linked_mention_ids": [si_mentions[number]["id"]],
+                "linked_mention_ids": (
+                    [si_mentions[number]["id"]] if number == "33" else []
+                ),
                 "authorized_change": {
                     "intent": f"Add the new reference {number} after releasing the old label.",
                     "explicitly_authorized_insertions": [
@@ -665,6 +667,27 @@ class ReferenceTransactionTests(unittest.TestCase):
                 },
             })
 
+        # SI [34] still refers to the old bibliography definition. Do not
+        # silently rebind it to the new [34] entry; explicitly renumber it
+        # together with the old definition to [36].
+        si_old_34 = si_mentions["34"]
+        citation_updates.append({
+            "operation_id": "REF-CITE-REUSE-SI-34",
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "mention_id": si_old_34["id"],
+            "document": "SI",
+            "p_idx": si_old_34["paragraph_index"],
+            "find": si_old_34["text"],
+            "replace": "36",
+            "new_number": "36",
+            "authorized_change": {
+                "intent": "Keep this SI citation linked to the old reference moved to [36].",
+                "explicitly_authorized_tokens": [
+                    {"kind": "number", "text": "34", "replacement": "36"},
+                ],
+            },
+        })
+
         spec = {
             "transaction_id": "REF-TXN-RELEASE-REUSE-001",
             "reviewer": "Author",
@@ -707,7 +730,11 @@ class ReferenceTransactionTests(unittest.TestCase):
         )
         self.assertEqual(
             [row["linked_mention_ids"] for row in transaction["definition_ids_added"]],
-            [[si_mentions["33"]["id"]], [si_mentions["34"]["id"]]],
+            [[si_mentions["33"]["id"]], []],
+        )
+        self.assertIn(
+            si_mentions["34"]["id"],
+            transaction["citation_mention_ids_updated"],
         )
         self.assertEqual(
             set(transaction["definition_ids_updated"]),
@@ -749,12 +776,14 @@ class ReferenceTransactionTests(unittest.TestCase):
         }
         self.assertEqual(set(output_definitions), {"33", "34", "35", "36", "37"})
         output_mentions = {row["id"]: row for row in output_graph["mentions"]}
-        for number in ("33", "34"):
-            mention_id = si_mentions[number]["id"]
-            self.assertEqual(
-                output_mentions[mention_id]["target_definition_ids"],
-                [output_definitions[number]["id"]],
-            )
+        self.assertEqual(
+            output_mentions[si_mentions["33"]["id"]]["target_definition_ids"],
+            [output_definitions["33"]["id"]],
+        )
+        self.assertEqual(
+            output_mentions[si_mentions["34"]["id"]]["target_definition_ids"],
+            [output_definitions["36"]["id"]],
+        )
 
     def test_reference_operation_needs_targetref_or_explicit_migration_mode(self):
         self.spec["entry_updates"][0].pop("target_identity_mode")

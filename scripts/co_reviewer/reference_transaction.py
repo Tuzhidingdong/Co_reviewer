@@ -261,10 +261,17 @@ def compile_reference_transaction(
                 f"Cannot add {role}::{number} while same-number citation mentions are ambiguous, grouped, ranged or field-generated: "
                 + ", ".join(sorted(blocked_mentions))
             )
-        candidates = {
+        required_unresolved_mentions = {
             item_id for item_id, item in matching_mentions.items()
             if item.get("resolution") == "unresolved"
-            or (
+        }
+        # A mention which currently resolves to a definition being moved is
+        # not automatically a citation for the new entry. It may still mean
+        # the old work and must then be updated along with its old definition.
+        # Only exact IDs supplied by the author are rebound to an addition.
+        eligible_rebindings = {
+            item_id for item_id, item in matching_mentions.items()
+            if (
                 item_id not in scheduled_citation_update_ids
                 and item.get("resolution") in {"resolved", "confirmed_by_user"}
                 and _targets_only_released_definitions(item)
@@ -274,11 +281,13 @@ def compile_reference_transaction(
         if not isinstance(linked_raw, list) or any(not isinstance(x, str) for x in linked_raw):
             raise ReferenceTransactionError(f"additions[{index}].linked_mention_ids must be a string array.")
         linked = set(linked_raw)
-        if linked != candidates:
+        invalid_links = linked - required_unresolved_mentions - eligible_rebindings
+        missing_unresolved = required_unresolved_mentions - linked
+        if missing_unresolved or invalid_links:
             raise ReferenceTransactionError(
-                f"Addition {role}::{number} must explicitly link every unresolved static mention and every "
-                "rebindable occurrence released from the old definition. "
-                f"Missing={sorted(candidates - linked)}; extra={sorted(linked - candidates)}."
+                f"Addition {role}::{number} must link every unresolved static mention and may rebind "
+                "only explicitly identified occurrences released from a moved definition. "
+                f"Missing unresolved={sorted(missing_unresolved)}; invalid links={sorted(invalid_links)}."
             )
         previously_linked = set().union(*addition_links.values()) if addition_links else set()
         duplicate_links = linked & previously_linked
