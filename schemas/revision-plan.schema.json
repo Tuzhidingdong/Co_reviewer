@@ -280,6 +280,25 @@
                     "additionalProperties": false
                   }
                 },
+                "reference_citation_normalization": {
+                  "type": "object",
+                  "description": "Auditable Preflight projection that removes a graph-linked citation token from a prose target so it can be updated as a separate Track Changes operation.",
+                  "required": [
+                    "mode", "citation_operation_id", "source_find", "source_replace",
+                    "citation_find", "citation_replace", "normalized_find", "normalized_replace"
+                  ],
+                  "properties": {
+                    "mode": {"enum": ["prefix_before_citation", "suffix_after_citation"]},
+                    "citation_operation_id": {"type": "string", "minLength": 1},
+                    "source_find": {"type": "string", "minLength": 1},
+                    "source_replace": {"type": "string", "minLength": 1},
+                    "citation_find": {"type": "string", "minLength": 1},
+                    "citation_replace": {"type": "string", "minLength": 1},
+                    "normalized_find": {"type": "string", "minLength": 1},
+                    "normalized_replace": {"type": "string", "minLength": 1}
+                  },
+                  "additionalProperties": false
+                },
                 "replacement_format_map": {
                   "type": "array",
                   "minItems": 1,

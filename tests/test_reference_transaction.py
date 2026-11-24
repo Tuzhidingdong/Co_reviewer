@@ -539,7 +539,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertTrue(any("operation_ids must exactly match" in error for error in errors), errors)
 
 
-    def test_merged_plan_schedules_broad_edit_before_inner_reference_citation_in_preflight_and_apply(self):
+    def test_merged_plan_normalizes_prose_target_around_reference_citation_and_applies(self):
         import copy
         import io
         import json
@@ -575,16 +575,23 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         preflight = cli.preflight_plan(merged_plan)
         self.assertTrue(preflight["passed"], preflight)
-        execution_order = preflight["execution_order"]
         ordinary_id = ordinary_plan["revision_items"][0]["id"]
         transaction_id = transaction_plan["revision_items"][0]["id"]
-        self.assertLess(execution_order.index(ordinary_id), execution_order.index(transaction_id))
-        self.assertTrue(any(
-            row["before_revision_item_id"] == ordinary_id
-            and row["after_revision_item_id"] == transaction_id
-            and row["paragraph_index"] == 0
-            for row in preflight["execution_dependencies"]
-        ))
+        self.assertEqual(preflight["execution_order"], [transaction_id, ordinary_id])
+        self.assertEqual(preflight["execution_dependencies"], [])
+        self.assertEqual(len(preflight["target_normalizations"]), 1)
+        ordinary_target = next(
+            target
+            for item in merged_plan["revision_items"]
+            if item["id"] == ordinary_id
+            for target in item["targets"]
+        )
+        self.assertEqual(ordinary_target["find"], "The claim is supported by [")
+        self.assertEqual(ordinary_target["replace"], "The statement is supported by [")
+        self.assertEqual(
+            ordinary_target["reference_citation_normalization"]["citation_operation_id"],
+            "REF-CITE-001",
+        )
 
         plan_path = self.root / "merged_plan.json"
         plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -658,8 +665,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             "SENTENCE-SECOND",
         )
 
-    def test_merged_plan_fails_closed_when_overlapping_targets_have_no_safe_order(self):
-        import copy
+    def test_scheduler_blocks_nested_track_changes_targets_instead_of_reordering(self):
         import co_reviewer_cli as cli
 
         ordinary_plan = compile_revision_plan({
@@ -670,21 +676,20 @@ class ReferenceTransactionTests(unittest.TestCase):
                 }
             },
             "intents": [{
-                "id": "ORD-REMOVE-CITATION-001",
+                "id": "ORD-BROAD-NESTED-001",
                 "doc_role": "Manuscript",
                 "reviewer": "Author",
                 "find": "The claim is supported by [4].",
-                "replace": "The statement is supported.",
-                "intent": "Replace the sentence without retaining its citation token.",
+                "replace": "The statement is supported by [4].",
+                "intent": "Revise the prose while retaining the graph-linked citation.",
             }],
         })
         transaction_plan = compile_reference_transaction(self.spec, self.graph)
-        merged_plan = copy.deepcopy(transaction_plan)
-        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
-        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
-
-        with self.assertRaisesRegex(ValueError, "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE"):
-            cli.preflight_plan(merged_plan)
+        with self.assertRaisesRegex(ValueError, "PLAN_TARGET_OVERLAP_REQUIRES_COMPOSITION"):
+            cli._schedule_plan_item_dependencies([
+                ordinary_plan["revision_items"][0],
+                transaction_plan["revision_items"][0],
+            ])
         self.assertFalse((self.root / "manuscript_marked.docx").exists())
 
     def test_merged_plan_validates_transaction_targets_without_unbound_operation_ids(self):

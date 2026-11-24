@@ -703,6 +703,80 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
             action = t.get("action", "replace")
             if action not in {"replace", "insert_paragraph"}:
                 errors.append(f"{tp}.action must be replace or insert_paragraph.")
+            normalization = t.get("reference_citation_normalization")
+            if normalization is not None:
+                if not isinstance(normalization, dict):
+                    errors.append(f"{tp}.reference_citation_normalization must be an object.")
+                else:
+                    required_fields = {
+                        "mode", "citation_operation_id", "source_find", "source_replace",
+                        "citation_find", "citation_replace", "normalized_find", "normalized_replace",
+                    }
+                    if set(normalization) != required_fields:
+                        errors.append(f"{tp}.reference_citation_normalization has missing or unsupported fields.")
+                    else:
+                        mode = normalization.get("mode")
+                        source_find = normalization.get("source_find")
+                        source_replace = normalization.get("source_replace")
+                        citation_find = normalization.get("citation_find")
+                        citation_replace = normalization.get("citation_replace")
+                        values = (source_find, source_replace, citation_find, citation_replace,
+                                  normalization.get("normalized_find"), normalization.get("normalized_replace"))
+                        if (
+                            mode not in {"prefix_before_citation", "suffix_after_citation"}
+                            or not all(isinstance(value, str) for value in values)
+                            or not citation_find or not citation_replace
+                        ):
+                            errors.append(f"{tp}.reference_citation_normalization contains invalid values.")
+                        elif source_find.count(citation_find) != 1 or source_replace.count(citation_find) != 1:
+                            errors.append(f"{tp}.reference_citation_normalization must retain one original citation token on both sides of the prose replacement.")
+                        else:
+                            old_at = source_find.find(citation_find)
+                            new_at = source_replace.find(citation_find)
+                            old_prefix, old_suffix = source_find[:old_at], source_find[old_at + len(citation_find):]
+                            new_prefix, new_suffix = source_replace[:new_at], source_replace[new_at + len(citation_find):]
+                            if mode == "prefix_before_citation":
+                                expected_find, expected_replace = old_prefix, new_prefix
+                                valid = bool(old_prefix.strip()) and bool(new_prefix.strip()) and old_prefix != new_prefix and old_suffix == new_suffix
+                            else:
+                                expected_find, expected_replace = old_suffix, new_suffix
+                                valid = bool(old_suffix.strip()) and bool(new_suffix.strip()) and old_prefix == new_prefix and old_suffix != new_suffix
+                            if (
+                                not valid or t.get("find") != expected_find or t.get("replace") != expected_replace
+                                or normalization.get("normalized_find") != expected_find
+                                or normalization.get("normalized_replace") != expected_replace
+                            ):
+                                errors.append(f"{tp}.reference_citation_normalization does not exactly project the original target around the citation token.")
+                            transaction = plan.get("reference_transaction")
+                            expectations = transaction.get("updated_mention_expectations", []) if isinstance(transaction, dict) else []
+                            target_p_idx = t.get("p_idx")
+                            if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                                tref = t.get("target_ref")
+                                hint = tref.get("location_hint") if isinstance(tref, Mapping) else None
+                                candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+                                target_p_idx = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
+                            matched = [
+                                row for row in expectations
+                                if isinstance(row, dict)
+                                and row.get("operation_id") == normalization.get("citation_operation_id")
+                                and row.get("document") == t.get("document")
+                                and row.get("part", "word/document.xml") == t.get("part", "word/document.xml")
+                                and row.get("source_p_idx") == target_p_idx
+                                and row.get("find_text") == citation_find
+                                and row.get("replace_text") == citation_replace
+                            ]
+                            tx_docs = transaction.get("documents", {}) if isinstance(transaction, dict) else {}
+                            tx_doc = tx_docs.get(t.get("document")) if isinstance(tx_docs, dict) else None
+                            try:
+                                paths_match = (
+                                    isinstance(tx_doc, dict)
+                                    and _canonical_artifact_path(t.get("input_file", "")) == _canonical_artifact_path(tx_doc.get("input_file", ""))
+                                    and _canonical_artifact_path(t.get("output_file", "")) == _canonical_artifact_path(tx_doc.get("output_file", ""))
+                                )
+                            except (TypeError, ValueError, OSError):
+                                paths_match = False
+                            if len(matched) != 1 or not paths_match:
+                                errors.append(f"{tp}.reference_citation_normalization is not bound to exactly one graph-linked citation operation and document path.")
             if action == "insert_paragraph":
                 if t.get("part", "word/document.xml") != "word/document.xml":
                     errors.append(f"{tp}: insert_paragraph currently supports word/document.xml only.")
@@ -994,6 +1068,157 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
     return errors
 
 
+
+def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep graph-linked citation tokens outside separate prose Track Changes spans."""
+    transaction = plan.get("reference_transaction")
+    if not isinstance(transaction, Mapping):
+        return []
+    expectations = transaction.get("updated_mention_expectations", [])
+    docs = transaction.get("documents", {})
+    if not isinstance(expectations, list) or not expectations:
+        return []
+    tx_items = [
+        item for item in plan.get("revision_items", [])
+        if isinstance(item, Mapping) and "reference_transaction_sha256" in item
+    ]
+    if len(tx_items) != 1:
+        raise ValueError("REFERENCE_CITATION_NORMALIZATION_BLOCKED: the transaction must bind exactly one revision item.")
+    tx_item = tx_items[0]
+    records: list[dict[str, Any]] = []
+
+    def p_index(target: Mapping[str, Any]) -> int | None:
+        value = target.get("p_idx")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        tref = target.get("target_ref")
+        if isinstance(tref, Mapping):
+            for key in ("paragraph_index", "p_idx"):
+                candidate = tref.get(key)
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    return candidate
+            hint = tref.get("location_hint")
+            candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                return candidate
+        return None
+
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, dict) or item is tx_item:
+            continue
+        for target in item.get("targets", []):
+            if not isinstance(target, dict) or target.get("action", "replace") != "replace":
+                continue
+            existing = target.get("reference_citation_normalization")
+            if existing is not None:
+                records.append({
+                    "revision_item_id": item.get("id"), "document": target.get("document"),
+                    "part": target.get("part", "word/document.xml"), "p_idx": p_index(target),
+                    **copy.deepcopy(existing), "reused": True,
+                })
+                continue
+
+            for expectation in expectations:
+                if not isinstance(expectation, Mapping):
+                    continue
+                role = expectation.get("document")
+                document = docs.get(role) if isinstance(docs, Mapping) else None
+                if not isinstance(document, Mapping):
+                    continue
+                if (
+                    target.get("document") != role
+                    or target.get("part", "word/document.xml") != expectation.get("part", "word/document.xml")
+                    or p_index(target) != expectation.get("source_p_idx")
+                ):
+                    continue
+                try:
+                    paths_match = (
+                        _canonical_artifact_path(target.get("input_file", "")) == _canonical_artifact_path(document.get("input_file", ""))
+                        and _canonical_artifact_path(target.get("output_file", "")) == _canonical_artifact_path(document.get("output_file", ""))
+                    )
+                except (TypeError, ValueError, OSError):
+                    paths_match = False
+                if not paths_match:
+                    continue
+
+                old_find, old_replace = target.get("find"), target.get("replace")
+                token, token_new = expectation.get("find_text"), expectation.get("replace_text")
+                if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
+                    continue
+                n_old, n_replace = old_find.count(token), old_replace.count(token)
+                if n_old == 0 and n_replace == 0:
+                    continue
+                if n_old != 1 or n_replace != 1:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
+                        f"{item.get('id')} must contain the unchanged graph-linked citation token exactly once on both sides."
+                    )
+
+                old_at, new_at = old_find.find(token), old_replace.find(token)
+                old_prefix, new_prefix = old_find[:old_at], old_replace[:new_at]
+                old_suffix = old_find[old_at + len(token):]
+                new_suffix = old_replace[new_at + len(token):]
+                if old_prefix.strip() and new_prefix.strip() and old_prefix != new_prefix and old_suffix == new_suffix:
+                    mode, normalized_find, normalized_replace = "prefix_before_citation", old_prefix, new_prefix
+                    split_offset = old_at
+                elif old_suffix.strip() and new_suffix.strip() and old_prefix == new_prefix and old_suffix != new_suffix:
+                    mode, normalized_find, normalized_replace = "suffix_after_citation", old_suffix, new_suffix
+                    split_offset = old_at + len(token)
+                else:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_REQUIRES_TARGET_REWRITE: prose target "
+                        f"{item.get('id')} changes text on both sides of citation {expectation.get('operation_id')}. "
+                        "Narrow the prose target to one exact changed span outside the citation; no DOCX was written."
+                    )
+                if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass target "
+                        f"{item.get('id')} requires an explicitly authored citation-free target."
+                    )
+
+                projected_spans = []
+                for span in target.get("protected_spans", []):
+                    if not isinstance(span, Mapping):
+                        raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
+                    start, end = span.get("start"), span.get("end")
+                    if not isinstance(start, int) or isinstance(start, bool) or not isinstance(end, int) or isinstance(end, bool) or end <= start:
+                        raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
+                    if mode == "prefix_before_citation":
+                        if end <= split_offset:
+                            projected_spans.append(copy.deepcopy(dict(span)))
+                        elif start < split_offset:
+                            raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
+                    else:
+                        if start >= split_offset:
+                            shifted = copy.deepcopy(dict(span))
+                            shifted["start"], shifted["end"] = start - split_offset, end - split_offset
+                            projected_spans.append(shifted)
+                        elif end > split_offset:
+                            raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
+
+                metadata = {
+                    "mode": mode,
+                    "citation_operation_id": str(expectation.get("operation_id", "")),
+                    "source_find": old_find,
+                    "source_replace": old_replace,
+                    "citation_find": token,
+                    "citation_replace": token_new,
+                    "normalized_find": normalized_find,
+                    "normalized_replace": normalized_replace,
+                }
+                target["find"], target["replace"] = normalized_find, normalized_replace
+                if "protected_spans" in target:
+                    target["protected_spans"] = projected_spans
+                target["reference_citation_normalization"] = metadata
+                records.append({
+                    "revision_item_id": item.get("id"), "document": role,
+                    "part": target.get("part", "word/document.xml"), "p_idx": p_index(target),
+                    **copy.deepcopy(metadata), "reused": False,
+                })
+                break
+    return records
+
+
 def _schedule_plan_item_dependencies(
     items: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1093,6 +1318,8 @@ def _schedule_plan_item_dependencies(
             "part": part,
             "paragraph_index": paragraph_index,
             "source_text": paragraph_text,
+            "start": start,
+            "end": start + len(find_text),
             "find": find_text,
             "replace": replacement_text,
             "after_text": after_text,
@@ -1117,9 +1344,19 @@ def _schedule_plan_item_dependencies(
                 for right in item_targets[right_index]:
                     if left["group"] != right["group"]:
                         continue
-                    # Check the whole resulting paragraph for every pair of
-                    # same-paragraph operations, including disjoint spans. A replacement
-                    # can create/remove a target anchor across a text-join boundary.
+                    source_overlap = max(left["start"], right["start"]) < min(left["end"], right["end"])
+                    if source_overlap:
+                        left_id = str(ordered_items[left_index].get("id", left_index))
+                        right_id = str(ordered_items[right_index].get("id", right_index))
+                        raise ValueError(
+                            "PLAN_TARGET_OVERLAP_REQUIRES_COMPOSITION: same-paragraph source spans in "
+                            f"{left_id} and {right_id} overlap. Independent nested Track Changes edits "
+                            "cannot be made safe by reordering; compose them into one exact PatchOperation "
+                            "or narrow the prose target. No DOCX was written."
+                        )
+
+                    # Check full-paragraph uniqueness for disjoint spans too: an edit
+                    # may create/remove a later anchor across a text-join boundary.
                     left_preserves_right = left["after_text"].count(right["find"]) == 1
                     right_preserves_left = right["after_text"].count(left["find"]) == 1
                     if left_preserves_right and right_preserves_left:
@@ -1192,6 +1429,11 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
     if errors:
         raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
+
+    target_normalizations = _normalize_prose_targets_around_reference_citations(plan)
+    normalization_errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    if normalization_errors:
+        raise ValueError("Normalized revision plan validation failed: " + "; ".join(normalization_errors))
 
     eligible_items = [
         item for item in plan["revision_items"]
@@ -1433,6 +1675,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         "approval_scope_changed_items": sorted(set(changed_items)),
         "execution_order": [item["id"] for item in eligible_items],
         "execution_dependencies": execution_dependencies,
+        "target_normalizations": target_normalizations,
         "preflight_items": [
             {"revision_item_id": item["id"], "preflight_fingerprint": item["preflight_fingerprint"]}
             for item in eligible_items
