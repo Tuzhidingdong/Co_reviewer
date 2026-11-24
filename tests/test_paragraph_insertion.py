@@ -353,6 +353,7 @@ class ParagraphInsertionTransactionTests(unittest.TestCase):
                 "action": "insert_paragraph", "anchor_text": anchor_text,
                 "position": "after", "inserted_text": inserted_text,
                 "inserted_format_map": spans, "p_idx": 0,
+                "explicitly_authorized_insertions": [{"kind": "number", "text": "2024"}],
                 "intent": "Insert a paragraph using explicitly selected source Run formatting.",
             }],
         })
