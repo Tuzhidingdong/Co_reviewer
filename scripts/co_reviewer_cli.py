@@ -1086,6 +1086,7 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
         raise ValueError("REFERENCE_CITATION_NORMALIZATION_BLOCKED: the transaction must bind exactly one revision item.")
     tx_item = tx_items[0]
     records: list[dict[str, Any]] = []
+    source_reference_segments: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def p_index(target: Mapping[str, Any]) -> int | None:
         value = target.get("p_idx")
@@ -1145,6 +1146,52 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 token, token_new = expectation.get("find_text"), expectation.get("replace_text")
                 if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
                     continue
+
+                # The matching token must be the exact occurrence recorded by the
+                # source Reference Graph, not merely another identical number in
+                # the same paragraph. Graph offsets are measured in the same
+                # joined Word text-node view used by extract_docx_reference_segments.
+                source_offset = expectation.get("source_offset")
+                source_sha256 = document.get("source_sha256")
+                source_path = Path(target.get("input_file", "")).expanduser().resolve()
+                source_key = _canonical_artifact_path(source_path)
+                if (
+                    not isinstance(source_offset, int)
+                    or isinstance(source_offset, bool)
+                    or source_offset < 0
+                    or not isinstance(source_sha256, str)
+                    or sha256_file(source_path) != source_sha256
+                ):
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+                    )
+                source_cache_key = (source_key, source_sha256)
+                if source_cache_key not in source_reference_segments:
+                    source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
+                source_p_idx = p_index(target)
+                source_part = target.get("part", "word/document.xml")
+                source_segments = [
+                    row for row in source_reference_segments[source_cache_key]
+                    if row.get("part") == source_part
+                    and row.get("paragraph_index") == source_p_idx
+                ]
+                if len(source_segments) != 1:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
+                        "the graph-bound source paragraph does not resolve exactly once."
+                    )
+                source_paragraph_text = source_segments[0].get("text")
+                if (
+                    not isinstance(source_paragraph_text, str)
+                    or source_paragraph_text.count(old_find) != 1
+                    or source_paragraph_text.find(old_find) + old_find.find(token) != source_offset
+                ):
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
+                        f"prose target {item.get('id')} does not place the exact citation token "
+                        f"at the source Reference Graph offset {source_offset}; no DOCX was written."
+                    )
+
                 n_old, n_replace = old_find.count(token), old_replace.count(token)
                 if n_old == 0 and n_replace == 0:
                     continue
