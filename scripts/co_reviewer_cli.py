@@ -591,51 +591,78 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
         ).hexdigest()
         if transaction_fingerprint != expected_transaction_fingerprint:
             errors.append("reference_transaction.transaction_fingerprint is missing or stale; rebuild the transaction before approval.")
-        if len(items) != 1 or not isinstance(items[0], dict):
-            errors.append("A reference transaction must bind exactly one atomic revision item.")
-        elif items[0].get("reference_transaction_sha256") != transaction_fingerprint:
-            errors.append("The revision item approval scope is not bound to this exact reference transaction.")
+        transaction_items = [
+            item for item in items
+            if isinstance(item, dict) and "reference_transaction_sha256" in item
+        ]
+        transaction_item = None
+        if len(transaction_items) != 1:
+            errors.append(
+                "A reference transaction must bind exactly one atomic revision item, "
+                "which may coexist with ordinary revision items in the same plan."
+            )
+        else:
+            transaction_item = transaction_items[0]
+            if transaction_item.get("reference_transaction_sha256") != transaction_fingerprint:
+                errors.append("The revision item approval scope is not bound to this exact reference transaction.")
+
         raw_operation_ids = reference_transaction.get("operation_ids")
+        raw_transaction_targets = (
+            transaction_item.get("targets", [])
+            if isinstance(transaction_item, dict)
+            else []
+        )
+        transaction_targets = (
+            raw_transaction_targets if isinstance(raw_transaction_targets, list) else []
+        )
         target_operation_ids = [
             target.get("operation_id")
-            for item in items if isinstance(item, dict)
-            for target in item.get("targets", []) if isinstance(target, dict)
+            for target in transaction_targets if isinstance(target, dict)
         ]
+        valid_target_operation_ids = (
+            isinstance(raw_transaction_targets, list)
+            and all(
+                isinstance(target, dict)
+                and isinstance(target.get("operation_id"), str)
+                and bool(target.get("operation_id", "").strip())
+                for target in raw_transaction_targets
+            )
+        )
         if (
             not isinstance(raw_operation_ids, list)
             or any(not isinstance(value, str) or not value.strip() for value in raw_operation_ids)
             or len(raw_operation_ids) != len(set(raw_operation_ids))
+            or not valid_target_operation_ids
+            or len(target_operation_ids) != len(set(target_operation_ids))
             or sorted(raw_operation_ids) != sorted(target_operation_ids)
         ):
             errors.append("reference_transaction.operation_ids must exactly match the revision item's unique target operation IDs.")
+
         document_registry = reference_transaction.get("documents")
         if not isinstance(document_registry, dict) or not document_registry:
             errors.append("reference_transaction.documents must contain the graph-bound source/output path registry.")
-        else:
-            for item in items:
-                if not isinstance(item, dict):
+        elif isinstance(transaction_item, dict):
+            for target in transaction_targets:
+                if not isinstance(target, dict):
                     continue
-                for target in item.get("targets", []):
-                    if not isinstance(target, dict):
-                        continue
-                    role = target.get("document")
-                    document_record = document_registry.get(role)
-                    if not isinstance(document_record, dict):
-                        errors.append(f"Reference transaction target has no source record for document role {role!r}.")
-                        continue
-                    try:
-                        paths_match = (
-                            _canonical_artifact_path(target.get("input_file", ""))
-                            == _canonical_artifact_path(document_record.get("input_file", ""))
-                            and _canonical_artifact_path(target.get("output_file", ""))
-                            == _canonical_artifact_path(document_record.get("output_file", ""))
-                        )
-                    except (TypeError, ValueError, OSError):
-                        paths_match = False
-                    if not paths_match:
-                        errors.append(f"Reference transaction target paths differ from its graph-bound document registry for role {role!r}.")
-                    if target.get("source_sha256") != document_record.get("source_sha256"):
-                        errors.append(f"Reference transaction target source SHA-256 differs from its graph-bound source for role {role!r}.")
+                role = target.get("document")
+                document_record = document_registry.get(role)
+                if not isinstance(document_record, dict):
+                    errors.append(f"Reference transaction target has no source record for document role {role!r}.")
+                    continue
+                try:
+                    paths_match = (
+                        _canonical_artifact_path(target.get("input_file", ""))
+                        == _canonical_artifact_path(document_record.get("input_file", ""))
+                        and _canonical_artifact_path(target.get("output_file", ""))
+                        == _canonical_artifact_path(document_record.get("output_file", ""))
+                    )
+                except (TypeError, ValueError, OSError):
+                    paths_match = False
+                if not paths_match:
+                    errors.append(f"Reference transaction target paths differ from its graph-bound document registry for role {role!r}.")
+                if target.get("source_sha256") != document_record.get("source_sha256"):
+                    errors.append(f"Reference transaction target source SHA-256 differs from its graph-bound source for role {role!r}.")
     seen = set()
     for i, item in enumerate(items):
         at = f"revision_items[{i}]"

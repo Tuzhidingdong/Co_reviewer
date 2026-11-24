@@ -16,6 +16,7 @@ from co_reviewer.reference_transaction import (
     ReferenceTransactionError,
     compile_reference_transaction,
 )
+from co_reviewer.plan_compiler import compile_revision_plan
 
 
 class ReferenceTransactionTests(unittest.TestCase):
@@ -536,6 +537,51 @@ class ReferenceTransactionTests(unittest.TestCase):
         tampered_operations["revision_items"][0]["targets"][0]["operation_id"] = "OTHER-OP"
         errors = cli.validate_plan(tampered_operations, require_approval=False)
         self.assertTrue(any("operation_ids must exactly match" in error for error in errors), errors)
+
+    def test_merged_plan_validates_transaction_targets_without_unbound_operation_ids(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim",
+                "replace": "The statement",
+                "intent": "Revise prose independently of the reference transaction.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        merged_plan = copy.deepcopy(ordinary_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(transaction_plan["revision_items"]))
+        merged_plan["reference_transaction"] = copy.deepcopy(transaction_plan["reference_transaction"])
+
+        ordinary_target = merged_plan["revision_items"][0]["targets"][0]
+        self.assertIsNone(ordinary_target.get("operation_id"))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+    def test_transaction_target_missing_operation_id_returns_validation_error_not_type_error(self):
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        plan["revision_items"][0]["targets"][0]["operation_id"] = None
+
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(
+            any("operation_ids must exactly match" in error for error in errors),
+            errors,
+        )
 
     def test_preflight_refuses_source_changes_after_reference_graph_creation(self):
         import co_reviewer_cli as cli
