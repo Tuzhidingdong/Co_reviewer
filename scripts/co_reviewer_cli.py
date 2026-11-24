@@ -1147,6 +1147,15 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
                     continue
 
+                n_old, n_replace = old_find.count(token), old_replace.count(token)
+                if n_old == 0 and n_replace == 0:
+                    continue
+                if n_old != 1 or n_replace != 1:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
+                        f"{item.get('id')} must contain the unchanged graph-linked citation token exactly once on both sides."
+                    )
+
                 # The matching token must be the exact occurrence recorded by the
                 # source Reference Graph, not merely another identical number in
                 # the same paragraph. Graph offsets are measured in the same
@@ -1190,15 +1199,6 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                         "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
                         f"prose target {item.get('id')} does not place the exact citation token "
                         f"at the source Reference Graph offset {source_offset}; no DOCX was written."
-                    )
-
-                n_old, n_replace = old_find.count(token), old_replace.count(token)
-                if n_old == 0 and n_replace == 0:
-                    continue
-                if n_old != 1 or n_replace != 1:
-                    raise ValueError(
-                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
-                        f"{item.get('id')} must contain the unchanged graph-linked citation token exactly once on both sides."
                     )
 
                 old_at, new_at = old_find.find(token), old_replace.find(token)
