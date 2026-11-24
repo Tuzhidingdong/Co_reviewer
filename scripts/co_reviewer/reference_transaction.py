@@ -1123,7 +1123,7 @@ def verify_reference_transaction_outputs(
                     or not isinstance(prose_replace, str)
                     or not prose_replace
                     or paragraph_text.count(prose_replace) != 1
-                    or prose_replace.count(replace_text) != 1
+                    or len(_exact_token_positions(prose_replace, replace_text)) != 1
                 ):
                     errors.append(
                         f"Delegated citation operation {expected.get('operation_id')} cannot be mapped to one exact output prose replacement and citation occurrence."

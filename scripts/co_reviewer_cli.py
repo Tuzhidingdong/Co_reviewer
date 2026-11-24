@@ -552,6 +552,24 @@ _RUN_PROPERTY_ORDER = (
 )
 
 
+def _exact_token_positions(text: str, token: str) -> list[int]:
+    """Return exact token starts; numeric citation labels must not match inside larger numbers."""
+    if not token:
+        return []
+    if token.isdigit():
+        pattern = rf"(?<!\d){re.escape(token)}(?!\d)"
+        return [match.start() for match in re.finditer(pattern, text)]
+    positions: list[int] = []
+    cursor = 0
+    while True:
+        position = text.find(token, cursor)
+        if position < 0:
+            break
+        positions.append(position)
+        cursor = position + len(token)
+    return positions
+
+
 def _cached_sha256(path: str | Path, cache: dict[str, str]) -> str:
     """Compute and cache a file's SHA-256 within a single validation or command pass."""
     key = os.path.normcase(str(Path(path).expanduser().resolve()))
@@ -830,9 +848,9 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                             or delegation.get("prose_target_index") != j
                             or source_find != t.get("find")
                             or source_replace != t.get("replace")
-                            or source_find.count(citation_find) != 1
-                            or source_replace.count(citation_replace) != 1
-                            or source_replace.count(citation_find) != 0
+                            or len(_exact_token_positions(source_find, citation_find)) != 1
+                            or len(_exact_token_positions(source_replace, citation_replace)) != 1
+                            or len(_exact_token_positions(source_replace, citation_find)) != 0
                             or t.get("replacement_format_map")
                             or t.get("format_operations")
                             or t.get("two_pass")
@@ -1242,7 +1260,8 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
         if (
             not isinstance(source_paragraph_text, str)
             or source_paragraph_text.count(old_find) != 1
-            or source_paragraph_text.find(old_find) + old_find.find(citation_find) != source_offset
+            or len(_exact_token_positions(old_find, citation_find)) != 1
+            or source_paragraph_text.find(old_find) + _exact_token_positions(old_find, citation_find)[0] != source_offset
         ):
             raise ValueError(
                 "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
@@ -1299,9 +1318,12 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
                     continue
 
-                old_count = old_find.count(token)
-                unchanged_count = old_replace.count(token)
-                new_count = old_replace.count(token_new)
+                old_positions = _exact_token_positions(old_find, token)
+                unchanged_positions = _exact_token_positions(old_replace, token)
+                new_positions = _exact_token_positions(old_replace, token_new)
+                old_count = len(old_positions)
+                unchanged_count = len(unchanged_positions)
+                new_count = len(new_positions)
                 if old_count == 0 and unchanged_count == 0:
                     continue
                 if old_count != 1:
@@ -1318,6 +1340,16 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 # matching Reference Transaction operation remains a logical,
                 # independently verified transaction expectation and is not applied.
                 if token_new != token and unchanged_count == 0 and new_count == 1:
+                    old_token_at = old_positions[0]
+                    new_token_at = new_positions[0]
+                    old_left = old_find[old_token_at - 1:old_token_at]
+                    new_left = old_replace[new_token_at - 1:new_token_at]
+                    old_right = old_find[old_token_at + len(token):old_token_at + len(token) + 1]
+                    new_right = old_replace[new_token_at + len(token_new):new_token_at + len(token_new) + 1]
+                    if old_left != new_left or old_right != new_right:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_CONTEXT_MISMATCH: exact citation delimiters changed around the graph-linked token."
+                        )
                     if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
                         raise ValueError(
                             "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass prose target "
@@ -1377,8 +1409,8 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                         "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
                     )
 
-                old_at = old_find.find(token)
-                new_at = old_replace.find(token)
+                old_at = old_positions[0]
+                new_at = unchanged_positions[0]
                 old_prefix, new_prefix = old_find[:old_at], old_replace[:new_at]
                 old_suffix = old_find[old_at + len(token):]
                 new_suffix = old_replace[new_at + len(token):]

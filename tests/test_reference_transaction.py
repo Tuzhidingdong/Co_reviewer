@@ -624,6 +624,14 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertIn("[7] New reference entry.", output_text)
 
 
+    def test_numeric_citation_token_matching_uses_whole_number_boundaries(self):
+        import co_reviewer_cli as cli
+
+        self.assertEqual(cli._exact_token_positions("[3] and [35]", "3"), [1])
+        self.assertEqual(cli._exact_token_positions("[35] and [3]", "35"), [1])
+        self.assertEqual(cli._exact_token_positions("Ref. 3, 35", "3"), [5])
+
+
     def test_prose_target_delegates_renumbered_graph_citation_as_single_writer(self):
         import copy
         import json
