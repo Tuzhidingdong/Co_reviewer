@@ -2339,7 +2339,10 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     if (
                         batch_edit.get("part", "word/document.xml") != part
                         or batch_edit.get("p_idx") != source_p_idx
+                        or batch_edit.get("action", "replace") == "insert_paragraph"
                     ):
+                        # A paragraph insertion is a separate output paragraph;
+                        # it does not replace text inside the original anchor.
                         continue
                     anchor_text = batch_edit.get("find")
                     if not isinstance(anchor_text, str) or not anchor_text:
