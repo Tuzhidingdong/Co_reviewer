@@ -767,6 +767,32 @@ def compile_reference_transaction(
     }
 
 
+def _exact_token_positions(text: str, token: str) -> list[int]:
+    """Match complete numeric labels, not digits embedded in larger numbers."""
+    if not token:
+        return []
+    positions: list[int] = []
+    if token.isdigit():
+        width = len(token)
+        for position in range(0, len(text) - width + 1):
+            end = position + width
+            if (
+                text.startswith(token, position)
+                and (position == 0 or not text[position - 1].isdigit())
+                and (end == len(text) or not text[end].isdigit())
+            ):
+                positions.append(position)
+        return positions
+    cursor = 0
+    while True:
+        position = text.find(token, cursor)
+        if position < 0:
+            break
+        positions.append(position)
+        cursor = position + len(token)
+    return positions
+
+
 def verify_reference_transaction_outputs(
     plan: Mapping[str, Any],
     apply_reports: list[Mapping[str, Any]],
