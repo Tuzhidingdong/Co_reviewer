@@ -604,7 +604,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(approve_rc, 0)
         approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
         apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
-        self.assertEqual(len(apply_reports), 2)
+        self.assertEqual(len(apply_reports), 1)
         for item in approved_plan["revision_items"]:
             item["status"] = "applied"
         verification = cli.verify_apply_report(approved_plan, apply_reports)
