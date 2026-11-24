@@ -538,6 +538,110 @@ class ReferenceTransactionTests(unittest.TestCase):
         errors = cli.validate_plan(tampered_operations, require_approval=False)
         self.assertTrue(any("operation_ids must exactly match" in error for error in errors), errors)
 
+
+    def test_merged_plan_schedules_broad_edit_before_inner_reference_citation_in_preflight_and_apply(self):
+        import copy
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-BROAD-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported by [4].",
+                "intent": "Revise the sentence while retaining its linked citation token.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        # Deliberately place the transaction first, reproducing a merged-plan order
+        # that previously changed [4] to [5] before the broader sentence anchor ran.
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        execution_order = preflight["execution_order"]
+        ordinary_id = ordinary_plan["revision_items"][0]["id"]
+        transaction_id = transaction_plan["revision_items"][0]["id"]
+        self.assertLess(execution_order.index(ordinary_id), execution_order.index(transaction_id))
+        self.assertTrue(any(
+            row["before_revision_item_id"] == ordinary_id
+            and row["after_revision_item_id"] == transaction_id
+            and row["paragraph_index"] == 0
+            for row in preflight["execution_dependencies"]
+        ))
+
+        plan_path = self.root / "merged_plan.json"
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 2)
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+
+        output_file = self.root / "manuscript_marked.docx"
+        accepted_payload = accepted_view_docx_bytes(output_file.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertIn("The statement is supported by [5].", output_text)
+        self.assertIn("[5] Smith (2020). Journal details.", output_text)
+        self.assertIn("[7] New reference entry.", output_text)
+
+    def test_merged_plan_fails_closed_when_overlapping_targets_have_no_safe_order(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "blocked_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-REMOVE-CITATION-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported.",
+                "intent": "Replace the sentence without retaining its citation token.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        with self.assertRaisesRegex(ValueError, "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE"):
+            cli.preflight_plan(merged_plan)
+        self.assertFalse((self.root / "blocked_marked.docx").exists())
+
     def test_merged_plan_validates_transaction_targets_without_unbound_operation_ids(self):
         import copy
         import co_reviewer_cli as cli

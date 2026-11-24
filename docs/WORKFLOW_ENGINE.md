@@ -53,6 +53,8 @@ TargetRef binds a task to a document revision, object ID, object fingerprint, Wo
 
 The Workflow Engine is used by decision-plan validation, ledger creation/validation, ready-batch materialization and execution synchronization. `build-revision-ledger` converts only the current conflict-free ready batch into typed Patches; those Patches are bridged to the legacy DOCX writer with fresh preflight and explicit approval. After verified changes, same-target peers and downstream tasks are invalidated before the next batch can be authorized. A reapproved task is rebased from the previous verified DOCX output, creates a new superseding Patch ID, and retains prior execution history. The CLI remains the controlled execution bridge rather than silently applying work.
 
+For a merged Revision Plan containing targets from multiple Revision Items, the CLI resolves source anchors against the same accepted source view and derives a stable dependency order for overlapping targets. A containing replacement runs before an inner target only when its replacement preserves that inner exact anchor once; otherwise the engine blocks the overlapping pair before DOCX preparation. The exact same scheduler is used by Preflight and Apply, and the Preflight report records `execution_order` and `execution_dependencies`. Target order inside one atomic Revision Item (including a compiled Reference Transaction) is preserved.
+
 ## Patch execution bridge
 
 The implementation now has separate typed records for \`PatchOperation\`, \`Patch\`, \`RevisionDocument\`, \`RevisionEvent\` and \`RevisionLedger\`.

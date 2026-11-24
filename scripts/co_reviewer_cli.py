@@ -993,6 +993,201 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                     errors.append(f"{at}.verified_output_hashes must cover exactly the linked DOCX outputs.")
     return errors
 
+
+def _schedule_plan_item_dependencies(
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Order cross-item edits whose exact source anchors overlap.
+
+    The same schedule is used by Preflight and Apply. An operation that replaces
+    a containing span must run before an inner operation only when its proposed
+    replacement preserves that inner exact anchor once. If no safe order can
+    preserve both approved anchors, fail closed before preparing any DOCX.
+    Target order inside one revision item is intentionally preserved because a
+    transaction compiler may have authored a meaningful atomic operation order.
+    """
+    ordered_items = list(items)
+    if len(ordered_items) < 2:
+        return ordered_items, []
+
+    paragraph_cache: dict[tuple[str, str], list[str] | None] = {}
+
+    def source_target(target: Mapping[str, Any]) -> dict[str, Any] | None:
+        if target.get("action", "replace") == "insert_paragraph":
+            # Insertions add a paragraph but do not change their source anchor text.
+            return None
+        find_text = target.get("find")
+        input_file = target.get("input_file")
+        output_file = target.get("output_file")
+        if not isinstance(find_text, str) or not find_text:
+            return None
+        if not isinstance(input_file, str) or not input_file or not isinstance(output_file, str) or not output_file:
+            return None
+        try:
+            source_key = _canonical_artifact_path(input_file)
+            output_key = _canonical_artifact_path(output_file)
+            part = safe_part(target.get("part", "word/document.xml"))
+            cache_key = (source_key, part)
+            if cache_key not in paragraph_cache:
+                source_path = Path(input_file).expanduser()
+                if not source_path.is_file():
+                    paragraph_cache[cache_key] = None
+                else:
+                    accepted_payload = accepted_view_docx_bytes(source_path.read_bytes())
+                    with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+                        if part not in archive.namelist():
+                            paragraph_cache[cache_key] = None
+                        else:
+                            root = parse_xml(archive.read(part))
+                            paragraphs = (
+                                root.findall(".//w:body//w:p", NS)
+                                if part == "word/document.xml"
+                                else root.findall(".//w:p", NS)
+                            )
+                            paragraph_cache[cache_key] = [visible_text(paragraph) for paragraph in paragraphs]
+            paragraph_texts = paragraph_cache[cache_key]
+            if paragraph_texts is None:
+                return None
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.XMLSyntaxError):
+            # The normal validation/Preflight path will report unreadable sources.
+            return None
+
+        p_idx = target.get("p_idx")
+        if not isinstance(p_idx, int) or isinstance(p_idx, bool):
+            target_ref = target.get("target_ref")
+            if isinstance(target_ref, Mapping):
+                for field in ("paragraph_index", "p_idx"):
+                    candidate = target_ref.get(field)
+                    if isinstance(candidate, int) and not isinstance(candidate, bool):
+                        p_idx = candidate
+                        break
+        if isinstance(p_idx, int) and not isinstance(p_idx, bool):
+            if p_idx < 0 or p_idx >= len(paragraph_texts):
+                return None
+            paragraph_index = p_idx
+            paragraph_text = paragraph_texts[paragraph_index]
+            if paragraph_text.count(find_text) != 1:
+                return None
+        else:
+            matches = [
+                (index, paragraph_text)
+                for index, paragraph_text in enumerate(paragraph_texts)
+                if paragraph_text.count(find_text) == 1
+            ]
+            if len(matches) != 1:
+                return None
+            paragraph_index, paragraph_text = matches[0]
+
+        start = paragraph_text.find(find_text)
+        return {
+            "group": (source_key, output_key, part, paragraph_index),
+            "source_file": input_file,
+            "part": part,
+            "paragraph_index": paragraph_index,
+            "start": start,
+            "end": start + len(find_text),
+            "find": find_text,
+            "replace": str(target.get("replace", "")),
+        }
+
+    item_targets: list[list[dict[str, Any]]] = []
+    for item in ordered_items:
+        item_targets.append([
+            resolved
+            for target in item.get("targets", [])
+            if isinstance(target, Mapping)
+            for resolved in [source_target(target)]
+            if resolved is not None
+        ])
+
+    edges: dict[int, set[int]] = {index: set() for index in range(len(ordered_items))}
+    dependency_details: dict[tuple[int, int], dict[str, Any]] = {}
+
+    for left_index in range(len(ordered_items)):
+        for right_index in range(left_index + 1, len(ordered_items)):
+            for left in item_targets[left_index]:
+                for right in item_targets[right_index]:
+                    if left["group"] != right["group"]:
+                        continue
+                    overlap = max(left["start"], right["start"]) < min(left["end"], right["end"])
+                    if not overlap:
+                        continue
+
+                    left_preserves_right = left["replace"].count(right["find"]) == 1
+                    right_preserves_left = right["replace"].count(left["find"]) == 1
+                    if (
+                        left["find"] == right["find"]
+                        and left["replace"] == left["find"]
+                        and right["replace"] == right["find"]
+                    ):
+                        # Two text-preserving operations (typically separate FormatChanges)
+                        # can retain the original item order.
+                        continue
+                    if left_preserves_right and right_preserves_left:
+                        # Either order retains the other source anchor; keep the authored
+                        # plan order as the deterministic tie-breaker.
+                        continue
+                    if left_preserves_right:
+                        before_index, after_index = left_index, right_index
+                        reason = "the first replacement preserves the second operation's exact source anchor"
+                    elif right_preserves_left:
+                        before_index, after_index = right_index, left_index
+                        reason = "the first replacement preserves the second operation's exact source anchor"
+                    else:
+                        left_id = str(ordered_items[left_index].get("id", left_index))
+                        right_id = str(ordered_items[right_index].get("id", right_index))
+                        raise ValueError(
+                            "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE: overlapping source anchors in "
+                            f"{left_id} and {right_id} cannot both be applied safely. "
+                            "Keep the edits as one explicitly ordered atomic operation or revise the exact target spans."
+                        )
+
+                    edges[before_index].add(after_index)
+                    dependency_details[(before_index, after_index)] = {
+                        "before_revision_item_id": ordered_items[before_index].get("id"),
+                        "after_revision_item_id": ordered_items[after_index].get("id"),
+                        "source_file": left["source_file"],
+                        "part": left["part"],
+                        "paragraph_index": left["paragraph_index"],
+                        "reason": reason,
+                    }
+
+    indegree = {index: 0 for index in range(len(ordered_items))}
+    for destinations in edges.values():
+        for destination in destinations:
+            indegree[destination] += 1
+    ready = [index for index, degree in indegree.items() if degree == 0]
+    ready.sort()
+    sorted_indices: list[int] = []
+    while ready:
+        current = ready.pop(0)
+        sorted_indices.append(current)
+        for destination in sorted(edges[current]):
+            indegree[destination] -= 1
+            if indegree[destination] == 0:
+                ready.append(destination)
+                ready.sort()
+
+    if len(sorted_indices) != len(ordered_items):
+        blocked_ids = [
+            str(ordered_items[index].get("id", index))
+            for index, degree in indegree.items()
+            if degree > 0
+        ]
+        raise ValueError(
+            "PLAN_TARGET_DEPENDENCY_CYCLE: conflicting overlapping-target dependencies "
+            "between revision items: " + ", ".join(blocked_ids) + ". "
+            "The plan cannot be safely reordered without changing its approved scope."
+        )
+
+    scheduled = [ordered_items[index] for index in sorted_indices]
+    dependencies = [
+        dependency_details[key]
+        for key in sorted(dependency_details)
+    ]
+    return scheduled, dependencies
+
+
 def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") -> dict[str, Any]:
     """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
@@ -1005,6 +1200,7 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     ]
     if not eligible_items:
         raise ValueError("No planned or approved revision items are available for preflight.")
+    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(eligible_items)
 
     grouped = defaultdict(list)
     target_refs = []
@@ -1236,6 +1432,8 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             for key, path in source_paths.items()
         ],
         "approval_scope_changed_items": sorted(set(changed_items)),
+        "execution_order": [item["id"] for item in eligible_items],
+        "execution_dependencies": execution_dependencies,
         "preflight_items": [
             {"revision_item_id": item["id"], "preflight_fingerprint": item["preflight_fingerprint"]}
             for item in eligible_items
@@ -1251,6 +1449,7 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
     if not approved_items:
         raise ValueError("No revision items are currently approved for application.")
+    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(approved_items)
     authorization_errors = validate_plan(plan, True, require_authorized_change=True)
     if authorization_errors:
         raise ValueError("Revision plan authorization validation failed:\n- " + "\n- ".join(authorization_errors))
