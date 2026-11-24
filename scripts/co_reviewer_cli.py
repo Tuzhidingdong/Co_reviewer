@@ -664,6 +664,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 if target.get("source_sha256") != document_record.get("source_sha256"):
                     errors.append(f"Reference transaction target source SHA-256 differs from its graph-bound source for role {role!r}.")
     seen = set()
+    delegated_citation_operation_ids: set[str] = set()
     for i, item in enumerate(items):
         at = f"revision_items[{i}]"
         if not isinstance(item, dict): errors.append(f"{at} must be an object."); continue
@@ -777,6 +778,96 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                                 paths_match = False
                             if len(matched) != 1 or not paths_match:
                                 errors.append(f"{tp}.reference_citation_normalization is not bound to exactly one graph-linked citation operation and document path.")
+            delegations = t.get("reference_citation_delegations")
+            if delegations is not None:
+                if normalization is not None:
+                    errors.append(f"{tp} cannot combine separate citation normalization with delegated citation ownership.")
+                if not isinstance(delegations, list) or not delegations:
+                    errors.append(f"{tp}.reference_citation_delegations must be a non-empty array.")
+                elif "reference_transaction_sha256" in item:
+                    errors.append(f"{tp} cannot delegate a citation operation from the transaction item itself.")
+                else:
+                    for delegation_index, delegation in enumerate(delegations):
+                        dp = f"{tp}.reference_citation_delegations[{delegation_index}]"
+                        required_delegation_fields = {
+                            "citation_operation_id", "source_find", "source_replace",
+                            "citation_find", "citation_replace",
+                            "prose_revision_item_id", "prose_target_index",
+                        }
+                        if not isinstance(delegation, dict) or set(delegation) != required_delegation_fields:
+                            errors.append(f"{dp} has missing or unsupported fields.")
+                            continue
+                        operation_id = delegation.get("citation_operation_id")
+                        source_find = delegation.get("source_find")
+                        source_replace = delegation.get("source_replace")
+                        citation_find = delegation.get("citation_find")
+                        citation_replace = delegation.get("citation_replace")
+                        target_p_idx = t.get("p_idx")
+                        if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                            tref = t.get("target_ref")
+                            for key in ("paragraph_index", "p_idx"):
+                                candidate = tref.get(key) if isinstance(tref, Mapping) else None
+                                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                                    target_p_idx = candidate
+                                    break
+                            if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                                hint = tref.get("location_hint") if isinstance(tref, Mapping) else None
+                                candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+                                target_p_idx = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
+                        if (
+                            not isinstance(operation_id, str) or not operation_id.strip()
+                            or not all(isinstance(value, str) and value for value in (
+                                source_find, source_replace, citation_find, citation_replace
+                            ))
+                            or citation_find == citation_replace
+                            or not isinstance(delegation.get("prose_target_index"), int)
+                            or isinstance(delegation.get("prose_target_index"), bool)
+                        ):
+                            errors.append(f"{dp} contains invalid values.")
+                            continue
+                        if (
+                            delegation.get("prose_revision_item_id") != item_id
+                            or delegation.get("prose_target_index") != j
+                            or source_find != t.get("find")
+                            or source_replace != t.get("replace")
+                            or source_find.count(citation_find) != 1
+                            or source_replace.count(citation_replace) != 1
+                            or source_replace.count(citation_find) != 0
+                            or t.get("replacement_format_map")
+                            or t.get("format_operations")
+                            or t.get("two_pass")
+                            or t.get("allow_two_pass_overlap")
+                        ):
+                            errors.append(f"{dp} does not bind the exact source/replacement span to its owning prose target.")
+                        if operation_id in delegated_citation_operation_ids:
+                            errors.append(f"{dp} duplicates another prose delegation for citation operation {operation_id}.")
+                        else:
+                            delegated_citation_operation_ids.add(operation_id)
+
+                        transaction = plan.get("reference_transaction")
+                        expectations = transaction.get("updated_mention_expectations", []) if isinstance(transaction, dict) else []
+                        matched = [
+                            row for row in expectations
+                            if isinstance(row, dict)
+                            and row.get("operation_id") == operation_id
+                            and row.get("document") == t.get("document")
+                            and row.get("part", "word/document.xml") == t.get("part", "word/document.xml")
+                            and row.get("source_p_idx") == target_p_idx
+                            and row.get("find_text") == citation_find
+                            and row.get("replace_text") == citation_replace
+                        ]
+                        tx_docs = transaction.get("documents", {}) if isinstance(transaction, dict) else {}
+                        tx_doc = tx_docs.get(t.get("document")) if isinstance(tx_docs, dict) else None
+                        try:
+                            paths_match = (
+                                isinstance(tx_doc, dict)
+                                and _canonical_artifact_path(t.get("input_file", "")) == _canonical_artifact_path(tx_doc.get("input_file", ""))
+                                and _canonical_artifact_path(t.get("output_file", "")) == _canonical_artifact_path(tx_doc.get("output_file", ""))
+                            )
+                        except (TypeError, ValueError, OSError):
+                            paths_match = False
+                        if len(matched) != 1 or not paths_match:
+                            errors.append(f"{dp} is not bound to exactly one graph-linked citation operation and document path.")
             if action == "insert_paragraph":
                 if t.get("part", "word/document.xml") != "word/document.xml":
                     errors.append(f"{tp}: insert_paragraph currently supports word/document.xml only.")
@@ -1070,7 +1161,14 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
 
 
 def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """Keep graph-linked citation tokens outside separate prose Track Changes spans."""
+    """Give each graph-linked citation occurrence exactly one physical Track Changes writer.
+
+    If a prose target retains the old citation token, narrow that target around the
+    citation and let the Reference Transaction write the token. If the prose target
+    already replaces the exact graph-linked token with the transaction's exact new
+    token, delegate the logical citation operation to that one prose PatchOperation.
+    Never create two overlapping Track Changes revisions for the same citation.
+    """
     transaction = plan.get("reference_transaction")
     if not isinstance(transaction, Mapping):
         return []
@@ -1104,20 +1202,74 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 return candidate
         return None
 
+    def exact_source_paragraph(
+        target: Mapping[str, Any],
+        expectation: Mapping[str, Any],
+        old_find: str,
+        citation_find: str,
+    ) -> str:
+        source_offset = expectation.get("source_offset")
+        document = docs.get(expectation.get("document")) if isinstance(docs, Mapping) else None
+        source_sha256 = document.get("source_sha256") if isinstance(document, Mapping) else None
+        source_path = Path(target.get("input_file", "")).expanduser().resolve()
+        source_key = _canonical_artifact_path(source_path)
+        if (
+            not isinstance(source_offset, int)
+            or isinstance(source_offset, bool)
+            or source_offset < 0
+            or not isinstance(source_sha256, str)
+            or sha256_file(source_path) != source_sha256
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+            )
+        source_cache_key = (source_key, source_sha256)
+        if source_cache_key not in source_reference_segments:
+            source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
+        source_p_idx = p_index(target)
+        source_part = target.get("part", "word/document.xml")
+        source_segments = [
+            row for row in source_reference_segments[source_cache_key]
+            if row.get("part") == source_part
+            and row.get("paragraph_index") == source_p_idx
+        ]
+        if len(source_segments) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
+                "the graph-bound source paragraph does not resolve exactly once."
+            )
+        source_paragraph_text = source_segments[0].get("text")
+        if (
+            not isinstance(source_paragraph_text, str)
+            or source_paragraph_text.count(old_find) != 1
+            or source_paragraph_text.find(old_find) + old_find.find(citation_find) != source_offset
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
+                f"prose target does not place the exact citation token at source offset {source_offset}; no DOCX was written."
+            )
+        return source_paragraph_text
+
     for item in plan.get("revision_items", []):
         if not isinstance(item, dict) or item is tx_item:
             continue
-        for target in item.get("targets", []):
+        for target_index, target in enumerate(item.get("targets", [])):
             if not isinstance(target, dict) or target.get("action", "replace") != "replace":
                 continue
+
             existing = target.get("reference_citation_normalization")
             if existing is not None:
                 records.append({
-                    "revision_item_id": item.get("id"), "document": target.get("document"),
+                    "revision_item_id": item.get("id"), "target_index": target_index,
+                    "document": target.get("document"),
                     "part": target.get("part", "word/document.xml"), "p_idx": p_index(target),
                     **copy.deepcopy(existing), "reused": True,
                 })
                 continue
+
+            existing_delegations = target.get("reference_citation_delegations", [])
+            if not isinstance(existing_delegations, list):
+                raise ValueError("REFERENCE_CITATION_DELEGATION_METADATA_INVALID: delegation metadata must be an array.")
 
             for expectation in expectations:
                 if not isinstance(expectation, Mapping):
@@ -1147,61 +1299,86 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
                     continue
 
-                n_old, n_replace = old_find.count(token), old_replace.count(token)
-                if n_old == 0 and n_replace == 0:
+                old_count = old_find.count(token)
+                unchanged_count = old_replace.count(token)
+                new_count = old_replace.count(token_new)
+                if old_count == 0 and unchanged_count == 0:
                     continue
-                if n_old != 1 or n_replace != 1:
+                if old_count != 1:
                     raise ValueError(
                         "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
-                        f"{item.get('id')} must contain the unchanged graph-linked citation token exactly once on both sides."
+                        f"{item.get('id')} does not contain exactly one source occurrence of graph-linked citation "
+                        f"{expectation.get('operation_id')}."
                     )
 
-                # The matching token must be the exact occurrence recorded by the
-                # source Reference Graph, not merely another identical number in
-                # the same paragraph. Graph offsets are measured in the same
-                # joined Word text-node view used by extract_docx_reference_segments.
-                source_offset = expectation.get("source_offset")
-                source_sha256 = document.get("source_sha256")
-                source_path = Path(target.get("input_file", "")).expanduser().resolve()
-                source_key = _canonical_artifact_path(source_path)
-                if (
-                    not isinstance(source_offset, int)
-                    or isinstance(source_offset, bool)
-                    or source_offset < 0
-                    or not isinstance(source_sha256, str)
-                    or sha256_file(source_path) != source_sha256
-                ):
+                exact_source_paragraph(target, expectation, old_find, token)
+
+                # Case A: the prose replacement already makes the exact graph-bound
+                # citation change. The prose PatchOperation is the sole writer; the
+                # matching Reference Transaction operation remains a logical,
+                # independently verified transaction expectation and is not applied.
+                if token_new != token and unchanged_count == 0 and new_count == 1:
+                    if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass prose target "
+                            f"{item.get('id')} cannot own a reference citation update without an explicit citation-free target."
+                        )
+                    if target.get("reference_citation_normalization") is not None:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
+                        )
+                    delegation = {
+                        "citation_operation_id": str(expectation.get("operation_id", "")),
+                        "source_find": old_find,
+                        "source_replace": old_replace,
+                        "citation_find": token,
+                        "citation_replace": token_new,
+                        "prose_revision_item_id": str(item.get("id", "")),
+                        "prose_target_index": target_index,
+                    }
+                    previous = [
+                        row for row in existing_delegations
+                        if isinstance(row, Mapping)
+                        and row.get("citation_operation_id") == delegation["citation_operation_id"]
+                    ]
+                    if previous:
+                        if len(previous) != 1 or dict(previous[0]) != delegation:
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_METADATA_CONFLICT: existing ownership record differs from the graph-bound operation."
+                            )
+                        records.append({
+                            "revision_item_id": item.get("id"), "target_index": target_index,
+                            "document": role, "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target), "mode": "delegated_to_prose_target",
+                            **copy.deepcopy(delegation), "reused": True,
+                        })
+                    else:
+                        existing_delegations.append(delegation)
+                        target["reference_citation_delegations"] = existing_delegations
+                        records.append({
+                            "revision_item_id": item.get("id"), "target_index": target_index,
+                            "document": role, "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target), "mode": "delegated_to_prose_target",
+                            **copy.deepcopy(delegation), "reused": False,
+                        })
+                    continue
+
+                # Case B: the prose target retains the old citation token. Keep the
+                # existing exact prefix/suffix projection and let the transaction
+                # operation be the sole writer of the citation.
+                if unchanged_count != 1:
                     raise ValueError(
-                        "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
+                        f"{item.get('id')} must either retain the graph-linked citation unchanged exactly once "
+                        "or contain the exact transaction replacement exactly once; deletion or ambiguous relabeling is blocked."
                     )
-                source_cache_key = (source_key, source_sha256)
-                if source_cache_key not in source_reference_segments:
-                    source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
-                source_p_idx = p_index(target)
-                source_part = target.get("part", "word/document.xml")
-                source_segments = [
-                    row for row in source_reference_segments[source_cache_key]
-                    if row.get("part") == source_part
-                    and row.get("paragraph_index") == source_p_idx
-                ]
-                if len(source_segments) != 1:
+                if existing_delegations:
                     raise ValueError(
-                        "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
-                        "the graph-bound source paragraph does not resolve exactly once."
-                    )
-                source_paragraph_text = source_segments[0].get("text")
-                if (
-                    not isinstance(source_paragraph_text, str)
-                    or source_paragraph_text.count(old_find) != 1
-                    or source_paragraph_text.find(old_find) + old_find.find(token) != source_offset
-                ):
-                    raise ValueError(
-                        "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
-                        f"prose target {item.get('id')} does not place the exact citation token "
-                        f"at the source Reference Graph offset {source_offset}; no DOCX was written."
+                        "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
                     )
 
-                old_at, new_at = old_find.find(token), old_replace.find(token)
+                old_at = old_find.find(token)
+                new_at = old_replace.find(token)
                 old_prefix, new_prefix = old_find[:old_at], old_replace[:new_at]
                 old_suffix = old_find[old_at + len(token):]
                 new_suffix = old_replace[new_at + len(token):]
@@ -1214,8 +1391,9 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 else:
                     raise ValueError(
                         "REFERENCE_CITATION_NORMALIZATION_REQUIRES_TARGET_REWRITE: prose target "
-                        f"{item.get('id')} changes text on both sides of citation {expectation.get('operation_id')}. "
-                        "Narrow the prose target to one exact changed span outside the citation; no DOCX was written."
+                        f"{item.get('id')} changes text on both sides of citation {expectation.get('operation_id')} "
+                        "while retaining the old token. Narrow the prose target to one exact changed span outside the citation; "
+                        "no DOCX was written."
                     )
                 if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
                     raise ValueError(
@@ -1227,20 +1405,20 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 for span in target.get("protected_spans", []):
                     if not isinstance(span, Mapping):
                         raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
-                    start, end = span.get("start"), span.get("end")
-                    if not isinstance(start, int) or isinstance(start, bool) or not isinstance(end, int) or isinstance(end, bool) or end <= start:
+                    span_start, span_end = span.get("start"), span.get("end")
+                    if not isinstance(span_start, int) or isinstance(span_start, bool) or not isinstance(span_end, int) or isinstance(span_end, bool) or span_end <= span_start:
                         raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
                     if mode == "prefix_before_citation":
-                        if end <= split_offset:
+                        if span_end <= split_offset:
                             projected_spans.append(copy.deepcopy(dict(span)))
-                        elif start < split_offset:
+                        elif span_start < split_offset:
                             raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
                     else:
-                        if start >= split_offset:
+                        if span_start >= split_offset:
                             shifted = copy.deepcopy(dict(span))
-                            shifted["start"], shifted["end"] = start - split_offset, end - split_offset
+                            shifted["start"], shifted["end"] = span_start - split_offset, span_end - split_offset
                             projected_spans.append(shifted)
-                        elif end > split_offset:
+                        elif span_end > split_offset:
                             raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
 
                 metadata = {
@@ -1258,16 +1436,42 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                     target["protected_spans"] = projected_spans
                 target["reference_citation_normalization"] = metadata
                 records.append({
-                    "revision_item_id": item.get("id"), "document": role,
-                    "part": target.get("part", "word/document.xml"), "p_idx": p_index(target),
-                    **copy.deepcopy(metadata), "reused": False,
+                    "revision_item_id": item.get("id"), "target_index": target_index,
+                    "document": role, "part": target.get("part", "word/document.xml"),
+                    "p_idx": p_index(target), **copy.deepcopy(metadata), "reused": False,
                 })
                 break
     return records
 
 
+def _reference_citation_delegations(plan: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index citation operations whose sole physical writer is an ordinary prose target."""
+    result: dict[str, dict[str, Any]] = {}
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, Mapping):
+            continue
+        for target_index, target in enumerate(item.get("targets", [])):
+            if not isinstance(target, Mapping):
+                continue
+            for row in target.get("reference_citation_delegations", []):
+                if not isinstance(row, Mapping):
+                    continue
+                operation_id = row.get("citation_operation_id")
+                if isinstance(operation_id, str) and operation_id:
+                    result[operation_id] = {
+                        **copy.deepcopy(dict(row)),
+                        "prose_revision_item_id": item.get("id"),
+                        "prose_target_index": target_index,
+                        "prose_document": target.get("document"),
+                        "prose_part": target.get("part", "word/document.xml"),
+                        "prose_p_idx": target.get("p_idx"),
+                    }
+    return result
+
+
 def _schedule_plan_item_dependencies(
     items: list[dict[str, Any]],
+    delegated_operation_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Order cross-item edits whose same-paragraph anchors can affect each other.
 
@@ -1279,12 +1483,15 @@ def _schedule_plan_item_dependencies(
     transaction compiler may have authored a meaningful atomic operation order.
     """
     ordered_items = list(items)
+    delegated_ids = delegated_operation_ids or set()
     if len(ordered_items) < 2:
         return ordered_items, []
 
     paragraph_cache: dict[tuple[str, str], list[str] | None] = {}
 
     def source_target(target: Mapping[str, Any]) -> dict[str, Any] | None:
+        if target.get("operation_id") in delegated_ids:
+            return None
         if target.get("action", "replace") == "insert_paragraph":
             # Insertions add a paragraph but do not change their source anchor text.
             return None
@@ -1488,13 +1695,30 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     ]
     if not eligible_items:
         raise ValueError("No planned or approved revision items are available for preflight.")
-    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(eligible_items)
+    delegated_operations = _reference_citation_delegations(plan)
+    delegated_operation_ids = set(delegated_operations)
+    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(eligible_items, delegated_operation_ids)
 
     grouped = defaultdict(list)
     target_refs = []
+    delegated_targets = []
     source_hash_cache: dict[str, str] = {}
     for item in eligible_items:
         for target in item["targets"]:
+            target_refs.append((item, target))
+            if target.get("operation_id") in delegated_operation_ids:
+                delegation = delegated_operations[target["operation_id"]]
+                delegated_targets.append({
+                    "revision_item_id": item["id"],
+                    "operation_id": target["operation_id"],
+                    "status": "delegated_preflight",
+                    "delegated_to_revision_item_id": delegation["prose_revision_item_id"],
+                    "delegated_to_target_index": delegation["prose_target_index"],
+                    "document": target["document"],
+                    "part": target.get("part", "word/document.xml"),
+                    "p_idx": target.get("p_idx"),
+                })
+                continue
             edit = {
                 "find": target["find"], "replace": target["replace"],
                 "action": target.get("action", "replace"),
@@ -1525,7 +1749,6 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
-            target_refs.append((item, target))
 
     outputs = [_canonical_artifact_path(out) for _, out in grouped]
     inputs = [_canonical_artifact_path(inp) for inp, _ in grouped]
@@ -1538,6 +1761,14 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         _canonical_artifact_path(inp): str(Path(inp).expanduser().resolve())
         for inp, _ in grouped
     }
+    for item in eligible_items:
+        for target in item.get("targets", []):
+            input_path = target.get("input_file")
+            if isinstance(input_path, str) and input_path:
+                source_paths.setdefault(
+                    _canonical_artifact_path(input_path),
+                    str(Path(input_path).expanduser().resolve()),
+                )
     # Initial Manuscript/SI baselines are gated at document import/identity registration.
     # Do not re-run that gate here: an incremental batch may legitimately use a prior
     # Co_Reviewer Marked DOCX as its source, and accepted_view_docx_bytes resolves its
@@ -1714,7 +1945,10 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "passed": True,
         "targets_total": len(target_refs),
-        "targets_preflighted": len(results),
+        "targets_preflighted": len(results) + len(delegated_targets),
+        "targets_executed_preflight": len(results),
+        "targets_delegated": len(delegated_targets),
+        "delegated_targets": delegated_targets,
         "source_files": [
             {"input_file": path, "sha256": source_hashes_after[key]}
             for key, path in source_paths.items()
@@ -1738,13 +1972,16 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
     if not approved_items:
         raise ValueError("No revision items are currently approved for application.")
-    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(approved_items)
+    delegated_operation_ids = set(_reference_citation_delegations(plan))
+    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(approved_items, delegated_operation_ids)
     authorization_errors = validate_plan(plan, True, require_authorized_change=True)
     if authorization_errors:
         raise ValueError("Revision plan authorization validation failed:\n- " + "\n- ".join(authorization_errors))
     grouped = defaultdict(list)
     for item in approved_items:
         for target in item["targets"]:
+            if target.get("operation_id") in delegated_operation_ids:
+                continue
             edit = {
                 "find": target["find"], "replace": target["replace"],
                 "action": target.get("action", "replace"),
@@ -2606,11 +2843,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
             report_index.setdefault(key, []).append((document_report, edit))
 
     results = []
+    delegated_operation_ids = set(_reference_citation_delegations(plan))
     for item in plan.get("revision_items", []):
         if item.get("status") not in {"applied", "verified"}:
             continue
         item_id = item.get("id", "")
         for target in item.get("targets", []):
+            if target.get("operation_id") in delegated_operation_ids:
+                continue
             output_path = str(Path(target["output_file"]).expanduser().resolve())
             part = target.get("part", "word/document.xml")
             key = (item_id, target["document"], output_path, part, target["find"], target["replace"])
@@ -3133,10 +3373,15 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
     if isinstance(plan.get("reference_transaction"), Mapping):
         from co_reviewer.reference_transaction import verify_reference_transaction_outputs
         reference_transaction_report = verify_reference_transaction_outputs(plan, apply_reports)
+    delegated_count = len(delegated_operation_ids)
+    delegated_verified = delegated_count if reference_transaction_report.get("passed") else 0
+    delegated_failed = delegated_count - delegated_verified
+    target_passed = (bool(results) or delegated_count > 0) and passed == len(results) and delegated_failed == 0
     return {
         "scope": "Mechanical DOCX Track Changes verification and untracked-text audit, plus package Reference Graph verification when a reference transaction is present; scientific correctness still requires separate review.",
-        "targets_total": len(results), "targets_verified": passed,
-        "targets_failed": len(results) - passed,
+        "targets_total": len(results) + delegated_count,
+        "targets_verified": passed + delegated_verified,
+        "targets_failed": len(results) - passed + delegated_failed,
         "untracked_text_audit": untracked_audit,
         "reference_transaction": reference_transaction_report,
         "passed": (

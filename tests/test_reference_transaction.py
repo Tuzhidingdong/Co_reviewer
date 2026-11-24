@@ -624,6 +624,102 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertIn("[7] New reference entry.", output_text)
 
 
+    def test_prose_target_delegates_renumbered_graph_citation_as_single_writer(self):
+        import copy
+        import json
+        import io
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-DELEGATED-CITATION-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported by [5] in this revised sentence.",
+                "intent": "Revise the sentence and update its exact linked citation under the approved reference renumbering.",
+            }],
+        })
+        ordinary_plan["revision_items"][0]["targets"][0]["authorized_change"] = {
+            "intent": "Revise the sentence and change its graph-linked citation label from 4 to 5.",
+            "explicitly_authorized_tokens": [
+                {"kind": "number", "text": "4", "replacement": "5"}
+            ],
+        }
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 4)
+        self.assertEqual(preflight["targets_preflighted"], 4)
+        self.assertEqual(preflight["targets_delegated"], 1)
+        self.assertEqual(len(preflight["delegated_targets"]), 1)
+        self.assertEqual(preflight["delegated_targets"][0]["operation_id"], "REF-CITE-001")
+
+        prose_target = merged_plan["revision_items"][1]["targets"][0]
+        self.assertEqual(prose_target["find"], "The claim is supported by [4].")
+        self.assertEqual(prose_target["replace"], "The statement is supported by [5] in this revised sentence.")
+        self.assertEqual(
+            prose_target["reference_citation_delegations"][0]["citation_operation_id"],
+            "REF-CITE-001",
+        )
+        self.assertEqual(preflight["execution_dependencies"], [])
+
+        owner_item_id = merged_plan["revision_items"][1]["id"]
+        plan_path = self.root / "delegated_merged_plan.json"
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        applied_rows = [
+            row for report in apply_reports for row in report.get("results", [])
+        ]
+        applied_operation_ids = [row.get("operation_id") for row in applied_rows]
+        self.assertNotIn("REF-CITE-001", applied_operation_ids)
+        self.assertTrue(any(row.get("revision_item_id") == owner_item_id for row in applied_rows))
+
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 4)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertTrue(
+            verification["reference_transaction"]["passed"],
+            verification["reference_transaction"],
+        )
+
+        output_file = self.root / "manuscript_marked.docx"
+        accepted_payload = accepted_view_docx_bytes(output_file.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertIn("The statement is supported by [5] in this revised sentence.", output_text)
+        self.assertIn("[5] Smith (2020). Journal details.", output_text)
+        self.assertIn("[7] New reference entry.", output_text)
+
+
     def test_dependency_scheduler_detects_boundary_created_duplicate_for_disjoint_spans(self):
         import co_reviewer_cli as cli
 

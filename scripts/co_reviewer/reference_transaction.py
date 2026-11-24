@@ -1020,9 +1020,82 @@ def verify_reference_transaction_outputs(
             role = str(expected.get("document"))
             part = str(expected.get("part") or "word/document.xml")
             new_number = str(expected.get("new_number"))
-            operation_result = _operation_result_for(expected, "In-text citation update")
-            if operation_result is None:
+            delegation_matches = []
+            for prose_item in plan.get("revision_items", []):
+                if not isinstance(prose_item, Mapping):
+                    continue
+                for prose_target_index, prose_target in enumerate(prose_item.get("targets", [])):
+                    if not isinstance(prose_target, Mapping):
+                        continue
+                    for delegation in prose_target.get("reference_citation_delegations", []):
+                        if (
+                            isinstance(delegation, Mapping)
+                            and delegation.get("citation_operation_id") == expected.get("operation_id")
+                        ):
+                            delegation_matches.append((
+                                prose_item, prose_target_index, prose_target, delegation
+                            ))
+            if len(delegation_matches) > 1:
+                errors.append(
+                    f"In-text citation update {expected.get('operation_id')} has multiple delegated prose owners; expected exactly one."
+                )
                 continue
+
+            delegated_owner = delegation_matches[0] if delegation_matches else None
+            if delegated_owner is None:
+                operation_result = _operation_result_for(expected, "In-text citation update")
+                if operation_result is None:
+                    continue
+            else:
+                duplicate_citation_results = [
+                    row for row in applied_operations
+                    if row.get("operation_id") == expected.get("operation_id")
+                ]
+                if duplicate_citation_results:
+                    errors.append(
+                        f"Delegated citation operation {expected.get('operation_id')} was also applied independently; duplicate Track Changes ownership is forbidden."
+                    )
+                    continue
+                prose_item, prose_target_index, prose_target, delegation = delegated_owner
+                if (
+                    delegation.get("prose_revision_item_id") != prose_item.get("id")
+                    or delegation.get("prose_target_index") != prose_target_index
+                    or delegation.get("source_find") != prose_target.get("find")
+                    or delegation.get("source_replace") != prose_target.get("replace")
+                    or delegation.get("citation_find") != expected.get("find_text")
+                    or delegation.get("citation_replace") != expected.get("replace_text")
+                    or prose_target.get("document") != role
+                    or prose_target.get("part", "word/document.xml") != part
+                    or prose_target.get("p_idx") != expected.get("source_p_idx")
+                ):
+                    errors.append(
+                        f"Delegated citation operation {expected.get('operation_id')} no longer matches its approved prose owner."
+                    )
+                    continue
+                owner_operation_id = prose_target.get("operation_id")
+                owner_results = [
+                    row
+                    for row in applied_operations
+                    if row.get("status") == "applied"
+                    and row.get("revision_item_id") == prose_item.get("id")
+                    and row.get("document") == role
+                    and row.get("part", "word/document.xml") == part
+                    and row.get("p_idx") == expected.get("source_p_idx")
+                    and row.get("find") == prose_target.get("find")
+                    and row.get("replace") == prose_target.get("replace")
+                    and row.get("action", "replace") == "replace"
+                    and (
+                        not isinstance(owner_operation_id, str)
+                        or row.get("operation_id") == owner_operation_id
+                    )
+                ]
+                if len(owner_results) != 1:
+                    errors.append(
+                        f"Delegated citation operation {expected.get('operation_id')} has {len(owner_results)} applied prose-owner results; expected exactly one."
+                    )
+                    continue
+                operation_result = owner_results[0]
+
             output_p_idx = _output_paragraph_index(role, expected.get("source_p_idx"))
             source_offset = expected.get("source_offset")
             find_text = expected.get("find_text")
@@ -1040,8 +1113,28 @@ def verify_reference_transaction_outputs(
                     f"In-text citation update {expected.get('operation_id')} lacks an exact graph offset/find/replace contract."
                 )
                 continue
-            output_offset = source_offset
+            if delegated_owner is not None:
+                _prose_item, _prose_index, prose_target, _delegation = delegated_owner
+                paragraph_segment = segments_by_document.get(role, {}).get((part, output_p_idx))
+                paragraph_text = paragraph_segment.get("text") if isinstance(paragraph_segment, Mapping) else None
+                prose_replace = prose_target.get("replace")
+                if (
+                    not isinstance(paragraph_text, str)
+                    or not isinstance(prose_replace, str)
+                    or not prose_replace
+                    or paragraph_text.count(prose_replace) != 1
+                    or prose_replace.count(replace_text) != 1
+                ):
+                    errors.append(
+                        f"Delegated citation operation {expected.get('operation_id')} cannot be mapped to one exact output prose replacement and citation occurrence."
+                    )
+                    continue
+                output_offset = paragraph_text.find(prose_replace) + prose_replace.find(replace_text)
+            else:
+                output_offset = source_offset
             for earlier in mention_expectations:
+                if delegated_owner is not None:
+                    break
                 if (
                     earlier.get("document") == role
                     and earlier.get("part", "word/document.xml") == part
@@ -1062,6 +1155,8 @@ def verify_reference_transaction_outputs(
             # verification checks the true output occurrence, not the stale
             # pre-edit offset.
             for revision_item in plan.get("revision_items", []):
+                if delegated_owner is not None:
+                    break
                 if not isinstance(revision_item, Mapping):
                     continue
                 for prose_target in revision_item.get("targets", []):
