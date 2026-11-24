@@ -2180,6 +2180,40 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     if inserted_index is None:
                         raise ValueError("Inserted paragraph is not part of the document body.")
                     para_id_attr = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+                    # The insertion anchor can itself be edited by another operation
+                    # in this same approved revision item (for example, inserting a
+                    # new bibliography entry before an entry that is renumbered in
+                    # the same transaction). Reconstruct only those exact, applied
+                    # replacements against the source paragraph; never fuzzy-match
+                    # or infer a changed anchor from nearby text.
+                    expected_anchor_text = source_anchor_text
+                    for related_edit in document_report.get("results", []):
+                        if (
+                            related_edit.get("status") != "applied"
+                            or related_edit.get("revision_item_id") != edit.get("revision_item_id")
+                            or related_edit.get("part", "word/document.xml") != part
+                            or related_edit.get("p_idx") != p_idx
+                            or related_edit.get("action", "replace") == "insert_paragraph"
+                        ):
+                            continue
+                        related_find = related_edit.get("find")
+                        related_replace = related_edit.get("replace")
+                        if (
+                            not isinstance(related_find, str)
+                            or not related_find
+                            or not isinstance(related_replace, str)
+                        ):
+                            raise ValueError(
+                                "Applied edits to the insertion anchor contain an invalid exact replacement."
+                            )
+                        if expected_anchor_text.count(related_find) != 1:
+                            raise ValueError(
+                                "Approved edits to the insertion anchor cannot be replayed uniquely."
+                            )
+                        expected_anchor_text = expected_anchor_text.replace(
+                            related_find, related_replace, 1
+                        )
+
                     source_para_id = source_anchor.get(para_id_attr)
                     if source_para_id:
                         anchor_matches = [
@@ -2189,16 +2223,21 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     else:
                         anchor_matches = [
                             (idx, candidate) for idx, candidate in enumerate(output_paragraphs)
-                            if _accepted_paragraph_text(candidate) == source_anchor_text
+                            if _accepted_paragraph_text(candidate) == expected_anchor_text
                         ]
                     if len(anchor_matches) != 1:
-                        raise ValueError("Original insertion anchor cannot be uniquely located in the output.")
+                        raise ValueError(
+                            "Original insertion anchor cannot be uniquely located after exact approved edits."
+                        )
                     anchor_index, output_anchor = anchor_matches[0]
+                    anchor_text_after_approved_edits = (
+                        _accepted_paragraph_text(output_anchor) == expected_anchor_text
+                    )
                     position_ok = (
                         inserted_index < anchor_index if position == "before"
                         else inserted_index > anchor_index if position == "after"
                         else False
-                    )
+                    ) and anchor_text_after_approved_edits
                     source_ppr = source_anchor.find("w:pPr", NS)
                     inserted_ppr = inserted_paragraph.find("w:pPr", NS)
                     source_ppr_bytes = ET.tostring(source_ppr, method="c14n") if source_ppr is not None else b""
