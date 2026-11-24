@@ -742,7 +742,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         )
         self.assertEqual(
             set(transaction["citation_mention_ids_updated"]),
-            {row["id"] for row in manuscript_mentions.values()},
+            {row["id"] for row in manuscript_mentions.values()} | {si_mentions["34"]["id"]},
         )
 
         preflight = cli.preflight_plan(plan)
@@ -758,7 +758,7 @@ class ReferenceTransactionTests(unittest.TestCase):
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
 
         apply_reports = cli.apply_plan(plan, "Unit Test Author")
-        self.assertEqual(len(apply_reports), 1)
+        self.assertEqual(len(apply_reports), 2)
         plan["revision_items"][0]["status"] = "applied"
         verification = cli.verify_apply_report(plan, apply_reports)
         self.assertTrue(verification["passed"], verification)
@@ -767,7 +767,7 @@ class ReferenceTransactionTests(unittest.TestCase):
 
         output_graph = build_package_reference_graph({
             "Manuscript": extract_docx_reference_segments(manuscript_output),
-            "SI": extract_docx_reference_segments(si),
+            "SI": extract_docx_reference_segments(si_output),
         })
         output_definitions = {
             str(row["number"]): row
@@ -784,6 +784,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             output_mentions[si_mentions["34"]["id"]]["target_definition_ids"],
             [output_definitions["36"]["id"]],
         )
+        self.assertEqual(output_mentions[si_mentions["34"]["id"]]["number"], "36")
 
     def test_reference_operation_needs_targetref_or_explicit_migration_mode(self):
         self.spec["entry_updates"][0].pop("target_identity_mode")
