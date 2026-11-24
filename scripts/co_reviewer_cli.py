@@ -1079,6 +1079,8 @@ def _schedule_plan_item_dependencies(
             paragraph_index, paragraph_text = matches[0]
 
         start = paragraph_text.find(find_text)
+        replacement_text = str(target.get("replace", ""))
+        after_text = paragraph_text[:start] + replacement_text + paragraph_text[start + len(find_text):]
         return {
             "group": (source_key, output_key, part, paragraph_index),
             "source_file": input_file,
@@ -1087,7 +1089,8 @@ def _schedule_plan_item_dependencies(
             "start": start,
             "end": start + len(find_text),
             "find": find_text,
-            "replace": str(target.get("replace", "")),
+            "replace": replacement_text,
+            "after_text": after_text,
         }
 
     item_targets: list[list[dict[str, Any]]] = []
@@ -1113,8 +1116,11 @@ def _schedule_plan_item_dependencies(
                     if not overlap:
                         continue
 
-                    left_preserves_right = left["replace"].count(right["find"]) == 1
-                    right_preserves_left = right["replace"].count(left["find"]) == 1
+                    # Check the whole resulting paragraph, not just the replacement
+                    # operand: concatenating adjacent source text can create a second
+                    # occurrence across the replacement boundary.
+                    left_preserves_right = left["after_text"].count(right["find"]) == 1
+                    right_preserves_left = right["after_text"].count(left["find"]) == 1
                     if (
                         left["find"] == right["find"]
                         and left["replace"] == left["find"]
