@@ -997,7 +997,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
 def _schedule_plan_item_dependencies(
     items: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Order cross-item edits whose exact source anchors overlap.
+    """Order cross-item edits whose same-paragraph anchors can affect each other.
 
     The same schedule is used by Preflight and Apply. An operation that replaces
     a containing span must run before an inner operation only when its proposed
@@ -1086,8 +1086,7 @@ def _schedule_plan_item_dependencies(
             "source_file": input_file,
             "part": part,
             "paragraph_index": paragraph_index,
-            "start": start,
-            "end": start + len(find_text),
+            "source_text": paragraph_text,
             "find": find_text,
             "replace": replacement_text,
             "after_text": after_text,
@@ -1112,23 +1111,11 @@ def _schedule_plan_item_dependencies(
                 for right in item_targets[right_index]:
                     if left["group"] != right["group"]:
                         continue
-                    overlap = max(left["start"], right["start"]) < min(left["end"], right["end"])
-                    if not overlap:
-                        continue
-
-                    # Check the whole resulting paragraph, not just the replacement
-                    # operand: concatenating adjacent source text can create a second
-                    # occurrence across the replacement boundary.
+                    # Check the whole resulting paragraph for every pair of
+                    # same-paragraph operations, including disjoint spans. A replacement
+                    # can create/remove a target anchor across a text-join boundary.
                     left_preserves_right = left["after_text"].count(right["find"]) == 1
                     right_preserves_left = right["after_text"].count(left["find"]) == 1
-                    if (
-                        left["find"] == right["find"]
-                        and left["replace"] == left["find"]
-                        and right["replace"] == right["find"]
-                    ):
-                        # Two text-preserving operations (typically separate FormatChanges)
-                        # can retain the original item order.
-                        continue
                     if left_preserves_right and right_preserves_left:
                         # Either order retains the other source anchor; keep the authored
                         # plan order as the deterministic tie-breaker.
@@ -1143,7 +1130,7 @@ def _schedule_plan_item_dependencies(
                         left_id = str(ordered_items[left_index].get("id", left_index))
                         right_id = str(ordered_items[right_index].get("id", right_index))
                         raise ValueError(
-                            "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE: overlapping source anchors in "
+                            "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE: interacting same-paragraph targets in "
                             f"{left_id} and {right_id} cannot both be applied safely. "
                             "Keep the edits as one explicitly ordered atomic operation or revise the exact target spans."
                         )
@@ -1181,7 +1168,7 @@ def _schedule_plan_item_dependencies(
             if degree > 0
         ]
         raise ValueError(
-            "PLAN_TARGET_DEPENDENCY_CYCLE: conflicting overlapping-target dependencies "
+            "PLAN_TARGET_DEPENDENCY_CYCLE: conflicting same-paragraph target dependencies "
             "between revision items: " + ", ".join(blocked_ids) + ". "
             "The plan cannot be safely reordered without changing its approved scope."
         )

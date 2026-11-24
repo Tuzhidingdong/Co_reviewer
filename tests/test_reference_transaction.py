@@ -613,6 +613,51 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertIn("[5] Smith (2020). Journal details.", output_text)
         self.assertIn("[7] New reference entry.", output_text)
 
+
+    def test_dependency_scheduler_detects_boundary_created_duplicate_for_disjoint_spans(self):
+        import co_reviewer_cli as cli
+
+        source = str(self.manuscript)
+        output = str(self.root / "boundary_marked.docx")
+        citation = {
+            "id": "CITATION-FIRST",
+            "targets": [{
+                "document": "Manuscript",
+                "input_file": source,
+                "output_file": output,
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "4",
+                "replace": "5",
+            }],
+        }
+        sentence = {
+            "id": "SENTENCE-SECOND",
+            "targets": [{
+                "document": "Manuscript",
+                "input_file": source,
+                "output_file": output,
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "The claim is supported ",
+                "replace": "The claim is supported [4] ",
+            }],
+        }
+
+        ordered, dependencies = cli._schedule_plan_item_dependencies([sentence, citation])
+        self.assertEqual(
+            [item["id"] for item in ordered],
+            ["CITATION-FIRST", "SENTENCE-SECOND"],
+        )
+        self.assertEqual(
+            dependencies[0]["before_revision_item_id"],
+            "CITATION-FIRST",
+        )
+        self.assertEqual(
+            dependencies[0]["after_revision_item_id"],
+            "SENTENCE-SECOND",
+        )
+
     def test_merged_plan_fails_closed_when_overlapping_targets_have_no_safe_order(self):
         import copy
         import co_reviewer_cli as cli
