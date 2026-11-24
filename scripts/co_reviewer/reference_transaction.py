@@ -203,6 +203,10 @@ def compile_reference_transaction(
         if role not in normalized_documents:
             raise ReferenceTransactionError(f"additions[{index}] references unknown document role {role}.")
         number = _require_text(str(row.get("reference_number") or ""), f"additions[{index}].reference_number")
+        if not number.isdigit():
+            raise ReferenceTransactionError(
+                f"additions[{index}].reference_number must be a numeric citation label."
+            )
         collisions = [
             item for item in definitions.values()
             if item.get("kind") == "citation"
@@ -491,7 +495,13 @@ def compile_reference_transaction(
     operations: list[PatchOperation] = []
     operation_ids: set[str] = set()
 
-    def add_operation(raw: Mapping[str, Any], *, action: str, label: str) -> None:
+    def add_operation(
+        raw: Mapping[str, Any],
+        *,
+        action: str,
+        label: str,
+        expected_reference_number: str | None = None,
+    ) -> None:
         role = _require_text(raw.get("document"), f"{label}.document")
         if role not in normalized_documents:
             raise ReferenceTransactionError(f"{label} references unknown document role {role}.")
@@ -512,6 +522,19 @@ def compile_reference_transaction(
             if position not in {"before", "after"}:
                 raise ReferenceTransactionError(f"{label}.position must be before or after.")
             find_text, replace_text = anchor, inserted
+            if expected_reference_number is not None:
+                expected_label = f"[{expected_reference_number}]"
+                if inserted.count(expected_label) != 1:
+                    raise ReferenceTransactionError(
+                        f"{label}.inserted_text must contain exactly one exact bibliography label "
+                        f"{expected_label}; additional or missing labels require a separately scoped operation."
+                    )
+            # The bracketed bibliography label is one protected citation token.
+            # All other numbers/DOIs in the inserted entry (e.g. publication
+            # year, volume, pages) remain separately protected and must each
+            # appear in explicitly_authorized_insertions with their exact kind
+            # and text. Do not infer authorization for a bare number merely
+            # because it matches reference_number.
             _validate_operation_token_authorization(action, find_text, replace_text, authorization)
         else:
             find_text = _require_text(raw.get("find"), f"{label}.find")
@@ -603,7 +626,12 @@ def compile_reference_transaction(
             raise ReferenceTransactionError(
                 f"Bibliography insertion {role}/{part}/P[{p_idx}] is not uniquely inside a detected reference section."
             )
-        add_operation(raw, action="insert_paragraph", label=f"additions[{index}]")
+        add_operation(
+            raw,
+            action="insert_paragraph",
+            label=f"additions[{index}]",
+            expected_reference_number=str(raw.get("reference_number")),
+        )
 
     for index, row in enumerate(entry_updates):
         add_operation(row, action="replace", label=f"entry_updates[{index}]")

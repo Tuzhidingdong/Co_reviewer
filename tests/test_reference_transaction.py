@@ -534,6 +534,26 @@ class ReferenceTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed after the Reference Graph was built"):
             cli.preflight_plan(plan)
 
+    def test_reference_insertion_requires_separate_exact_authorization_for_non_label_numbers(self):
+        self.spec["additions"][0]["inserted_text"] = "[7] New reference published in 2024."
+        with self.assertRaisesRegex(
+            ReferenceTransactionError,
+            "INSERTED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+        ):
+            compile_reference_transaction(self.spec, self.graph)
+
+        self.spec["additions"][0]["authorized_change"]["explicitly_authorized_insertions"].append({
+            "kind": "number",
+            "text": "2024",
+        })
+        plan = compile_reference_transaction(self.spec, self.graph)
+        insertion = next(
+            target
+            for target in plan["revision_items"][0]["targets"]
+            if target["operation_id"] == "REF-ADD-001"
+        )
+        self.assertEqual(insertion["replace"], "[7] New reference published in 2024.")
+
     def test_reuses_released_labels_only_with_explicit_mention_rebinding_and_full_renumbering(self):
         import copy
         import json
@@ -615,7 +635,7 @@ class ReferenceTransactionTests(unittest.TestCase):
                 "p_idx": 3 if number == "33" else 4,
                 "anchor_text": "References" if number == "33" else "[33] Synthetic old reference A.",
                 "position": "after" if number == "33" else "before",
-                "inserted_text": f"[{number}] Synthetic new reference {number}.",
+                "inserted_text": f"[{number}] Synthetic new reference entry.",
                 "reference_number": number,
                 "linked_mention_ids": (
                     [si_mentions[number]["id"]] if number == "33" else []

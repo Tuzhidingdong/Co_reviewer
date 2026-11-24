@@ -436,7 +436,8 @@
               }
             },
             "additionalProperties": false
-          }
+          },
+          "description": "Every protected token introduced by an operation must be listed exactly once with its exact token kind and text. The bibliography citation label does not implicitly authorize any other numeric token in the inserted entry."
         },
         "explicitly_authorized_deletions": {
           "type": "array",
