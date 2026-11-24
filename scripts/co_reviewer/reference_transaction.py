@@ -523,18 +523,36 @@ def compile_reference_transaction(
                 raise ReferenceTransactionError(f"{label}.position must be before or after.")
             find_text, replace_text = anchor, inserted
             if expected_reference_number is not None:
-                expected_label = f"[{expected_reference_number}]"
-                if inserted.count(expected_label) != 1:
+                stripped_inserted = inserted.lstrip()
+                bracketed_label = f"[{expected_reference_number}]"
+                numbered_labels = (
+                    f"{expected_reference_number}.",
+                    f"{expected_reference_number})",
+                )
+                bracketed_match = (
+                    stripped_inserted.startswith(bracketed_label)
+                    and len(stripped_inserted) > len(bracketed_label)
+                    and stripped_inserted[len(bracketed_label)].isspace()
+                )
+                numbered_match = any(
+                    stripped_inserted.startswith(label)
+                    and len(stripped_inserted) > len(label)
+                    and stripped_inserted[len(label)].isspace()
+                    for label in numbered_labels
+                )
+                if bracketed_match == numbered_match:
                     raise ReferenceTransactionError(
-                        f"{label}.inserted_text must contain exactly one exact bibliography label "
-                        f"{expected_label}; additional or missing labels require a separately scoped operation."
+                        f"{label}.inserted_text must start with exactly one supported bibliography label "
+                        f"for reference_number={expected_reference_number!r} ([n], n. or n)); "
+                        "additional or missing labels require a separately scoped operation."
                     )
-            # The bracketed bibliography label is one protected citation token.
-            # All other numbers/DOIs in the inserted entry (e.g. publication
-            # year, volume, pages) remain separately protected and must each
-            # appear in explicitly_authorized_insertions with their exact kind
-            # and text. Do not infer authorization for a bare number merely
-            # because it matches reference_number.
+            # The bracketed form is a protected citation token; the n. / n)
+            # forms are protected number tokens. All other numbers/DOIs in the
+            # inserted entry (e.g. publication year, volume, pages) remain
+            # separately protected and must each appear in
+            # explicitly_authorized_insertions with their exact kind and text.
+            # Do not infer authorization for a bare number merely because it
+            # matches reference_number.
             _validate_operation_token_authorization(action, find_text, replace_text, authorization)
         else:
             find_text = _require_text(raw.get("find"), f"{label}.find")

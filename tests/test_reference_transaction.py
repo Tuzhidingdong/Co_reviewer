@@ -554,6 +554,20 @@ class ReferenceTransactionTests(unittest.TestCase):
         )
         self.assertEqual(insertion["replace"], "[7] New reference published in 2024.")
 
+    def test_unbracketed_reference_label_uses_exact_number_token_authorization(self):
+        self.spec["additions"][0]["inserted_text"] = "7. New reference entry."
+        self.spec["additions"][0]["authorized_change"]["explicitly_authorized_insertions"] = [{
+            "kind": "number",
+            "text": "7",
+        }]
+        plan = compile_reference_transaction(self.spec, self.graph)
+        insertion = next(
+            target
+            for target in plan["revision_items"][0]["targets"]
+            if target["operation_id"] == "REF-ADD-001"
+        )
+        self.assertEqual(insertion["replace"], "7. New reference entry.")
+
     def test_reuses_released_labels_only_with_explicit_mention_rebinding_and_full_renumbering(self):
         import copy
         import json
