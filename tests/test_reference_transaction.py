@@ -1188,5 +1188,235 @@ class ReferenceTransactionTests(unittest.TestCase):
             compile_reference_transaction(self.spec, self.graph)
 
 
+    def test_prose_target_owns_only_citation_inside_its_source_find(self):
+        """One paragraph, three graph-linked citations, one prose replacement.
+
+        The prose replacement changes [33] into [35], while the graph separately
+        owns [34] -> [36] and [35] -> [37]. Ownership must follow the original
+        source offsets, not the number appearing in the replacement text.
+        """
+        import copy
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        manuscript = self.root / "ownership_manuscript.docx"
+        manuscript_output = self.root / "ownership_manuscript_marked.docx"
+        plan_path = self.root / "ownership_merged_plan.json"
+
+        source_paragraph = "Claim alpha [33]. Claim beta [34]. Claim gamma [35]."
+        document = Document()
+        document.add_paragraph(source_paragraph)
+        document.add_paragraph("References")
+        document.add_paragraph("[33] Synthetic old reference A.")
+        document.add_paragraph("[34] Synthetic old reference B.")
+        document.add_paragraph("[35] Synthetic old reference C.")
+        document.save(manuscript)
+
+        graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript),
+        })
+        graph["source_files"] = {
+            "Manuscript": {
+                "path": str(manuscript.resolve()),
+                "sha256": hashlib.sha256(manuscript.read_bytes()).hexdigest(),
+            }
+        }
+        definitions = {
+            str(row["number"]): row
+            for row in graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        mentions = {
+            str(row["number"]): row
+            for row in graph["mentions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation"
+            and row.get("resolution") == "resolved"
+        }
+        self.assertEqual(set(definitions), {"33", "34", "35"})
+        self.assertEqual(set(mentions), {"33", "34", "35"})
+
+        prose_find = "Claim alpha [33]."
+        # Keep the prefix length-neutral so the other citations retain their
+        # graph-bound source offsets in the final document.
+        prose_replace = "Claim alpha [35]."
+        find_start = source_paragraph.find(prose_find)
+        find_end = find_start + len(prose_find)
+        offsets = {number: source_paragraph.index(number) for number in ("33", "34", "35")}
+        self.assertTrue(find_start <= offsets["33"] < find_end)
+        self.assertFalse(find_start <= offsets["34"] < find_end)
+        self.assertFalse(find_start <= offsets["35"] < find_end)
+        # The replacement deliberately introduces the label owned by RT-CU-35.
+        self.assertIn("35", prose_replace)
+
+        entry_updates = []
+        citation_updates = []
+        labels = {"33": "A", "34": "B", "35": "C"}
+        for old, new in (("33", "35"), ("34", "36"), ("35", "37")):
+            definition = definitions[old]
+            entry_updates.append({
+                "operation_id": f"REF-ENTRY-OWN-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition["id"],
+                "document": "Manuscript",
+                "p_idx": definition["paragraph_index"],
+                "find": f"[{old}] Synthetic old reference {labels[old]}.",
+                "replace": f"[{new}] Synthetic old reference {labels[old]}.",
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Move exact reference label {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": f"[{old}]", "replacement": f"[{new}]"},
+                    ],
+                },
+            })
+            mention = mentions[old]
+            citation_updates.append({
+                "operation_id": f"RT-CU-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": mention["id"],
+                "document": "Manuscript",
+                "p_idx": mention["paragraph_index"],
+                "find": mention["text"],
+                "replace": new,
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Renumber the graph-linked citation {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": old, "replacement": new},
+                    ],
+                },
+            })
+
+        spec = {
+            "transaction_id": "REF-TXN-OWNERSHIP-001",
+            "reviewer": "Author",
+            "comment": "Renumber three linked citations; one is owned by a prose PatchOperation.",
+            "proposed_response": "Every citation was written exactly once.",
+            "source_comment_ids": ["C-OWN-001"],
+            "evidence_ids": ["E-OWN-001"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "additions": [],
+            "entry_updates": entry_updates,
+            "citation_updates": citation_updates,
+        }
+        transaction_plan = compile_reference_transaction(spec, graph)
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "intents": [{
+                "id": "PROSE-CITE-OWN-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": prose_find,
+                "replace": prose_replace,
+                "intent": "Revise the sentence and apply its separately approved citation renumbering.",
+            }],
+        })
+        ordinary_plan["revision_items"][0]["targets"][0]["authorized_change"] = {
+            "intent": "Revise the prose and apply the approved renumbering of its one citation."
+        }
+
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 7)
+        self.assertEqual(preflight["targets_preflighted"], 7)
+        self.assertEqual(preflight["targets_delegated"], 1)
+        self.assertEqual(preflight["delegated_targets"][0]["operation_id"], "RT-CU-33")
+        self.assertEqual(
+            {item["id"] for item in merged_plan["revision_items"]},
+            set(preflight["execution_order"]),
+        )
+
+        prose_target = merged_plan["revision_items"][1]["targets"][0]
+        delegated_ids = {
+            row["citation_operation_id"]
+            for row in prose_target.get("reference_citation_delegations", [])
+        }
+        self.assertEqual(delegated_ids, {"RT-CU-33"})
+        self.assertNotIn("RT-CU-34", delegated_ids)
+        self.assertNotIn("RT-CU-35", delegated_ids)
+        self.assertIn(
+            {"kind": "citation", "text": "[33]", "replacement": "[35]"},
+            prose_target["authorized_change"]["explicitly_authorized_tokens"],
+        )
+
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        applied_operations = [
+            row.get("operation_id")
+            for report in apply_reports
+            for row in report.get("results", [])
+        ]
+        self.assertEqual(applied_operations.count("RT-CU-33"), 0)
+        self.assertEqual(applied_operations.count("RT-CU-34"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-35"), 1)
+        self.assertEqual(applied_operations.count(None), 1)
+
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 7)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertTrue(verification["reference_transaction"]["passed"])
+
+        accepted_payload = accepted_view_docx_bytes(manuscript_output.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertEqual(
+            output_text[0],
+            "Claim alpha [35]. Claim beta [36]. Claim gamma [37].",
+        )
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript_output),
+        })
+        output_definitions = {
+            str(row["number"]): row
+            for row in output_graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_definitions), {"35", "36", "37"})
+        output_mentions = {
+            str(row["number"]): row
+            for row in output_graph["mentions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_mentions), {"35", "36", "37"})
+
+
 if __name__ == "__main__":
     unittest.main()

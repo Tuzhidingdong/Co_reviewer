@@ -1227,6 +1227,57 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 return candidate
         return None
 
+    def prose_find_source_range(
+        target: Mapping[str, Any],
+        expectation: Mapping[str, Any],
+        old_find: str,
+    ) -> tuple[str, int, int]:
+        """Resolve the graph-bound source paragraph and the exact prose find span.
+
+        Ownership of a citation is decided by the original source coordinates,
+        never by a number appearing in the replacement text. This helper fails
+        closed on a stale source hash, an ambiguous source paragraph or a prose
+        find that is not unique in the exact source document.
+        """
+        source_offset = expectation.get("source_offset")
+        document = docs.get(expectation.get("document")) if isinstance(docs, Mapping) else None
+        source_sha256 = document.get("source_sha256") if isinstance(document, Mapping) else None
+        source_path = Path(target.get("input_file", "")).expanduser().resolve()
+        source_key = _canonical_artifact_path(source_path)
+        if (
+            not isinstance(source_offset, int)
+            or isinstance(source_offset, bool)
+            or source_offset < 0
+            or not isinstance(source_sha256, str)
+            or sha256_file(source_path) != source_sha256
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+            )
+        source_cache_key = (source_key, source_sha256)
+        if source_cache_key not in source_reference_segments:
+            source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
+        source_p_idx = p_index(target)
+        source_part = target.get("part", "word/document.xml")
+        source_segments = [
+            row for row in source_reference_segments[source_cache_key]
+            if row.get("part") == source_part
+            and row.get("paragraph_index") == source_p_idx
+        ]
+        if len(source_segments) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
+                "the graph-bound source paragraph does not resolve exactly once."
+            )
+        source_paragraph_text = source_segments[0].get("text")
+        if not isinstance(source_paragraph_text, str) or source_paragraph_text.count(old_find) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_FIND_AMBIGUOUS: "
+                "the prose find must occur exactly once in the graph-bound source paragraph."
+            )
+        find_start = source_paragraph_text.find(old_find)
+        return source_paragraph_text, find_start, find_start + len(old_find)
+
     def exact_source_paragraph(
         target: Mapping[str, Any],
         expectation: Mapping[str, Any],
@@ -1323,6 +1374,20 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                 old_find, old_replace = target.get("find"), target.get("replace")
                 token, token_new = expectation.get("find_text"), expectation.get("replace_text")
                 if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
+                    continue
+
+                # Decide ownership from the exact graph-bound source coordinates
+                # before examining the replacement text. A number introduced by
+                # the replacement (for example a reused label such as 35) must
+                # never bind this prose target to a different citation that only
+                # happens to sit in the same paragraph. source_offset is the
+                # start of the numeric token itself, not of the surrounding []
+                # delimiters; keep that definition unchanged.
+                _source_text, find_start, find_end = prose_find_source_range(
+                    target, expectation, old_find
+                )
+                source_offset = expectation.get("source_offset")
+                if source_offset < find_start or source_offset >= find_end:
                     continue
 
                 old_positions = _exact_token_positions(old_find, token)
