@@ -681,6 +681,9 @@ class ReferenceTransactionTests(unittest.TestCase):
         prose_target = merged_plan["revision_items"][1]["targets"][0]
         self.assertEqual(prose_target["find"], "The claim is supported by [4].")
         self.assertEqual(prose_target["replace"], "The statement is supported by [5] in this revised sentence.")
+        # The public plan compiler preserves the supported legacy shape for
+        # ordinary replacement targets: no operation_id is fabricated.
+        self.assertIsNone(prose_target.get("operation_id"))
         self.assertEqual(
             prose_target["reference_citation_delegations"][0]["citation_operation_id"],
             "REF-CITE-001",
@@ -712,7 +715,17 @@ class ReferenceTransactionTests(unittest.TestCase):
         ]
         applied_operation_ids = [row.get("operation_id") for row in applied_rows]
         self.assertNotIn("REF-CITE-001", applied_operation_ids)
-        self.assertTrue(any(row.get("revision_item_id") == owner_item_id for row in applied_rows))
+        owner_rows = [
+            row for row in applied_rows
+            if row.get("revision_item_id") == owner_item_id
+            and row.get("document") == "Manuscript"
+            and row.get("part", "word/document.xml") == "word/document.xml"
+            and row.get("p_idx") == 0
+            and row.get("find") == prose_target["find"]
+            and row.get("replace") == prose_target["replace"]
+        ]
+        self.assertEqual(len(owner_rows), 1, applied_rows)
+        self.assertIsNone(owner_rows[0].get("operation_id"))
 
         for item in approved_plan["revision_items"]:
             item["status"] = "applied"

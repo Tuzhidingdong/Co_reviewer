@@ -858,11 +858,15 @@ def verify_reference_transaction_outputs(
             extracted_documents[str(role)] = extract_docx_reference_segments(candidate)
         output_graph = build_package_reference_graph(extracted_documents)
         errors: list[str] = []
+        # Legacy prose Patch targets may not carry operation_id. Keep all
+        # structured Apply rows here; transaction rows are selected by their
+        # required operation IDs below, while delegated prose rows are matched
+        # by their sealed Revision Item/target index and exact source scope.
         applied_operations = [
             row
             for report in apply_reports
             for row in report.get("results", [])
-            if isinstance(row, Mapping) and isinstance(row.get("operation_id"), str)
+            if isinstance(row, Mapping)
         ]
         segments_by_document = {
             role: {
