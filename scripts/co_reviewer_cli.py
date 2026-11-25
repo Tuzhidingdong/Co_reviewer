@@ -1177,6 +1177,7 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         errors.append(f"{at}.verified_output_hashes cannot read {resolved_path}: {exc}")
                 if recorded_paths != expected_paths:
                     errors.append(f"{at}.verified_output_hashes must cover exactly the linked DOCX outputs.")
+    errors.extend(_validate_reference_citation_transaction_coverage(plan))
     return errors
 
 
@@ -1423,10 +1424,50 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                             "REFERENCE_CITATION_DELEGATION_CONTEXT_MISMATCH: exact citation delimiters changed around the graph-linked token."
                         )
                     if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
-                        raise ValueError(
-                            "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass prose target "
-                            f"{item.get('id')} cannot own a reference citation update without an explicit citation-free target."
-                        )
+                        # A class: the prose replacement is exactly the graph-bound
+                        # citation substitution. A mixed-format/two-pass prose target
+                        # cannot safely own that citation, so the Reference
+                        # Transaction becomes the sole physical writer and fully
+                        # covers this prose target. All binding fields are derived
+                        # from the graph expectation and the exact source DOCX.
+                        prose_offset = expectation.get("source_offset")
+                        relative = prose_offset - find_start
+                        covered_replace = old_find[:relative] + token_new + old_find[relative + len(token):]
+                        if (
+                            covered_replace != old_replace
+                            or existing_delegations
+                            or target.get("reference_citation_transaction_coverage") is not None
+                        ):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass prose target "
+                                f"{item.get('id')} cannot own a reference citation update without an explicit citation-free target."
+                            )
+                        coverage = {
+                            "citation_operation_id": str(expectation.get("operation_id", "")),
+                            "prose_revision_item_id": str(item.get("id", "")),
+                            "prose_target_index": target_index,
+                            "document": role,
+                            "part": target.get("part", "word/document.xml"),
+                            "source_p_idx": p_index(target),
+                            "source_offset": prose_offset,
+                            "exact_source_citation": token,
+                            "exact_replacement_citation": token_new,
+                            "source_docx_sha256": document.get("source_sha256"),
+                            "exact_prose_source_find": old_find,
+                            "exact_prose_source_replace": old_replace,
+                        }
+                        target["reference_citation_transaction_coverage"] = coverage
+                        records.append({
+                            "revision_item_id": item.get("id"),
+                            "target_index": target_index,
+                            "document": role,
+                            "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target),
+                            "mode": "covered_by_reference_transaction",
+                            **copy.deepcopy(coverage),
+                            "reused": False,
+                        })
+                        continue
                     if target.get("reference_citation_normalization") is not None:
                         raise ValueError(
                             "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
@@ -1719,9 +1760,149 @@ def _reference_citation_delegations(plan: Mapping[str, Any]) -> dict[str, dict[s
     return result
 
 
+_REFERENCE_CITATION_COVERAGE_FIELDS = (
+    "citation_operation_id", "prose_revision_item_id", "prose_target_index",
+    "document", "part", "source_p_idx", "source_offset",
+    "exact_source_citation", "exact_replacement_citation",
+    "source_docx_sha256", "exact_prose_source_find", "exact_prose_source_replace",
+)
+
+
+def _reference_citation_transaction_coverage(plan: Mapping[str, Any]) -> dict[tuple[Any, int], dict[str, Any]]:
+    """Index prose targets fully covered by a Reference Transaction citation write.
+
+    This is the inverse of ``_reference_citation_delegations``: the transaction
+    is the sole physical writer of the citation and the prose target contributes
+    no Track Changes revision at all.
+    """
+    result: dict[tuple[Any, int], dict[str, Any]] = {}
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, Mapping):
+            continue
+        for target_index, target in enumerate(item.get("targets", [])):
+            if not isinstance(target, Mapping):
+                continue
+            row = target.get("reference_citation_transaction_coverage")
+            if isinstance(row, Mapping):
+                result[(item.get("id"), target_index)] = {
+                    **copy.deepcopy(dict(row)),
+                    "prose_revision_item_id": item.get("id"),
+                    "prose_target_index": target_index,
+                }
+    return result
+
+
+def _validate_reference_citation_transaction_coverage(plan: Mapping[str, Any]) -> list[str]:
+    """Hash-bind every coverage record to the graph, transaction and source DOCX."""
+    from co_reviewer.identity import sha256_file
+
+    errors: list[str] = []
+    transaction = plan.get("reference_transaction")
+    records = _reference_citation_transaction_coverage(plan)
+    if not records:
+        return errors
+    if not isinstance(transaction, Mapping):
+        return ["A prose target declares reference_citation_transaction_coverage but the plan has no reference_transaction metadata."]
+    expectations = {
+        row.get("operation_id"): row
+        for row in transaction.get("updated_mention_expectations", [])
+        if isinstance(row, Mapping)
+    }
+    documents = transaction.get("documents", {})
+    seen_operations: dict[Any, tuple[Any, int]] = {}
+    for key, row in records.items():
+        label = "coverage[%s]" % (key,)
+        missing = [name for name in _REFERENCE_CITATION_COVERAGE_FIELDS if name not in row]
+        if missing:
+            errors.append("%s is missing fields: %s" % (label, ", ".join(missing)))
+            continue
+        item, target_index = key
+        target = None
+        for candidate in plan.get("revision_items", []):
+            if isinstance(candidate, Mapping) and candidate.get("id") == item:
+                targets = candidate.get("targets", [])
+                if isinstance(targets, list) and 0 <= target_index < len(targets):
+                    target = targets[target_index]
+                break
+        if not isinstance(target, Mapping):
+            errors.append("%s points to a missing revision target." % label)
+            continue
+        if target.get("reference_citation_delegations"):
+            errors.append("%s cannot be combined with reference_citation_delegations on one prose target." % label)
+        operation_id = row["citation_operation_id"]
+        expectation = expectations.get(operation_id)
+        if not isinstance(expectation, Mapping):
+            errors.append("%s cites operation %r which is not in the transaction expectations." % (label, operation_id))
+            continue
+        if operation_id in seen_operations:
+            errors.append("%s reuses citation operation %r already covering %s." % (
+                label, operation_id, seen_operations[operation_id]))
+        else:
+            seen_operations[operation_id] = key
+        for field in ("document", "part", "source_p_idx", "source_offset",
+                      "exact_source_citation", "exact_replacement_citation"):
+            if row[field] != expectation.get("find_text" if field == "exact_source_citation"
+                                            else "replace_text" if field == "exact_replacement_citation"
+                                            else field):
+                errors.append("%s.%s does not match the graph-bound transaction expectation." % (label, field))
+        if row["prose_revision_item_id"] != item or row["prose_target_index"] != target_index:
+            errors.append("%s prose coordinates do not match its owning target." % label)
+        if (row["exact_prose_source_find"] != target.get("find")
+                or row["exact_prose_source_replace"] != target.get("replace")):
+            errors.append("%s does not bind the exact prose find/replace." % label)
+        document = documents.get(row["document"]) if isinstance(documents, Mapping) else None
+        if not isinstance(document, Mapping):
+            errors.append("%s has no source document record." % label)
+            continue
+        source_path = Path(target.get("input_file", "")).expanduser()
+        try:
+            actual_sha = sha256_file(source_path)
+        except (OSError, TypeError, ValueError):
+            actual_sha = None
+        if (row["source_docx_sha256"] != document.get("source_sha256")
+                or actual_sha != document.get("source_sha256")):
+            errors.append("%s source DOCX SHA-256 is stale or does not match the transaction document record." % label)
+            continue
+        if row["document"] != target.get("document") or row["part"] != target.get("part", "word/document.xml"):
+            errors.append("%s document/part does not match the prose target." % label)
+            continue
+        try:
+            from co_reviewer.document_engine import parse_xml, visible_text
+            import zipfile
+            with zipfile.ZipFile(source_path) as archive:
+                root = parse_xml(archive.read(row["part"]))
+            ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            paragraphs = root.findall(".//w:body//w:p", ns)
+            source_p_idx = row["source_p_idx"]
+            if not isinstance(source_p_idx, int) or not 0 <= source_p_idx < len(paragraphs):
+                errors.append("%s source_p_idx is outside the source DOCX." % label)
+                continue
+            paragraph_text = visible_text(paragraphs[source_p_idx])
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            errors.append("%s source DOCX paragraph cannot be resolved: %s" % (label, exc))
+            continue
+        find = row["exact_prose_source_find"]
+        if not isinstance(find, str) or paragraph_text.count(find) != 1:
+            errors.append("%s prose find is not unique in the exact source paragraph." % label)
+            continue
+        find_start = paragraph_text.find(find)
+        offset = row["source_offset"]
+        token = row["exact_source_citation"]
+        if (not isinstance(offset, int) or not find_start <= offset < find_start + len(find)
+                or paragraph_text[offset:offset + len(token)] != token):
+            errors.append("%s source_offset does not identify the exact graph citation inside the prose find." % label)
+            continue
+        rel = offset - find_start
+        expected_replace = find[:rel] + row["exact_replacement_citation"] + find[rel + len(token):]
+        if expected_replace != row["exact_prose_source_replace"]:
+            errors.append("%s prose replace is not the exact graph citation substitution." % label)
+    return errors
+
+
 def _schedule_plan_item_dependencies(
     items: list[dict[str, Any]],
     delegated_operation_ids: set[str] | None = None,
+    covered_targets: set[tuple[Any, int]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Order cross-item edits whose same-paragraph anchors can affect each other.
 
@@ -1829,12 +2010,14 @@ def _schedule_plan_item_dependencies(
             "after_text": after_text,
         }
 
+    covered = covered_targets or set()
     item_targets: list[list[dict[str, Any]]] = []
     for item in ordered_items:
         item_targets.append([
             resolved
-            for target in item.get("targets", [])
+            for target_index, target in enumerate(item.get("targets", []))
             if isinstance(target, Mapping)
+            and (item.get("id"), target_index) not in covered
             for resolved in [source_target(target)]
             if resolved is not None
         ])
@@ -1947,15 +2130,31 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         raise ValueError("No planned or approved revision items are available for preflight.")
     delegated_operations = _reference_citation_delegations(plan)
     delegated_operation_ids = set(delegated_operations)
-    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(eligible_items, delegated_operation_ids)
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
+    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(
+        eligible_items, delegated_operation_ids, set(covered_prose_targets)
+    )
 
     grouped = defaultdict(list)
     target_refs = []
     delegated_targets = []
     source_hash_cache: dict[str, str] = {}
     for item in eligible_items:
-        for target in item["targets"]:
+        for target_index, target in enumerate(item["targets"]):
             target_refs.append((item, target))
+            if (item["id"], target_index) in covered_prose_targets:
+                coverage = covered_prose_targets[(item["id"], target_index)]
+                delegated_targets.append({
+                    "revision_item_id": item["id"],
+                    "target_index": target_index,
+                    "operation_id": None,
+                    "status": "delegated_to_reference_transaction",
+                    "covered_by_operation_id": coverage["citation_operation_id"],
+                    "document": target["document"],
+                    "part": target.get("part", "word/document.xml"),
+                    "p_idx": target.get("p_idx"),
+                })
+                continue
             if target.get("operation_id") in delegated_operation_ids:
                 delegation = delegated_operations[target["operation_id"]]
                 delegated_targets.append({
@@ -2199,6 +2398,13 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         "targets_executed_preflight": len(results),
         "targets_delegated": len(delegated_targets),
         "delegated_targets": delegated_targets,
+        "targets_covered_by_transaction": len(covered_prose_targets),
+        "covered_prose_targets": [
+            {"revision_item_id": key[0], "target_index": key[1],
+             "status": "delegated_to_reference_transaction",
+             "covered_by_operation_id": row["citation_operation_id"]}
+            for key, row in sorted(covered_prose_targets.items(), key=lambda pair: str(pair[0]))
+        ],
         "source_files": [
             {"input_file": path, "sha256": source_hashes_after[key]}
             for key, path in source_paths.items()
@@ -2223,13 +2429,18 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     if not approved_items:
         raise ValueError("No revision items are currently approved for application.")
     delegated_operation_ids = set(_reference_citation_delegations(plan))
-    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(approved_items, delegated_operation_ids)
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
+    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(
+        approved_items, delegated_operation_ids, set(covered_prose_targets)
+    )
     authorization_errors = validate_plan(plan, True, require_authorized_change=True)
     if authorization_errors:
         raise ValueError("Revision plan authorization validation failed:\n- " + "\n- ".join(authorization_errors))
     grouped = defaultdict(list)
     for item in approved_items:
-        for target in item["targets"]:
+        for target_index, target in enumerate(item["targets"]):
+            if (item["id"], target_index) in covered_prose_targets:
+                continue
             if target.get("operation_id") in delegated_operation_ids:
                 continue
             edit = {
@@ -3094,11 +3305,14 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
 
     results = []
     delegated_operation_ids = set(_reference_citation_delegations(plan))
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
     for item in plan.get("revision_items", []):
         if item.get("status") not in {"applied", "verified"}:
             continue
         item_id = item.get("id", "")
-        for target in item.get("targets", []):
+        for target_index, target in enumerate(item.get("targets", [])):
+            if (item_id, target_index) in covered_prose_targets:
+                continue
             if target.get("operation_id") in delegated_operation_ids:
                 continue
             output_path = str(Path(target["output_file"]).expanduser().resolve())
@@ -3626,14 +3840,69 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
     delegated_count = len(delegated_operation_ids)
     delegated_verified = delegated_count if reference_transaction_report.get("passed") else 0
     delegated_failed = delegated_count - delegated_verified
-    target_passed = (bool(results) or delegated_count > 0) and passed == len(results) and delegated_failed == 0
+
+    covered_checks = []
+    for (covered_item, covered_index), coverage in sorted(
+        covered_prose_targets.items(), key=lambda pair: str(pair[0])
+    ):
+        check = {
+            "revision_item_id": covered_item,
+            "target_index": covered_index,
+            "status": "failed",
+            "mode": "covered_by_reference_transaction",
+            "covered_by_operation_id": coverage["citation_operation_id"],
+        }
+        covering_target = None
+        for item in plan.get("revision_items", []):
+            for target in item.get("targets", []):
+                if target.get("operation_id") == coverage["citation_operation_id"]:
+                    covering_target = target
+                    break
+            if covering_target is not None:
+                break
+        if not isinstance(covering_target, Mapping):
+            check["reason"] = "The covering Reference Transaction citation target is missing."
+        else:
+            try:
+                from co_reviewer.working_view import accepted_view_docx_bytes
+                output_path = Path(covering_target["output_file"]).expanduser()
+                payload = accepted_view_docx_bytes(output_path.read_bytes())
+                with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+                    root = parse_xml(archive.read(coverage["part"]))
+                ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                paragraphs = root.findall(".//w:body//w:p", ns)
+                final_text = visible_text(paragraphs[coverage["source_p_idx"]])
+                expected = coverage["exact_prose_source_replace"]
+                if final_text.count(expected) == 1:
+                    check["status"] = "verified"
+                    check["final_text"] = final_text
+                else:
+                    check["reason"] = (
+                        "The covering transaction did not produce the exact prose replacement text exactly once."
+                    )
+            except (OSError, KeyError, IndexError, ValueError, TypeError) as exc:
+                check["reason"] = "Covered prose target output cannot be verified: %s" % exc
+        covered_checks.append(check)
+    covered_count = len(covered_checks)
+    covered_verified = (
+        sum(1 for row in covered_checks if row["status"] == "verified")
+        if reference_transaction_report.get("passed") else 0
+    )
+    covered_failed = covered_count - covered_verified
+    target_passed = (
+        (bool(results) or delegated_count > 0 or covered_count > 0)
+        and passed == len(results)
+        and delegated_failed == 0
+        and covered_failed == 0
+    )
     return {
         "scope": "Mechanical DOCX Track Changes verification and untracked-text audit, plus package Reference Graph verification when a reference transaction is present; scientific correctness still requires separate review.",
-        "targets_total": len(results) + delegated_count,
-        "targets_verified": passed + delegated_verified,
-        "targets_failed": len(results) - passed + delegated_failed,
+        "targets_total": len(results) + delegated_count + covered_count,
+        "targets_verified": passed + delegated_verified + covered_verified,
+        "targets_failed": len(results) - passed + delegated_failed + covered_failed,
         "untracked_text_audit": untracked_audit,
         "reference_transaction": reference_transaction_report,
+        "covered_targets": covered_checks,
         "passed": (
             target_passed and untracked_audit["passed"]
             and reference_transaction_report["passed"]

@@ -1418,5 +1418,324 @@ class ReferenceTransactionTests(unittest.TestCase):
         self.assertEqual(set(output_mentions), {"35", "36", "37"})
 
 
+    def _build_three_citation_coverage_case(self):
+        """Synthetic DOCX: one prose paragraph with three graph-linked citations."""
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+
+        manuscript = self.root / "coverage_manuscript.docx"
+        manuscript_output = self.root / "coverage_manuscript_marked.docx"
+        document = Document()
+        document.add_paragraph("Claim alpha [33]. Claim beta [34]. Claim gamma [35].")
+        document.add_paragraph("References")
+        document.add_paragraph("[33] Synthetic old reference A.")
+        document.add_paragraph("[34] Synthetic old reference B.")
+        document.add_paragraph("[35] Synthetic old reference C.")
+        document.save(manuscript)
+
+        graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript),
+        })
+        graph["source_files"] = {
+            "Manuscript": {
+                "path": str(manuscript.resolve()),
+                "sha256": hashlib.sha256(manuscript.read_bytes()).hexdigest(),
+            }
+        }
+        definitions = {
+            str(row["number"]): row for row in graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        mentions = {
+            str(row["number"]): row for row in graph["mentions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation" and row.get("resolution") == "resolved"
+        }
+        labels = {"33": "A", "34": "B", "35": "C"}
+        entry_updates, citation_updates = [], []
+        # Author the in-text operations in the same dependency-safe order as the
+        # real transaction: consume the original 35 before 33->35 introduces a
+        # second 35 into the paragraph.
+        for old, new in (("35", "37"), ("34", "36"), ("33", "35")):
+            definition = definitions[old]
+            entry_updates.append({
+                "operation_id": f"REF-ENTRY-COV-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition["id"],
+                "document": "Manuscript",
+                "p_idx": definition["paragraph_index"],
+                "find": f"[{old}] Synthetic old reference {labels[old]}.",
+                "replace": f"[{new}] Synthetic old reference {labels[old]}.",
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Move exact reference label {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": f"[{old}]", "replacement": f"[{new}]"},
+                    ],
+                },
+            })
+            mention = mentions[old]
+            citation_updates.append({
+                "operation_id": f"RT-CU-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": mention["id"],
+                "document": "Manuscript",
+                "p_idx": mention["paragraph_index"],
+                "find": mention["text"],
+                "replace": new,
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Renumber the graph-linked citation {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": old, "replacement": new},
+                    ],
+                },
+            })
+        spec = {
+            "transaction_id": "REF-TXN-COVERAGE-001",
+            "reviewer": "Author",
+            "comment": "Renumber three graph-linked citations; one is described by prose.",
+            "proposed_response": "Each citation was physically written exactly once.",
+            "source_comment_ids": ["C-COV-001"],
+            "evidence_ids": ["E-COV-001"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "additions": [],
+            "entry_updates": entry_updates,
+            "citation_updates": citation_updates,
+        }
+        return {
+            "manuscript": manuscript,
+            "manuscript_output": manuscript_output,
+            "plan_path": self.root / "coverage_merged_plan.json",
+            "graph": graph,
+            "spec": spec,
+            "definitions": definitions,
+            "mentions": mentions,
+        }
+
+    def _merged_coverage_plan(self, case, prose_find, prose_replace, with_format_map=True):
+        import copy
+        import co_reviewer_cli as cli
+
+        transaction_plan = compile_reference_transaction(case["spec"], case["graph"])
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(case["manuscript"]),
+                    "output_file": str(case["manuscript_output"]),
+                }
+            },
+            "intents": [{
+                "id": "PROSE-COVERAGE-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": prose_find,
+                "replace": prose_replace,
+                "intent": "Prose description of the exact graph-bound citation renumbering.",
+            }],
+        })
+        ordinary_target = ordinary_plan["revision_items"][0]["targets"][0]
+        ordinary_target["authorized_change"] = {"intent": "Prose statement covered by the approved transaction."}
+        if with_format_map:
+            ordinary_target["replacement_format_map"] = [{
+                "replacement_start": 0,
+                "replacement_end": len(prose_replace),
+                "source_offset": 0,
+            }]
+        merged = copy.deepcopy(transaction_plan)
+        merged["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged, require_approval=False), [])
+        return merged
+
+    def test_citation_only_mixed_format_prose_is_covered_by_transaction(self):
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 7)
+        self.assertEqual(preflight["targets_preflighted"], 7)
+        self.assertEqual(preflight["targets_covered_by_transaction"], 1)
+        self.assertEqual(preflight["delegated_targets"][0]["status"], "delegated_to_reference_transaction")
+        self.assertEqual(preflight["delegated_targets"][0]["covered_by_operation_id"], "RT-CU-33")
+
+        prose_target = merged["revision_items"][1]["targets"][0]
+        coverage = prose_target["reference_citation_transaction_coverage"]
+        self.assertEqual(coverage["citation_operation_id"], "RT-CU-33")
+        self.assertEqual(coverage["source_offset"], 13)
+        self.assertEqual(coverage["source_docx_sha256"], hashlib.sha256(case["manuscript"].read_bytes()).hexdigest())
+        self.assertTrue(prose_target["replacement_format_map"])
+
+        case["plan_path"].write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(case["plan_path"]),
+            ids=[item["id"] for item in merged["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved = json.loads(case["plan_path"].read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved, "Unit Test Author")
+        applied_operations = [
+            row.get("operation_id") for report in apply_reports for row in report.get("results", [])
+        ]
+        self.assertEqual(applied_operations.count("RT-CU-33"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-34"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-35"), 1)
+        # The covered prose PatchOperation must not produce any physical edit.
+        self.assertEqual(applied_operations.count(None), 0)
+
+        for item in approved["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 7)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertEqual(len(verification["covered_targets"]), 1)
+        self.assertEqual(verification["covered_targets"][0]["status"], "verified")
+        self.assertTrue(verification["reference_transaction"]["passed"])
+
+        payload = accepted_view_docx_bytes(case["manuscript_output"].read_bytes())
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", NS)
+        self.assertEqual(
+            visible_text(paragraphs[0]),
+            "Claim alpha [35]. Claim beta [36]. Claim gamma [37].",
+        )
+
+    def test_three_citations_only_first_is_covered_and_graph_offsets_are_correct(self):
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+        import json
+        from types import SimpleNamespace
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+
+        prose_target = merged["revision_items"][1]["targets"][0]
+        self.assertEqual(
+            prose_target["reference_citation_transaction_coverage"]["citation_operation_id"],
+            "RT-CU-33",
+        )
+        self.assertNotIn("reference_citation_delegations", prose_target)
+        for operation_id in ("RT-CU-34", "RT-CU-35"):
+            self.assertFalse(any(
+                isinstance(target.get("reference_citation_transaction_coverage"), dict)
+                and target["reference_citation_transaction_coverage"].get("citation_operation_id") == operation_id
+                for item in merged["revision_items"]
+                for target in item.get("targets", [])
+            ))
+
+        case["plan_path"].write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.assertEqual(cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(case["plan_path"]),
+            ids=[item["id"] for item in merged["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        )), 0)
+        approved = json.loads(case["plan_path"].read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved, "Unit Test Author")
+        for item in approved["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(case["manuscript_output"]),
+        })
+        output_mentions = {
+            str(row["number"]): row for row in output_graph["mentions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        output_definitions = {
+            str(row["number"]): row["id"] for row in output_graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_mentions), {"35", "36", "37"})
+        self.assertEqual(set(output_definitions), {"35", "36", "37"})
+        source_text = "Claim alpha [33]. Claim beta [34]. Claim gamma [35]."
+        for number, old in (("35", "33"), ("36", "34"), ("37", "35")):
+            self.assertEqual(output_mentions[number]["offset"], source_text.index("[" + old + "]") + 1)
+            self.assertEqual(
+                output_mentions[number]["target_definition_ids"],
+                [output_definitions[number]],
+            )
+
+    def test_real_prose_rewrite_with_citation_stays_fail_closed(self):
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Revised claim alpha [35].")
+        with self.assertRaisesRegex(ValueError, "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED"):
+            cli.preflight_plan(merged)
+        self.assertFalse(any(
+            "reference_citation_transaction_coverage" in target
+            for item in merged["revision_items"]
+            for target in item.get("targets", [])
+        ))
+
+    def test_coverage_records_are_hash_bound_and_fail_closed_on_tampering(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+        coverage = copy.deepcopy(merged["revision_items"][1]["targets"][0]["reference_citation_transaction_coverage"])
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        row = target["reference_citation_transaction_coverage"]
+        row["citation_operation_id"] = "RT-CU-34"
+        self.assertTrue(any("does not match the graph-bound transaction expectation" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        target["reference_citation_transaction_coverage"]["source_offset"] = 14
+        self.assertTrue(any("source_offset" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        target["reference_citation_transaction_coverage"]["source_docx_sha256"] = "0" * 64
+        self.assertTrue(any("SHA-256" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        second_prose_item = copy.deepcopy(tampered["revision_items"][1])
+        second_prose_item["id"] = "PROSE-COVERAGE-002"
+        second_prose_item["targets"][0]["reference_citation_transaction_coverage"] = copy.deepcopy(coverage)
+        tampered["revision_items"].append(second_prose_item)
+        self.assertTrue(any("reuses citation operation" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+
 if __name__ == "__main__":
     unittest.main()
