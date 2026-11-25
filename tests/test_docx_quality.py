@@ -152,6 +152,42 @@ class DocxQualityTests(unittest.TestCase):
         self.assertEqual(parsed.func, cli.cmd_audit_docx_quality)
         self.assertEqual(parsed.profile, "word-final-clean")
 
+    def test_cover_letter_profile_does_not_impose_response_letter_typography(self):
+        from docx.shared import Pt
+
+        path = self._make_docx()
+        document = Document(path)
+        document.styles["Normal"].font.name = "Arial"
+        document.styles["Normal"].font.size = Pt(12)
+        document.save(path)
+
+        report = audit_docx_quality(path, profile="cover-letter")
+        self.assertEqual(report["status"], "PASS", report)
+        check_ids = {row["id"] for row in report["checks"]}
+        self.assertNotIn("normal_style_font", check_ids)
+        self.assertNotIn("normal_style_size", check_ids)
+        self.assertNotIn("normal_style_color", check_ids)
+
+    def test_cover_letter_profile_still_rejects_tracked_revisions(self):
+        path = self._make_docx()
+        document = Document(path)
+        paragraph = document.paragraphs[0]._p
+        insertion = OxmlElement("w:ins")
+        insertion.set(qn("w:id"), "1")
+        insertion.set(qn("w:author"), "Synthetic reviewer")
+        run = OxmlElement("w:r")
+        text_node = OxmlElement("w:t")
+        text_node.text = "tracked"
+        run.append(text_node)
+        insertion.append(run)
+        paragraph.append(insertion)
+        document.save(path)
+
+        report = audit_docx_quality(path, profile="cover-letter")
+        self.assertEqual(report["status"], "FAIL")
+        check = next(row for row in report["checks"] if row["id"] == "no_tracked_revisions")
+        self.assertEqual(check["status"], "FAIL")
+
     def test_response_letter_profile_enforces_normal_style_font(self):
         path = self._make_docx()
         report = audit_docx_quality(path, profile="response-letter")

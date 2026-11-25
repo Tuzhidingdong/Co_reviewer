@@ -280,6 +280,52 @@
                     "additionalProperties": false
                   }
                 },
+                "reference_citation_normalization": {
+                  "type": "object",
+                  "description": "Auditable Preflight projection that removes a graph-linked citation token from a prose target so it can be updated as a separate Track Changes operation.",
+                  "required": [
+                    "mode", "citation_operation_id", "source_find", "source_replace",
+                    "citation_find", "citation_replace", "normalized_find", "normalized_replace"
+                  ],
+                  "properties": {
+                    "mode": {"enum": ["prefix_before_citation", "suffix_after_citation"]},
+                    "citation_operation_id": {"type": "string", "minLength": 1},
+                    "source_find": {"type": "string", "minLength": 1},
+                    "source_replace": {"type": "string", "minLength": 1},
+                    "citation_find": {"type": "string", "minLength": 1},
+                    "citation_replace": {"type": "string", "minLength": 1},
+                    "normalized_find": {"type": "string", "minLength": 1},
+                    "normalized_replace": {"type": "string", "minLength": 1}
+                  },
+                  "additionalProperties": false
+                },
+                "reference_citation_delegations": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Graph-bound citation operations whose exact write is delegated to one ordinary prose target; the transaction operation is logically verified but is not applied as a second overlapping Track Changes edit.",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "citation_operation_id",
+                      "source_find",
+                      "source_replace",
+                      "citation_find",
+                      "citation_replace",
+                      "prose_revision_item_id",
+                      "prose_target_index"
+                    ],
+                    "properties": {
+                      "citation_operation_id": { "type": "string", "minLength": 1 },
+                      "source_find": { "type": "string", "minLength": 1 },
+                      "source_replace": { "type": "string", "minLength": 1 },
+                      "citation_find": { "type": "string", "minLength": 1 },
+                      "citation_replace": { "type": "string", "minLength": 1 },
+                      "prose_revision_item_id": { "type": "string", "minLength": 1 },
+                      "prose_target_index": { "type": "integer", "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
+                },
                 "replacement_format_map": {
                   "type": "array",
                   "minItems": 1,
@@ -456,7 +502,43 @@
                 },
                 "author_decision_ref": {
                   "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
-                }
+                },
+                "action": {
+                  "enum": [
+                    "replace",
+                    "insert_paragraph"
+                  ],
+                  "default": "replace"
+                },
+                "anchor_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                },
+                "inserted_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+        "inserted_format_map": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Complete contiguous map from inserted-text character ranges to exact ordinary source Run offsets within anchor_text. Each range inherits direct formatting from the single ordinary Run containing source_offset.",
+          "items": {
+            "type": "object",
+            "required": ["inserted_start", "inserted_end", "source_offset"],
+            "properties": {
+              "inserted_start": {"type": "integer", "minimum": 0},
+              "inserted_end": {"type": "integer", "minimum": 1},
+              "source_offset": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        }
               },
               "additionalProperties": false,
               "anyOf": [
@@ -542,9 +624,49 @@
                       }
                     }
                   }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action": {
+                        "const": "insert_paragraph"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "anchor_text",
+                      "position",
+                      "inserted_text"
+                    ],
+                    "properties": {
+                      "part": {
+                        "const": "word/document.xml"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["inserted_format_map"]
+                  },
+                  "then": {
+                    "required": ["action"],
+                    "properties": {
+                      "action": {"const": "insert_paragraph"}
+                    }
+                  }
                 }
               ]
             }
+          },
+          "reference_transaction_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Binds all graph-linked bibliography/citation expectations into the ordinary revision-item approval fingerprint."
           }
         },
         "allOf": [
@@ -597,6 +719,282 @@
         ],
         "additionalProperties": false
       }
+    },
+    "reference_transaction": {
+      "type": "object",
+      "required": [
+        "transaction_id",
+        "reference_graph_sha256",
+        "transaction_fingerprint",
+        "operation_ids",
+        "documents",
+        "status"
+      ],
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_graph_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "transaction_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "definition_ids_added": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "linked_mention_ids"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "definition_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "citation_mention_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "operation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "documents": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "input_file",
+              "output_file",
+              "source_sha256"
+            ],
+            "properties": {
+              "input_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "output_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "added_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "operation_id",
+              "part",
+              "anchor_p_idx",
+              "position",
+              "inserted_text",
+              "visible_inserted_text",
+              "linked_mention_ids",
+              "linked_mention_count"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "part": {
+                "type": "string",
+                "const": "word/document.xml"
+              },
+              "anchor_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position": {
+                "enum": [
+                  "before",
+                  "after"
+                ]
+              },
+              "inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "visible_inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "linked_mention_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "operation_id",
+              "part",
+              "source_p_idx",
+              "find_text",
+              "old_number",
+              "new_number",
+              "updated_entry_text"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "updated_entry_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "part": {
+                "type": "string",
+                "pattern": "^word/"
+              },
+              "source_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "find_text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_mention_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "operation_id",
+              "part",
+              "source_p_idx",
+              "source_offset",
+              "find_text",
+              "replace_text",
+              "old_number",
+              "new_number",
+              "mention_id"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "mention_id": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "part": {
+                "type": "string",
+                "pattern": "^word/"
+              },
+              "source_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "find_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "replace_text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "status": {
+          "enum": [
+            "pending_author_approval"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

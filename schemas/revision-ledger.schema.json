@@ -311,15 +311,30 @@
         },
         "format_authorization": {
           "type": "object",
-          "required": ["intent"],
+          "required": [
+            "intent"
+          ],
           "properties": {
-            "intent": {"type": "string", "minLength": 1},
-            "semantic_profile_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-            "format_zone": {"enum": ["body", "references"]}
+            "intent": {
+              "type": "string",
+              "minLength": 1
+            },
+            "semantic_profile_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "format_zone": {
+              "enum": [
+                "body",
+                "references"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "two_pass": {"type": "boolean"},
+        "two_pass": {
+          "type": "boolean"
+        },
         "format_operations": {
           "type": "array",
           "items": {
@@ -456,25 +471,80 @@
             },
             "additionalProperties": false
           }
+        },
+        "action": {
+          "enum": [
+            "replace",
+            "insert_paragraph"
+          ],
+          "default": "replace"
+        },
+        "anchor_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "inserted_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inserted_format_map": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Complete contiguous map from inserted-text character ranges to exact ordinary source Run offsets within anchor_text. Each range inherits direct formatting from the single ordinary Run containing source_offset.",
+          "items": {
+            "type": "object",
+            "required": ["inserted_start", "inserted_end", "source_offset"],
+            "properties": {
+              "inserted_start": {"type": "integer", "minimum": 0},
+              "inserted_end": {"type": "integer", "minimum": 1},
+              "source_offset": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false,
       "allOf": [
         {
           "if": {
-            "required": ["two_pass"],
-            "properties": {"two_pass": {"const": true}}
+            "required": [
+              "two_pass"
+            ],
+            "properties": {
+              "two_pass": {
+                "const": true
+              }
+            }
           },
           "then": {
-            "required": ["format_authorization", "format_operations"],
+            "required": [
+              "format_authorization",
+              "format_operations"
+            ],
             "properties": {
               "format_authorization": {
-                "required": ["intent", "semantic_profile_sha256", "format_zone"]
+                "required": [
+                  "intent",
+                  "semantic_profile_sha256",
+                  "format_zone"
+                ]
               },
               "format_operations": {
                 "minItems": 1,
                 "items": {
-                  "required": ["find", "properties", "source_occurrence_id", "scope_find", "scope_offset"]
+                  "required": [
+                    "find",
+                    "properties",
+                    "source_occurrence_id",
+                    "scope_find",
+                    "scope_offset"
+                  ]
                 }
               }
             }
@@ -534,6 +604,41 @@
                 "type": "integer",
                 "minimum": 0
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "insert_paragraph"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "anchor_text",
+              "position",
+              "inserted_text"
+            ],
+            "properties": {
+              "part": {
+                "const": "word/document.xml"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["inserted_format_map"]
+          },
+          "then": {
+            "required": ["action"],
+            "properties": {
+              "action": {"const": "insert_paragraph"}
             }
           }
         }

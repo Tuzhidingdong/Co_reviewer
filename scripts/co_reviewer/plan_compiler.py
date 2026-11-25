@@ -331,14 +331,34 @@ def compile_revision_plan(
             raise ValueError(f"intents[{index - 1}] must be an object.")
         item_id = str(intent.get("id") or f"REV-{index:03d}")
         reviewer = str(intent.get("reviewer") or "Author").strip() or "Author"
-        find_raw = intent.get("find")
+        action = str(intent.get("action") or "replace")
+        if action not in {"replace", "insert_paragraph"}:
+            raise ValueError(f"{item_id}: unsupported action {action!r}.")
+        is_paragraph_insertion = action == "insert_paragraph"
+        find_raw = (
+            intent.get("anchor_text", intent.get("find"))
+            if is_paragraph_insertion else intent.get("find")
+        )
         if not isinstance(find_raw, str) or not find_raw.strip():
-            raise ValueError(f"{item_id}: 'find' must be a non-empty string.")
-        replace_raw = intent.get("replace")
-        if replace_raw is None:
+            raise ValueError(
+                f"{item_id}: {'anchor_text' if is_paragraph_insertion else 'find'} must be non-empty."
+            )
+        replace_raw = (
+            intent.get("inserted_text", intent.get("replace"))
+            if is_paragraph_insertion else intent.get("replace")
+        )
+        if replace_raw is None and not is_paragraph_insertion:
             replace_raw = find_raw
-        if not isinstance(replace_raw, str):
-            raise ValueError(f"{item_id}: 'replace' must be a string.")
+        if not isinstance(replace_raw, str) or (is_paragraph_insertion and not replace_raw.strip()):
+            raise ValueError(
+                f"{item_id}: {'inserted_text' if is_paragraph_insertion else 'replace'} must be a "
+                f"{'non-empty ' if is_paragraph_insertion else ''}string."
+            )
+        if is_paragraph_insertion:
+            if intent.get("position") not in {"before", "after"}:
+                raise ValueError(f"{item_id}: insert_paragraph requires position=before or after.")
+            if intent.get("part", "word/document.xml") != "word/document.xml":
+                raise ValueError(f"{item_id}: insert_paragraph currently supports word/document.xml only.")
 
         part = safe_part(str(intent.get("part", "word/document.xml")))
         doc_role, input_file, output_file = _resolve_doc_paths(intent, doc_registry, base_dir)
@@ -351,9 +371,22 @@ def compile_revision_plan(
             sha_cache[input_file] = hashlib.sha256(Path(input_file).read_bytes()).hexdigest()
         source_sha256 = sha_cache[input_file]
 
-        plain_replace, inline_ops = parse_inline_format_markup(replace_raw, include_offsets=True)
-        explicit_ops = _normalize_format_intent(intent.get("format_intent"), plain_replace)
-        after_para_text = visible_text(para).replace(find_raw, plain_replace, 1)
+        if is_paragraph_insertion:
+            if intent.get("replacement_format_map") is not None:
+                raise ValueError(f"{item_id}: replacement_format_map is not valid for insert_paragraph.")
+            plain_replace, inline_ops, explicit_ops = replace_raw, [], []
+        else:
+            plain_replace, inline_ops = parse_inline_format_markup(replace_raw, include_offsets=True)
+            explicit_ops = _normalize_format_intent(intent.get("format_intent"), plain_replace)
+            if intent.get("replacement_format_map") is not None and find_raw == plain_replace:
+                raise ValueError(
+                    f"{item_id}: replacement_format_map requires an actual text replacement; "
+                    "use a separately scoped FormatChange for format-only edits."
+                )
+        after_para_text = (
+            visible_text(para).replace(find_raw, plain_replace, 1)
+            if not is_paragraph_insertion else ""
+        )
         scope_is_unique = after_para_text.count(plain_replace) == 1
         for op in inline_ops:
             offset = op.pop("_offset", None)
@@ -366,7 +399,7 @@ def compile_revision_plan(
                 op["scope_offset"] = plain_replace.index(op["find"])
         format_ops = inline_ops + explicit_ops
 
-        if find_raw == plain_replace and not format_ops:
+        if not is_paragraph_insertion and find_raw == plain_replace and not format_ops:
             raise ValueError(f"{item_id}: no-op intent (find equals replace with no format operations).")
 
         intent_desc = str(
@@ -378,7 +411,37 @@ def compile_revision_plan(
         comment = str(intent.get("comment") or intent_desc).strip()
 
         targets: list[dict[str, Any]] = []
-        if find_raw != plain_replace:
+        if is_paragraph_insertion:
+            raw_insertions = intent.get("explicitly_authorized_insertions", [])
+            if not isinstance(raw_insertions, list):
+                raise ValueError(f"{item_id}: explicitly_authorized_insertions must be an array.")
+            insertion_auth = {
+                "intent": intent_desc,
+                "explicitly_authorized_insertions": raw_insertions,
+            }
+            targets.append({
+                "document": doc_role,
+                "input_file": input_file,
+                "output_file": output_file,
+                "part": part,
+                "p_idx": p_idx,
+                "source_sha256": source_sha256,
+                "find": find_raw,
+                "replace": plain_replace,
+                "operation_id": str(intent.get("operation_id") or f"{item_id}-OP001"),
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "action": "insert_paragraph",
+                "anchor_text": find_raw,
+                "position": intent["position"],
+                "inserted_text": plain_replace,
+                "authorized_change": insertion_auth,
+            })
+            inserted_format_map = intent.get("inserted_format_map")
+            if inserted_format_map is not None:
+                if not isinstance(inserted_format_map, list) or not inserted_format_map:
+                    raise ValueError(f"{item_id}: inserted_format_map must be a non-empty array when supplied.")
+                targets[-1]["inserted_format_map"] = inserted_format_map
+        elif find_raw != plain_replace:
             token_auth = compute_token_authorizations(find_raw, plain_replace)
             token_auth["intent"] = intent_desc
             text_target: dict[str, Any] = {
@@ -392,11 +455,19 @@ def compile_revision_plan(
                 "replace": plain_replace,
                 "authorized_change": token_auth,
             }
-            auto_map = _compute_auto_format_map_for_paragraph(
-                para, find_raw, plain_replace, allow_dominant_replace_fallback=False,
-            )
-            if auto_map is not None:
-                text_target["replacement_format_map"] = auto_map
+            explicit_map = intent.get("replacement_format_map")
+            if explicit_map is not None:
+                if not isinstance(explicit_map, list) or not explicit_map:
+                    raise ValueError(
+                        f"{item_id}: replacement_format_map must be a non-empty array when explicitly supplied."
+                    )
+                text_target["replacement_format_map"] = explicit_map
+            else:
+                auto_map = _compute_auto_format_map_for_paragraph(
+                    para, find_raw, plain_replace, allow_dominant_replace_fallback=False,
+                )
+                if auto_map is not None:
+                    text_target["replacement_format_map"] = auto_map
             targets.append(text_target)
 
         if format_ops:

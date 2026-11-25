@@ -87,6 +87,32 @@ class JsonSchemaContractTests(unittest.TestCase):
         receipt_validator.validate(committed)
         receipt_validator.validate(abandoned)
 
+    def test_instruction_coverage_1_1_schema_declares_source_traceability(self):
+        schema = json.loads(
+            (SCHEMA_DIR / "instruction-coverage.schema.json").read_text(encoding="utf-8")
+        )
+        validator = validator_for(schema)(schema)
+        manifest = {
+            "schema_version": "1.1",
+            "source_instruction": {"file": "/round/instructions.txt", "sha256": "a" * 64},
+            "requirements": [{
+                "requirement_id": "REQ-MT-06-EXAMPLE",
+                "task_id": "MT-06",
+                "source_line_start": 2,
+                "source_line_end": 3,
+                "source_locator": "L2–L3",
+                "instruction_excerpt": "Instruction line 2.\\nInstruction line 3.",
+                "status": "blocked",
+                "reason": "Pending evidence.",
+            }],
+            "coverage_sha256": "b" * 64,
+        }
+        validator.validate(manifest)
+        invalid = json.loads(json.dumps(manifest))
+        invalid["requirements"][0].pop("task_id")
+        with self.assertRaises(ValidationError):
+            validator.validate(invalid)
+
     def test_revision_plan_and_ledger_schema_include_strict_formatting_contracts(self):
         plan_schema = json.loads((SCHEMA_DIR / "revision-plan.schema.json").read_text(encoding="utf-8"))
         ledger_schema = json.loads((SCHEMA_DIR / "revision-ledger.schema.json").read_text(encoding="utf-8"))
@@ -94,6 +120,7 @@ class JsonSchemaContractTests(unittest.TestCase):
         ledger_operation = ledger_schema["$defs"]["patchOperation"]
         for schema in (plan_target, ledger_operation):
             self.assertIn("replacement_format_map", schema["properties"])
+            self.assertIn("inserted_format_map", schema["properties"])
             self.assertIn("format_authorization", schema["properties"])
             self.assertIn("format_operations", schema["properties"])
             self.assertFalse(schema["additionalProperties"])
@@ -157,6 +184,26 @@ class JsonSchemaContractTests(unittest.TestCase):
         }
         stable_target["target_identity_mode"] = "stable_target_ref"
         plan_validator.validate(stable_plan_target)
+        insertion_plan = json.loads(json.dumps(plan_instance))
+        insertion_target = insertion_plan["revision_items"][0]["targets"][0]
+        insertion_target.update({
+            "action": "insert_paragraph",
+            "anchor_text": "References",
+            "position": "after",
+            "inserted_text": "[1] New reference.",
+            "find": "References",
+            "replace": "[1] New reference.",
+            "inserted_format_map": [{
+                "inserted_start": 0,
+                "inserted_end": len("[1] New reference."),
+                "source_offset": 0,
+            }],
+        })
+        plan_validator.validate(insertion_plan)
+        wrong_action = json.loads(json.dumps(insertion_plan))
+        wrong_action["revision_items"][0]["targets"][0]["action"] = "replace"
+        with self.assertRaises(ValidationError):
+            plan_validator.validate(wrong_action)
         for invalid_hint in ("0", -1, True):
             invalid_location = json.loads(json.dumps(stable_plan_target))
             invalid_location["revision_items"][0]["targets"][0]["target_ref"]["location_hint"]["p_idx"] = invalid_hint
@@ -220,6 +267,30 @@ class JsonSchemaContractTests(unittest.TestCase):
             "events": [],
         }
         ledger_validator.validate(valid_ledger)
+
+        insertion_operation = dict(operation)
+        for field in ("format_authorization", "format_operations", "replacement_format_map"):
+            insertion_operation.pop(field)
+        insertion_operation.update({
+            "action": "insert_paragraph",
+            "anchor_text": "References",
+            "position": "after",
+            "inserted_text": "[1] New reference.",
+            "find": "References",
+            "replace": "[1] New reference.",
+            "inserted_format_map": [{
+                "inserted_start": 0,
+                "inserted_end": len("[1] New reference."),
+                "source_offset": 0,
+            }],
+        })
+        insertion_ledger = json.loads(json.dumps(valid_ledger))
+        insertion_ledger["patches"][0]["operations"] = [insertion_operation]
+        ledger_validator.validate(insertion_ledger)
+        insertion_wrong_action = json.loads(json.dumps(insertion_ledger))
+        insertion_wrong_action["patches"][0]["operations"][0]["action"] = "replace"
+        with self.assertRaises(ValidationError):
+            ledger_validator.validate(insertion_wrong_action)
 
         implicit_legacy = json.loads(json.dumps(valid_ledger))
         implicit_legacy["patches"][0]["operations"][0].pop("target_identity_mode")

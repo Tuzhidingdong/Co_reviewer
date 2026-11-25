@@ -973,6 +973,108 @@ def make_insert_runs(source: ET.Element, text: str) -> list[ET.Element]:
         runs.append(run)
     return runs
 
+def build_paragraph_insertion_runs(
+    paragraph: ET.Element,
+    anchor_text: str,
+    inserted_text: str,
+    inserted_format_map: list[dict[str, Any]] | None = None,
+) -> tuple[list[ET.Element], list[dict[str, Any]]]:
+    """Build insertion Runs from uniform anchor formatting or an exact source-Run map."""
+    if not isinstance(anchor_text, str) or not anchor_text:
+        raise ValueError("PARAGRAPH_INSERTION_FORMAT_ANCHOR_REQUIRED: anchor_text must be non-empty.")
+    if not isinstance(inserted_text, str) or not inserted_text:
+        raise ValueError("PARAGRAPH_INSERTION_FORMAT_TEXT_REQUIRED: inserted_text must be non-empty.")
+    if len(normalize_script_characters(inserted_text)) != len(inserted_text):
+        raise ValueError("PARAGRAPH_INSERTION_FORMAT_MAP_NORMALIZATION_AMBIGUOUS: script normalization changed offsets.")
+    paragraph_text = visible_text(paragraph)
+    if paragraph_text.count(anchor_text) != 1:
+        raise ValueError("PARAGRAPH_INSERTION_FORMAT_ANCHOR_AMBIGUOUS: anchor_text must occur exactly once.")
+    anchor_start = paragraph_text.index(anchor_text)
+    anchor_end = anchor_start + len(anchor_text)
+    source_records: list[tuple[int, int, ET.Element, str]] = []
+    cursor = 0
+    allowed_children = {qn("pPr"), qn("r"), qn("proofErr")}
+    if any(child.tag not in allowed_children for child in paragraph):
+        raise ValueError("PARAGRAPH_INSERTION_UNSUPPORTED_ANCHOR: source has non-plain Word structures.")
+    for child in paragraph:
+        if child.tag == qn("r"):
+            run_text = run_plain_text(child)
+            if run_text is None:
+                raise ValueError("PARAGRAPH_INSERTION_FORMAT_SOURCE_UNSUPPORTED_RUN: complex Run source is unsupported.")
+            if run_text:
+                source_records.append((cursor, cursor + len(run_text), child, run_text))
+                cursor += len(run_text)
+    if not source_records:
+        raise ValueError("PARAGRAPH_INSERTION_NO_FORMAT_SOURCE: anchor has no ordinary text Run.")
+    if cursor != len(paragraph_text):
+        raise ValueError("PARAGRAPH_INSERTION_FORMAT_SOURCE_TEXT_MISMATCH: ordinary Runs do not cover paragraph text.")
+
+    def rpr_sha256(run: ET.Element) -> str:
+        properties = _format_run_properties(run)
+        return hashlib.sha256(
+            ET.tostring(properties, method="c14n") if properties is not None else b""
+        ).hexdigest()
+
+    if inserted_format_map is None:
+        signatures = {rpr_sha256(run) for _, _, run, _ in source_records}
+        if len(signatures) > 1:
+            raise ValueError(
+                "PARAGRAPH_INSERTION_AMBIGUOUS_CHARACTER_FORMAT: mixed-format anchor requires inserted_format_map."
+            )
+        return make_insert_runs(source_records[0][2], inserted_text), [{
+            "mode": "uniform_anchor", "source_offset": 0,
+            "source_rpr_sha256": rpr_sha256(source_records[0][2]),
+        }]
+
+    if not isinstance(inserted_format_map, list) or not inserted_format_map:
+        raise ValueError("inserted_format_map must be a non-empty array.")
+    inserted_runs: list[ET.Element] = []
+    audit: list[dict[str, Any]] = []
+    map_cursor = 0
+    for index, segment in enumerate(inserted_format_map):
+        if not isinstance(segment, dict) or set(segment) != {"inserted_start", "inserted_end", "source_offset"}:
+            raise ValueError(f"inserted_format_map[{index}] requires exactly inserted_start, inserted_end and source_offset.")
+        start, end, source_offset = (
+            segment.get("inserted_start"), segment.get("inserted_end"), segment.get("source_offset")
+        )
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in (start, end, source_offset)):
+            raise ValueError(f"inserted_format_map[{index}] offsets must be integers.")
+        if start != map_cursor or end <= start or end > len(inserted_text):
+            raise ValueError("inserted_format_map must cover inserted text contiguously without gaps or overlaps.")
+        if source_offset < 0 or source_offset >= len(anchor_text):
+            raise ValueError(f"inserted_format_map[{index}].source_offset is outside anchor_text.")
+        absolute_offset = anchor_start + source_offset
+        source_record = next(
+            (record for record in source_records if record[0] <= absolute_offset < record[1]), None
+        )
+        if source_record is None:
+            raise ValueError(f"inserted_format_map[{index}].source_offset does not resolve to an ordinary Run.")
+        run_start, run_end, source_run, _source_run_text = source_record
+        segment_text = inserted_text[start:end]
+        mapped_runs = make_insert_runs(source_run, segment_text)
+        selected_source_length = max(0, min(anchor_end, run_end) - max(anchor_start, run_start))
+        vertical = source_run.find("w:rPr/w:vertAlign", NS)
+        vertical_value = vertical.get(qn("val")) if vertical is not None else None
+        has_script = any(_script_character(character) is not None for character in segment_text)
+        if vertical_value in {"superscript", "subscript"} and not has_script and (
+            any(character.isspace() for character in segment_text) or len(segment_text) != selected_source_length
+        ):
+            for run in mapped_runs:
+                _set_run_property(run, "vertAlign", "baseline")
+        inserted_runs.extend(mapped_runs)
+        audit.append({
+            "inserted_start": start, "inserted_end": end, "source_offset": source_offset,
+            "source_run_start": run_start, "source_run_end": run_end,
+            "source_rpr_sha256": rpr_sha256(source_run),
+        })
+        map_cursor = end
+    if map_cursor != len(inserted_text):
+        raise ValueError("inserted_format_map must cover every inserted character exactly once.")
+    if not inserted_runs:
+        raise ValueError("PARAGRAPH_INSERTION_FAILED: map produced no Word Runs.")
+    return inserted_runs, audit
+
+
 def revision_wrapper(kind: str, rid: int, author: str, date: str, runs: list[ET.Element]) -> ET.Element:
     wrapper = ET.Element(qn(kind), {qn("id"): str(rid), qn("author"): author, qn("date"): date})
     for run in runs:
@@ -1411,13 +1513,27 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
             "DOCX package structure preflight is blocked: " + "; ".join(blocking[:12])
         )
     groups = defaultdict(list)
-    for edit in edits: groups[safe_part(edit.get("part", "word/document.xml"))].append(edit)
+    seen_operation_ids: set[str] = set()
+    for edit in edits:
+        operation_id = edit.get("operation_id")
+        if isinstance(operation_id, str) and operation_id.strip():
+            if operation_id in seen_operation_ids:
+                raise ValueError(f"DUPLICATE_OPERATION_ID: operation_id {operation_id!r} occurs more than once in one DOCX Apply.")
+            seen_operation_ids.add(operation_id)
+        groups[safe_part(edit.get("part", "word/document.xml"))].append(edit)
     changed, edit_results = {}, []
     rid = 1
+    bookmark_id = 1
     for name, data in original.items():
         if name.startswith("word/") and name.endswith(".xml"):
             try:
-                rid = max(rid, next_revision_id(parse_xml(data)))
+                xml_root = parse_xml(data)
+                rid = max(rid, next_revision_id(xml_root))
+                for bookmark in xml_root.findall(".//w:bookmarkStart", NS):
+                    try:
+                        bookmark_id = max(bookmark_id, int(bookmark.get(qn("id"), "0")) + 1)
+                    except ValueError:
+                        raise ValueError("DOCX contains a malformed bookmark ID; paragraph insertion is blocked.")
             except ET.XMLSyntaxError:
                 continue
     for part, part_edits in groups.items():
@@ -1426,8 +1542,23 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
         paras = root.findall(".//w:body//w:p", NS) if part == "word/document.xml" else root.findall(".//w:p", NS)
         pass1_inserted_paragraphs: set[int] = set()
         for edit in part_edits:
-            old, new = str(edit.get("find", "")), str(edit.get("replace", ""))
-            if not old.strip(): raise ValueError("Each find value must be non-empty.")
+            action = edit.get("action", "replace")
+            if action not in {"replace", "insert_paragraph"}:
+                raise ValueError(f"Unsupported DOCX operation action: {action!r}.")
+            old = str(edit.get("anchor_text") or edit.get("find", ""))
+            new = str(edit.get("inserted_text") if action == "insert_paragraph" else edit.get("replace", ""))
+            if not old.strip(): raise ValueError("Each find/anchor value must be non-empty.")
+            if action == "insert_paragraph":
+                if not isinstance(edit.get("operation_id"), str) or not edit["operation_id"].strip():
+                    raise ValueError("insert_paragraph requires a stable operation_id for idempotence.")
+                if not new.strip():
+                    raise ValueError("insert_paragraph requires non-empty inserted_text.")
+                if edit.get("position") not in {"before", "after"}:
+                    raise ValueError("insert_paragraph position must be before or after.")
+                if part != "word/document.xml":
+                    raise ValueError("insert_paragraph is supported only in word/document.xml.")
+                if edit.get("protected_spans"):
+                    raise ValueError("insert_paragraph does not accept source-relative protected_spans.")
             # Direct engine callers receive no token-change permission by default.
             # The high-level plan approval gate separately requires an explicit
             # Authorized Change and seals it into the approval fingerprint.
@@ -1435,8 +1566,9 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                 "intent": "No protected-token changes are authorized by this operation"
             }
             contract = narrow_revision(
-                old, new, authorized_change=authorization,
-                protected_spans=edit.get("protected_spans", ()),
+                "" if action == "insert_paragraph" else old,
+                new, authorized_change=authorization,
+                protected_spans=edit.get("protected_spans", ()) if action == "replace" else (),
             )
             if contract["status"] != "PASS":
                 raise ValueError(
@@ -1537,6 +1669,7 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         allow_mixed_format=(
                             (old == new and bool(edit.get("format_operations")))
                             or bool(edit.get("replacement_format_map"))
+                            or bool(edit.get("inserted_format_map"))
                             or bool(edit.get("allow_format_flatten"))
                         ),
                     )
@@ -1583,6 +1716,129 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                         "proposed_edit": new,
                     })
                     raise ManualFallbackRequired(suggestion, str(exc)) from exc
+            if action == "insert_paragraph":
+                if any(ch in old for ch in "\t\r\n") or any(ch in new for ch in "\t\r\n"):
+                    raise ValueError("Paragraph insertion text must be a single-line string without tabs.")
+                parent = para.getparent()
+                if parent is None or parent.tag not in {qn("body"), qn("tc")}:
+                    raise ValueError(
+                        "PARAGRAPH_INSERTION_UNSUPPORTED_PARENT: anchor paragraph must be a direct child "
+                        "of w:body or w:tc; content controls and nested containers remain fail-closed."
+                    )
+                allowed_children = {qn("pPr"), qn("r"), qn("proofErr")}
+                if any(child.tag not in allowed_children for child in para):
+                    raise ValueError(
+                        "PARAGRAPH_INSERTION_UNSUPPORTED_ANCHOR: format source contains non-plain Word structures."
+                    )
+                source_ppr = para.find("w:pPr", NS)
+                if source_ppr is not None and source_ppr.find("w:numPr", NS) is not None:
+                    raise ValueError(
+                        "PARAGRAPH_INSERTION_NUMBERING_AMBIGUOUS: numbered/list paragraphs need an explicit list-continuation adapter."
+                    )
+                normalized_inserted_text = normalize_script_characters(new)
+                inserted_runs, inserted_format_map_resolution = build_paragraph_insertion_runs(
+                    para, old, new, edit.get("inserted_format_map")
+                )
+                operation_id = edit["operation_id"]
+                bookmark_name = "_CR_OP_" + hashlib.sha256(operation_id.encode("utf-8")).hexdigest()[:32]
+                for member, member_data in original.items():
+                    if not (member.startswith("word/") and member.endswith(".xml")):
+                        continue
+                    member_root = parse_xml(member_data)
+                    if any(
+                        node.get(qn("name")) == bookmark_name
+                        for node in member_root.findall(".//w:bookmarkStart", NS)
+                    ):
+                        raise ValueError(
+                            f"IDEMPOTENT_INSERTION_BLOCKED: operation {operation_id} already exists in source DOCX."
+                        )
+                inserted_paragraph = ET.Element(qn("p"))
+                if source_ppr is not None:
+                    inserted_paragraph.append(copy.deepcopy(source_ppr))
+                # Paragraph-level formatting is copied separately through pPr.
+                # Character-level formatting comes only from the approved insertion map
+                # or the explicit uniform-format fallback, never an implicit first Run.
+                marker_start = ET.Element(qn("bookmarkStart"), {
+                    qn("id"): str(bookmark_id), qn("name"): bookmark_name,
+                })
+                marker_end = ET.Element(qn("bookmarkEnd"), {qn("id"): str(bookmark_id)})
+                inserted_paragraph.append(marker_start)
+                insert_revision_id = rid
+                insertion = revision_wrapper(
+                    "ins", insert_revision_id, author,
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    inserted_runs,
+                )
+                inserted_paragraph.append(insertion)
+                inserted_paragraph.append(marker_end)
+                anchor_child_index = parent.index(para)
+                parent.insert(
+                    anchor_child_index + (1 if edit["position"] == "after" else 0),
+                    inserted_paragraph,
+                )
+                output_paragraphs = (
+                    root.findall(".//w:body//w:p", NS)
+                    if part == "word/document.xml" else root.findall(".//w:p", NS)
+                )
+                inserted_p_idx = next(
+                    index for index, candidate in enumerate(output_paragraphs)
+                    if candidate is inserted_paragraph
+                )
+                run_signatures = []
+                for inserted_run in insertion.findall(".//w:r", NS):
+                    run_text = "".join(node.text or "" for node in inserted_run.findall("w:t", NS))
+                    vertical = inserted_run.find("w:rPr/w:vertAlign", NS)
+                    rpr = inserted_run.find("w:rPr", NS)
+                    bold = rpr.find("w:b", NS) if rpr is not None else None
+                    italic = rpr.find("w:i", NS) if rpr is not None else None
+                    size = rpr.find("w:sz", NS) if rpr is not None else None
+                    fonts = rpr.find("w:rFonts", NS) if rpr is not None else None
+                    run_signatures.append({
+                        "text": run_text,
+                        "vertical_alignment": vertical.get(qn("val")) if vertical is not None else None,
+                        "bold": bold is not None and bold.get(qn("val"), "1") not in {"0", "false", "off"},
+                        "italic": italic is not None and italic.get(qn("val"), "1") not in {"0", "false", "off"},
+                        "font_size_half_points": size.get(qn("val")) if size is not None else None,
+                        "fonts": dict(fonts.attrib) if fonts is not None else {},
+                        "direct_rpr_sha256": hashlib.sha256(
+                            ET.tostring(_format_run_properties(inserted_run), method="c14n")
+                            if _format_run_properties(inserted_run) is not None else b""
+                        ).hexdigest(),
+                    })
+                edit_result = {
+                    "part": part, "p_idx": idx, "inserted_p_idx": inserted_p_idx,
+                    "find": old, "replace": new, "anchor_text": old,
+                    "inserted_text": normalized_inserted_text,
+                    "requested_inserted_text": new,
+                    "action": action, "position": edit["position"],
+                    "status": "applied", "delete_revision_id": None,
+                    "insert_revision_id": insert_revision_id,
+                    "bookmark_name": bookmark_name, "bookmark_id": bookmark_id,
+                    "inserted_run_formats": run_signatures,
+                    "inserted_run_format_signatures": run_signatures,
+                    "inserted_format_map": copy.deepcopy(edit.get("inserted_format_map")),
+                    "inserted_format_map_resolution": copy.deepcopy(inserted_format_map_resolution),
+                    "structure_safety": copy.deepcopy(structure_safety),
+                    "target_ref": copy.deepcopy(dict(target_ref)) if isinstance(target_ref, Mapping) else None,
+                    "target_identity_validation": copy.deepcopy(target_identity_validation),
+                    "authorization_validation": {
+                        "status": contract["status"],
+                        "diff_algorithm": contract["diff_algorithm"],
+                        "authorization_intent": contract["authorization_intent"],
+                        "token_lock": contract["token_lock"],
+                    },
+                }
+                for metadata_key in (
+                    "revision_item_id", "reviewer", "document", "location", "operation_id",
+                    "source_comment_ids", "author_decision_ref", "location_phrase",
+                ):
+                    if metadata_key in edit:
+                        edit_result[metadata_key] = edit[metadata_key]
+                edit_results.append(edit_result)
+                rid = max(rid, insert_revision_id + 1)
+                bookmark_id += 1
+                continue
+
             format_operations = edit.get("format_operations", [])
             format_authorization = edit.get("format_authorization")
             two_pass = bool(edit.get("two_pass", False) or edit.get("allow_two_pass_overlap", False))
@@ -1774,10 +2030,39 @@ def prepare_document(input_file: str, output_file: str, edits: list[dict[str, An
                     "token_lock": contract["token_lock"],
                 }
             }
-            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "author_decision_ref", "location_phrase"):
+            for metadata_key in ("revision_item_id", "reviewer", "document", "location", "operation_id", "source_comment_ids", "author_decision_ref", "location_phrase", "action", "anchor_text", "position", "inserted_text"):
                 if metadata_key in edit:
                     edit_result[metadata_key] = edit[metadata_key]
             edit_results.append(edit_result)
+        # Later insertions at the same anchor can shift earlier inserted
+        # paragraphs. Resolve every idempotence bookmark against the final
+        # in-memory XML so Apply reports carry final, not intermediate, indices.
+        if part == "word/document.xml":
+            final_paragraphs = root.findall(".//w:body//w:p", NS)
+            for result in edit_results:
+                if result.get("action") != "insert_paragraph":
+                    continue
+                bookmark_name = result.get("bookmark_name")
+                markers = [
+                    node for node in root.findall(".//w:bookmarkStart", NS)
+                    if node.get(qn("name")) == bookmark_name
+                ]
+                if len(markers) != 1 or markers[0].getparent() is None:
+                    raise ValueError(
+                        f"PARAGRAPH_INSERTION_MARKER_LOST: operation {result.get('operation_id')} "
+                        "does not have one final marker after all package edits."
+                    )
+                marker_paragraph = markers[0].getparent()
+                final_index = next(
+                    (index for index, paragraph in enumerate(final_paragraphs) if paragraph is marker_paragraph),
+                    None,
+                )
+                if final_index is None:
+                    raise ValueError(
+                        f"PARAGRAPH_INSERTION_NOT_IN_BODY: operation {result.get('operation_id')} "
+                        "was removed or moved outside the document body."
+                    )
+                result["inserted_p_idx"] = final_index
         changed[part] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     output = dict(original); output.update(changed)
     if set(output) != set(original): raise ValueError("DOCX package member inventory changed.")

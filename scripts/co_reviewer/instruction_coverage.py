@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,8 +32,9 @@ def _validate_manifest(coverage: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(coverage, Mapping):
         return ["Instruction coverage manifest is missing or is not a JSON object."]
-    if coverage.get("schema_version") != "1.0":
-        errors.append("Instruction coverage schema_version must be '1.0'.")
+    schema_version = coverage.get("schema_version")
+    if schema_version not in {"1.0", "1.1"}:
+        errors.append("Instruction coverage schema_version must be '1.0' or '1.1'.")
     source = coverage.get("source_instruction")
     if not isinstance(source, Mapping):
         errors.append("source_instruction must contain the original instruction file and SHA-256.")
@@ -53,6 +55,17 @@ def _validate_manifest(coverage: Any) -> list[str]:
     if not isinstance(requirements, list) or not requirements:
         errors.append("requirements must be a non-empty array of atomic source requirements.")
         return errors
+    strict_source_lines: list[str] | None = None
+    if schema_version == "1.1" and isinstance(source, Mapping):
+        source_file = source.get("file")
+        try:
+            instruction_path = Path(str(source_file)).expanduser().resolve()
+            source_bytes = instruction_path.read_bytes()
+            if hashlib.sha256(source_bytes).hexdigest() != source.get("sha256"):
+                errors.append("source_instruction.sha256 does not match the current original instruction file.")
+            strict_source_lines = source_bytes.decode("utf-8-sig").splitlines()
+        except (OSError, UnicodeError) as exc:
+            errors.append(f"Source instruction file cannot be read for exact Coverage 1.1 provenance: {exc}")
     seen: set[str] = set()
     allowed = {"planned", "no_change", "manual_completed", "not_applicable", "blocked", "deferred"}
     for index, row in enumerate(requirements):
@@ -70,6 +83,46 @@ def _validate_manifest(coverage: Any) -> list[str]:
         for field in ("source_locator", "instruction_excerpt"):
             if not isinstance(row.get(field), str) or not row.get(field, "").strip():
                 errors.append(f"{label}.{field} must preserve a traceable source instruction.")
+        if schema_version == "1.1":
+            task_id = row.get("task_id")
+            line_start = row.get("source_line_start")
+            line_end = row.get("source_line_end")
+            if not isinstance(task_id, str) or not task_id.strip():
+                errors.append(f"{label}.task_id must identify the exact source task.")
+            elif isinstance(requirement_id, str) and not requirement_id.startswith(f"REQ-{task_id}-"):
+                errors.append(
+                    f"{label}.requirement_id must use the task_id prefix REQ-{task_id}-; "
+                    "requirement/task attribution is inconsistent."
+                )
+            valid_lines = (
+                isinstance(line_start, int) and not isinstance(line_start, bool) and line_start > 0
+                and isinstance(line_end, int) and not isinstance(line_end, bool)
+                and line_end >= line_start
+            )
+            if not valid_lines:
+                errors.append(f"{label}.source_line_start/source_line_end must be positive, ordered 1-based line numbers.")
+            else:
+                expected_locator = f"L{line_start}–L{line_end}"
+                if row.get("source_locator") != expected_locator:
+                    errors.append(f"{label}.source_locator must exactly equal {expected_locator!r}.")
+                if strict_source_lines is not None:
+                    if line_end > len(strict_source_lines):
+                        errors.append(f"{label} source line range exceeds the original instruction file.")
+                    else:
+                        exact_excerpt = "\n".join(strict_source_lines[line_start - 1:line_end])
+                        if row.get("instruction_excerpt") != exact_excerpt:
+                            errors.append(
+                                f"{label}.instruction_excerpt must exactly reproduce the original source lines "
+                                f"{line_start}-{line_end}; generic or paraphrased excerpts are not valid provenance."
+                            )
+                        elif isinstance(task_id, str) and not re.search(
+                            rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])",
+                            exact_excerpt,
+                        ):
+                            errors.append(
+                                f"{label}.task_id {task_id!r} does not appear in its cited original instruction lines; "
+                                "task/line attribution is inconsistent."
+                            )
         status = row.get("status")
         if status not in allowed:
             errors.append(f"{label}.status must be one of: {', '.join(sorted(allowed))}.")

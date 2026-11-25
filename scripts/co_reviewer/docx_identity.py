@@ -37,7 +37,7 @@ _WORD_PART = re.compile(
     r"^word/(?:document|header\d+|footer\d+|footnotes|endnotes|comments)\.xml$"
 )
 _ROLE_ALIASES = {"reply": "Reviewers", "reviewer": "Reviewers", "reviewers": "Reviewers"}
-_MUTATING_ACTIONS = frozenset({"replace", "add", "remove", "renumber", "reference_update"})
+_MUTATING_ACTIONS = frozenset({"replace", "add", "remove", "renumber", "reference_update", "insert_paragraph"})
 
 
 class DocxIdentityError(ValueError):

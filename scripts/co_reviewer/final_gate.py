@@ -33,7 +33,35 @@ def _is_valid_pdf(path: Path) -> bool:
         return handle.read(5) == b"%PDF-"
 
 
-def _infer_quality_profile(docx_path: Path, explicit_profile: str | None) -> str:
+_DOCUMENT_ROLE_PROFILES = {
+    "marked": "marked-manuscript",
+    "marked-manuscript": "marked-manuscript",
+    "clean": "clean-manuscript",
+    "clean-manuscript": "clean-manuscript",
+    "word-final-clean": "word-final-clean",
+    "cover-letter": "cover-letter",
+    "response-letter": "response-letter",
+    "si": "generic",
+    "supplementary-information": "generic",
+    "clean-si": "clean-manuscript",
+    "clean-supplementary-information": "clean-manuscript",
+    "marked-si": "marked-manuscript",
+    "marked-supplementary-information": "marked-manuscript",
+    "generic": "generic",
+}
+
+
+def _infer_quality_profile(
+    docx_path: Path,
+    explicit_profile: str | None,
+    explicit_role: str | None = None,
+) -> str:
+    """Resolve QA profile from explicit document role before legacy filename hints."""
+    if explicit_role:
+        role = explicit_role.strip().lower()
+        if role not in _DOCUMENT_ROLE_PROFILES:
+            raise ValueError(f"Unsupported document role: {explicit_role!r}")
+        return _DOCUMENT_ROLE_PROFILES[role]
     if explicit_profile:
         return explicit_profile
     stem = docx_path.stem.lower()
@@ -339,6 +367,7 @@ def evaluate_final_gate(
     pdf_exporter: Callable[[Path, Path], dict[str, Any]] | None = None,
     instruction_coverage: dict[str, Any] | None = None,
     instruction_coverage_approval: dict[str, Any] | None = None,
+    document_roles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate all Final Delivery Hard Gate checks and return structured report."""
     blockers: list[str] = []
@@ -405,7 +434,12 @@ def evaluate_final_gate(
         any_pdf_skipped = False
 
         for docx_path in delivered_docs:
-            profile = _infer_quality_profile(docx_path, quality_profile)
+            role = None
+            if document_roles:
+                role = document_roles.get(str(docx_path))
+                if role is None:
+                    role = document_roles.get(docx_path.name)
+            profile = _infer_quality_profile(docx_path, quality_profile, role)
             pdf_path = docx_path.with_suffix(".pdf")
             if not docx_path.is_file():
                 any_quality_fail = True

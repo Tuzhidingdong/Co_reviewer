@@ -39,6 +39,22 @@ def make_mixed_docx(path: Path) -> None:
     p1 = ET.SubElement(body, q("p"))
     ET.SubElement(ET.SubElement(p1, q("r")), q("t")).text = "We use H2O and model alpha in Eq. 1."
 
+    # P[2]: four direct Run formats for explicit segmented replacement mapping.
+    p2 = ET.SubElement(body, q("p"))
+    for text, formatting in [
+        ("Plain", None),
+        ("Italic", "italic"),
+        ("Sub", "subscript"),
+        ("Sup", "superscript"),
+    ]:
+        run = ET.SubElement(p2, q("r"))
+        if formatting == "italic":
+            ET.SubElement(ET.SubElement(run, q("rPr")), q("i"))
+        elif formatting in {"subscript", "superscript"}:
+            vertical = ET.SubElement(ET.SubElement(run, q("rPr")), q("vertAlign"))
+            vertical.set(q("val"), formatting)
+        ET.SubElement(run, q("t")).text = text
+
     ET.SubElement(body, q("sectPr"))
     root = ET.Element(q("document"))
     root.append(body)
@@ -135,6 +151,103 @@ class PlanCompilerTests(unittest.TestCase):
         self.assertEqual(item2["targets"][1]["find"], "We use D2O and model beta")
         self.assertEqual(item2["targets"][1]["replace"], "We use D2O and model beta")
         self.assertEqual(len(item2["targets"][1]["format_operations"]), 3)
+
+    def test_explicit_mixed_run_format_map_survives_compile_preflight_apply_and_verify(self):
+        from types import SimpleNamespace
+
+        map_segments = [
+            {"replacement_start": 0, "replacement_end": 5, "source_offset": 0},
+            {"replacement_start": 5, "replacement_end": 15, "source_offset": 5},
+            {"replacement_start": 15, "replacement_end": 18, "source_offset": 11},
+            {"replacement_start": 18, "replacement_end": 21, "source_offset": 14},
+        ]
+        plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.input),
+                    "output_file": str(self.output),
+                }
+            },
+            "intents": [{
+                "id": "MIXED-EXPLICIT-001",
+                "doc_role": "Manuscript",
+                "find": "PlainItalicSubSup",
+                "replace": "FreshItalicPartSubSup",
+                "replacement_format_map": map_segments,
+                "intent": "Replace a synthetic four-format Run span without flattening.",
+            }],
+        })
+        target = plan["revision_items"][0]["targets"][0]
+        self.assertEqual(target["replacement_format_map"], map_segments)
+        self.assertEqual(
+            cli.validate_plan(plan, require_approval=False, check_approval_integrity=False),
+            [],
+        )
+
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+        plan_path = self.root / "explicit_mixed_plan.json"
+        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=["MIXED-EXPLICIT-001"],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(rc, 0)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        apply_reports = cli.apply_plan(plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 1)
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_verified"], 1)
+
+        with zipfile.ZipFile(self.output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//" + q("p"))
+        inserted_runs = []
+        for paragraph in paragraphs:
+            for insertion in paragraph.findall(".//" + q("ins")):
+                inserted_runs.extend(insertion.findall(q("r")))
+        run_records = []
+        for run in inserted_runs:
+            text_value = "".join(node.text or "" for node in run.findall(".//" + q("t")))
+            rpr = run.find(q("rPr"))
+            italic = rpr is not None and rpr.find(q("i")) is not None
+            vertical = rpr.find(q("vertAlign")) if rpr is not None else None
+            run_records.append((text_value, italic, vertical.get(q("val")) if vertical is not None else None))
+        self.assertEqual(run_records, [
+            ("Fresh", False, None),
+            ("ItalicPart", True, None),
+            ("Sub", False, "subscript"),
+            ("Sup", False, "superscript"),
+        ])
+
+    def test_explicit_mixed_run_format_map_rejects_incomplete_coverage(self):
+        bad_map = [
+            {"replacement_start": 0, "replacement_end": 5, "source_offset": 0},
+            {"replacement_start": 6, "replacement_end": 21, "source_offset": 5},
+        ]
+        plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.input),
+                    "output_file": str(self.output),
+                }
+            },
+            "intents": [{
+                "id": "MIXED-INVALID-001",
+                "doc_role": "Manuscript",
+                "find": "PlainItalicSubSup",
+                "replace": "FreshItalicPartSubSup",
+                "replacement_format_map": bad_map,
+                "intent": "Negative test for incomplete source mapping.",
+            }],
+        })
+        errors = cli.validate_plan(plan, require_approval=False, check_approval_integrity=False)
+        self.assertTrue(any("replacement_format_map" in error for error in errors), errors)
 
     def test_cli_compile_plan_end_to_end_pipeline(self):
         intents_path = self.root / "intents.json"

@@ -238,6 +238,66 @@ class FinalGateTests(unittest.TestCase):
         self.assertIn("| applied_text_edits | 1 |", md_text)
         self.assertIn("| applied_format_changes | 1 |", md_text)
 
+    def test_instruction_coverage_1_1_requires_exact_task_and_source_line_provenance(self):
+        import hashlib
+        import copy
+        from co_reviewer.instruction_coverage import InstructionCoverageError
+
+        instruction = self.root / "coverage_v11_source.txt"
+        instruction.write_text(
+            "MT-06: revise the exact velocity sentence.\n"
+            "MT-10: add the bibliography entry.\n",
+            encoding="utf-8",
+        )
+        coverage = {
+            "schema_version": "1.1",
+            "source_instruction": {
+                "file": str(instruction),
+                "sha256": hashlib.sha256(instruction.read_bytes()).hexdigest(),
+            },
+            "requirements": [{
+                "requirement_id": "REQ-MT-06-VELOCITY",
+                "task_id": "MT-06",
+                "source_line_start": 1,
+                "source_line_end": 1,
+                "source_locator": "L1–L1",
+                "instruction_excerpt": "MT-06: revise the exact velocity sentence.",
+                "status": "blocked",
+                "reason": "The target must be selected from the exact source sentence.",
+            }],
+        }
+        coverage["coverage_sha256"] = instruction_coverage_sha256(coverage)
+        authorize_instruction_coverage(
+            coverage, coverage["coverage_sha256"], "Human Author",
+            approved_at_utc="2026-11-24T03:00:00+00:00",
+        )
+        wrong_task = copy.deepcopy(coverage)
+        wrong_task["requirements"][0]["task_id"] = "MT-10"
+        wrong_task["coverage_sha256"] = instruction_coverage_sha256(wrong_task)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_task, wrong_task["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+        wrong_both_task_and_id = copy.deepcopy(coverage)
+        wrong_both_task_and_id["requirements"][0]["task_id"] = "MT-10"
+        wrong_both_task_and_id["requirements"][0]["requirement_id"] = "REQ-MT-10-VELOCITY"
+        wrong_both_task_and_id["coverage_sha256"] = instruction_coverage_sha256(wrong_both_task_and_id)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_both_task_and_id, wrong_both_task_and_id["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+
+        wrong_excerpt = copy.deepcopy(coverage)
+        wrong_excerpt["requirements"][0]["instruction_excerpt"] = "A generic paraphrase."
+        wrong_excerpt["coverage_sha256"] = instruction_coverage_sha256(wrong_excerpt)
+        with self.assertRaises(InstructionCoverageError):
+            authorize_instruction_coverage(
+                wrong_excerpt, wrong_excerpt["coverage_sha256"], "Human Author",
+                approved_at_utc="2026-11-24T03:00:00+00:00",
+            )
+
     def test_instruction_coverage_approval_cli_requires_exact_hash(self):
         coverage_path = self.root / "coverage_for_approval.json"
         approval_path = self.root / "coverage_approval.json"
@@ -536,3 +596,88 @@ class FinalGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentRoleProfileTests(unittest.TestCase):
+    def test_explicit_marked_role_overrides_clean_source_filename(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("art_file_water_WangChunli_clean.revised.docx")
+        self.assertEqual(_infer_quality_profile(path, None, "marked-manuscript"), "marked-manuscript")
+
+    def test_explicit_clean_role_is_not_inferred_from_filename(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("manuscript_revised.docx")
+        self.assertEqual(_infer_quality_profile(path, None, "clean-manuscript"), "clean-manuscript")
+
+    def test_unknown_explicit_role_fails_closed(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        with self.assertRaises(ValueError):
+            _infer_quality_profile(Path("anything.docx"), None, "guess")
+
+    def test_explicit_role_overrides_global_quality_profile(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("manuscript.docx")
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-manuscript"),
+            "marked-manuscript",
+        )
+
+    def test_cover_letter_role_uses_dedicated_profile_and_overrides_global_profile(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("Cover_Letter_Nature_Water.docx")
+        self.assertEqual(
+            _infer_quality_profile(path, "response-letter", "cover-letter"),
+            "cover-letter",
+        )
+
+    def test_clean_and_marked_si_roles_apply_state_gates_without_imposing_manuscript_typography(self):
+        from co_reviewer.final_gate import _infer_quality_profile
+
+        path = Path("supporting-information.docx")
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "clean-si"),
+            "clean-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-si"),
+            "marked-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "clean-supplementary-information"),
+            "clean-manuscript",
+        )
+        self.assertEqual(
+            _infer_quality_profile(path, "generic", "marked-supplementary-information"),
+            "marked-manuscript",
+        )
+    def test_cli_accepts_every_declared_document_role_alias(self):
+        bindings = cli._parse_document_roles([
+            "marked.docx=marked-manuscript",
+            "clean.docx=clean",
+            "cover.docx=cover-letter",
+            "si.docx=si",
+            "clean-si.docx=clean-si",
+            "marked-si.docx=marked-si",
+            "clean-si-full.docx=clean-supplementary-information",
+            "marked-si-full.docx=marked-supplementary-information",
+            "final.docx=word-final-clean",
+            "other.docx=generic",
+        ])
+        self.assertEqual(bindings[str(Path("cover.docx").resolve())], "cover-letter")
+        self.assertEqual(bindings[str(Path("si.docx").resolve())], "si")
+        self.assertEqual(bindings[str(Path("clean-si.docx").resolve())], "clean-si")
+        self.assertEqual(bindings[str(Path("marked-si.docx").resolve())], "marked-si")
+        self.assertEqual(bindings[str(Path("clean-si-full.docx").resolve())], "clean-supplementary-information")
+        self.assertEqual(bindings[str(Path("marked-si-full.docx").resolve())], "marked-supplementary-information")
+
+    def test_cli_rejects_roles_not_supported_by_quality_profile_map(self):
+        with self.assertRaisesRegex(ValueError, "Invalid --document-role"):
+            cli._parse_document_roles(["document.docx=unknown-role"])
+    def test_cli_rejects_empty_document_role_path(self):
+        with self.assertRaisesRegex(ValueError, "Invalid --document-role"):
+            cli._parse_document_roles(["=si"])

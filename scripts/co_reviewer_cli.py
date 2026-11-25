@@ -552,6 +552,24 @@ _RUN_PROPERTY_ORDER = (
 )
 
 
+def _exact_token_positions(text: str, token: str) -> list[int]:
+    """Return exact token starts; numeric citation labels must not match inside larger numbers."""
+    if not token:
+        return []
+    if token.isdigit():
+        pattern = rf"(?<!\d){re.escape(token)}(?!\d)"
+        return [match.start() for match in re.finditer(pattern, text)]
+    positions: list[int] = []
+    cursor = 0
+    while True:
+        position = text.find(token, cursor)
+        if position < 0:
+            break
+        positions.append(position)
+        cursor = position + len(token)
+    return positions
+
+
 def _cached_sha256(path: str | Path, cache: dict[str, str]) -> str:
     """Compute and cache a file's SHA-256 within a single validation or command pass."""
     key = os.path.normcase(str(Path(path).expanduser().resolve()))
@@ -572,7 +590,99 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
         errors.append("Human approval gate: top-level approved must be true.")
     items = plan.get("revision_items")
     if not isinstance(items, list) or not items: return errors + ["revision_items must be a non-empty array."]
+    reference_transaction = plan.get("reference_transaction")
+    if reference_transaction is None:
+        if any(isinstance(item, dict) and "reference_transaction_sha256" in item for item in items):
+            errors.append("Revision item has a reference_transaction_sha256 but the plan has no reference_transaction metadata.")
+    elif not isinstance(reference_transaction, dict):
+        errors.append("reference_transaction must be an object.")
+    else:
+        transaction_fingerprint = reference_transaction.get("transaction_fingerprint")
+        unsigned_transaction = {
+            key: value for key, value in reference_transaction.items()
+            if key != "transaction_fingerprint"
+        }
+        expected_transaction_fingerprint = hashlib.sha256(
+            json.dumps(
+                unsigned_transaction, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        if transaction_fingerprint != expected_transaction_fingerprint:
+            errors.append("reference_transaction.transaction_fingerprint is missing or stale; rebuild the transaction before approval.")
+        transaction_items = [
+            item for item in items
+            if isinstance(item, dict) and "reference_transaction_sha256" in item
+        ]
+        transaction_item = None
+        if len(transaction_items) != 1:
+            errors.append(
+                "A reference transaction must bind exactly one atomic revision item, "
+                "which may coexist with ordinary revision items in the same plan."
+            )
+        else:
+            transaction_item = transaction_items[0]
+            if transaction_item.get("reference_transaction_sha256") != transaction_fingerprint:
+                errors.append("The revision item approval scope is not bound to this exact reference transaction.")
+
+        raw_operation_ids = reference_transaction.get("operation_ids")
+        raw_transaction_targets = (
+            transaction_item.get("targets", [])
+            if isinstance(transaction_item, dict)
+            else []
+        )
+        transaction_targets = (
+            raw_transaction_targets if isinstance(raw_transaction_targets, list) else []
+        )
+        target_operation_ids = [
+            target.get("operation_id")
+            for target in transaction_targets if isinstance(target, dict)
+        ]
+        valid_target_operation_ids = (
+            isinstance(raw_transaction_targets, list)
+            and all(
+                isinstance(target, dict)
+                and isinstance(target.get("operation_id"), str)
+                and bool(target.get("operation_id", "").strip())
+                for target in raw_transaction_targets
+            )
+        )
+        if (
+            not isinstance(raw_operation_ids, list)
+            or any(not isinstance(value, str) or not value.strip() for value in raw_operation_ids)
+            or len(raw_operation_ids) != len(set(raw_operation_ids))
+            or not valid_target_operation_ids
+            or len(target_operation_ids) != len(set(target_operation_ids))
+            or sorted(raw_operation_ids) != sorted(target_operation_ids)
+        ):
+            errors.append("reference_transaction.operation_ids must exactly match the revision item's unique target operation IDs.")
+
+        document_registry = reference_transaction.get("documents")
+        if not isinstance(document_registry, dict) or not document_registry:
+            errors.append("reference_transaction.documents must contain the graph-bound source/output path registry.")
+        elif isinstance(transaction_item, dict):
+            for target in transaction_targets:
+                if not isinstance(target, dict):
+                    continue
+                role = target.get("document")
+                document_record = document_registry.get(role)
+                if not isinstance(document_record, dict):
+                    errors.append(f"Reference transaction target has no source record for document role {role!r}.")
+                    continue
+                try:
+                    paths_match = (
+                        _canonical_artifact_path(target.get("input_file", ""))
+                        == _canonical_artifact_path(document_record.get("input_file", ""))
+                        and _canonical_artifact_path(target.get("output_file", ""))
+                        == _canonical_artifact_path(document_record.get("output_file", ""))
+                    )
+                except (TypeError, ValueError, OSError):
+                    paths_match = False
+                if not paths_match:
+                    errors.append(f"Reference transaction target paths differ from its graph-bound document registry for role {role!r}.")
+                if target.get("source_sha256") != document_record.get("source_sha256"):
+                    errors.append(f"Reference transaction target source SHA-256 differs from its graph-bound source for role {role!r}.")
     seen = set()
+    delegated_citation_operation_ids: set[str] = set()
     for i, item in enumerate(items):
         at = f"revision_items[{i}]"
         if not isinstance(item, dict): errors.append(f"{at} must be an object."); continue
@@ -609,6 +719,191 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                 elif not t[field].strip(): errors.append(f"{tp}.{field} cannot be empty.")
             if not isinstance(t.get("replace"), str):
                 errors.append(f"{tp}.replace must be a string; use an empty string to delete text.")
+            action = t.get("action", "replace")
+            if action not in {"replace", "insert_paragraph"}:
+                errors.append(f"{tp}.action must be replace or insert_paragraph.")
+            normalization = t.get("reference_citation_normalization")
+            if normalization is not None:
+                if not isinstance(normalization, dict):
+                    errors.append(f"{tp}.reference_citation_normalization must be an object.")
+                else:
+                    required_fields = {
+                        "mode", "citation_operation_id", "source_find", "source_replace",
+                        "citation_find", "citation_replace", "normalized_find", "normalized_replace",
+                    }
+                    if set(normalization) != required_fields:
+                        errors.append(f"{tp}.reference_citation_normalization has missing or unsupported fields.")
+                    else:
+                        mode = normalization.get("mode")
+                        source_find = normalization.get("source_find")
+                        source_replace = normalization.get("source_replace")
+                        citation_find = normalization.get("citation_find")
+                        citation_replace = normalization.get("citation_replace")
+                        values = (source_find, source_replace, citation_find, citation_replace,
+                                  normalization.get("normalized_find"), normalization.get("normalized_replace"))
+                        if (
+                            mode not in {"prefix_before_citation", "suffix_after_citation"}
+                            or not all(isinstance(value, str) for value in values)
+                            or not citation_find or not citation_replace
+                        ):
+                            errors.append(f"{tp}.reference_citation_normalization contains invalid values.")
+                        elif (
+                            len(_exact_token_positions(source_find, citation_find)) != 1
+                            or len(_exact_token_positions(source_replace, citation_find)) != 1
+                        ):
+                            errors.append(f"{tp}.reference_citation_normalization must retain one original citation token on both sides of the prose replacement.")
+                        else:
+                            old_at = _exact_token_positions(source_find, citation_find)[0]
+                            new_at = _exact_token_positions(source_replace, citation_find)[0]
+                            old_prefix, old_suffix = source_find[:old_at], source_find[old_at + len(citation_find):]
+                            new_prefix, new_suffix = source_replace[:new_at], source_replace[new_at + len(citation_find):]
+                            if mode == "prefix_before_citation":
+                                expected_find, expected_replace = old_prefix, new_prefix
+                                valid = bool(old_prefix.strip()) and bool(new_prefix.strip()) and old_prefix != new_prefix and old_suffix == new_suffix
+                            else:
+                                expected_find, expected_replace = old_suffix, new_suffix
+                                valid = bool(old_suffix.strip()) and bool(new_suffix.strip()) and old_prefix == new_prefix and old_suffix != new_suffix
+                            if (
+                                not valid or t.get("find") != expected_find or t.get("replace") != expected_replace
+                                or normalization.get("normalized_find") != expected_find
+                                or normalization.get("normalized_replace") != expected_replace
+                            ):
+                                errors.append(f"{tp}.reference_citation_normalization does not exactly project the original target around the citation token.")
+                            transaction = plan.get("reference_transaction")
+                            expectations = transaction.get("updated_mention_expectations", []) if isinstance(transaction, dict) else []
+                            target_p_idx = t.get("p_idx")
+                            if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                                tref = t.get("target_ref")
+                                hint = tref.get("location_hint") if isinstance(tref, Mapping) else None
+                                candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+                                target_p_idx = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
+                            matched = [
+                                row for row in expectations
+                                if isinstance(row, dict)
+                                and row.get("operation_id") == normalization.get("citation_operation_id")
+                                and row.get("document") == t.get("document")
+                                and row.get("part", "word/document.xml") == t.get("part", "word/document.xml")
+                                and row.get("source_p_idx") == target_p_idx
+                                and row.get("find_text") == citation_find
+                                and row.get("replace_text") == citation_replace
+                            ]
+                            tx_docs = transaction.get("documents", {}) if isinstance(transaction, dict) else {}
+                            tx_doc = tx_docs.get(t.get("document")) if isinstance(tx_docs, dict) else None
+                            try:
+                                paths_match = (
+                                    isinstance(tx_doc, dict)
+                                    and _canonical_artifact_path(t.get("input_file", "")) == _canonical_artifact_path(tx_doc.get("input_file", ""))
+                                    and _canonical_artifact_path(t.get("output_file", "")) == _canonical_artifact_path(tx_doc.get("output_file", ""))
+                                )
+                            except (TypeError, ValueError, OSError):
+                                paths_match = False
+                            if len(matched) != 1 or not paths_match:
+                                errors.append(f"{tp}.reference_citation_normalization is not bound to exactly one graph-linked citation operation and document path.")
+            delegations = t.get("reference_citation_delegations")
+            if delegations is not None:
+                if normalization is not None:
+                    errors.append(f"{tp} cannot combine separate citation normalization with delegated citation ownership.")
+                if not isinstance(delegations, list) or not delegations:
+                    errors.append(f"{tp}.reference_citation_delegations must be a non-empty array.")
+                elif "reference_transaction_sha256" in item:
+                    errors.append(f"{tp} cannot delegate a citation operation from the transaction item itself.")
+                else:
+                    for delegation_index, delegation in enumerate(delegations):
+                        dp = f"{tp}.reference_citation_delegations[{delegation_index}]"
+                        required_delegation_fields = {
+                            "citation_operation_id", "source_find", "source_replace",
+                            "citation_find", "citation_replace",
+                            "prose_revision_item_id", "prose_target_index",
+                        }
+                        if not isinstance(delegation, dict) or set(delegation) != required_delegation_fields:
+                            errors.append(f"{dp} has missing or unsupported fields.")
+                            continue
+                        operation_id = delegation.get("citation_operation_id")
+                        source_find = delegation.get("source_find")
+                        source_replace = delegation.get("source_replace")
+                        citation_find = delegation.get("citation_find")
+                        citation_replace = delegation.get("citation_replace")
+                        target_p_idx = t.get("p_idx")
+                        if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                            tref = t.get("target_ref")
+                            for key in ("paragraph_index", "p_idx"):
+                                candidate = tref.get(key) if isinstance(tref, Mapping) else None
+                                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                                    target_p_idx = candidate
+                                    break
+                            if not isinstance(target_p_idx, int) or isinstance(target_p_idx, bool):
+                                hint = tref.get("location_hint") if isinstance(tref, Mapping) else None
+                                candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+                                target_p_idx = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
+                        if (
+                            not isinstance(operation_id, str) or not operation_id.strip()
+                            or not all(isinstance(value, str) and value for value in (
+                                source_find, source_replace, citation_find, citation_replace
+                            ))
+                            or citation_find == citation_replace
+                            or not isinstance(delegation.get("prose_target_index"), int)
+                            or isinstance(delegation.get("prose_target_index"), bool)
+                        ):
+                            errors.append(f"{dp} contains invalid values.")
+                            continue
+                        if (
+                            delegation.get("prose_revision_item_id") != item_id
+                            or delegation.get("prose_target_index") != j
+                            or source_find != t.get("find")
+                            or source_replace != t.get("replace")
+                            or len(_exact_token_positions(source_find, citation_find)) != 1
+                            or len(_exact_token_positions(source_replace, citation_replace)) != 1
+                            or len(_exact_token_positions(source_replace, citation_find)) != 0
+                            or t.get("replacement_format_map")
+                            or t.get("format_operations")
+                            or t.get("two_pass")
+                            or t.get("allow_two_pass_overlap")
+                        ):
+                            errors.append(f"{dp} does not bind the exact source/replacement span to its owning prose target.")
+                        if operation_id in delegated_citation_operation_ids:
+                            errors.append(f"{dp} duplicates another prose delegation for citation operation {operation_id}.")
+                        else:
+                            delegated_citation_operation_ids.add(operation_id)
+
+                        transaction = plan.get("reference_transaction")
+                        expectations = transaction.get("updated_mention_expectations", []) if isinstance(transaction, dict) else []
+                        matched = [
+                            row for row in expectations
+                            if isinstance(row, dict)
+                            and row.get("operation_id") == operation_id
+                            and row.get("document") == t.get("document")
+                            and row.get("part", "word/document.xml") == t.get("part", "word/document.xml")
+                            and row.get("source_p_idx") == target_p_idx
+                            and row.get("find_text") == citation_find
+                            and row.get("replace_text") == citation_replace
+                        ]
+                        tx_docs = transaction.get("documents", {}) if isinstance(transaction, dict) else {}
+                        tx_doc = tx_docs.get(t.get("document")) if isinstance(tx_docs, dict) else None
+                        try:
+                            paths_match = (
+                                isinstance(tx_doc, dict)
+                                and _canonical_artifact_path(t.get("input_file", "")) == _canonical_artifact_path(tx_doc.get("input_file", ""))
+                                and _canonical_artifact_path(t.get("output_file", "")) == _canonical_artifact_path(tx_doc.get("output_file", ""))
+                            )
+                        except (TypeError, ValueError, OSError):
+                            paths_match = False
+                        if len(matched) != 1 or not paths_match:
+                            errors.append(f"{dp} is not bound to exactly one graph-linked citation operation and document path.")
+            if action == "insert_paragraph":
+                if t.get("part", "word/document.xml") != "word/document.xml":
+                    errors.append(f"{tp}: insert_paragraph currently supports word/document.xml only.")
+                if t.get("anchor_text") != t.get("find") or not isinstance(t.get("anchor_text"), str) or not t.get("anchor_text", "").strip():
+                    errors.append(f"{tp}.anchor_text must exactly equal the non-empty find anchor.")
+                if t.get("inserted_text") != t.get("replace") or not isinstance(t.get("inserted_text"), str) or not t.get("inserted_text", "").strip():
+                    errors.append(f"{tp}.inserted_text must exactly equal a non-empty replace value.")
+                if t.get("position") not in {"before", "after"}:
+                    errors.append(f"{tp}.position must be before or after.")
+                if not isinstance(t.get("operation_id"), str) or not t.get("operation_id", "").strip():
+                    errors.append(f"{tp}.operation_id is required for idempotent paragraph insertion.")
+                if t.get("format_operations") or t.get("replacement_format_map") or t.get("two_pass"):
+                    errors.append(f"{tp}: insert_paragraph cannot be combined with replacement or FormatChange.")
+            elif any(key in t for key in ("anchor_text", "position", "inserted_text")):
+                errors.append(f"{tp}: insertion-only fields require action=insert_paragraph.")
             authorization = t.get("authorized_change")
             if authorization is None and (
                 not require_authorized_change
@@ -690,6 +985,43 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         cursor = end
                     if cursor != len(t.get("replace", "")):
                         errors.append(f"{tp}.replacement_format_map must cover the full replacement text.")
+            inserted_format_map = t.get("inserted_format_map")
+            if inserted_format_map is not None:
+                if action != "insert_paragraph":
+                    errors.append(f"{tp}.inserted_format_map is valid only for action=insert_paragraph.")
+                if not isinstance(inserted_format_map, list) or not inserted_format_map:
+                    errors.append(f"{tp}.inserted_format_map must be a non-empty array when supplied.")
+                else:
+                    cursor = 0
+                    for segment_index, segment in enumerate(inserted_format_map):
+                        valid_segment = (
+                            isinstance(segment, dict)
+                            and set(segment) == {"inserted_start", "inserted_end", "source_offset"}
+                            and all(
+                                isinstance(segment.get(field), int) and not isinstance(segment.get(field), bool)
+                                for field in ("inserted_start", "inserted_end", "source_offset")
+                            )
+                        )
+                        if not valid_segment:
+                            errors.append(
+                                f"{tp}.inserted_format_map[{segment_index}] requires integer "
+                                "inserted_start/inserted_end/source_offset only."
+                            )
+                            continue
+                        start, end, source_offset = (
+                            segment["inserted_start"], segment["inserted_end"], segment["source_offset"]
+                        )
+                        if (
+                            start != cursor or end <= start or end > len(t.get("inserted_text", ""))
+                            or source_offset < 0 or source_offset >= len(t.get("anchor_text", ""))
+                        ):
+                            errors.append(
+                                f"{tp}.inserted_format_map[{segment_index}] is not a contiguous, "
+                                "in-range inserted/source mapping."
+                            )
+                        cursor = end
+                    if cursor != len(t.get("inserted_text", "")):
+                        errors.append(f"{tp}.inserted_format_map must cover the full inserted text.")
             format_operations = t.get("format_operations", [])
             if not isinstance(format_operations, list):
                 errors.append(f"{tp}.format_operations must be an array.")
@@ -845,7 +1177,939 @@ def validate_plan(plan: Any, require_approval: bool = True, check_approval_integ
                         errors.append(f"{at}.verified_output_hashes cannot read {resolved_path}: {exc}")
                 if recorded_paths != expected_paths:
                     errors.append(f"{at}.verified_output_hashes must cover exactly the linked DOCX outputs.")
+    errors.extend(_validate_reference_citation_transaction_coverage(plan))
     return errors
+
+
+
+def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Give each graph-linked citation occurrence exactly one physical Track Changes writer.
+
+    If a prose target retains the old citation token, narrow that target around the
+    citation and let the Reference Transaction write the token. If the prose target
+    already replaces the exact graph-linked token with the transaction's exact new
+    token, delegate the logical citation operation to that one prose PatchOperation.
+    Never create two overlapping Track Changes revisions for the same citation.
+    """
+    transaction = plan.get("reference_transaction")
+    if not isinstance(transaction, Mapping):
+        return []
+    expectations = transaction.get("updated_mention_expectations", [])
+    docs = transaction.get("documents", {})
+    if not isinstance(expectations, list) or not expectations:
+        return []
+    tx_items = [
+        item for item in plan.get("revision_items", [])
+        if isinstance(item, Mapping) and "reference_transaction_sha256" in item
+    ]
+    if len(tx_items) != 1:
+        raise ValueError("REFERENCE_CITATION_NORMALIZATION_BLOCKED: the transaction must bind exactly one revision item.")
+    tx_item = tx_items[0]
+    transaction_targets = [
+        target for target in tx_item.get("targets", [])
+        if isinstance(target, Mapping)
+    ]
+    records: list[dict[str, Any]] = []
+    source_reference_segments: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+    def p_index(target: Mapping[str, Any]) -> int | None:
+        value = target.get("p_idx")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        tref = target.get("target_ref")
+        if isinstance(tref, Mapping):
+            for key in ("paragraph_index", "p_idx"):
+                candidate = tref.get(key)
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    return candidate
+            hint = tref.get("location_hint")
+            candidate = hint.get("p_idx") if isinstance(hint, Mapping) else None
+            if isinstance(candidate, int) and not isinstance(candidate, bool):
+                return candidate
+        return None
+
+    def prose_find_source_range(
+        target: Mapping[str, Any],
+        expectation: Mapping[str, Any],
+        old_find: str,
+    ) -> tuple[str, int, int]:
+        """Resolve the graph-bound source paragraph and the exact prose find span.
+
+        Ownership of a citation is decided by the original source coordinates,
+        never by a number appearing in the replacement text. This helper fails
+        closed on a stale source hash, an ambiguous source paragraph or a prose
+        find that is not unique in the exact source document.
+        """
+        source_offset = expectation.get("source_offset")
+        document = docs.get(expectation.get("document")) if isinstance(docs, Mapping) else None
+        source_sha256 = document.get("source_sha256") if isinstance(document, Mapping) else None
+        source_path = Path(target.get("input_file", "")).expanduser().resolve()
+        source_key = _canonical_artifact_path(source_path)
+        if (
+            not isinstance(source_offset, int)
+            or isinstance(source_offset, bool)
+            or source_offset < 0
+            or not isinstance(source_sha256, str)
+            or sha256_file(source_path) != source_sha256
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+            )
+        source_cache_key = (source_key, source_sha256)
+        if source_cache_key not in source_reference_segments:
+            source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
+        source_p_idx = p_index(target)
+        source_part = target.get("part", "word/document.xml")
+        source_segments = [
+            row for row in source_reference_segments[source_cache_key]
+            if row.get("part") == source_part
+            and row.get("paragraph_index") == source_p_idx
+        ]
+        if len(source_segments) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
+                "the graph-bound source paragraph does not resolve exactly once."
+            )
+        source_paragraph_text = source_segments[0].get("text")
+        if not isinstance(source_paragraph_text, str) or source_paragraph_text.count(old_find) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_FIND_AMBIGUOUS: "
+                "the prose find must occur exactly once in the graph-bound source paragraph."
+            )
+        find_start = source_paragraph_text.find(old_find)
+        return source_paragraph_text, find_start, find_start + len(old_find)
+
+    def exact_source_paragraph(
+        target: Mapping[str, Any],
+        expectation: Mapping[str, Any],
+        old_find: str,
+        citation_find: str,
+    ) -> str:
+        source_offset = expectation.get("source_offset")
+        document = docs.get(expectation.get("document")) if isinstance(docs, Mapping) else None
+        source_sha256 = document.get("source_sha256") if isinstance(document, Mapping) else None
+        source_path = Path(target.get("input_file", "")).expanduser().resolve()
+        source_key = _canonical_artifact_path(source_path)
+        if (
+            not isinstance(source_offset, int)
+            or isinstance(source_offset, bool)
+            or source_offset < 0
+            or not isinstance(source_sha256, str)
+            or sha256_file(source_path) != source_sha256
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_BINDING_INVALID: source hash or graph citation offset is absent/stale."
+            )
+        source_cache_key = (source_key, source_sha256)
+        if source_cache_key not in source_reference_segments:
+            source_reference_segments[source_cache_key] = extract_docx_reference_segments(source_path)
+        source_p_idx = p_index(target)
+        source_part = target.get("part", "word/document.xml")
+        source_segments = [
+            row for row in source_reference_segments[source_cache_key]
+            if row.get("part") == source_part
+            and row.get("paragraph_index") == source_p_idx
+        ]
+        if len(source_segments) != 1:
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_SOURCE_PARAGRAPH_AMBIGUOUS: "
+                "the graph-bound source paragraph does not resolve exactly once."
+            )
+        source_paragraph_text = source_segments[0].get("text")
+        if (
+            not isinstance(source_paragraph_text, str)
+            or source_paragraph_text.count(old_find) != 1
+            or len(_exact_token_positions(old_find, citation_find)) != 1
+            or source_paragraph_text.find(old_find) + _exact_token_positions(old_find, citation_find)[0] != source_offset
+        ):
+            raise ValueError(
+                "REFERENCE_CITATION_NORMALIZATION_GRAPH_OFFSET_MISMATCH: "
+                f"prose target does not place the exact citation token at source offset {source_offset}; no DOCX was written."
+            )
+        return source_paragraph_text
+
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, dict) or item is tx_item:
+            continue
+        for target_index, target in enumerate(item.get("targets", [])):
+            if not isinstance(target, dict) or target.get("action", "replace") != "replace":
+                continue
+
+            existing = target.get("reference_citation_normalization")
+            if existing is not None:
+                records.append({
+                    "revision_item_id": item.get("id"), "target_index": target_index,
+                    "document": target.get("document"),
+                    "part": target.get("part", "word/document.xml"), "p_idx": p_index(target),
+                    **copy.deepcopy(existing), "reused": True,
+                })
+                continue
+
+            existing_delegations = target.get("reference_citation_delegations", [])
+            if not isinstance(existing_delegations, list):
+                raise ValueError("REFERENCE_CITATION_DELEGATION_METADATA_INVALID: delegation metadata must be an array.")
+
+            for expectation in expectations:
+                if not isinstance(expectation, Mapping):
+                    continue
+                role = expectation.get("document")
+                document = docs.get(role) if isinstance(docs, Mapping) else None
+                if not isinstance(document, Mapping):
+                    continue
+                if (
+                    target.get("document") != role
+                    or target.get("part", "word/document.xml") != expectation.get("part", "word/document.xml")
+                    or p_index(target) != expectation.get("source_p_idx")
+                ):
+                    continue
+                try:
+                    paths_match = (
+                        _canonical_artifact_path(target.get("input_file", "")) == _canonical_artifact_path(document.get("input_file", ""))
+                        and _canonical_artifact_path(target.get("output_file", "")) == _canonical_artifact_path(document.get("output_file", ""))
+                    )
+                except (TypeError, ValueError, OSError):
+                    paths_match = False
+                if not paths_match:
+                    continue
+
+                old_find, old_replace = target.get("find"), target.get("replace")
+                token, token_new = expectation.get("find_text"), expectation.get("replace_text")
+                if not all(isinstance(value, str) and value for value in (old_find, old_replace, token, token_new)):
+                    continue
+
+                # Decide ownership from the exact graph-bound source coordinates
+                # before examining the replacement text. A number introduced by
+                # the replacement (for example a reused label such as 35) must
+                # never bind this prose target to a different citation that only
+                # happens to sit in the same paragraph. source_offset is the
+                # start of the numeric token itself, not of the surrounding []
+                # delimiters; keep that definition unchanged.
+                _source_text, find_start, find_end = prose_find_source_range(
+                    target, expectation, old_find
+                )
+                source_offset = expectation.get("source_offset")
+                if source_offset < find_start or source_offset >= find_end:
+                    continue
+
+                old_positions = _exact_token_positions(old_find, token)
+                unchanged_positions = _exact_token_positions(old_replace, token)
+                new_positions = _exact_token_positions(old_replace, token_new)
+                old_count = len(old_positions)
+                unchanged_count = len(unchanged_positions)
+                new_count = len(new_positions)
+                if old_count == 0 and unchanged_count == 0:
+                    continue
+                if old_count != 1:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
+                        f"{item.get('id')} does not contain exactly one source occurrence of graph-linked citation "
+                        f"{expectation.get('operation_id')}."
+                    )
+
+                exact_source_paragraph(target, expectation, old_find, token)
+
+                # Case A: the prose replacement already makes the exact graph-bound
+                # citation change. The prose PatchOperation is the sole writer; the
+                # matching Reference Transaction operation remains a logical,
+                # independently verified transaction expectation and is not applied.
+                if token_new != token and unchanged_count == 0 and new_count == 1:
+                    old_token_at = old_positions[0]
+                    new_token_at = new_positions[0]
+                    old_left = old_find[old_token_at - 1:old_token_at]
+                    new_left = old_replace[new_token_at - 1:new_token_at]
+                    old_right = old_find[old_token_at + len(token):old_token_at + len(token) + 1]
+                    new_right = old_replace[new_token_at + len(token_new):new_token_at + len(token_new) + 1]
+                    if old_left != new_left or old_right != new_right:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_CONTEXT_MISMATCH: exact citation delimiters changed around the graph-linked token."
+                        )
+                    if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
+                        # A class: the prose replacement is exactly the graph-bound
+                        # citation substitution. A mixed-format/two-pass prose target
+                        # cannot safely own that citation, so the Reference
+                        # Transaction becomes the sole physical writer and fully
+                        # covers this prose target. All binding fields are derived
+                        # from the graph expectation and the exact source DOCX.
+                        prose_offset = expectation.get("source_offset")
+                        relative = prose_offset - find_start
+                        covered_replace = old_find[:relative] + token_new + old_find[relative + len(token):]
+                        if (
+                            covered_replace != old_replace
+                            or existing_delegations
+                            or target.get("reference_citation_transaction_coverage") is not None
+                        ):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass prose target "
+                                f"{item.get('id')} cannot own a reference citation update without an explicit citation-free target."
+                            )
+                        coverage = {
+                            "citation_operation_id": str(expectation.get("operation_id", "")),
+                            "prose_revision_item_id": str(item.get("id", "")),
+                            "prose_target_index": target_index,
+                            "document": role,
+                            "part": target.get("part", "word/document.xml"),
+                            "source_p_idx": p_index(target),
+                            "source_offset": prose_offset,
+                            "exact_source_citation": token,
+                            "exact_replacement_citation": token_new,
+                            "source_docx_sha256": document.get("source_sha256"),
+                            "exact_prose_source_find": old_find,
+                            "exact_prose_source_replace": old_replace,
+                        }
+                        target["reference_citation_transaction_coverage"] = coverage
+                        records.append({
+                            "revision_item_id": item.get("id"),
+                            "target_index": target_index,
+                            "document": role,
+                            "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target),
+                            "mode": "covered_by_reference_transaction",
+                            **copy.deepcopy(coverage),
+                            "reused": False,
+                        })
+                        continue
+                    if target.get("reference_citation_normalization") is not None:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
+                        )
+                    operation_id = str(expectation.get("operation_id", ""))
+                    transaction_targets_for_operation = [
+                        row for row in transaction_targets
+                        if row.get("operation_id") == operation_id
+                    ]
+                    if len(transaction_targets_for_operation) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_SOURCE_MISSING: "
+                            f"transaction operation {operation_id} does not resolve exactly once."
+                        )
+                    transaction_authorization = transaction_targets_for_operation[0].get("authorized_change")
+                    transaction_tokens = (
+                        transaction_authorization.get("explicitly_authorized_tokens", [])
+                        if isinstance(transaction_authorization, Mapping) else None
+                    )
+                    matching_transaction_tokens = [
+                        copy.deepcopy(dict(row))
+                        for row in transaction_tokens
+                        if isinstance(row, Mapping)
+                        and row.get("text") == token
+                        and row.get("replacement") == token_new
+                    ] if isinstance(transaction_tokens, list) else []
+                    if len(matching_transaction_tokens) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_MISSING: "
+                            f"transaction operation {operation_id} does not carry one exact {token!r}->{token_new!r} token authorization."
+                        )
+
+                    prose_authorization = target.get("authorized_change")
+                    if (
+                        not isinstance(prose_authorization, Mapping)
+                        or not isinstance(prose_authorization.get("intent"), str)
+                        or not prose_authorization.get("intent", "").strip()
+                    ):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_PROSE_INTENT_MISSING: the prose target needs its own explicit author intent."
+                        )
+                    merged_authorization = copy.deepcopy(dict(prose_authorization))
+                    existing_tokens = merged_authorization.get("explicitly_authorized_tokens", [])
+                    if not isinstance(existing_tokens, list):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_CONFLICT: prose explicitly_authorized_tokens must be an array."
+                        )
+                    conflicting_tokens = [
+                        row for row in existing_tokens
+                        if isinstance(row, Mapping)
+                        and row.get("text") == token
+                        and row.get("replacement") != token_new
+                    ]
+                    if conflicting_tokens:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_CONFLICT: prose authorization already assigns a different replacement to this exact citation token."
+                        )
+                    # The transaction authorizes the citation label itself (e.g. 4 -> 5),
+                    # while the prose engine may protect its full surface (e.g. [4] -> [5]).
+                    # Transfer the corresponding exact immutable token pair, preserving the
+                    # engine's token kind and delimiters instead of relabelling a citation as a number.
+                    from co_reviewer.v232_contract import extract_immutable_tokens
+
+                    old_immutable = [
+                        row for row in extract_immutable_tokens(old_find)
+                        if row.get("start", -1) <= old_token_at < row.get("end", -1)
+                    ]
+                    new_immutable = [
+                        row for row in extract_immutable_tokens(old_replace)
+                        if row.get("start", -1) <= new_token_at < row.get("end", -1)
+                    ]
+                    if len(old_immutable) != 1 or len(new_immutable) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_IMMUTABLE_TOKEN_AMBIGUOUS: "
+                            "the changed citation label does not map to exactly one protected token in both prose surfaces."
+                        )
+                    old_immutable_token = old_immutable[0]
+                    new_immutable_token = new_immutable[0]
+                    old_token_prefix = old_find[old_immutable_token["start"]:old_token_at]
+                    new_token_prefix = old_replace[new_immutable_token["start"]:new_token_at]
+                    old_token_suffix = old_find[old_token_at + len(token):old_immutable_token["end"]]
+                    new_token_suffix = old_replace[new_token_at + len(token_new):new_immutable_token["end"]]
+                    if (
+                        old_immutable_token.get("kind") != new_immutable_token.get("kind")
+                        or old_token_prefix != new_token_prefix
+                        or old_token_suffix != new_token_suffix
+                    ):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_IMMUTABLE_CONTEXT_CHANGED: "
+                            "the enclosing protected token changes beyond the exact citation label."
+                        )
+                    inherited_token = {
+                        "kind": old_immutable_token["kind"],
+                        "text": old_immutable_token["text"],
+                        "replacement": new_immutable_token["text"],
+                    }
+                    if inherited_token not in existing_tokens:
+                        existing_tokens.append(inherited_token)
+                    merged_authorization["explicitly_authorized_tokens"] = existing_tokens
+
+                    existing_authorized_spans = merged_authorization.get("explicitly_authorized_spans", [])
+                    if not isinstance(existing_authorized_spans, list):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_SPAN_AUTHORIZATION_CONFLICT: prose explicitly_authorized_spans must be an array."
+                        )
+                    old_token_start = old_token_at
+                    old_token_end = old_token_start + len(token)
+                    for protected_span in target.get("protected_spans", []):
+                        if not isinstance(protected_span, Mapping):
+                            raise ValueError("REFERENCE_CITATION_DELEGATION_INVALID_PROTECTED_SPAN.")
+                        span_start = protected_span.get("start")
+                        span_end = protected_span.get("end")
+                        if (
+                            not isinstance(span_start, int) or isinstance(span_start, bool)
+                            or not isinstance(span_end, int) or isinstance(span_end, bool)
+                            or span_start < 0 or span_end <= span_start
+                            or span_end > len(old_find)
+                        ):
+                            raise ValueError("REFERENCE_CITATION_DELEGATION_INVALID_PROTECTED_SPAN.")
+                        if span_start >= old_token_end or span_end <= old_token_start:
+                            continue
+                        relative_left = old_token_start - span_start
+                        relative_right = span_end - old_token_end
+                        new_span_start = new_token_at - relative_left
+                        new_span_end = new_token_at + len(token_new) + relative_right
+                        if new_span_start < 0 or new_span_end > len(old_replace):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_PROTECTED_SPAN_CONTEXT_MISMATCH: the delegated token does not fit the exact protected source span."
+                            )
+                        old_surface = old_find[span_start:span_end]
+                        new_surface = old_replace[new_span_start:new_span_end]
+                        if (
+                            old_surface[:relative_left] != new_surface[:relative_left]
+                            or old_surface[relative_left + len(token):]
+                            != new_surface[relative_left + len(token_new):]
+                        ):
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_PROTECTED_CONTEXT_CHANGED: protected characters outside the citation number also change; a broader approval is required."
+                            )
+                        exact_span = {"start": span_start, "end": span_end}
+                        if not any(
+                            isinstance(row, Mapping)
+                            and row.get("start") == span_start
+                            and row.get("end") == span_end
+                            for row in existing_authorized_spans
+                        ):
+                            existing_authorized_spans.append(exact_span)
+                    merged_authorization["explicitly_authorized_spans"] = existing_authorized_spans
+                    target["authorized_change"] = merged_authorization
+
+                    delegation = {
+                        "citation_operation_id": str(expectation.get("operation_id", "")),
+                        "source_find": old_find,
+                        "source_replace": old_replace,
+                        "citation_find": token,
+                        "citation_replace": token_new,
+                        "prose_revision_item_id": str(item.get("id", "")),
+                        "prose_target_index": target_index,
+                    }
+                    previous = [
+                        row for row in existing_delegations
+                        if isinstance(row, Mapping)
+                        and row.get("citation_operation_id") == delegation["citation_operation_id"]
+                    ]
+                    if previous:
+                        if len(previous) != 1 or dict(previous[0]) != delegation:
+                            raise ValueError(
+                                "REFERENCE_CITATION_DELEGATION_METADATA_CONFLICT: existing ownership record differs from the graph-bound operation."
+                            )
+                        records.append({
+                            "revision_item_id": item.get("id"), "target_index": target_index,
+                            "document": role, "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target), "mode": "delegated_to_prose_target",
+                            **copy.deepcopy(delegation), "reused": True,
+                        })
+                    else:
+                        existing_delegations.append(delegation)
+                        target["reference_citation_delegations"] = existing_delegations
+                        records.append({
+                            "revision_item_id": item.get("id"), "target_index": target_index,
+                            "document": role, "part": target.get("part", "word/document.xml"),
+                            "p_idx": p_index(target), "mode": "delegated_to_prose_target",
+                            **copy.deepcopy(delegation), "reused": False,
+                        })
+                    continue
+
+                # Case B: the prose target retains the old citation token. Keep the
+                # existing exact prefix/suffix projection and let the transaction
+                # operation be the sole writer of the citation.
+                if unchanged_count != 1:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_AMBIGUOUS: prose target "
+                        f"{item.get('id')} must either retain the graph-linked citation unchanged exactly once "
+                        "or contain the exact transaction replacement exactly once; deletion or ambiguous relabeling is blocked."
+                    )
+                if existing_delegations:
+                    raise ValueError(
+                        "REFERENCE_CITATION_DELEGATION_MIXED_OWNERSHIP: one prose target cannot mix delegated and separately-owned citation updates."
+                    )
+
+                old_at = old_positions[0]
+                new_at = unchanged_positions[0]
+                old_prefix, new_prefix = old_find[:old_at], old_replace[:new_at]
+                old_suffix = old_find[old_at + len(token):]
+                new_suffix = old_replace[new_at + len(token):]
+                if old_prefix.strip() and new_prefix.strip() and old_prefix != new_prefix and old_suffix == new_suffix:
+                    mode, normalized_find, normalized_replace = "prefix_before_citation", old_prefix, new_prefix
+                    split_offset = old_at
+                elif old_suffix.strip() and new_suffix.strip() and old_prefix == new_prefix and old_suffix != new_suffix:
+                    mode, normalized_find, normalized_replace = "suffix_after_citation", old_suffix, new_suffix
+                    split_offset = old_at + len(token)
+                else:
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_REQUIRES_TARGET_REWRITE: prose target "
+                        f"{item.get('id')} changes text on both sides of citation {expectation.get('operation_id')} "
+                        "while retaining the old token. Narrow the prose target to one exact changed span outside the citation; "
+                        "no DOCX was written."
+                    )
+                if target.get("replacement_format_map") or target.get("format_operations") or target.get("two_pass") or target.get("allow_two_pass_overlap"):
+                    raise ValueError(
+                        "REFERENCE_CITATION_NORMALIZATION_FORMAT_SCOPE_BLOCKED: mixed-format/two-pass target "
+                        f"{item.get('id')} requires an explicitly authored citation-free target."
+                    )
+
+                projected_spans = []
+                for span in target.get("protected_spans", []):
+                    if not isinstance(span, Mapping):
+                        raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
+                    span_start, span_end = span.get("start"), span.get("end")
+                    if not isinstance(span_start, int) or isinstance(span_start, bool) or not isinstance(span_end, int) or isinstance(span_end, bool) or span_end <= span_start:
+                        raise ValueError("REFERENCE_CITATION_NORMALIZATION_INVALID_PROTECTED_SPAN.")
+                    if mode == "prefix_before_citation":
+                        if span_end <= split_offset:
+                            projected_spans.append(copy.deepcopy(dict(span)))
+                        elif span_start < split_offset:
+                            raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
+                    else:
+                        if span_start >= split_offset:
+                            shifted = copy.deepcopy(dict(span))
+                            shifted["start"], shifted["end"] = span_start - split_offset, span_end - split_offset
+                            projected_spans.append(shifted)
+                        elif span_end > split_offset:
+                            raise ValueError("REFERENCE_CITATION_NORMALIZATION_PROTECTED_SPAN_CROSSES_BOUNDARY.")
+
+                metadata = {
+                    "mode": mode,
+                    "citation_operation_id": str(expectation.get("operation_id", "")),
+                    "source_find": old_find,
+                    "source_replace": old_replace,
+                    "citation_find": token,
+                    "citation_replace": token_new,
+                    "normalized_find": normalized_find,
+                    "normalized_replace": normalized_replace,
+                }
+                target["find"], target["replace"] = normalized_find, normalized_replace
+                if "protected_spans" in target:
+                    target["protected_spans"] = projected_spans
+                target["reference_citation_normalization"] = metadata
+                records.append({
+                    "revision_item_id": item.get("id"), "target_index": target_index,
+                    "document": role, "part": target.get("part", "word/document.xml"),
+                    "p_idx": p_index(target), **copy.deepcopy(metadata), "reused": False,
+                })
+                break
+    return records
+
+
+def _reference_citation_delegations(plan: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index citation operations whose sole physical writer is an ordinary prose target."""
+    result: dict[str, dict[str, Any]] = {}
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, Mapping):
+            continue
+        for target_index, target in enumerate(item.get("targets", [])):
+            if not isinstance(target, Mapping):
+                continue
+            for row in target.get("reference_citation_delegations", []):
+                if not isinstance(row, Mapping):
+                    continue
+                operation_id = row.get("citation_operation_id")
+                if isinstance(operation_id, str) and operation_id:
+                    result[operation_id] = {
+                        **copy.deepcopy(dict(row)),
+                        "prose_revision_item_id": item.get("id"),
+                        "prose_target_index": target_index,
+                        "prose_document": target.get("document"),
+                        "prose_part": target.get("part", "word/document.xml"),
+                        "prose_p_idx": target.get("p_idx"),
+                    }
+    return result
+
+
+_REFERENCE_CITATION_COVERAGE_FIELDS = (
+    "citation_operation_id", "prose_revision_item_id", "prose_target_index",
+    "document", "part", "source_p_idx", "source_offset",
+    "exact_source_citation", "exact_replacement_citation",
+    "source_docx_sha256", "exact_prose_source_find", "exact_prose_source_replace",
+)
+
+
+def _reference_citation_transaction_coverage(plan: Mapping[str, Any]) -> dict[tuple[Any, int], dict[str, Any]]:
+    """Index prose targets fully covered by a Reference Transaction citation write.
+
+    This is the inverse of ``_reference_citation_delegations``: the transaction
+    is the sole physical writer of the citation and the prose target contributes
+    no Track Changes revision at all.
+    """
+    result: dict[tuple[Any, int], dict[str, Any]] = {}
+    for item in plan.get("revision_items", []):
+        if not isinstance(item, Mapping):
+            continue
+        for target_index, target in enumerate(item.get("targets", [])):
+            if not isinstance(target, Mapping):
+                continue
+            row = target.get("reference_citation_transaction_coverage")
+            if isinstance(row, Mapping):
+                result[(item.get("id"), target_index)] = {
+                    **copy.deepcopy(dict(row)),
+                    "prose_revision_item_id": item.get("id"),
+                    "prose_target_index": target_index,
+                }
+    return result
+
+
+def _validate_reference_citation_transaction_coverage(plan: Mapping[str, Any]) -> list[str]:
+    """Hash-bind every coverage record to the graph, transaction and source DOCX."""
+    from co_reviewer.identity import sha256_file
+
+    errors: list[str] = []
+    transaction = plan.get("reference_transaction")
+    records = _reference_citation_transaction_coverage(plan)
+    if not records:
+        return errors
+    if not isinstance(transaction, Mapping):
+        return ["A prose target declares reference_citation_transaction_coverage but the plan has no reference_transaction metadata."]
+    expectations = {
+        row.get("operation_id"): row
+        for row in transaction.get("updated_mention_expectations", [])
+        if isinstance(row, Mapping)
+    }
+    documents = transaction.get("documents", {})
+    seen_operations: dict[Any, tuple[Any, int]] = {}
+    for key, row in records.items():
+        label = "coverage[%s]" % (key,)
+        missing = [name for name in _REFERENCE_CITATION_COVERAGE_FIELDS if name not in row]
+        if missing:
+            errors.append("%s is missing fields: %s" % (label, ", ".join(missing)))
+            continue
+        item, target_index = key
+        target = None
+        for candidate in plan.get("revision_items", []):
+            if isinstance(candidate, Mapping) and candidate.get("id") == item:
+                targets = candidate.get("targets", [])
+                if isinstance(targets, list) and 0 <= target_index < len(targets):
+                    target = targets[target_index]
+                break
+        if not isinstance(target, Mapping):
+            errors.append("%s points to a missing revision target." % label)
+            continue
+        if target.get("reference_citation_delegations"):
+            errors.append("%s cannot be combined with reference_citation_delegations on one prose target." % label)
+        operation_id = row["citation_operation_id"]
+        expectation = expectations.get(operation_id)
+        if not isinstance(expectation, Mapping):
+            errors.append("%s cites operation %r which is not in the transaction expectations." % (label, operation_id))
+            continue
+        if operation_id in seen_operations:
+            errors.append("%s reuses citation operation %r already covering %s." % (
+                label, operation_id, seen_operations[operation_id]))
+        else:
+            seen_operations[operation_id] = key
+        for field in ("document", "part", "source_p_idx", "source_offset",
+                      "exact_source_citation", "exact_replacement_citation"):
+            if row[field] != expectation.get("find_text" if field == "exact_source_citation"
+                                            else "replace_text" if field == "exact_replacement_citation"
+                                            else field):
+                errors.append("%s.%s does not match the graph-bound transaction expectation." % (label, field))
+        if row["prose_revision_item_id"] != item or row["prose_target_index"] != target_index:
+            errors.append("%s prose coordinates do not match its owning target." % label)
+        if (row["exact_prose_source_find"] != target.get("find")
+                or row["exact_prose_source_replace"] != target.get("replace")):
+            errors.append("%s does not bind the exact prose find/replace." % label)
+        document = documents.get(row["document"]) if isinstance(documents, Mapping) else None
+        if not isinstance(document, Mapping):
+            errors.append("%s has no source document record." % label)
+            continue
+        source_path = Path(target.get("input_file", "")).expanduser()
+        try:
+            actual_sha = sha256_file(source_path)
+        except (OSError, TypeError, ValueError):
+            actual_sha = None
+        if (row["source_docx_sha256"] != document.get("source_sha256")
+                or actual_sha != document.get("source_sha256")):
+            errors.append("%s source DOCX SHA-256 is stale or does not match the transaction document record." % label)
+            continue
+        if row["document"] != target.get("document") or row["part"] != target.get("part", "word/document.xml"):
+            errors.append("%s document/part does not match the prose target." % label)
+            continue
+        try:
+            from co_reviewer.document_engine import parse_xml, visible_text
+            import zipfile
+            with zipfile.ZipFile(source_path) as archive:
+                root = parse_xml(archive.read(row["part"]))
+            ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            paragraphs = root.findall(".//w:body//w:p", ns)
+            source_p_idx = row["source_p_idx"]
+            if not isinstance(source_p_idx, int) or not 0 <= source_p_idx < len(paragraphs):
+                errors.append("%s source_p_idx is outside the source DOCX." % label)
+                continue
+            paragraph_text = visible_text(paragraphs[source_p_idx])
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            errors.append("%s source DOCX paragraph cannot be resolved: %s" % (label, exc))
+            continue
+        find = row["exact_prose_source_find"]
+        if not isinstance(find, str) or paragraph_text.count(find) != 1:
+            errors.append("%s prose find is not unique in the exact source paragraph." % label)
+            continue
+        find_start = paragraph_text.find(find)
+        offset = row["source_offset"]
+        token = row["exact_source_citation"]
+        if (not isinstance(offset, int) or not find_start <= offset < find_start + len(find)
+                or paragraph_text[offset:offset + len(token)] != token):
+            errors.append("%s source_offset does not identify the exact graph citation inside the prose find." % label)
+            continue
+        rel = offset - find_start
+        expected_replace = find[:rel] + row["exact_replacement_citation"] + find[rel + len(token):]
+        if expected_replace != row["exact_prose_source_replace"]:
+            errors.append("%s prose replace is not the exact graph citation substitution." % label)
+    return errors
+
+
+def _schedule_plan_item_dependencies(
+    items: list[dict[str, Any]],
+    delegated_operation_ids: set[str] | None = None,
+    covered_targets: set[tuple[Any, int]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Order cross-item edits whose same-paragraph anchors can affect each other.
+
+    The same schedule is used by Preflight and Apply. An operation must precede
+    another only when its resulting paragraph preserves the latter's exact
+    anchor once. If no safe order can preserve both approved anchors, fail
+    closed before preparing any DOCX.
+    Target order inside one revision item is intentionally preserved because a
+    transaction compiler may have authored a meaningful atomic operation order.
+    """
+    ordered_items = list(items)
+    delegated_ids = delegated_operation_ids or set()
+    if len(ordered_items) < 2:
+        return ordered_items, []
+
+    paragraph_cache: dict[tuple[str, str], list[str] | None] = {}
+
+    def source_target(target: Mapping[str, Any]) -> dict[str, Any] | None:
+        if target.get("operation_id") in delegated_ids:
+            return None
+        if target.get("action", "replace") == "insert_paragraph":
+            # Insertions add a paragraph but do not change their source anchor text.
+            return None
+        find_text = target.get("find")
+        input_file = target.get("input_file")
+        output_file = target.get("output_file")
+        if not isinstance(find_text, str) or not find_text:
+            return None
+        if not isinstance(input_file, str) or not input_file or not isinstance(output_file, str) or not output_file:
+            return None
+        try:
+            source_key = _canonical_artifact_path(input_file)
+            output_key = _canonical_artifact_path(output_file)
+            part = safe_part(target.get("part", "word/document.xml"))
+            cache_key = (source_key, part)
+            if cache_key not in paragraph_cache:
+                source_path = Path(input_file).expanduser()
+                if not source_path.is_file():
+                    paragraph_cache[cache_key] = None
+                else:
+                    accepted_payload = accepted_view_docx_bytes(source_path.read_bytes())
+                    with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+                        if part not in archive.namelist():
+                            paragraph_cache[cache_key] = None
+                        else:
+                            root = parse_xml(archive.read(part))
+                            paragraphs = (
+                                root.findall(".//w:body//w:p", NS)
+                                if part == "word/document.xml"
+                                else root.findall(".//w:p", NS)
+                            )
+                            paragraph_cache[cache_key] = [visible_text(paragraph) for paragraph in paragraphs]
+            paragraph_texts = paragraph_cache[cache_key]
+            if paragraph_texts is None:
+                return None
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.XMLSyntaxError):
+            # The normal validation/Preflight path will report unreadable sources.
+            return None
+
+        p_idx = target.get("p_idx")
+        if not isinstance(p_idx, int) or isinstance(p_idx, bool):
+            target_ref = target.get("target_ref")
+            if isinstance(target_ref, Mapping):
+                for field in ("paragraph_index", "p_idx"):
+                    candidate = target_ref.get(field)
+                    if isinstance(candidate, int) and not isinstance(candidate, bool):
+                        p_idx = candidate
+                        break
+                if not isinstance(p_idx, int) or isinstance(p_idx, bool):
+                    location_hint = target_ref.get("location_hint")
+                    if isinstance(location_hint, Mapping):
+                        candidate = location_hint.get("p_idx")
+                        if isinstance(candidate, int) and not isinstance(candidate, bool):
+                            p_idx = candidate
+        if isinstance(p_idx, int) and not isinstance(p_idx, bool):
+            if p_idx < 0 or p_idx >= len(paragraph_texts):
+                return None
+            paragraph_index = p_idx
+            paragraph_text = paragraph_texts[paragraph_index]
+            if paragraph_text.count(find_text) != 1:
+                return None
+        else:
+            matches = [
+                (index, paragraph_text)
+                for index, paragraph_text in enumerate(paragraph_texts)
+                if paragraph_text.count(find_text) == 1
+            ]
+            if len(matches) != 1:
+                return None
+            paragraph_index, paragraph_text = matches[0]
+
+        start = paragraph_text.find(find_text)
+        replacement_text = str(target.get("replace", ""))
+        after_text = paragraph_text[:start] + replacement_text + paragraph_text[start + len(find_text):]
+        return {
+            "group": (source_key, output_key, part, paragraph_index),
+            "source_file": input_file,
+            "part": part,
+            "paragraph_index": paragraph_index,
+            "source_text": paragraph_text,
+            "start": start,
+            "end": start + len(find_text),
+            "find": find_text,
+            "replace": replacement_text,
+            "after_text": after_text,
+        }
+
+    covered = covered_targets or set()
+    item_targets: list[list[dict[str, Any]]] = []
+    for item in ordered_items:
+        item_targets.append([
+            resolved
+            for target_index, target in enumerate(item.get("targets", []))
+            if isinstance(target, Mapping)
+            and (item.get("id"), target_index) not in covered
+            for resolved in [source_target(target)]
+            if resolved is not None
+        ])
+
+    edges: dict[int, set[int]] = {index: set() for index in range(len(ordered_items))}
+    dependency_details: dict[tuple[int, int], dict[str, Any]] = {}
+
+    for left_index in range(len(ordered_items)):
+        for right_index in range(left_index + 1, len(ordered_items)):
+            for left in item_targets[left_index]:
+                for right in item_targets[right_index]:
+                    if left["group"] != right["group"]:
+                        continue
+                    source_overlap = max(left["start"], right["start"]) < min(left["end"], right["end"])
+                    if source_overlap:
+                        left_id = str(ordered_items[left_index].get("id", left_index))
+                        right_id = str(ordered_items[right_index].get("id", right_index))
+                        raise ValueError(
+                            "PLAN_TARGET_OVERLAP_REQUIRES_COMPOSITION: same-paragraph source spans in "
+                            f"{left_id} and {right_id} overlap. Independent nested Track Changes edits "
+                            "cannot be made safe by reordering; compose them into one exact PatchOperation "
+                            "or narrow the prose target. No DOCX was written."
+                        )
+
+                    # Check full-paragraph uniqueness for disjoint spans too: an edit
+                    # may create/remove a later anchor across a text-join boundary.
+                    left_preserves_right = left["after_text"].count(right["find"]) == 1
+                    right_preserves_left = right["after_text"].count(left["find"]) == 1
+                    if left_preserves_right and right_preserves_left:
+                        # Either order retains the other source anchor; keep the authored
+                        # plan order as the deterministic tie-breaker.
+                        continue
+                    if left_preserves_right:
+                        before_index, after_index = left_index, right_index
+                        reason = "the first replacement preserves the second operation's exact source anchor"
+                    elif right_preserves_left:
+                        before_index, after_index = right_index, left_index
+                        reason = "the first replacement preserves the second operation's exact source anchor"
+                    else:
+                        left_id = str(ordered_items[left_index].get("id", left_index))
+                        right_id = str(ordered_items[right_index].get("id", right_index))
+                        raise ValueError(
+                            "PLAN_TARGET_DEPENDENCY_UNRESOLVABLE: interacting same-paragraph targets in "
+                            f"{left_id} and {right_id} cannot both be applied safely. "
+                            "Keep the edits as one explicitly ordered atomic operation or revise the exact target spans."
+                        )
+
+                    edges[before_index].add(after_index)
+                    dependency_details[(before_index, after_index)] = {
+                        "before_revision_item_id": ordered_items[before_index].get("id"),
+                        "after_revision_item_id": ordered_items[after_index].get("id"),
+                        "source_file": left["source_file"],
+                        "part": left["part"],
+                        "paragraph_index": left["paragraph_index"],
+                        "reason": reason,
+                    }
+
+    indegree = {index: 0 for index in range(len(ordered_items))}
+    for destinations in edges.values():
+        for destination in destinations:
+            indegree[destination] += 1
+    ready = [index for index, degree in indegree.items() if degree == 0]
+    ready.sort()
+    sorted_indices: list[int] = []
+    while ready:
+        current = ready.pop(0)
+        sorted_indices.append(current)
+        for destination in sorted(edges[current]):
+            indegree[destination] -= 1
+            if indegree[destination] == 0:
+                ready.append(destination)
+                ready.sort()
+
+    if len(sorted_indices) != len(ordered_items):
+        blocked_ids = [
+            str(ordered_items[index].get("id", index))
+            for index, degree in indegree.items()
+            if degree > 0
+        ]
+        raise ValueError(
+            "PLAN_TARGET_DEPENDENCY_CYCLE: conflicting same-paragraph target dependencies "
+            "between revision items: " + ", ".join(blocked_ids) + ". "
+            "The plan cannot be safely reordered without changing its approved scope."
+        )
+
+    scheduled = [ordered_items[index] for index in sorted_indices]
+    dependencies = [
+        dependency_details[key]
+        for key in sorted(dependency_details)
+    ]
+    return scheduled, dependencies
+
 
 def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") -> dict[str, Any]:
     """Validate eligible anchors and bind each target to its source DOCX version without writing DOCX files."""
@@ -853,20 +2117,64 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     if errors:
         raise ValueError("Revision plan validation failed:\n- " + "\n- ".join(errors))
 
+    target_normalizations = _normalize_prose_targets_around_reference_citations(plan)
+    normalization_errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
+    if normalization_errors:
+        raise ValueError("Normalized revision plan validation failed: " + "; ".join(normalization_errors))
+
     eligible_items = [
         item for item in plan["revision_items"]
         if item.get("status") in {"planned", "approved"}
     ]
     if not eligible_items:
         raise ValueError("No planned or approved revision items are available for preflight.")
+    delegated_operations = _reference_citation_delegations(plan)
+    delegated_operation_ids = set(delegated_operations)
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
+    eligible_items, execution_dependencies = _schedule_plan_item_dependencies(
+        eligible_items, delegated_operation_ids, set(covered_prose_targets)
+    )
 
     grouped = defaultdict(list)
     target_refs = []
+    delegated_targets = []
     source_hash_cache: dict[str, str] = {}
     for item in eligible_items:
-        for target in item["targets"]:
+        for target_index, target in enumerate(item["targets"]):
+            target_refs.append((item, target))
+            if (item["id"], target_index) in covered_prose_targets:
+                coverage = covered_prose_targets[(item["id"], target_index)]
+                delegated_targets.append({
+                    "revision_item_id": item["id"],
+                    "target_index": target_index,
+                    "operation_id": None,
+                    "status": "delegated_to_reference_transaction",
+                    "covered_by_operation_id": coverage["citation_operation_id"],
+                    "document": target["document"],
+                    "part": target.get("part", "word/document.xml"),
+                    "p_idx": target.get("p_idx"),
+                })
+                continue
+            if target.get("operation_id") in delegated_operation_ids:
+                delegation = delegated_operations[target["operation_id"]]
+                delegated_targets.append({
+                    "revision_item_id": item["id"],
+                    "operation_id": target["operation_id"],
+                    "status": "delegated_preflight",
+                    "delegated_to_revision_item_id": delegation["prose_revision_item_id"],
+                    "delegated_to_target_index": delegation["prose_target_index"],
+                    "document": target["document"],
+                    "part": target.get("part", "word/document.xml"),
+                    "p_idx": target.get("p_idx"),
+                })
+                continue
             edit = {
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
+                "inserted_format_map": copy.deepcopy(target.get("inserted_format_map")),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -890,7 +2198,6 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             if "p_idx" in target:
                 edit["p_idx"] = target["p_idx"]
             grouped[(target["input_file"], target["output_file"])].append(edit)
-            target_refs.append((item, target))
 
     outputs = [_canonical_artifact_path(out) for _, out in grouped]
     inputs = [_canonical_artifact_path(inp) for inp, _ in grouped]
@@ -903,6 +2210,14 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         _canonical_artifact_path(inp): str(Path(inp).expanduser().resolve())
         for inp, _ in grouped
     }
+    for item in eligible_items:
+        for target in item.get("targets", []):
+            input_path = target.get("input_file")
+            if isinstance(input_path, str) and input_path:
+                source_paths.setdefault(
+                    _canonical_artifact_path(input_path),
+                    str(Path(input_path).expanduser().resolve()),
+                )
     # Initial Manuscript/SI baselines are gated at document import/identity registration.
     # Do not re-run that gate here: an incremental batch may legitimately use a prior
     # Co_Reviewer Marked DOCX as its source, and accepted_view_docx_bytes resolves its
@@ -910,6 +2225,26 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
     source_hashes_before = {
         key: sha256_file(path) for key, path in source_paths.items()
     }
+    reference_transaction = plan.get("reference_transaction")
+    if isinstance(reference_transaction, Mapping):
+        transaction_documents = reference_transaction.get("documents", {})
+        for role, record in transaction_documents.items():
+            if not isinstance(record, Mapping):
+                raise ValueError(f"Reference transaction source record for {role} is invalid.")
+            input_path = str(Path(record.get("input_file", "")).expanduser().resolve())
+            key = _canonical_artifact_path(input_path)
+            actual_source_hash = source_hashes_before.get(key)
+            if actual_source_hash is None:
+                if not Path(input_path).is_file():
+                    raise ValueError(
+                        f"Reference transaction source DOCX for {role} is missing: {input_path}"
+                    )
+                actual_source_hash = sha256_file(input_path)
+            if actual_source_hash != record.get("source_sha256"):
+                raise ValueError(
+                    f"Reference transaction source DOCX for {role} changed after the Reference Graph was built. "
+                    "Rebuild the package graph and compile a new transaction; preflight will not silently rebind it."
+                )
 
     prepared = []
     for (inp, out), edits in grouped.items():
@@ -949,6 +2284,36 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
             if operation_id not in targets_by_operation:
                 raise ValueError(f"Prepared target has unknown operation_id {operation_id!r}.")
             target = targets_by_operation[operation_id]
+            if target.get("action") == "insert_paragraph":
+                if result.get("action") != "insert_paragraph":
+                    raise ValueError(f"Preflight did not prepare paragraph insertion for {operation_id}.")
+                bookmark_name = result.get("bookmark_name")
+                if not isinstance(bookmark_name, str) or not bookmark_name:
+                    raise ValueError(f"Preflight insertion {operation_id} has no idempotence marker.")
+                with zipfile.ZipFile(io.BytesIO(prepared_entry["payload"]), "r") as prepared_archive:
+                    prepared_root = parse_xml(prepared_archive.read("word/document.xml"))
+                marker_nodes = [
+                    node for node in prepared_root.findall(".//w:bookmarkStart", NS)
+                    if node.get(qn("name")) == bookmark_name
+                ]
+                if len(marker_nodes) != 1 or marker_nodes[0].getparent() is None:
+                    raise ValueError(f"Preflight insertion marker for {operation_id} is missing or ambiguous.")
+                inserted_paragraph = marker_nodes[0].getparent()
+                prepared_paragraphs = prepared_root.findall(".//w:body//w:p", NS)
+                inserted_index = next(
+                    (idx for idx, paragraph in enumerate(prepared_paragraphs) if paragraph is inserted_paragraph),
+                    None,
+                )
+                if inserted_index is None:
+                    raise ValueError(f"Preflight insertion paragraph for {operation_id} is not in document body.")
+                prepared_texts = [_accepted_paragraph_text(paragraph) for paragraph in prepared_paragraphs]
+                inserted_value = str(result.get("inserted_text", ""))
+                if prepared_texts[inserted_index] != inserted_value:
+                    raise ValueError(f"Preflight inserted text mismatch for {operation_id}.")
+                target["location_phrase"] = build_unique_location_phrase(
+                    prepared_texts, inserted_index, 0, len(inserted_value)
+                )
+                continue
             if target.get("part", "word/document.xml") != "word/document.xml":
                 # Header/footer and other non-body parts are kept eligible for
                 # exact revision application, but their locators are entered
@@ -1029,12 +2394,25 @@ def preflight_plan(plan: dict[str, Any], author: str = "Co_Reviewer Preflight") 
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "passed": True,
         "targets_total": len(target_refs),
-        "targets_preflighted": len(results),
+        "targets_preflighted": len(results) + len(delegated_targets),
+        "targets_executed_preflight": len(results),
+        "targets_delegated": len(delegated_targets),
+        "delegated_targets": delegated_targets,
+        "targets_covered_by_transaction": len(covered_prose_targets),
+        "covered_prose_targets": [
+            {"revision_item_id": key[0], "target_index": key[1],
+             "status": "delegated_to_reference_transaction",
+             "covered_by_operation_id": row["citation_operation_id"]}
+            for key, row in sorted(covered_prose_targets.items(), key=lambda pair: str(pair[0]))
+        ],
         "source_files": [
             {"input_file": path, "sha256": source_hashes_after[key]}
             for key, path in source_paths.items()
         ],
         "approval_scope_changed_items": sorted(set(changed_items)),
+        "execution_order": [item["id"] for item in eligible_items],
+        "execution_dependencies": execution_dependencies,
+        "target_normalizations": target_normalizations,
         "preflight_items": [
             {"revision_item_id": item["id"], "preflight_fingerprint": item["preflight_fingerprint"]}
             for item in eligible_items
@@ -1050,14 +2428,28 @@ def apply_plan(plan: dict[str, Any], author: str) -> list[dict[str, Any]]:
     approved_items = [item for item in plan["revision_items"] if item.get("status") == "approved"]
     if not approved_items:
         raise ValueError("No revision items are currently approved for application.")
+    delegated_operation_ids = set(_reference_citation_delegations(plan))
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
+    approved_items, _execution_dependencies = _schedule_plan_item_dependencies(
+        approved_items, delegated_operation_ids, set(covered_prose_targets)
+    )
     authorization_errors = validate_plan(plan, True, require_authorized_change=True)
     if authorization_errors:
         raise ValueError("Revision plan authorization validation failed:\n- " + "\n- ".join(authorization_errors))
     grouped = defaultdict(list)
     for item in approved_items:
-        for target in item["targets"]:
+        for target_index, target in enumerate(item["targets"]):
+            if (item["id"], target_index) in covered_prose_targets:
+                continue
+            if target.get("operation_id") in delegated_operation_ids:
+                continue
             edit = {
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
+                "inserted_format_map": copy.deepcopy(target.get("inserted_format_map")),
                 "part": target.get("part", "word/document.xml"),
                 "revision_item_id": item["id"], "reviewer": item["reviewer"],
                 "document": target["document"], "location": target.get("location", ""),
@@ -1216,10 +2608,12 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
         documents_checked += 1
         expected_parts = copy.deepcopy(source_parts)
         pass1_inserted_by_para: dict[tuple[str, int], list[str]] = defaultdict(list)
+        inserted_paragraph_positions: dict[str, list[int]] = defaultdict(list)
         for edit in edits:
             part = edit.get("part", "word/document.xml")
             p_idx = edit.get("p_idx")
             find_text = edit.get("find", "")
+            action = edit.get("action", "replace")
             paragraphs = expected_parts.get(part)
             if paragraphs is None or not isinstance(p_idx, int) or isinstance(p_idx, bool) or not (0 <= p_idx < len(paragraphs)):
                 violations.append({
@@ -1228,15 +2622,44 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                     "reason": "Applied target cannot be mapped to the source paragraph for untracked-edit audit."
                 })
                 continue
+            if action == "insert_paragraph":
+                # A tracked paragraph insertion leaves the source anchor intact.
+                # Its new paragraph contributes an empty untracked-text slot because
+                # the entire visible content is inside w:ins. Use the final output
+                # index recorded by Apply to align source/output paragraph sequences.
+                if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "p_idx": p_idx,
+                        "reason": "The insertion anchor is not unique in untracked source text; audit cannot safely establish the expected baseline."
+                    })
+                    continue
+                inserted_p_idx = edit.get("inserted_p_idx")
+                if (
+                    not isinstance(inserted_p_idx, int)
+                    or isinstance(inserted_p_idx, bool)
+                    or inserted_p_idx < 0
+                ):
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "p_idx": p_idx,
+                        "reason": "Tracked paragraph insertion is missing a valid final inserted_p_idx for untracked-text audit."
+                    })
+                    continue
+                inserted_paragraph_positions[part].append(inserted_p_idx)
+                continue
             pure_format_change = (
                 find_text == edit.get("replace")
                 and bool(edit.get("format_changes"))
                 and edit.get("delete_revision_id") is None
                 and edit.get("insert_revision_id") is None
             )
+            # A Pass-2 FormatChange may target text introduced by the same
+            # operation. That text is intentionally absent from the original
+            # source baseline and is already accounted for by its Pass-1 change.
             if pure_format_change and any(find_text in ins_txt for ins_txt in pass1_inserted_by_para.get((part, p_idx), [])):
                 continue
-            if not isinstance(find_text, str) or paragraphs[p_idx].count(find_text) != 1:
+            if not isinstance(find_text, str) or not find_text or paragraphs[p_idx].count(find_text) != 1:
                 violations.append({
                     "input_file": str(source_path), "output_file": str(output_path),
                     "part": part, "p_idx": p_idx,
@@ -1247,6 +2670,32 @@ def audit_untracked_text_changes(apply_reports: list[dict[str, Any]]) -> dict[st
                 paragraphs[p_idx] = paragraphs[p_idx].replace(find_text, "", 1)
                 if isinstance(edit.get("replace"), str) and edit["replace"]:
                     pass1_inserted_by_para[(part, p_idx)].append(edit["replace"])
+
+        for part, positions in inserted_paragraph_positions.items():
+            paragraphs = expected_parts.get(part)
+            if paragraphs is None:
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part,
+                    "reason": "Tracked paragraph insertion references a text part missing from the source."
+                })
+                continue
+            if len(positions) != len(set(positions)):
+                violations.append({
+                    "input_file": str(source_path), "output_file": str(output_path),
+                    "part": part,
+                    "reason": "Multiple tracked paragraph insertions report the same final paragraph index."
+                })
+                continue
+            for inserted_p_idx in sorted(positions):
+                if inserted_p_idx > len(paragraphs):
+                    violations.append({
+                        "input_file": str(source_path), "output_file": str(output_path),
+                        "part": part, "inserted_p_idx": inserted_p_idx,
+                        "reason": "Tracked paragraph insertion index is outside the expected output paragraph sequence."
+                    })
+                    continue
+                paragraphs.insert(inserted_p_idx, "")
 
         for part in sorted(set(expected_parts) | set(output_parts)):
             expected = expected_parts.get(part)
@@ -1468,8 +2917,13 @@ def _verify_paragraph_format_integrity(
             isinstance(item, dict) and item.get("status") == "applied"
             and item.get("part", "word/document.xml") == part
             and item.get("p_idx") == p_idx
+            and item.get("action", "replace") != "insert_paragraph"
         )
     ]
+    # Paragraph insertions are verified against their own bookmarked paragraph.
+    # They must not enter the source-character replacement replay for this
+    # original paragraph, otherwise a separate insertion is mistaken for a
+    # text replacement and corrupts exact Run-format verification.
     for edit in relevant:
         current_text = "".join(item["character"] for item in working)
         anchor = edit.get("find")
@@ -1850,19 +3304,41 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
             report_index.setdefault(key, []).append((document_report, edit))
 
     results = []
+    delegated_operation_ids = set(_reference_citation_delegations(plan))
+    covered_prose_targets = _reference_citation_transaction_coverage(plan)
     for item in plan.get("revision_items", []):
         if item.get("status") not in {"applied", "verified"}:
             continue
         item_id = item.get("id", "")
-        for target in item.get("targets", []):
+        for target_index, target in enumerate(item.get("targets", [])):
+            if (item_id, target_index) in covered_prose_targets:
+                continue
+            if target.get("operation_id") in delegated_operation_ids:
+                continue
             output_path = str(Path(target["output_file"]).expanduser().resolve())
             part = target.get("part", "word/document.xml")
             key = (item_id, target["document"], output_path, part, target["find"], target["replace"])
             matches = report_index.get(key, [])
+            operation_id = target.get("operation_id")
+            if isinstance(operation_id, str) and operation_id.strip():
+                matches = [
+                    pair for pair in matches
+                    if pair[1].get("operation_id") == operation_id
+                ]
+            source_p_idx = target.get("p_idx")
+            if isinstance(source_p_idx, int) and not isinstance(source_p_idx, bool):
+                matches = [
+                    pair for pair in matches
+                    if pair[1].get("p_idx") == source_p_idx
+                ]
             result = {
                 "revision_item_id": item_id, "document": target["document"],
                 "output_file": output_path, "part": part, "location": target.get("location", ""),
                 "find": target["find"], "replace": target["replace"],
+                "action": target.get("action", "replace"),
+                "anchor_text": target.get("anchor_text"),
+                "position": target.get("position"),
+                "inserted_text": target.get("inserted_text"),
                 "status": "failed", "checks": {}
             }
             if len(matches) != 1:
@@ -1889,9 +3365,6 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     root = parse_xml(archive.read(part))
                 paragraphs = root.findall(".//w:body//w:p", NS) if part == "word/document.xml" else root.findall(".//w:p", NS)
                 p_idx = edit.get("p_idx")
-                if not isinstance(p_idx, int) or isinstance(p_idx, bool) or p_idx < 0 or p_idx >= len(paragraphs):
-                    raise ValueError("Paragraph index from apply report is outside the output document.")
-                paragraph = paragraphs[p_idx]
 
                 # Correct revision IDs/text are insufficient if the new text was
                 # inserted at the wrong point in its paragraph.
@@ -1914,16 +3387,236 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     if part == "word/document.xml"
                     else source_root.findall(".//w:p", NS)
                 )
-                if p_idx >= len(source_paragraphs):
+                if target.get("action", "replace") == "insert_paragraph":
+                    if not isinstance(p_idx, int) or isinstance(p_idx, bool) or not 0 <= p_idx < len(source_paragraphs):
+                        raise ValueError("Insertion anchor index is outside the source document.")
+                    source_anchor = source_paragraphs[p_idx]
+                    anchor_text = target.get("anchor_text")
+                    requested_inserted_text = target.get("inserted_text")
+                    inserted_text = (
+                        normalize_script_characters(requested_inserted_text)
+                        if isinstance(requested_inserted_text, str) else None
+                    )
+                    position = target.get("position")
+                    if not isinstance(anchor_text, str) or not anchor_text or not isinstance(inserted_text, str) or not inserted_text:
+                        raise ValueError("Approved paragraph insertion is missing its exact anchor or inserted text.")
+                    source_anchor_text = _accepted_paragraph_text(source_anchor)
+                    if source_anchor_text.count(anchor_text) != 1:
+                        raise ValueError("Insertion anchor is not unique in the exact source paragraph.")
+                    bookmark_name = edit.get("bookmark_name")
+                    bookmark_id = edit.get("bookmark_id")
+                    insert_id = edit.get("insert_revision_id")
+                    if not isinstance(bookmark_name, str) or not bookmark_name:
+                        raise ValueError("Apply report is missing the insertion idempotence marker.")
+                    marker_nodes = [
+                        node for node in root.findall(".//w:bookmarkStart", NS)
+                        if node.get(qn("name")) == bookmark_name
+                    ]
+                    if len(marker_nodes) != 1:
+                        raise ValueError("Insertion operation marker is missing or duplicated.")
+                    inserted_paragraph = marker_nodes[0].getparent()
+                    if inserted_paragraph is None or inserted_paragraph.tag != qn("p"):
+                        raise ValueError("Insertion operation marker is not inside a Word paragraph.")
+                    end_nodes = [
+                        node for node in inserted_paragraph.findall("w:bookmarkEnd", NS)
+                        if node.get(qn("id")) == str(bookmark_id)
+                    ]
+                    if len(end_nodes) != 1:
+                        raise ValueError("Insertion operation bookmark has no unique matching end marker.")
+                    insertion_nodes = [
+                        node for node in inserted_paragraph.findall("w:ins", NS)
+                        if node.get(qn("id")) == str(insert_id)
+                    ]
+                    if len(insertion_nodes) != 1:
+                        raise ValueError("Tracked insertion wrapper is missing or duplicated.")
+                    insertion = insertion_nodes[0]
+                    actual_inserted_text = "".join(
+                        node.text or "" for node in insertion.findall(".//w:t", NS)
+                    )
+                    if actual_inserted_text != inserted_text:
+                        raise ValueError("Tracked paragraph insertion text differs from the approved text.")
+                    output_paragraphs = paragraphs
+                    inserted_index = next(
+                        (idx for idx, candidate in enumerate(output_paragraphs) if candidate is inserted_paragraph),
+                        None,
+                    )
+                    if inserted_index is None:
+                        raise ValueError("Inserted paragraph is not part of the document body.")
+                    para_id_attr = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+                    # The insertion anchor can itself be edited by another operation
+                    # in this same approved revision item (for example, inserting a
+                    # new bibliography entry before an entry that is renumbered in
+                    # the same transaction). Reconstruct only those exact, applied
+                    # replacements against the source paragraph; never fuzzy-match
+                    # or infer a changed anchor from nearby text.
+                    expected_anchor_text = source_anchor_text
+                    for related_edit in document_report.get("results", []):
+                        if (
+                            related_edit.get("status") != "applied"
+                            or related_edit.get("revision_item_id") != edit.get("revision_item_id")
+                            or related_edit.get("part", "word/document.xml") != part
+                            or related_edit.get("p_idx") != p_idx
+                            or related_edit.get("action", "replace") == "insert_paragraph"
+                        ):
+                            continue
+                        related_find = related_edit.get("find")
+                        related_replace = related_edit.get("replace")
+                        if (
+                            not isinstance(related_find, str)
+                            or not related_find
+                            or not isinstance(related_replace, str)
+                        ):
+                            raise ValueError(
+                                "Applied edits to the insertion anchor contain an invalid exact replacement."
+                            )
+                        if expected_anchor_text.count(related_find) != 1:
+                            raise ValueError(
+                                "Approved edits to the insertion anchor cannot be replayed uniquely."
+                            )
+                        expected_anchor_text = expected_anchor_text.replace(
+                            related_find, related_replace, 1
+                        )
+
+                    source_para_id = source_anchor.get(para_id_attr)
+                    if source_para_id:
+                        anchor_matches = [
+                            (idx, candidate) for idx, candidate in enumerate(output_paragraphs)
+                            if candidate.get(para_id_attr) == source_para_id
+                        ]
+                    else:
+                        anchor_matches = [
+                            (idx, candidate) for idx, candidate in enumerate(output_paragraphs)
+                            if _accepted_paragraph_text(candidate) == expected_anchor_text
+                        ]
+                    if len(anchor_matches) != 1:
+                        raise ValueError(
+                            "Original insertion anchor cannot be uniquely located after exact approved edits."
+                        )
+                    anchor_index, output_anchor = anchor_matches[0]
+                    anchor_text_after_approved_edits = (
+                        _accepted_paragraph_text(output_anchor) == expected_anchor_text
+                    )
+                    position_ok = (
+                        inserted_index < anchor_index if position == "before"
+                        else inserted_index > anchor_index if position == "after"
+                        else False
+                    ) and anchor_text_after_approved_edits
+                    source_ppr = source_anchor.find("w:pPr", NS)
+                    inserted_ppr = inserted_paragraph.find("w:pPr", NS)
+                    source_ppr_bytes = ET.tostring(source_ppr, method="c14n") if source_ppr is not None else b""
+                    inserted_ppr_bytes = ET.tostring(inserted_ppr, method="c14n") if inserted_ppr is not None else b""
+                    paragraph_style_ok = source_ppr_bytes == inserted_ppr_bytes
+                    inserted_runs = insertion.findall(".//w:r", NS)
+                    from co_reviewer.document_engine import build_paragraph_insertion_runs
+                    independently_expected_runs, inserted_format_map_resolution = (
+                        build_paragraph_insertion_runs(
+                            source_anchor, anchor_text, requested_inserted_text,
+                            target.get("inserted_format_map"),
+                        )
+                    )
+                    expected_run_pairs = [
+                        (
+                            "".join(node.text or "" for node in run.findall("w:t", NS)),
+                            _direct_run_format_sha256(run),
+                        )
+                        for run in independently_expected_runs
+                    ]
+                    actual_run_pairs = [
+                        (
+                            "".join(node.text or "" for node in run.findall("w:t", NS)),
+                            _direct_run_format_sha256(run),
+                        )
+                        for run in inserted_runs
+                    ]
+                    run_format_ok = bool(expected_run_pairs) and expected_run_pairs == actual_run_pairs
+                    inserted_map_matches_plan = edit.get("inserted_format_map") == target.get("inserted_format_map")
+                    accepted_inserted_text = _accepted_paragraph_text(inserted_paragraph)
+                    accepted_text_ok = accepted_inserted_text == inserted_text
+                    result["checks"] = {
+                        "output_exists": True,
+                        "zip_crc": "passed",
+                        "operation_marker_unique": len(marker_nodes) == 1 and len(end_nodes) == 1,
+                        "tracked_insertion_exact": len(insertion_nodes) == 1 and actual_inserted_text == inserted_text,
+                        "accepted_paragraph_text_exact": accepted_text_ok,
+                        "paragraph_position": position_ok,
+                        "anchor_text_after_approved_edits": anchor_text_after_approved_edits,
+                        "paragraph_style_inherited": paragraph_style_ok,
+                        "inserted_run_format_preserved": run_format_ok,
+                        "inserted_format_map_source_resolved": True,
+                        "inserted_format_map_matches_approved_plan": inserted_map_matches_plan,
+                        "inserted_format_map_resolution": inserted_format_map_resolution,
+                        "insert_revision_id": insert_id,
+                        "bookmark_name": bookmark_name,
+                    }
+                    result["p_idx"] = inserted_index
+                    if all((accepted_text_ok, position_ok, paragraph_style_ok, run_format_ok, inserted_map_matches_plan)):
+                        result["status"] = "verified"
+                    else:
+                        result["reason"] = (
+                            "Paragraph insertion verification failed: "
+                            + "; ".join(
+                                name for name, passed in (
+                                    ("accepted text", accepted_text_ok),
+                                    ("before/after position", position_ok),
+                                    ("paragraph style", paragraph_style_ok),
+                                    ("inserted run formatting", run_format_ok),
+                                    ("approved inserted-format map", inserted_map_matches_plan),
+                                ) if not passed
+                            )
+                        )
+                    results.append(result)
+                    continue
+                source_p_idx = p_idx
+                if (
+                    not isinstance(source_p_idx, int)
+                    or isinstance(source_p_idx, bool)
+                    or not 0 <= source_p_idx < len(source_paragraphs)
+                ):
                     raise ValueError("Paragraph index from apply report is outside the source document.")
-                expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[p_idx])
+
+                # Apply inserts paragraphs into the output package without changing
+                # source-relative p_idx values on subsequent PatchOperations. Map
+                # every original paragraph to its output index before inspecting it.
+                insertions_before_target = 0
+                for insertion_edit in document_report.get("results", []):
+                    if (
+                        insertion_edit.get("status") != "applied"
+                        or insertion_edit.get("action") != "insert_paragraph"
+                        or insertion_edit.get("part", "word/document.xml") != part
+                    ):
+                        continue
+                    anchor_p_idx = insertion_edit.get("p_idx")
+                    insertion_position = insertion_edit.get("position")
+                    if (
+                        not isinstance(anchor_p_idx, int)
+                        or isinstance(anchor_p_idx, bool)
+                        or anchor_p_idx < 0
+                        or insertion_position not in {"before", "after"}
+                    ):
+                        raise ValueError(
+                            "Apply report contains an insertion without a valid source anchor/position; "
+                            "source-to-output paragraph mapping is blocked."
+                        )
+                    if (
+                        anchor_p_idx < source_p_idx
+                        or (anchor_p_idx == source_p_idx and insertion_position == "before")
+                    ):
+                        insertions_before_target += 1
+                output_p_idx = source_p_idx + insertions_before_target
+                if not 0 <= output_p_idx < len(paragraphs):
+                    raise ValueError("Mapped output paragraph index is outside the revised document.")
+                paragraph = paragraphs[output_p_idx]
+                expected_paragraph_text = _accepted_paragraph_text(source_paragraphs[source_p_idx])
                 for batch_edit in document_report.get("results", []):
                     if batch_edit.get("status") != "applied":
                         continue
                     if (
                         batch_edit.get("part", "word/document.xml") != part
-                        or batch_edit.get("p_idx") != p_idx
+                        or batch_edit.get("p_idx") != source_p_idx
+                        or batch_edit.get("action", "replace") == "insert_paragraph"
                     ):
+                        # A paragraph insertion is a separate output paragraph;
+                        # it does not replace text inside the original anchor.
                         continue
                     anchor_text = batch_edit.get("find")
                     if not isinstance(anchor_text, str) or not anchor_text:
@@ -1976,7 +3669,7 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     and target["find"] in actual_paragraph_text
                     if pure_format_change else len(delete_nodes) == 1 and deleted == target["find"]
                 )
-                new_text = edit.get("inserted_text", target["replace"])
+                new_text = normalize_script_characters(edit.get("replace", target["replace"]))
                 new_ok = (
                     not insert_nodes and new_text == target["find"]
                     if pure_format_change else (
@@ -2093,8 +3786,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     edit.get("format_operations", []),
                 )
                 format_integrity = _verify_paragraph_format_integrity(
-                    source_paragraphs[p_idx], paragraph,
-                    document_report.get("results", []), part=part, p_idx=p_idx,
+                    source_paragraphs[source_p_idx], paragraph,
+                    document_report.get("results", []), part=part, p_idx=source_p_idx,
                 )
                 result["checks"] = {
                     "output_exists": True, "zip_crc": "passed", "paragraph_found": True,
@@ -2108,7 +3801,8 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
                     "script_scope_integrity": script_scope_integrity,
                     "format_integrity": format_integrity,
                 }
-                result["p_idx"] = p_idx
+                result["source_p_idx"] = source_p_idx
+                result["p_idx"] = output_p_idx
                 if (
                     old_ok and new_ok and native_script_format_preserved
                     and format_changes_preserved and script_scope_integrity["passed"]
@@ -2137,12 +3831,82 @@ def verify_apply_report(plan: dict[str, Any], apply_reports: list[dict[str, Any]
     passed = sum(1 for item in results if item["status"] == "verified")
     untracked_audit = audit_untracked_text_changes(apply_reports)
     target_passed = bool(results) and passed == len(results)
+    reference_transaction_report = {
+        "passed": True, "checked": False, "errors": [],
+    }
+    if isinstance(plan.get("reference_transaction"), Mapping):
+        from co_reviewer.reference_transaction import verify_reference_transaction_outputs
+        reference_transaction_report = verify_reference_transaction_outputs(plan, apply_reports)
+    delegated_count = len(delegated_operation_ids)
+    delegated_verified = delegated_count if reference_transaction_report.get("passed") else 0
+    delegated_failed = delegated_count - delegated_verified
+
+    covered_checks = []
+    for (covered_item, covered_index), coverage in sorted(
+        covered_prose_targets.items(), key=lambda pair: str(pair[0])
+    ):
+        check = {
+            "revision_item_id": covered_item,
+            "target_index": covered_index,
+            "status": "failed",
+            "mode": "covered_by_reference_transaction",
+            "covered_by_operation_id": coverage["citation_operation_id"],
+        }
+        covering_target = None
+        for item in plan.get("revision_items", []):
+            for target in item.get("targets", []):
+                if target.get("operation_id") == coverage["citation_operation_id"]:
+                    covering_target = target
+                    break
+            if covering_target is not None:
+                break
+        if not isinstance(covering_target, Mapping):
+            check["reason"] = "The covering Reference Transaction citation target is missing."
+        else:
+            try:
+                from co_reviewer.working_view import accepted_view_docx_bytes
+                output_path = Path(covering_target["output_file"]).expanduser()
+                payload = accepted_view_docx_bytes(output_path.read_bytes())
+                with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+                    root = parse_xml(archive.read(coverage["part"]))
+                ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                paragraphs = root.findall(".//w:body//w:p", ns)
+                final_text = visible_text(paragraphs[coverage["source_p_idx"]])
+                expected = coverage["exact_prose_source_replace"]
+                if final_text.count(expected) == 1:
+                    check["status"] = "verified"
+                    check["final_text"] = final_text
+                else:
+                    check["reason"] = (
+                        "The covering transaction did not produce the exact prose replacement text exactly once."
+                    )
+            except (OSError, KeyError, IndexError, ValueError, TypeError) as exc:
+                check["reason"] = "Covered prose target output cannot be verified: %s" % exc
+        covered_checks.append(check)
+    covered_count = len(covered_checks)
+    covered_verified = (
+        sum(1 for row in covered_checks if row["status"] == "verified")
+        if reference_transaction_report.get("passed") else 0
+    )
+    covered_failed = covered_count - covered_verified
+    target_passed = (
+        (bool(results) or delegated_count > 0 or covered_count > 0)
+        and passed == len(results)
+        and delegated_failed == 0
+        and covered_failed == 0
+    )
     return {
-        "scope": "Mechanical DOCX Track Changes verification and untracked-text audit only; scientific correctness and cross-document semantic consistency require separate review.",
-        "targets_total": len(results), "targets_verified": passed,
-        "targets_failed": len(results) - passed,
+        "scope": "Mechanical DOCX Track Changes verification and untracked-text audit, plus package Reference Graph verification when a reference transaction is present; scientific correctness still requires separate review.",
+        "targets_total": len(results) + delegated_count + covered_count,
+        "targets_verified": passed + delegated_verified + covered_verified,
+        "targets_failed": len(results) - passed + delegated_failed + covered_failed,
         "untracked_text_audit": untracked_audit,
-        "passed": target_passed and untracked_audit["passed"],
+        "reference_transaction": reference_transaction_report,
+        "covered_targets": covered_checks,
+        "passed": (
+            target_passed and untracked_audit["passed"]
+            and reference_transaction_report["passed"]
+        ),
         "results": results
     }
 
@@ -4520,7 +6284,7 @@ def cmd_attach_document_identities(args):
         task_id = task.get("task_id")
         expected_count = sum(
             1 for target in task.get("targets", [])
-            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update"}
+            if isinstance(target, Mapping) and target.get("action") in {"replace", "add", "remove", "renumber", "reference_update", "insert_paragraph"}
         )
         actual_count = len(refs_by_task.get(task_id, []))
         if actual_count != expected_count:
@@ -6821,16 +8585,46 @@ def cmd_preview_omml_docx(args):
     print("[BOUNDARY] Synthetic preview only; no manuscript was edited and formula Track Changes remain disabled.")
     return 0
 
+def cmd_compile_reference_transaction(args):
+    from co_reviewer.reference_transaction import compile_reference_transaction
+
+    graph = _read_json_object(args.graph, "Reference Graph")
+    spec = _read_json_object(args.spec, "Reference Transaction Spec")
+    plan = compile_reference_transaction(spec, graph)
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path.exists():
+        raise FileExistsError(
+            f"Reference transaction plan output already exists; choose a new path: {output_path}"
+        )
+    write_json_atomic(output_path, plan)
+    transaction = plan["reference_transaction"]
+    print(f"[REFERENCE TRANSACTION] {transaction['transaction_id']}")
+    print(f"[PLAN] {output_path}")
+    print(f"[OPERATIONS] {len(transaction['operation_ids'])}")
+    print(f"[REFERENCE GRAPH SHA256] {transaction['reference_graph_sha256']}")
+    print("[APPROVAL] Pending explicit author approval through preflight-plan and approve-plan; no DOCX was changed.")
+    return 0
+
+
 def cmd_build_package_reference_graph(args):
     documents = {}
+    source_files = {}
     for item in args.document:
         if "=" not in item:
             raise ValueError("--document must use ROLE=PATH")
         role, filename = item.split("=", 1)
         if not role or role in documents:
             raise ValueError("Document roles must be non-empty and unique")
-        documents[role] = extract_docx_reference_segments(filename)
+        source_path = Path(filename).expanduser().resolve()
+        if not source_path.is_file() or source_path.suffix.casefold() != ".docx":
+            raise ValueError(f"Reference Graph source must be an existing DOCX: {source_path}")
+        documents[role] = extract_docx_reference_segments(source_path)
+        source_files[role] = {
+            "path": str(source_path),
+            "sha256": sha256_file(source_path),
+        }
     report = build_package_reference_graph(documents)
+    report["source_files"] = source_files
     if args.out:
         write_json_atomic(Path(args.out), report)
         print(f"[REFERENCE GRAPH] {Path(args.out).resolve()}")
@@ -7466,6 +9260,27 @@ def cmd_approve_instruction_coverage(args):
     return 0
 
 
+def _parse_document_roles(values: list[str] | None) -> dict[str, str]:
+    """Parse explicit Final Gate document role bindings without filename guessing."""
+    result: dict[str, str] = {}
+    from co_reviewer.final_gate import _DOCUMENT_ROLE_PROFILES
+
+    allowed = set(_DOCUMENT_ROLE_PROFILES)
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError("--document-role must use PATH=ROLE.")
+        raw_path, role = value.rsplit("=", 1)
+        raw_path = raw_path.strip()
+        role = role.strip().lower()
+        if not raw_path or role not in allowed:
+            raise ValueError(f"Invalid --document-role binding: {value!r}")
+        path = str(Path(raw_path).expanduser().resolve())
+        if path in result and result[path] != role:
+            raise ValueError(f"Conflicting document roles for {path}.")
+        result[path] = role
+    return result
+
+
 def cmd_final_gate(args):
     from co_reviewer.final_gate import evaluate_final_gate, write_final_gate_reports
 
@@ -7530,6 +9345,7 @@ def cmd_final_gate(args):
         skip_word_com=False,
         instruction_coverage=coverage,
         instruction_coverage_approval=coverage_approval,
+        document_roles=_parse_document_roles(args.document_role),
     )
     out_json = Path(args.out_json).expanduser().resolve()
     out_md = Path(args.out_md).expanduser().resolve()
@@ -7647,6 +9463,11 @@ def build_parser():
     vc.add_argument("--authorization", required=True, help="JSON file containing intent and explicitly authorized tokens.")
     vc.add_argument("--out")
     vc.set_defaults(func=cmd_validate_edit_contract)
+    rt = sub.add_parser("compile-reference-transaction", help="Compile a graph-checked bibliography/citation update into one pending Patch transaction.")
+    rt.add_argument("--graph", required=True, help="Reference Graph JSON built from the exact source DOCX inputs.")
+    rt.add_argument("--spec", required=True, help="Explicit insertions, bibliography entry updates and linked citation updates.")
+    rt.add_argument("--out", required=True, help="New pending Revision Plan output; existing files are never overwritten.")
+    rt.set_defaults(func=cmd_compile_reference_transaction)
     rg = sub.add_parser("build-package-reference-graph", help="Build a directed cross-document definition/mention graph from extracted text.")
     rg.add_argument("--document", nargs="+", required=True, help="ROLE=DOCX_PATH entries for every managed DOCX file.")
     rg.add_argument("--out")
@@ -7712,8 +9533,13 @@ def build_parser():
     fg.add_argument("--instruction-coverage-approval", help="Required separate author approval receipt bound to the exact coverage SHA-256.")
     fg.add_argument(
         "--profile",
-        choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"],
+        choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter", "cover-letter"],
         help="Optional DOCX quality profile override.",
+    )
+    fg.add_argument(
+        "--document-role", action="append", default=[],
+        metavar="PATH=ROLE",
+        help="Explicit delivered-document role (repeatable); accepts marked/marked-manuscript, clean/clean-manuscript, marked-si/marked-supplementary-information, clean-si/clean-supplementary-information, cover-letter, response-letter, si/supplementary-information, word-final-clean and generic.",
     )
     fg.add_argument("--out-json", default="final_gate_report.json", help="Output JSON report path.")
     fg.add_argument("--out-md", default="final_gate_report.md", help="Output Markdown report path.")
@@ -7982,7 +9808,7 @@ def build_parser():
     est.set_defaults(func=cmd_estimate_usage)
     dq = sub.add_parser("audit-docx-quality", help="Audit DOCX package, revision state, placeholders, typography profile and optional PDF.")
     dq.add_argument("--docx", required=True)
-    dq.add_argument("--profile", choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter"], default="generic")
+    dq.add_argument("--profile", choices=["generic", "clean-manuscript", "marked-manuscript", "word-final-clean", "response-letter", "cover-letter"], default="generic")
     dq.add_argument("--pdf", help="Optional related PDF for signature/page-integrity metadata.")
     dq.add_argument("--expected-font", help="Optional required Normal-style font name.")
     dq.add_argument("--out", help="Optional JSON report path.")
