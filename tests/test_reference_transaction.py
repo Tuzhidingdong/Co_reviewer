@@ -686,7 +686,7 @@ class ReferenceTransactionTests(unittest.TestCase):
             "REF-CITE-001",
         )
         self.assertIn(
-            {"kind": "number", "text": "4", "replacement": "5"},
+            {"kind": "citation", "text": "[4]", "replacement": "[5]"},
             prose_target["authorized_change"]["explicitly_authorized_tokens"],
         )
         self.assertIn(

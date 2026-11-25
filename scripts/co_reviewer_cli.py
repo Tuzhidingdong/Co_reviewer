@@ -1419,7 +1419,45 @@ def _normalize_prose_targets_around_reference_citations(plan: dict[str, Any]) ->
                         raise ValueError(
                             "REFERENCE_CITATION_DELEGATION_AUTHORIZATION_CONFLICT: prose authorization already assigns a different replacement to this exact citation token."
                         )
-                    inherited_token = matching_transaction_tokens[0]
+                    # The transaction authorizes the citation label itself (e.g. 4 -> 5),
+                    # while the prose engine may protect its full surface (e.g. [4] -> [5]).
+                    # Transfer the corresponding exact immutable token pair, preserving the
+                    # engine's token kind and delimiters instead of relabelling a citation as a number.
+                    from co_reviewer.v232_contract import extract_immutable_tokens
+
+                    old_immutable = [
+                        row for row in extract_immutable_tokens(old_find)
+                        if row.get("start", -1) <= old_token_at < row.get("end", -1)
+                    ]
+                    new_immutable = [
+                        row for row in extract_immutable_tokens(old_replace)
+                        if row.get("start", -1) <= new_token_at < row.get("end", -1)
+                    ]
+                    if len(old_immutable) != 1 or len(new_immutable) != 1:
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_IMMUTABLE_TOKEN_AMBIGUOUS: "
+                            "the changed citation label does not map to exactly one protected token in both prose surfaces."
+                        )
+                    old_immutable_token = old_immutable[0]
+                    new_immutable_token = new_immutable[0]
+                    old_token_prefix = old_find[old_immutable_token["start"]:old_token_at]
+                    new_token_prefix = old_replace[new_immutable_token["start"]:new_token_at]
+                    old_token_suffix = old_find[old_token_at + len(token):old_immutable_token["end"]]
+                    new_token_suffix = old_replace[new_token_at + len(token_new):new_immutable_token["end"]]
+                    if (
+                        old_immutable_token.get("kind") != new_immutable_token.get("kind")
+                        or old_token_prefix != new_token_prefix
+                        or old_token_suffix != new_token_suffix
+                    ):
+                        raise ValueError(
+                            "REFERENCE_CITATION_DELEGATION_IMMUTABLE_CONTEXT_CHANGED: "
+                            "the enclosing protected token changes beyond the exact citation label."
+                        )
+                    inherited_token = {
+                        "kind": old_immutable_token["kind"],
+                        "text": old_immutable_token["text"],
+                        "replacement": new_immutable_token["text"],
+                    }
                     if inherited_token not in existing_tokens:
                         existing_tokens.append(inherited_token)
                     merged_authorization["explicitly_authorized_tokens"] = existing_tokens
