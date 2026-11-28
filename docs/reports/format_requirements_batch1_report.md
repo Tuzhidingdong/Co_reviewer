@@ -7,7 +7,8 @@
 - 基线仓库：`E:\Writting\Capillary_bridge\08\co_reviewer_runs\instruction_intent_producer_minfix_20261128\isolated_repo`
 - 基线 HEAD：`a7e32f1b79994173439cb2755ef52a9c99ce872b`（`master`，检查时工作区干净）
 - 本地开发分支：`feat/format-requirements-batch1-20261128`（从基线创建，未推送）
-- 最终 commit SHA：`FINAL_COMMIT_SHA_PLACEHOLDER`
+- Batch 1 实现 commit SHA：`1171590f33ca12340ffcd15ab1187bf2b7d8a112`（`feat: Batch 1 format requirements model, version chain and integrity anchor`）。
+- 本报告中的 commit SHA 字段由紧随其后的 docs-only commit 回填；实现代码、Schema 与测试均在上述实现 commit 中，之后未再改动。
 - 未添加 remote，未 fetch/pull/push，未创建 GitHub 分支或 PR，未修改其他分支。
 
 ## 2. 修改文件与目的
@@ -146,7 +147,9 @@ PYTHONPATH=scripts python -m unittest discover -s tests -v
 
 ## 10. `git status` 最终结果
 
-`FINAL_GIT_STATUS_PLACEHOLDER`
+- 实现 commit 提交后工作区：clean。
+- 回填本报告 SHA 字段的 docs-only commit 提交后工作区：clean。
+- 未推送、未创建 PR、未切换分支；`master` 仍指向 `a7e32f1b79994173439cb2755ef52a9c99ce872b`。
 
 ## 11. 三个最终问题
 
