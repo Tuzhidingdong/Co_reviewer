@@ -1,0 +1,134 @@
+{
+  "original_files": [
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\pre_revision_backup_20261127\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "size": 4478596,
+      "sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\pre_revision_backup_20261127\\Cover_Letter_Nature_Water.docx",
+      "size": 29744,
+      "sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\pre_revision_backup_20261127\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "size": 5001910,
+      "sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "name": "text_revision_instructions.txt",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\pre_revision_backup_20261127\\text_revision_instructions.txt",
+      "size": 22692,
+      "sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f"
+    }
+  ],
+  "round_copies": [
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "path": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "size": 4478596,
+      "sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+      "identical_to_original": true
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.docx",
+      "path": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "size": 29744,
+      "sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+      "identical_to_original": true
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "path": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "size": 5001910,
+      "sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+      "identical_to_original": true
+    },
+    {
+      "name": "text_revision_instructions.txt",
+      "path": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+      "size": 22692,
+      "sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+      "identical_to_original": true
+    }
+  ],
+  "deliverables": [
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "path": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "size": 4478911,
+      "sha256": "f1b2a3cb4004212a90509778261c71513a61b02c761fd66924fc2afaaebcd8d7"
+    },
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "path": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "size": 2519377,
+      "sha256": "3941ffcb20864c36873699771b51978857d21a439ba62be019f8a3821496c097"
+    },
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "path": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "size": 4481564,
+      "sha256": "7835a50ef432f441ca302e4914404f6e848732698fbdca04c1c74bf97f7d0a07"
+    },
+    {
+      "name": "art_file_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "path": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "size": 2520643,
+      "sha256": "eaabf5c6a0dacec3bc34f16b05ad516f2a5e3f76157e2780011bf79d9904e98b"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.clean.docx",
+      "path": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.clean.docx",
+      "size": 26705,
+      "sha256": "dbd0dfbb6184092ea3401287883b3d493e16fc6d0da9712d1e8d62051ba97c6a"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.clean.pdf",
+      "path": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.clean.pdf",
+      "size": 134268,
+      "sha256": "b5369ad7c64aeee3d5d57455906e38a5ccd233b8b80d510d9a1dd2682fe7ce07"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.marked.docx",
+      "path": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+      "size": 27087,
+      "sha256": "0c06429d3ef12d3196efc1c390f523cc4d8a99ce4fcda347c2f94800ad5bb444"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.marked.pdf",
+      "path": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.pdf",
+      "size": 134500,
+      "sha256": "3618f33e6324caf5be54c0b86afa93915d7a1f4ac8ca3d1f4d4132b4f3cf4e34"
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "path": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "size": 5002175,
+      "sha256": "26b87b26fcc16d0202f33f31e9c15e45a7c9d35891418d2e6896f880b0c558e3"
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "path": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "size": 1316059,
+      "sha256": "08f0d8724639d01b0cd62a43c35abdf737c38596ba12899f095697c6fd6f11d4"
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "path": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "size": 5002569,
+      "sha256": "691fe765c316b71706dadb7e9eca038beabf7f0ee736dec6085903e7c036f1ca"
+    },
+    {
+      "name": "SI_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "path": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "size": 1316089,
+      "sha256": "29b1324fce1be735aac7fa84b31d4287b60a0799727c82b95624d6a73d022e60"
+    }
+  ],
+  "sanitized": true,
+  "note": "author name in file names redacted; SHA-256 and sizes unchanged"
+}

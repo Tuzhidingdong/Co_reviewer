@@ -1,0 +1,2410 @@
+{
+  "schema_version": "1.0",
+  "approved": true,
+  "authorization_mode": "instruction_based",
+  "revision_item_count": 30,
+  "target_count": 45,
+  "sanitized": true,
+  "note": "all find/replace/inserted text withheld; IDs, fingerprints, hashes and target structure preserved",
+  "revision_items": [
+    {
+      "id": "CL01-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "e81a5b6ec93ec777db288aaed5c14ad8706093692ecad827cb094072ac4a9a19",
+      "approval_fingerprint": "0a1f0d0b0b0f1b5e7b5e74de7c294eaea5bbccae953aeedf711d9ad7fc51d785",
+      "targets": [
+        {
+          "target_id": "TGT-7de5f731e7bd3f49ab53",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 4,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 2,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-CL-01-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 61,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-aaebcca7a4749c4db282",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 4,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 42
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 42,
+              "end": 45,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-CL-01-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "CL02-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "0ca720031c7788b8cf142e09ced02a9a3c11ec4d9319edee2134c9f8ea6e0d1c",
+      "approval_fingerprint": "2c71d57a33e4ecc391b575c72894e373aed5001a57b0dd8176c449ba3c30ce80",
+      "targets": [
+        {
+          "target_id": "TGT-2e467914179ee688ce07",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 5,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 3,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-CL-02-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 247,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-05c1d6a3877194345848",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 5,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 46
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 163
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 46,
+              "end": 49,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 163,
+              "end": 164,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-CL-02-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "CL03-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "e475904e11a4dcca853585d570a2a0a267e2a55ff426cbbe2e99c54c5a07d9b3",
+      "approval_fingerprint": "c3b42e7ea45b785ccf985b6a6fe6da37acee20d0f9053c55dae919fe1057ecfb",
+      "targets": [
+        {
+          "target_id": "TGT-32e3c2b96792cd4d3f2d",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 7,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 1,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-CL-03-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 151,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "CL04-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "53f02e0c88d119f7e134062fe3d17440fda44b412a5a35eb464b2befd1df333c",
+      "approval_fingerprint": "16be58d4c29ddfc4113a887832f297aba883c9312a3c781173cf11f86443a823",
+      "targets": [
+        {
+          "target_id": "TGT-8bf484def0e4a8970c7c",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 8,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 2,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-CL-04-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 317,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-7a5182e58aba83d4166e",
+          "document": "Other",
+          "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+          "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 8,
+          "source_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 29
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 77
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 130
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 189
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 193
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 296
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 309
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 313
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 29,
+              "end": 30,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 77,
+              "end": 79,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 130,
+              "end": 132,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 189,
+              "end": 190,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 193,
+              "end": 195,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 296,
+              "end": 298,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 309,
+              "end": 310,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 313,
+              "end": 315,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-CL-04-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT01-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "1425a97512444a101b8c70cb5dbe4db1908535215c6c73db9dcc9e0f481d4552",
+      "approval_fingerprint": "706787be6f41bca1ebac4de9362ed79801031a9483bb4ca8ec33e93d298d0093",
+      "targets": [
+        {
+          "target_id": "TGT-859849fa1d2d34f71543",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 14,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-01-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 199,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT02-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "091bf6ae2dc32647f38848ab9d77d5a07e0b631623d25e0cc60eac74af730791",
+      "approval_fingerprint": "f5f71a3fff9b7d840c975cd4883f7a2716953f0d183f26725b6ebcb0c9ec4d1c",
+      "targets": [
+        {
+          "target_id": "TGT-34e4c7270e7faebded05",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 17,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-02-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 191,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT03A-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "700aa8d669c0eda40d7ee336a37150aff7d546d77ab89dc27d8745fb0f9b366c",
+      "approval_fingerprint": "3401ba4bc60056fbf38392a4aae34f533deb01957c9d9e53f11cc6a396ee9824",
+      "targets": [
+        {
+          "target_id": "TGT-0cfc7e3a11fff6615707",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 16,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-03-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 178,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT03B-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "5d010ea0d8dc8c907c3eb3c22fc68dfa6928c7a0ffc43c672663c44638fadee1",
+      "approval_fingerprint": "f4e802a05ec40c326aa5d6545beccaaa4331b9ac7cc17b0f6266cca65ecb2b34",
+      "targets": [
+        {
+          "target_id": "TGT-d0e6a5a8505bf48d9097",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 17,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-03-02"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 143,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT04-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "cb98789f1ad54273aabac3b3f30f1676d72519f2850e35432428237f83ae5783",
+      "approval_fingerprint": "6a0fe58d8887bb24431ca43941862d9217bf41cac1c9dfc9ca3584f3165f56d2",
+      "targets": [
+        {
+          "target_id": "TGT-2d5d3046ec12858ed6d6",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 19,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 1,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-04-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 205,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT06-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "6a99b4f43aad2e6bd98cf0bef5796d5573504fd673b8e00bde2ef49a0ac2eb14",
+      "approval_fingerprint": "679e303d88383fc3bd33bdc4ed9960923c3a451f183a25f859c9e46cc28ad039",
+      "targets": [
+        {
+          "target_id": "TGT-a0a1c4fc6e598ff67fea",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 22,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 5,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_deletions_count": 1,
+            "explicitly_authorized_deletions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-06-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 228,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-1dc214995b4dd4ee6103",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 22,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 15
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 49
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 89
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 90
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 150
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 156
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 157
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 202
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 215
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 216
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 15,
+              "end": 16,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 49,
+              "end": 51,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 89,
+              "end": 90,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 90,
+              "end": 92,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 150,
+              "end": 152,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 156,
+              "end": 157,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 157,
+              "end": 159,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 202,
+              "end": 204,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 215,
+              "end": 216,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 216,
+              "end": 218,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-06-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT07-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "2c912cd1a4a28b03a187abae9fee1fc3a84d83a8fc44b374d630b55b06c52d43",
+      "approval_fingerprint": "49cf01525fd6ffd233b22f5bfa07793b02653d28cc6a12083b360d24f59eeb60",
+      "targets": [
+        {
+          "target_id": "TGT-0e7427350ea84abbfe44",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 24,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 1,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-07-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 100,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT08-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "a6f82e147df6e1ea9e1279fe03ed26ac163cdc04c5c2b7b42d645d0863547c62",
+      "approval_fingerprint": "1f224e82cedb7b58eff18ed42df0827b745cd709951da2967c8d50c01d40af38",
+      "targets": [
+        {
+          "target_id": "TGT-cfe7bee12c930fdf869a",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 24,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 2,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_deletions_count": 1,
+            "explicitly_authorized_deletions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-08-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 281,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-4e96fd535d3e88093b64",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 24,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 63
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 72
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 74
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 103
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 160
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 250
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 63,
+              "end": 64,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 72,
+              "end": 73,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 74,
+              "end": 75,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 103,
+              "end": 105,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 160,
+              "end": 162,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 250,
+              "end": 252,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-08-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT09A-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "0a1fb6a31863d21020c2555ba8252006a992e8fe2d4337cd422108aa2676fd2a",
+      "approval_fingerprint": "8c9828ca2c3bf2e44951d691524188a4c5a000d89a153ce78cad583777499450",
+      "targets": [
+        {
+          "target_id": "TGT-836b02bd10c73c126a8e",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 25,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 1,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-09-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 305,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-f7e7bb26f81c6a08c924",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 25,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 40
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 94
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 236
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 280
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 40,
+              "end": 41,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 94,
+              "end": 101,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 236,
+              "end": 250,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 280,
+              "end": 281,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-09-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT09B-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "9aa964d8c9bdc0fb41178a57efa99739bcb7193031f31306f3d406e3556c1a13",
+      "approval_fingerprint": "f454e3bbe807b010b151f9d8bba092d91e343f009b4257828d9f1260150ea17c",
+      "targets": [
+        {
+          "target_id": "TGT-27c5efe858e097f3e120",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 25,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-09-03"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 175,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-aa6dbd6cc464284b24e8",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 25,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": false
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 42
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 52
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 42,
+              "end": 52,
+              "properties": {
+                "i": false
+              }
+            },
+            {
+              "start": 52,
+              "end": 53,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-09-04"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10A-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "d4bbf97f9966546b69c3a4b151ded5ef373cf22f728eab227075bff6c7f75937",
+      "approval_fingerprint": "4c282ba6b20a843539ecf451b48cbbed79ee3c2c3a27076b08d0a08a9ec50d38",
+      "targets": [
+        {
+          "target_id": "TGT-28dfc188487377864434",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 26,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 4,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 386,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-720f48fb4288428de7d7",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 26,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 53
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 119
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 174
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 297
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 370
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 53,
+              "end": 55,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 119,
+              "end": 120,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 174,
+              "end": 176,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 297,
+              "end": 299,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 370,
+              "end": 371,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-10-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10B-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "116e43672aff3dba4bd8b9a591d1c46e771f349f7214feb95f24352ebe852e1f",
+      "approval_fingerprint": "fd90ba79d2453cb94a0ec664343c9b92f40465c2dc6d2886c0f5d71ce53b78de",
+      "targets": [
+        {
+          "target_id": "TGT-752fdaa6863261d5cc6c",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 28,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-03"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 30,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10C-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "24fda63b6cd7e05456d8c99af238d6fc0faf3ea47795a26b90225acc6d35573a",
+      "approval_fingerprint": "64650b346e976d28b497155b86927fc4d49d07455a7496d058f4cddc46b92939",
+      "targets": [
+        {
+          "target_id": "TGT-63b132c9a6e148c112e8",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 28,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-04"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 36,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10D-INS",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "0db98600ed415f6fd3134b19f7b3c4cbff1eadcd6152693b5f8cc9ec012c7492",
+      "approval_fingerprint": "44dcd3888bbf66b2c31d4f5db88fa5fa6d3beb5e89d156b6f7d535255912e4c9",
+      "targets": [
+        {
+          "target_id": "TGT-bace303ec43ab857ca08",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 77,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "operation_id": "MT10D-INS-OP001",
+          "target_identity_mode": "legacy_p_idx_explicit",
+          "action": "insert_paragraph",
+          "anchor_text": "[REDACTED — public repository: verbatim text withheld]",
+          "position": "after",
+          "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "authorization_source": {
+              "source_file": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+              "source_sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+              "requirement_id": "REQ-MT-10-05",
+              "source_locator": "L147–L169",
+              "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+              "instruction_action": "insert",
+              "instruction_polarity": "affirmative",
+              "instruction_object": "[REDACTED — public repository: verbatim text withheld]"
+            },
+            "explicitly_authorized_insertions_count": 7,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-05",
+            "REQ-MT-10-10"
+          ],
+          "inserted_format_map": [
+            {
+              "inserted_start": 0,
+              "inserted_end": 127,
+              "source_offset": 1
+            },
+            {
+              "inserted_start": 127,
+              "inserted_end": 146,
+              "source_offset": 125
+            },
+            {
+              "inserted_start": 146,
+              "inserted_end": 153,
+              "source_offset": 1
+            },
+            {
+              "inserted_start": 153,
+              "inserted_end": 155,
+              "source_offset": 145
+            },
+            {
+              "inserted_start": 155,
+              "inserted_end": 165,
+              "source_offset": 1
+            }
+          ],
+          "location_phrase": "[33] de Faria, D. L. A.; Venâncio Silva, S.; de Oliveira, M. T. Raman microspectroscopy of some iron oxides and oxyhydroxides. J. Raman Spectrosc. 1997, 28, 873–878.",
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10H-INS",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "da15101839cfddbd8cdaef332feb156d261a2ef7475fc36af391d6589c9b3a77",
+      "approval_fingerprint": "d91b45aaeb75ad2d69640ef859ce2fd1d18211d5faf5057053b1f506ff47f3fd",
+      "targets": [
+        {
+          "target_id": "TGT-24a06c2b5e3b4b72db4d",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 77,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "operation_id": "MT10H-INS-OP001",
+          "target_identity_mode": "legacy_p_idx_explicit",
+          "action": "insert_paragraph",
+          "anchor_text": "[REDACTED — public repository: verbatim text withheld]",
+          "position": "after",
+          "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "authorization_source": {
+              "source_file": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+              "source_sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+              "requirement_id": "REQ-MT-10-09",
+              "source_locator": "L147–L169",
+              "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+              "instruction_action": "insert",
+              "instruction_polarity": "affirmative",
+              "instruction_object": "[REDACTED — public repository: verbatim text withheld]"
+            },
+            "explicitly_authorized_insertions_count": 6,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-09",
+            "REQ-MT-10-11"
+          ],
+          "inserted_format_map": [
+            {
+              "inserted_start": 0,
+              "inserted_end": 151,
+              "source_offset": 1
+            },
+            {
+              "inserted_start": 151,
+              "inserted_end": 167,
+              "source_offset": 125
+            },
+            {
+              "inserted_start": 167,
+              "inserted_end": 174,
+              "source_offset": 1
+            },
+            {
+              "inserted_start": 174,
+              "inserted_end": 177,
+              "source_offset": 145
+            },
+            {
+              "inserted_start": 177,
+              "inserted_end": 187,
+              "source_offset": 1
+            }
+          ],
+          "location_phrase": "[34] Hanesch, M. Raman spectroscopy of iron oxides and (oxy)hydroxides at low laser power and possible applications in environmental magnetic studies. Geophys. J. Int. 2009, 177, 941–948.",
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10E-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "56d3f4c13abc9d98c33093c1babae062e407ff1bd1387e670ed6fcd0683761c8",
+      "approval_fingerprint": "0fedfb07b89f61666b2028a96a6555d87f0f79e6b74f99364b28b7dea2011676",
+      "targets": [
+        {
+          "target_id": "TGT-14d1b02e42a52cea715f",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 78,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-06"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 14,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10F-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "ee687fe15e5100c84a5902896d8ce08de2adf0835e0d546af148d125023d9ee7",
+      "approval_fingerprint": "5eb0f4068cfa72cd8b46a42ebdeaaf1c54952eb176661997431a937078c546d5",
+      "targets": [
+        {
+          "target_id": "TGT-64aa805a7f81cef27792",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 79,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-07"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 16,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT10G-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "f53d7285422f2d9ff1e2118ecd49d1f0f83ca1e6a2d192fc1dde221bd5cd009c",
+      "approval_fingerprint": "1ec8f16cf63bb99dc10bc3b7f76b8f6f72c8e14697da710cf868553912c4d4d1",
+      "targets": [
+        {
+          "target_id": "TGT-1bdd227b849a95e773e8",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 80,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 1,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-10-08"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 17,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT11-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "81d21cad304c25de2827f647494c13a82d32d45ddd3faf160c8d703bcc7b0cbe",
+      "approval_fingerprint": "c6ff31e39001e0c9ace2f9dc0ec0d0ed531c7f61760ae967374d4ecd49f78d58",
+      "targets": [
+        {
+          "target_id": "TGT-0f7916f5c060bb14325e",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 28,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 2,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_deletions_count": 1,
+            "explicitly_authorized_deletions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-11-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 353,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-526fd1e3b324d58276f5",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 28,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 56
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 251
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 345
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 56,
+              "end": 58,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 251,
+              "end": 253,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 345,
+              "end": 346,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-11-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT12-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "5bae939a1cd58703f658829c7cc64c4b1c6cc12186d9771edc11c86dd813c650",
+      "approval_fingerprint": "0d654d1a8a35cbf360979f5dd83095fa81056b38ba2826377bd1bd8e6bb285bd",
+      "targets": [
+        {
+          "target_id": "TGT-d4bac29dfca70e734bc2",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 29,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 1,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-12-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 291,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-ce8cd0bb1cdc0fb3dccd",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 29,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 168
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 168,
+              "end": 169,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-12-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT13-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "1e03cb0fb0b5f4cedc8c0eccf70f11f8d5ab2abd8e92d007a3fef1e3fe250fb6",
+      "approval_fingerprint": "e347a54273a56d66396e058222679a379effd3d007a17c9cefb18be0428d0e6e",
+      "targets": [
+        {
+          "target_id": "TGT-5799cb6201ea84d8951f",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 31,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-13-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 274,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-5490b4d83f95b371e055",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 31,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 41
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 41,
+              "end": 42,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-13-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT15-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "3d3c8bc66be45fef09993ffe20d1f27cc421c7193e0b10bad30bfb8b355e3843",
+      "approval_fingerprint": "4b374ea04839ed1106c4351c3860af19914b11314d07b905dcb3ff3b53a8a786",
+      "targets": [
+        {
+          "target_id": "TGT-67f31b8e6d17ec1349d6",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 34,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_tokens_count": 2,
+            "explicitly_authorized_tokens": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-15-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 335,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-4a6a313e67b46a2f1a95",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 34,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 42
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 272
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 42,
+              "end": 44,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 272,
+              "end": 274,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-MT-15-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "MT17-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "8c3ace934a8259f4bb050b466e746a8206f33ffa608dd8059e62d7f57c0fd2a5",
+      "approval_fingerprint": "691f4981d4b5df6305e461369ee848d74a14225f1ae4bec88ab893dffe896a02",
+      "targets": [
+        {
+          "target_id": "TGT-a7c2cbdabb417d903ef8",
+          "document": "Manuscript",
+          "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 40,
+          "source_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-MT-17-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 48,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "SI03-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "8b5faff15e96ecc00b37f598d30bab3a6943fe8e0e704263948526224238b776",
+      "approval_fingerprint": "b1b97c43cde08dabf45b25a8f364ca1ad5c786412f2535f075540e393d292bd7",
+      "targets": [
+        {
+          "target_id": "TGT-17a5e995b7adf829299e",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 12,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 6,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-SI-03-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 371,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-b67e1c3a743ee501b6c3",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 12,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 224
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 224,
+              "end": 227,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-SI-03-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "SI04-REP",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "aedf77193bcafaed8be0ab92d48049a55906e6feb94a4095e674921668bd5385",
+      "approval_fingerprint": "967d034530bf0ca8965c51f7f3eed1750893295f250334a65e9705fdf38f3534",
+      "targets": [
+        {
+          "target_id": "TGT-03881c97db98b66cc3aa",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 16,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_insertions_count": 9,
+            "explicitly_authorized_insertions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-SI-04-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 334,
+              "source_offset": 1
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-548a305aea4c7ddd876a",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 16,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 76
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 104
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 107
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "superscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 123
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 189
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "i": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 229
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 76,
+              "end": 79,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 104,
+              "end": 105,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 107,
+              "end": 110,
+              "properties": {
+                "i": true
+              }
+            },
+            {
+              "start": 123,
+              "end": 124,
+              "properties": {
+                "vertAlign": "superscript"
+              }
+            },
+            {
+              "start": 189,
+              "end": 190,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 229,
+              "end": 243,
+              "properties": {
+                "i": true
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-SI-04-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    },
+    {
+      "id": "SI09-DEL",
+      "reviewer": "Author",
+      "status": "approved",
+      "authorization_mode": "instruction_based",
+      "preflight_fingerprint": "928cc3f85f4186b847b259b5c01acddcb7693a516ed9395d62d38726ceb483a0",
+      "approval_fingerprint": "8cefd35a58bd80c6b714b94ad78f095c4982e2fc458291ae037f1b01c5a6acdf",
+      "targets": [
+        {
+          "target_id": "TGT-6d7e2eb4b68aa310318f",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 62,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]",
+            "explicitly_authorized_deletions_count": 3,
+            "explicitly_authorized_deletions": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "instruction_requirement_ids": [
+            "REQ-SI-09-01"
+          ],
+          "replacement_format_map": [
+            {
+              "replacement_start": 0,
+              "replacement_end": 149,
+              "source_offset": 9
+            }
+          ],
+          "authorization_mode": "instruction_based"
+        },
+        {
+          "target_id": "TGT-7f91e1c184736fc1a023",
+          "document": "SI",
+          "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+          "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+          "part": "word/document.xml",
+          "p_idx": 62,
+          "source_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+          "find": "[REDACTED — public repository: verbatim text withheld]",
+          "replace": "[REDACTED — public repository: verbatim text withheld]",
+          "authorized_change": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_authorization": {
+            "intent": "[REDACTED — public repository: verbatim text withheld]"
+          },
+          "format_operations": [
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "b": true
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 0
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 64
+            },
+            {
+              "find": "[REDACTED — public repository: verbatim text withheld]",
+              "properties": {
+                "vertAlign": "subscript"
+              },
+              "scope_find": "[REDACTED — public repository: verbatim text withheld]",
+              "scope_offset": 102
+            }
+          ],
+          "format_operation_contract": [
+            {
+              "start": 0,
+              "end": 9,
+              "properties": {
+                "b": true
+              }
+            },
+            {
+              "start": 64,
+              "end": 65,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            },
+            {
+              "start": 102,
+              "end": 103,
+              "properties": {
+                "vertAlign": "subscript"
+              }
+            }
+          ],
+          "instruction_requirement_ids": [
+            "REQ-SI-09-02"
+          ],
+          "applies_to_target_index": 0,
+          "authorization_mode": "instruction_based"
+        }
+      ]
+    }
+  ]
+}

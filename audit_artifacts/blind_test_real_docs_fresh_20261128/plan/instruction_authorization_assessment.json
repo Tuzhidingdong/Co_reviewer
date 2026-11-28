@@ -1,0 +1,245 @@
+{
+  "schema_version": "1.0",
+  "status": "eligible",
+  "preflight_plan_sha256": "b513ab9aa4d2831f50faa228276f8e576d1d9d3a10e7d59aa5197b22d2a7a3e1",
+  "source_instruction_sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+  "coverage_sha256": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+  "reviewed_requirement_ids": [
+    "REQ-CL-01-01",
+    "REQ-CL-01-02",
+    "REQ-CL-02-01",
+    "REQ-CL-02-02",
+    "REQ-CL-02-03",
+    "REQ-CL-03-01",
+    "REQ-CL-04-01",
+    "REQ-CL-04-02",
+    "REQ-MT-01-01",
+    "REQ-MT-02-01",
+    "REQ-MT-03-01",
+    "REQ-MT-03-02",
+    "REQ-MT-04-01",
+    "REQ-MT-06-01",
+    "REQ-MT-06-02",
+    "REQ-MT-07-01",
+    "REQ-MT-08-01",
+    "REQ-MT-08-02",
+    "REQ-MT-09-01",
+    "REQ-MT-09-02",
+    "REQ-MT-09-03",
+    "REQ-MT-09-04",
+    "REQ-MT-10-01",
+    "REQ-MT-10-02",
+    "REQ-MT-10-03",
+    "REQ-MT-10-04",
+    "REQ-MT-10-05",
+    "REQ-MT-10-10",
+    "REQ-MT-10-09",
+    "REQ-MT-10-11",
+    "REQ-MT-10-06",
+    "REQ-MT-10-07",
+    "REQ-MT-10-08",
+    "REQ-MT-11-01",
+    "REQ-MT-11-02",
+    "REQ-MT-12-01",
+    "REQ-MT-12-02",
+    "REQ-MT-13-01",
+    "REQ-MT-13-02",
+    "REQ-MT-15-01",
+    "REQ-MT-15-02",
+    "REQ-MT-17-01",
+    "REQ-SI-03-01",
+    "REQ-SI-03-02",
+    "REQ-SI-04-01",
+    "REQ-SI-04-02",
+    "REQ-SI-09-01",
+    "REQ-SI-09-02"
+  ],
+  "reviewed_target_refs": [
+    {
+      "revision_item_id": "CL01-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "CL01-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "CL03-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT01-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT02-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT03A-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT03B-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT04-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT07-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT10B-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10C-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10D-INS",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10H-INS",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10E-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10F-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT10G-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "MT17-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "target_index": 1
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "target_index": 0
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "target_index": 1
+    }
+  ],
+  "unresolved_conflicts": [],
+  "uncovered_requirements": [],
+  "out_of_scope_targets": [],
+  "unresolved_questions": [],
+  "review_notes": "[REDACTED — public repository: verbatim text withheld]",
+  "sanitized": true
+}

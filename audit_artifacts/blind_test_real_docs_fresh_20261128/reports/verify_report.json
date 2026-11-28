@@ -1,0 +1,311 @@
+{
+  "scope": "Mechanical DOCX Track Changes verification and untracked-text audit, plus package Reference Graph verification when a reference transaction is present; scientific correctness still requires separate review.",
+  "targets_total": 45,
+  "targets_verified": 45,
+  "targets_failed": 0,
+  "untracked_text_audit": {
+    "passed": true,
+    "documents_checked": 3,
+    "violations": []
+  },
+  "reference_transaction": {
+    "passed": true,
+    "checked": false,
+    "errors": []
+  },
+  "character_format_integrity": {
+    "status": "PASS",
+    "passed": true,
+    "checked_targets": 43,
+    "checked_characters": 19084,
+    "violations": [],
+    "unverified": []
+  },
+  "format_operation_contract_integrity": {
+    "status": "PASS",
+    "passed": true,
+    "checked_targets": 15,
+    "violations": [],
+    "unverified": []
+  },
+  "passed": true,
+  "authorized_plan_sha256": "148c6d4c14d372b5e29b28066665b02e5edadc7866df9274469a376903c51f14",
+  "plan_file": "<ROUND_ROOT>\\plan\\revision_plan.instruction_authorized.json",
+  "authorization_sha256": "10fac4f2f888cda967133a73d71c473f8d2d52c25b878eb33064eaddb10cfb2b",
+  "round_id": "<ROUND_ROOT>\\plan",
+  "expected_targets": 45,
+  "results": [
+    {
+      "revision_item_id": "CL01-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL01-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL03-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT01-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT02-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT03A-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT03B-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT04-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT07-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10B-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10C-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10D-INS",
+      "status": "verified",
+      "check_pass_count": 10,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10H-INS",
+      "status": "verified",
+      "check_pass_count": 10,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10E-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10F-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT10G-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "MT17-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "status": "verified",
+      "check_pass_count": 8,
+      "check_fail_count": 0
+    }
+  ],
+  "covered_targets_count": 0,
+  "sanitized": true
+}

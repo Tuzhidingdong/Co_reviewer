@@ -1,0 +1,579 @@
+{
+  "documents": {
+    "Other": {
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "output_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx"
+    },
+    "Manuscript": {
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "output_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx"
+    },
+    "SI": {
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "output_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx"
+    }
+  },
+  "sanitized": true,
+  "note": "find/replace/inserted_text withheld; lengths and source-offset format maps preserved",
+  "intents": [
+    {
+      "id": "CL01-REP",
+      "doc_role": "Other",
+      "action": "replace",
+      "target_p_idx": 4,
+      "instruction_requirement_ids": [
+        "REQ-CL-01-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 49,
+      "replace_length": 63,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-CL-01-02"
+      ]
+    },
+    {
+      "id": "CL02-REP",
+      "doc_role": "Other",
+      "action": "replace",
+      "target_p_idx": 5,
+      "instruction_requirement_ids": [
+        "REQ-CL-02-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 150,
+      "replace_length": 251,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-CL-02-02"
+      ]
+    },
+    {
+      "id": "CL03-REP",
+      "doc_role": "Other",
+      "action": "replace",
+      "target_p_idx": 7,
+      "instruction_requirement_ids": [
+        "REQ-CL-03-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 146,
+      "replace_length": 151,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "CL04-REP",
+      "doc_role": "Other",
+      "action": "replace",
+      "target_p_idx": 8,
+      "instruction_requirement_ids": [
+        "REQ-CL-04-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 237,
+      "replace_length": 337,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-CL-04-02"
+      ]
+    },
+    {
+      "id": "MT01-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 14,
+      "instruction_requirement_ids": [
+        "REQ-MT-01-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 152,
+      "replace_length": 199,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT02-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 17,
+      "instruction_requirement_ids": [
+        "REQ-MT-02-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 150,
+      "replace_length": 191,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT03A-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 16,
+      "instruction_requirement_ids": [
+        "REQ-MT-03-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 126,
+      "replace_length": 178,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT03B-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 17,
+      "instruction_requirement_ids": [
+        "REQ-MT-03-02"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 118,
+      "replace_length": 143,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT04-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 19,
+      "instruction_requirement_ids": [
+        "REQ-MT-04-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 172,
+      "replace_length": 205,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT06-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 22,
+      "instruction_requirement_ids": [
+        "REQ-MT-06-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 128,
+      "replace_length": 250,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-06-02"
+      ]
+    },
+    {
+      "id": "MT07-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 24,
+      "instruction_requirement_ids": [
+        "REQ-MT-07-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 95,
+      "replace_length": 100,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT08-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 24,
+      "instruction_requirement_ids": [
+        "REQ-MT-08-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 160,
+      "replace_length": 294,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-08-02"
+      ]
+    },
+    {
+      "id": "MT09A-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 25,
+      "instruction_requirement_ids": [
+        "REQ-MT-09-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 182,
+      "replace_length": 313,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-09-02"
+      ]
+    },
+    {
+      "id": "MT09B-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 25,
+      "instruction_requirement_ids": [
+        "REQ-MT-09-03"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 153,
+      "replace_length": 177,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-09-04"
+      ]
+    },
+    {
+      "id": "MT10A-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 26,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 256,
+      "replace_length": 396,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-10-02"
+      ]
+    },
+    {
+      "id": "MT10B-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 28,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-03"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 30,
+      "replace_length": 30,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT10C-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 28,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-04"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 36,
+      "replace_length": 36,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT10D-INS",
+      "doc_role": "Manuscript",
+      "action": "insert_paragraph",
+      "target_p_idx": 77,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-05",
+        "REQ-MT-10-10"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 162,
+      "replace_length": 165,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "position": "after"
+    },
+    {
+      "id": "MT10H-INS",
+      "doc_role": "Manuscript",
+      "action": "insert_paragraph",
+      "target_p_idx": 77,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-09",
+        "REQ-MT-10-11"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 162,
+      "replace_length": 187,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "position": "after"
+    },
+    {
+      "id": "MT10E-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 78,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-06"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 14,
+      "replace_length": 14,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT10F-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 79,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-07"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 16,
+      "replace_length": 16,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT10G-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 80,
+      "instruction_requirement_ids": [
+        "REQ-MT-10-08"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 17,
+      "replace_length": 17,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "MT11-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 28,
+      "instruction_requirement_ids": [
+        "REQ-MT-11-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 168,
+      "replace_length": 359,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-11-02"
+      ]
+    },
+    {
+      "id": "MT12-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 29,
+      "instruction_requirement_ids": [
+        "REQ-MT-12-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 254,
+      "replace_length": 293,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-12-02"
+      ]
+    },
+    {
+      "id": "MT13-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 31,
+      "instruction_requirement_ids": [
+        "REQ-MT-13-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 120,
+      "replace_length": 276,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-13-02"
+      ]
+    },
+    {
+      "id": "MT15-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 34,
+      "instruction_requirement_ids": [
+        "REQ-MT-15-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 324,
+      "replace_length": 341,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-MT-15-02"
+      ]
+    },
+    {
+      "id": "MT17-REP",
+      "doc_role": "Manuscript",
+      "action": "replace",
+      "target_p_idx": 40,
+      "instruction_requirement_ids": [
+        "REQ-MT-17-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 56,
+      "replace_length": 48,
+      "replacement_format_map": [],
+      "inserted_format_map": []
+    },
+    {
+      "id": "SI03-REP",
+      "doc_role": "SI",
+      "action": "replace",
+      "target_p_idx": 12,
+      "instruction_requirement_ids": [
+        "REQ-SI-03-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 35,
+      "replace_length": 373,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-SI-03-02"
+      ]
+    },
+    {
+      "id": "SI04-REP",
+      "doc_role": "SI",
+      "action": "replace",
+      "target_p_idx": 16,
+      "instruction_requirement_ids": [
+        "REQ-SI-04-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 41,
+      "replace_length": 346,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-SI-04-02"
+      ]
+    },
+    {
+      "id": "SI09-DEL",
+      "doc_role": "SI",
+      "action": "replace",
+      "target_p_idx": 62,
+      "instruction_requirement_ids": [
+        "REQ-SI-09-01"
+      ],
+      "find": "[REDACTED — public repository: verbatim text withheld]",
+      "replace": "[REDACTED — public repository: verbatim text withheld]",
+      "inserted_text": "[REDACTED — public repository: verbatim text withheld]",
+      "intent": "[REDACTED — public repository: verbatim text withheld]",
+      "find_length": 244,
+      "replace_length": 157,
+      "replacement_format_map": [],
+      "inserted_format_map": [],
+      "format_instruction_requirement_ids": [
+        "REQ-SI-09-02"
+      ]
+    }
+  ]
+}

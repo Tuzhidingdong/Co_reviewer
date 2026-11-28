@@ -1,0 +1,872 @@
+{
+  "schema_version": "1.1",
+  "source_instruction": {
+    "file": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+    "sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f"
+  },
+  "coverage_sha256": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+  "sanitized": true,
+  "note": "verbatim excerpts/objects/evidence withheld; statuses, IDs and target links preserved",
+  "requirements": [
+    {
+      "requirement_id": "REQ-CL-01-01",
+      "task_id": "CL-01",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 15,
+      "source_line_end": 21,
+      "source_locator": "L15–L21",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL01-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-01-02",
+      "task_id": "CL-01",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 15,
+      "source_line_end": 22,
+      "source_locator": "L15–L22",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL01-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-02-01",
+      "task_id": "CL-02",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 25,
+      "source_line_end": 31,
+      "source_locator": "L25–L31",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL02-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-02-02",
+      "task_id": "CL-02",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 25,
+      "source_line_end": 32,
+      "source_locator": "L25–L32",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL02-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-02-03",
+      "task_id": "CL-02",
+      "instruction_action": "insert",
+      "instruction_polarity": "conditional",
+      "source_line_start": 25,
+      "source_line_end": 32,
+      "source_locator": "L25–L32",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "not_applicable",
+      "revision_targets": [],
+      "evidence": "[REDACTED — public repository: verbatim text withheld]"
+    },
+    {
+      "requirement_id": "REQ-CL-03-01",
+      "task_id": "CL-03",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 35,
+      "source_line_end": 41,
+      "source_locator": "L35–L41",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL03-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-04-01",
+      "task_id": "CL-04",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 45,
+      "source_line_end": 51,
+      "source_locator": "L45–L51",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL04-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-CL-04-02",
+      "task_id": "CL-04",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 45,
+      "source_line_end": 52,
+      "source_locator": "L45–L52",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "CL04-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-01-01",
+      "task_id": "MT-01",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 59,
+      "source_line_end": 65,
+      "source_locator": "L59–L65",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT01-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-02-01",
+      "task_id": "MT-02",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 69,
+      "source_line_end": 75,
+      "source_locator": "L69–L75",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT02-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-03-01",
+      "task_id": "MT-03",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 78,
+      "source_line_end": 84,
+      "source_locator": "L78–L84",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT03A-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-03-02",
+      "task_id": "MT-03",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 78,
+      "source_line_end": 89,
+      "source_locator": "L78–L89",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT03B-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-04-01",
+      "task_id": "MT-04",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 93,
+      "source_line_end": 99,
+      "source_locator": "L93–L99",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT04-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-06-01",
+      "task_id": "MT-06",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 104,
+      "source_line_end": 110,
+      "source_locator": "L104–L110",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT06-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-06-02",
+      "task_id": "MT-06",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 104,
+      "source_line_end": 111,
+      "source_locator": "L104–L111",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT06-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-07-01",
+      "task_id": "MT-07",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 114,
+      "source_line_end": 120,
+      "source_locator": "L114–L120",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT07-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-08-01",
+      "task_id": "MT-08",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 123,
+      "source_line_end": 129,
+      "source_locator": "L123–L129",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT08-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-08-02",
+      "task_id": "MT-08",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 123,
+      "source_line_end": 130,
+      "source_locator": "L123–L130",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT08-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-09-01",
+      "task_id": "MT-09",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 132,
+      "source_line_end": 138,
+      "source_locator": "L132–L138",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT09A-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-09-02",
+      "task_id": "MT-09",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 132,
+      "source_line_end": 144,
+      "source_locator": "L132–L144",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT09A-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-09-03",
+      "task_id": "MT-09",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 132,
+      "source_line_end": 143,
+      "source_locator": "L132–L143",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT09B-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-09-04",
+      "task_id": "MT-09",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 132,
+      "source_line_end": 144,
+      "source_locator": "L132–L144",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT09B-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-01",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10A-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-02",
+      "task_id": "MT-10",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10A-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-03",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10B-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-04",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10C-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-05",
+      "task_id": "MT-10",
+      "instruction_action": "insert",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10D-INS",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-10",
+      "task_id": "MT-10",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10D-INS",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-09",
+      "task_id": "MT-10",
+      "instruction_action": "insert",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10H-INS",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-11",
+      "task_id": "MT-10",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10H-INS",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-06",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10E-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-07",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10F-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-10-08",
+      "task_id": "MT-10",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 147,
+      "source_line_end": 169,
+      "source_locator": "L147–L169",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT10G-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-11-01",
+      "task_id": "MT-11",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 170,
+      "source_line_end": 176,
+      "source_locator": "L170–L176",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT11-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-11-02",
+      "task_id": "MT-11",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 170,
+      "source_line_end": 177,
+      "source_locator": "L170–L177",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT11-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-12-01",
+      "task_id": "MT-12",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 180,
+      "source_line_end": 186,
+      "source_locator": "L180–L186",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT12-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-12-02",
+      "task_id": "MT-12",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 180,
+      "source_line_end": 187,
+      "source_locator": "L180–L187",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT12-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-13-01",
+      "task_id": "MT-13",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 190,
+      "source_line_end": 196,
+      "source_locator": "L190–L196",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT13-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-13-02",
+      "task_id": "MT-13",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 190,
+      "source_line_end": 197,
+      "source_locator": "L190–L197",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT13-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-15-01",
+      "task_id": "MT-15",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 201,
+      "source_line_end": 207,
+      "source_locator": "L201–L207",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT15-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-15-02",
+      "task_id": "MT-15",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 201,
+      "source_line_end": 208,
+      "source_locator": "L201–L208",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT15-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-MT-17-01",
+      "task_id": "MT-17",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 212,
+      "source_line_end": 218,
+      "source_locator": "L212–L218",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "MT17-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-03-01",
+      "task_id": "SI-03",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 227,
+      "source_line_end": 233,
+      "source_locator": "L227–L233",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI03-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-03-02",
+      "task_id": "SI-03",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 227,
+      "source_line_end": 234,
+      "source_locator": "L227–L234",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI03-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-04-01",
+      "task_id": "SI-04",
+      "instruction_action": "replace",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 236,
+      "source_line_end": 242,
+      "source_locator": "L236–L242",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI04-REP",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-04-02",
+      "task_id": "SI-04",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 236,
+      "source_line_end": 243,
+      "source_locator": "L236–L243",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI04-REP",
+          "target_index": 1
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-09-01",
+      "task_id": "SI-09",
+      "instruction_action": "delete",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 249,
+      "source_line_end": 255,
+      "source_locator": "L249–L255",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI09-DEL",
+          "target_index": 0
+        }
+      ]
+    },
+    {
+      "requirement_id": "REQ-SI-09-02",
+      "task_id": "SI-09",
+      "instruction_action": "format",
+      "instruction_polarity": "affirmative",
+      "source_line_start": 249,
+      "source_line_end": 256,
+      "source_locator": "L249–L256",
+      "instruction_excerpt": "[REDACTED — public repository: verbatim text withheld]",
+      "instruction_object": "[REDACTED — public repository: verbatim text withheld]",
+      "status": "planned",
+      "revision_targets": [
+        {
+          "revision_item_id": "SI09-DEL",
+          "target_index": 1
+        }
+      ]
+    }
+  ]
+}

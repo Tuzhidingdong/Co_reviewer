@@ -1,0 +1,138 @@
+{
+  "schema_version": "1.0",
+  "generated_at_utc": "2026-11-28T13:04:36.722734+00:00",
+  "verdict": "READY",
+  "status": "PATCH_READY",
+  "verification_scope": "patch",
+  "round_status": "NOT_VERIFIED",
+  "round_complete": false,
+  "document_ready": true,
+  "patch_ready": true,
+  "status_semantics": {
+    "PATCH_READY": "Patch-scoped delivery checks passed; original round is not proven complete.",
+    "DOCUMENT_READY": "Document mechanical quality and role checks passed; edits are not proven complete.",
+    "ROUND_COMPLETE": "All original targets and formal patches have complete final verification.",
+    "NOT_VERIFIED": "Evidence is insufficient to prove all original targets are satisfied.",
+    "BLOCKED": "A check failed, the evidence chain broke, or a safety gate blocked delivery."
+  },
+  "gates": {
+    "instruction_coverage": "PASS",
+    "verify": "PASS",
+    "instruction_lifecycle": "PASS",
+    "character_format_integrity": "PASS",
+    "format_operation_contract": "PASS",
+    "docx_quality": "PASS",
+    "word_com_pdf": "PASS",
+    "zero_silent_fallback": "PASS"
+  },
+  "waived": false,
+  "waive_fallback_reason": null,
+  "reconciliation": {
+    "input_items": 30,
+    "applied_text_edits": 30,
+    "applied_format_changes": 15,
+    "failed": 0,
+    "manual_fallback": 0,
+    "blocked_count": 0,
+    "skipped_format_ops": 0,
+    "quality_status": "PASS",
+    "pdf_render_status": "PASS",
+    "instruction_coverage_status": "PASS"
+  },
+  "script_integrity": {
+    "checked": 43,
+    "passed": true,
+    "failed_targets": []
+  },
+  "character_format_integrity": {
+    "status": "PASS",
+    "checked_targets": 43,
+    "checked_characters": 19084,
+    "violations": [],
+    "unverified": []
+  },
+  "format_operation_contract_integrity": {
+    "status": "PASS",
+    "checked_targets": 15,
+    "violations": [],
+    "unverified": []
+  },
+  "fallback_details": [],
+  "blockers": [],
+  "documents": [
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "profile": "marked-manuscript",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "errors": []
+    },
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "profile": "clean-manuscript",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\art_file_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "errors": []
+    },
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.docx",
+      "profile": "marked-manuscript",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.marked.pdf",
+      "errors": []
+    },
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.clean.docx",
+      "profile": "cover-letter",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\Cover_Letter_Nature_Water.clean.pdf",
+      "errors": []
+    },
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.docx",
+      "profile": "marked-manuscript",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.marked.pdf",
+      "errors": []
+    },
+    {
+      "docx_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.clean.docx",
+      "profile": "clean-manuscript",
+      "quality_status": "PASS",
+      "quality_failures": 0,
+      "pdf_render_status": "PASS",
+      "pdf_file": "<ROUND_ROOT>\\output\\SI_water_[AUTHOR_REDACTED]_clean.clean.pdf",
+      "errors": []
+    }
+  ],
+  "instruction_coverage": {
+    "passed": true,
+    "authorization_mode": "instruction_based",
+    "coverage_sha256": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+    "source_instruction": {
+      "file": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+      "sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f"
+    },
+    "requirement_count": 48,
+    "planned_count": 47,
+    "no_change_count": 1,
+    "manual_completed_count": 0,
+    "unresolved_count": 0,
+    "linked_revision_item_count": 30,
+    "linked_revision_target_count": 45,
+    "unlinked_revision_item_ids": [],
+    "unlinked_revision_targets": [],
+    "errors": []
+  },
+  "sanitized": true
+}

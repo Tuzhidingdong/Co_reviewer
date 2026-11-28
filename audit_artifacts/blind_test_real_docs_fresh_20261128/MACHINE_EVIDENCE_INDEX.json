@@ -1,0 +1,142 @@
+{
+  "schema": "co-reviewer-public-audit-evidence-v1",
+  "sanitized": true,
+  "sanitization_note": "Verbatim instruction/manuscript text, personal names and DOCX/PDF bodies withheld because the GitHub repository is public. All hashes, IDs, statuses, timestamps, counts and correction history are unchanged from the local Round.",
+  "baseline": {
+    "github_repository": "Tuzhidingdong/co_reviewer",
+    "visibility": "public",
+    "commit": "32e08dd42613c38a101b720cbf420e33fcff4813",
+    "development_branch": "feat/format-real-docx-acceptance-batch5-20261128",
+    "audit_branch": "audit/real-docx-blind-test-20261128",
+    "round": "blind_test_real_docs_fresh_20261128"
+  },
+  "timestamps_utc": {
+    "preflight_report_generated": "2026-11-28T13:02:13.093486+00:00",
+    "instruction_authorization_issued": "2026-11-28T13:02:14.318758+00:00",
+    "final_gate_generated": "2026-11-28T13:04:36.722734+00:00"
+  },
+  "source_hashes": {
+    "instruction_txt": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+    "manuscript_docx": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+    "cover_letter_docx": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+    "si_docx": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+    "originals_unchanged_after_run": true,
+    "round_copies_identical": true
+  },
+  "chain_hashes": {
+    "instruction_analysis": "2e20e32fa1e9103e343a8c4cfb53ae8a307835ef5fe3effcc5b9b5aaa8abecd0",
+    "instruction_coverage": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+    "preflighted_plan": "b513ab9aa4d2831f50faa228276f8e576d1d9d3a10e7d59aa5197b22d2a7a3e1",
+    "instruction_authorized_plan": "148c6d4c14d372b5e29b28066665b02e5edadc7866df9274469a376903c51f14",
+    "instruction_based_authorization": "10fac4f2f888cda967133a73d71c473f8d2d52c25b878eb33064eaddb10cfb2b"
+  },
+  "instruction_analysis": {
+    "requirement_count": 48,
+    "actions": ["replace", "delete", "insert", "format"],
+    "polarities": ["affirmative", "conditional"],
+    "conditional_requirement_disposition": "not_applicable",
+    "agent_produced_action_and_polarity": true,
+    "hand_filled_action_or_polarity": false
+  },
+  "coverage": {
+    "schema_version": "1.1",
+    "requirement_count": 48,
+    "planned": 47,
+    "no_change_or_not_applicable": 1,
+    "blocked_or_deferred": 0,
+    "linked_revision_items": 30,
+    "linked_revision_targets": 45
+  },
+  "plan": {
+    "revision_items": 30,
+    "targets": 45,
+    "format_change_targets": 15,
+    "insert_paragraph_targets": 1,
+    "preflight": "45/45 safe to apply"
+  },
+  "authorization": {
+    "type": "instruction_based_authorization",
+    "status": "authorized",
+    "issued_by": "Co_Reviewer automated instruction-scope policy",
+    "human_approval_fabricated": false,
+    "authorized_targets": 45
+  },
+  "apply": {
+    "cover_letter_edits": "7/7",
+    "manuscript_edits": "32/32",
+    "si_edits": "6/6",
+    "native_track_changes": true
+  },
+  "verify": {
+    "targets_total": 45,
+    "targets_verified": 45,
+    "targets_failed": 0,
+    "untracked_text_violations": 0,
+    "script_integrity": "PASS",
+    "character_format_integrity": "PASS"
+  },
+  "independent_acceptance": {
+    "text_checks_total": 58,
+    "text_checks_passed": 58,
+    "format_checks_total": 25,
+    "format_checks_passed": 25,
+    "marked_revisions": {
+      "manuscript": {"ins": 23, "del": 21},
+      "cover_letter": {"ins": 4, "del": 4},
+      "si": {"ins": 3, "del": 3}
+    },
+    "clean_revisions": {"manuscript": {"ins": 0, "del": 0}, "cover_letter": {"ins": 0, "del": 0}, "si": {"ins": 0, "del": 0}},
+    "clean_comment_parts": 0
+  },
+  "final_gate": {
+    "verdict": "READY",
+    "status": "PATCH_READY",
+    "verification_scope": "patch",
+    "round_status": "NOT_VERIFIED",
+    "gates": {
+      "instruction_coverage": "PASS",
+      "verify": "PASS",
+      "instruction_lifecycle": "PASS",
+      "character_format_integrity": "PASS",
+      "format_operation_contract": "PASS",
+      "docx_quality": "PASS",
+      "word_com_pdf": "PASS",
+      "zero_silent_fallback": "PASS"
+    },
+    "reconciliation": {
+      "input_items": 30,
+      "applied_text_edits": 30,
+      "applied_format_changes": 15,
+      "failed": 0,
+      "manual_fallback": 0,
+      "blocked_count": 0,
+      "skipped_format_ops": 0
+    },
+    "blockers": []
+  },
+  "fail_closed_corrections": [
+    {"step": 1, "error": "Unsupported doc_role", "resolution": "use legal role Other"},
+    {"step": 2, "error": "VERTICAL_ALIGNMENT_TARGET_TOO_BROAD", "resolution": "escape literal delimiter"},
+    {"step": 3, "error": "MIXED_RUN_FORMAT_REPLACEMENT_REQUIRES_EXPLICIT_SEGMENT_PLAN", "resolution": "supply complete source-offset format map"},
+    {"step": 4, "error": "NAIVE_SINGLE_SEGMENT_FORMAT_FLATTEN_BLOCKED", "resolution": "use non-zero plain source offset"},
+    {"step": 5, "error": "Tabs/newlines are not supported in safe find/replace text", "resolution": "split two insertions"},
+    {"step": 6, "error": "insert format target absent from source document", "resolution": "inherit source Run formatting via inserted_format_map"},
+    {"step": 7, "error": "PARAGRAPH_INSERTION_AMBIGUOUS_CHARACTER_FORMAT", "resolution": "provide segmented inserted_format_map"},
+    {"step": 8, "error": "character_format_integrity FAIL (1 target)", "resolution": "explicit baseline FormatChange; recompile/reauthorize; 45/45 PASS"}
+  ],
+  "local_deliverable_hashes": {
+    "manuscript_marked_docx": "7835a50ef432f441ca302e4914404f6e848732698fbdca04c1c74bf97f7d0a07",
+    "manuscript_clean_docx": "f1b2a3cb4004212a90509778261c71513a61b02c761fd66924fc2afaaebcd8d7",
+    "manuscript_marked_pdf": "eaabf5c6a0dacec3bc34f16b05ad516f2a5e3f76157e2780011bf79d9904e98b",
+    "manuscript_clean_pdf": "3941ffcb20864c36873699771b51978857d21a439ba62be019f8a3821496c097",
+    "cover_letter_marked_docx": "0c06429d3ef12d3196efc1c390f523cc4d8a99ce4fcda347c2f94800ad5bb444",
+    "cover_letter_clean_docx": "dbd0dfbb6184092ea3401287883b3d493e16fc6d0da9712d1e8d62051ba97c6a",
+    "cover_letter_marked_pdf": "3618f33e6324caf5be54c0b86afa93915d7a1f4ac8ca3d1f4d4132b4f3cf4e34",
+    "cover_letter_clean_pdf": "b5369ad7c64aeee3d5d57455906e38a5ccd233b8b80d510d9a1dd2682fe7ce07",
+    "si_marked_docx": "691fe765c316b71706dadb7e9eca038beabf7f0ee736dec6085903e7c036f1ca",
+    "si_clean_docx": "26b87b26fcc16d0202f33f31e9c15e45a7c9d35891418d2e6896f880b0c558e3",
+    "si_marked_pdf": "29b1324fce1be735aac7fa84b31d4287b60a0799727c82b95624d6a73d022e60",
+    "si_clean_pdf": "08f0d8724639d01b0cd62a43c35abdf737c38596ba12899f095697c6fd6f11d4"
+  },
+  "uploaded_document_bodies": false
+}

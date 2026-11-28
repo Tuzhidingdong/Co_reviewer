@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-11-28T13:02:13.093486+00:00",
+  "passed": true,
+  "targets_total": 45,
+  "targets_preflighted": 45,
+  "targets_executed_preflight": 45,
+  "targets_delegated": 0,
+  "targets_covered_by_transaction": 0,
+  "source_files": [
+    {
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    }
+  ],
+  "execution_order": [
+    "CL01-REP",
+    "CL02-REP",
+    "CL03-REP",
+    "CL04-REP",
+    "MT01-REP",
+    "MT02-REP",
+    "MT03A-REP",
+    "MT03B-REP",
+    "MT04-REP",
+    "MT06-REP",
+    "MT07-REP",
+    "MT08-REP",
+    "MT09A-REP",
+    "MT09B-REP",
+    "MT10A-REP",
+    "MT10B-REP",
+    "MT10C-REP",
+    "MT10D-INS",
+    "MT10H-INS",
+    "MT10E-REP",
+    "MT10F-REP",
+    "MT10G-REP",
+    "MT11-REP",
+    "MT12-REP",
+    "MT13-REP",
+    "MT15-REP",
+    "MT17-REP",
+    "SI03-REP",
+    "SI04-REP",
+    "SI09-DEL"
+  ],
+  "execution_dependencies": [],
+  "results_count": 45,
+  "sanitized": true,
+  "note": "target text and per-target findings withheld; counts, hashes and file hashes preserved"
+}

@@ -1,0 +1,646 @@
+{
+  "schema_version": "1.0",
+  "authorization_type": "instruction_based_authorization",
+  "status": "authorized",
+  "issued_by": "Co_Reviewer automated instruction-scope policy",
+  "format_requirements_present": false,
+  "plan_file": "<ROUND_ROOT>\\plan\\revision_plan.instruction_authorized.json",
+  "plan_sha256": "148c6d4c14d372b5e29b28066665b02e5edadc7866df9274469a376903c51f14",
+  "coverage_file": "<ROUND_ROOT>\\plan\\instruction_coverage.json",
+  "coverage_file_sha256": "8c8cf7a9aabe2b0ab69d1e6a6649ed784aa91e7d51b83d7713b6205f54915878",
+  "coverage_sha256": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+  "source_instruction": {
+    "file": "<ROUND_ROOT>\\input\\text_revision_instructions.txt",
+    "sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f"
+  },
+  "assessment_file": "<ROUND_ROOT>\\plan\\instruction_authorization_assessment.json",
+  "assessment_file_sha256": "b7fdedb4e4ae9113f4f10f6238baec90c5f2d260e619ca3d300fa21f88d491bb",
+  "assessment": {
+    "schema_version": "1.0",
+    "status": "eligible",
+    "preflight_plan_sha256": "b513ab9aa4d2831f50faa228276f8e576d1d9d3a10e7d59aa5197b22d2a7a3e1",
+    "source_instruction_sha256": "d544523bf733add1bfeff5fc4d0112ba9caacaada592652268d3051c30fcdb5f",
+    "coverage_sha256": "82d16c8cae10f19693938d67f3c595c73e450da0430f75c99b79d3ce533a04f6",
+    "reviewed_requirement_ids": [
+      "REQ-CL-01-01",
+      "REQ-CL-01-02",
+      "REQ-CL-02-01",
+      "REQ-CL-02-02",
+      "REQ-CL-02-03",
+      "REQ-CL-03-01",
+      "REQ-CL-04-01",
+      "REQ-CL-04-02",
+      "REQ-MT-01-01",
+      "REQ-MT-02-01",
+      "REQ-MT-03-01",
+      "REQ-MT-03-02",
+      "REQ-MT-04-01",
+      "REQ-MT-06-01",
+      "REQ-MT-06-02",
+      "REQ-MT-07-01",
+      "REQ-MT-08-01",
+      "REQ-MT-08-02",
+      "REQ-MT-09-01",
+      "REQ-MT-09-02",
+      "REQ-MT-09-03",
+      "REQ-MT-09-04",
+      "REQ-MT-10-01",
+      "REQ-MT-10-02",
+      "REQ-MT-10-03",
+      "REQ-MT-10-04",
+      "REQ-MT-10-05",
+      "REQ-MT-10-10",
+      "REQ-MT-10-09",
+      "REQ-MT-10-11",
+      "REQ-MT-10-06",
+      "REQ-MT-10-07",
+      "REQ-MT-10-08",
+      "REQ-MT-11-01",
+      "REQ-MT-11-02",
+      "REQ-MT-12-01",
+      "REQ-MT-12-02",
+      "REQ-MT-13-01",
+      "REQ-MT-13-02",
+      "REQ-MT-15-01",
+      "REQ-MT-15-02",
+      "REQ-MT-17-01",
+      "REQ-SI-03-01",
+      "REQ-SI-03-02",
+      "REQ-SI-04-01",
+      "REQ-SI-04-02",
+      "REQ-SI-09-01",
+      "REQ-SI-09-02"
+    ],
+    "reviewed_target_refs": [
+      {
+        "revision_item_id": "CL01-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "CL01-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "CL02-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "CL02-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "CL03-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "CL04-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "CL04-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT01-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT02-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT03A-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT03B-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT04-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT06-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT06-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT07-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT08-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT08-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT09A-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT09A-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT09B-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT09B-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT10A-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10A-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT10B-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10C-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10D-INS",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10H-INS",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10E-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10F-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT10G-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT11-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT11-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT12-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT12-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT13-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT13-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT15-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "MT15-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "MT17-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "SI03-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "SI03-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "SI04-REP",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "SI04-REP",
+        "target_index": 1
+      },
+      {
+        "revision_item_id": "SI09-DEL",
+        "target_index": 0
+      },
+      {
+        "revision_item_id": "SI09-DEL",
+        "target_index": 1
+      }
+    ],
+    "unresolved_conflicts": [],
+    "uncovered_requirements": [],
+    "out_of_scope_targets": [],
+    "unresolved_questions": [],
+    "review_notes": "[REDACTED — public repository: verbatim text withheld]"
+  },
+  "input_documents": [
+    {
+      "file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    }
+  ],
+  "authorized_targets": [
+    {
+      "revision_item_id": "CL01-REP",
+      "target_index": 0,
+      "scope_sha256": "fd3505b1e785581c990bd5ccf11282025612e628ed0c6f4b0cc87f4653da2caf",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL01-REP",
+      "target_index": 1,
+      "scope_sha256": "b7a8f5c98754dd71a1520f4f6f623a12e19da31bc1a3259763c2f4c344228940",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "target_index": 0,
+      "scope_sha256": "4bcebbd7935adbc5100c8622462fd14a98390603e9c8f6ee9200cd68036830a6",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL02-REP",
+      "target_index": 1,
+      "scope_sha256": "ba6453896c272652dbe1fb207a1741584beb02644a6ea337fadfa8e7edbcebe8",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL03-REP",
+      "target_index": 0,
+      "scope_sha256": "835d689c90913c0d8d1ba74991790eee09a0f9239cc8b5454387366a37fcceeb",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "target_index": 0,
+      "scope_sha256": "5dd2cbdfcfc83d95fab89cd6e359b1fd6a1000d90dc330a618a7abd83c64d92b",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "CL04-REP",
+      "target_index": 1,
+      "scope_sha256": "b34480c0887f3b57a956ec1e31086f2f4504aa990aca21675172293e381a2b86",
+      "input_file": "<ROUND_ROOT>\\input\\Cover_Letter_Nature_Water.docx",
+      "input_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "revision_item_id": "MT01-REP",
+      "target_index": 0,
+      "scope_sha256": "68f3567e0ba33b7f8c1ee4a3f1e957700fb826505957821b44dec15996c2cc09",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT02-REP",
+      "target_index": 0,
+      "scope_sha256": "9181fdc179d4c34a2bd9b687152b8eb86444ef984c6c7f2f6fd203a1b294cdef",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT03A-REP",
+      "target_index": 0,
+      "scope_sha256": "ac410206afcb8bd7633eee4ad0773fd65878ef258b28b7492c29f62662b8a9e5",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT03B-REP",
+      "target_index": 0,
+      "scope_sha256": "06100dbca65828ee6dd56f909e32efadf0617a64a0a8fd27ff47403e9ebb0bcf",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT04-REP",
+      "target_index": 0,
+      "scope_sha256": "8222a4a33995a71f66e8ed955fa30d37ee03ce96b948546972b89d66879f4e9d",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "target_index": 0,
+      "scope_sha256": "a7a219db6f49fc7672bc597aad7d925cdcef016747f6f1ec8c385d555154c931",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT06-REP",
+      "target_index": 1,
+      "scope_sha256": "483f581e5bc2a8401f78fa3f43730b7eede98a4df0e64e3c0e49f46a9b614661",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT07-REP",
+      "target_index": 0,
+      "scope_sha256": "f23642e4770e73e11af86f04939f15cb8d4ebeb6ba9c3856127446c287d8029b",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "target_index": 0,
+      "scope_sha256": "fccdb3665c23733d312cf230ccee7b8531d2e20cb9aa79fdb6531c96d4b29b14",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT08-REP",
+      "target_index": 1,
+      "scope_sha256": "1881a82c1a62bd5a7fa3595a47beb75d0daf371cce8b377d9383515184ee00ea",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "target_index": 0,
+      "scope_sha256": "6ed1790d22f073700ff1cf2022e090e43e2610ef34e7219d5b949ad9866f541d",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT09A-REP",
+      "target_index": 1,
+      "scope_sha256": "efec41950acc2e63a41b8688c805c5a683cbac53e393000bdb9ab189041b7688",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "target_index": 0,
+      "scope_sha256": "6d85222b101015eaf92fb8b6c773b1ecbe954c513fc51e105a6baab30852246a",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT09B-REP",
+      "target_index": 1,
+      "scope_sha256": "89a9b4a09f61b11e79d35ed532d73ac70937086200c13760ee564da9adf781c6",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "target_index": 0,
+      "scope_sha256": "ba1e2fe01331d6109cc60c8434728add9e5ddd96bffb1bb8ed1947f0ad0aa6f2",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10A-REP",
+      "target_index": 1,
+      "scope_sha256": "958374d3dda87e9b3907267d0fa31f3e1c7e4b17a5325f30da45e3fc60217661",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10B-REP",
+      "target_index": 0,
+      "scope_sha256": "9f61aa76485d4c42ddedee112f3ded28defcb3f44a0abd31cb15627898dd4e85",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10C-REP",
+      "target_index": 0,
+      "scope_sha256": "a92f6997a9b44c7610975ca2d5ecfa891e1cb15974b84843858f959960ac6533",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10D-INS",
+      "target_index": 0,
+      "scope_sha256": "14b0b5c3349c40e7f47640c4bb342603e0f7995d654cc1fcb5d678db15c9eb45",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10H-INS",
+      "target_index": 0,
+      "scope_sha256": "fef3bf3d023406f0c4ddb5446e5ac6ed0b3b37a692aaa5ffba40e5bb8fa0c363",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10E-REP",
+      "target_index": 0,
+      "scope_sha256": "3fb4e1957dd33ae6b32ad7e98dd10895c7a556e8e6da41f41a259cba8e8bb1dd",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10F-REP",
+      "target_index": 0,
+      "scope_sha256": "cfe5594af9fe6188aff4688f8c0d9be5f27262663e78415518b278c020bca4c8",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT10G-REP",
+      "target_index": 0,
+      "scope_sha256": "971b64da12c8dd84e4e09c4ff54edaf367c944033b03d7bbf07fcd38cb87bff6",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "target_index": 0,
+      "scope_sha256": "4c1a76ade2c30c4dd175e5af754213e0670e6a7e8050b0b02c2754f3c8a03646",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT11-REP",
+      "target_index": 1,
+      "scope_sha256": "f9d4caacf138d88104131fc3043e8689bab1e4ce40faf6c36aeb5ba0cce21942",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "target_index": 0,
+      "scope_sha256": "cd9d6c8ad1d693d641a23e3f032cbc10457fce92044db187544bc677b0622ac9",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT12-REP",
+      "target_index": 1,
+      "scope_sha256": "32fcd1ab60fe12eb35ec6efdb64bb766f126349339ce9854d665d936385f606b",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "target_index": 0,
+      "scope_sha256": "f84b205ac8b8577f06561ae830f6f287f433897f5e425ce7b34515bc601a49a5",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT13-REP",
+      "target_index": 1,
+      "scope_sha256": "f442b51397b7ade39a7ab19c72ae322aecc19df89b8cdfdc7d66a68dbfc09168",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "target_index": 0,
+      "scope_sha256": "6e42928e62a41e29fccff9bfeb87003faae385ae0bb7a6484a4a2fbdccb8abd1",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT15-REP",
+      "target_index": 1,
+      "scope_sha256": "e8fabd7c148b8c84735c785702f520529a0a2702ff68431443f2d2ad26adb456",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "MT17-REP",
+      "target_index": 0,
+      "scope_sha256": "f829f9071c8f7ee81b9957cfc04e5bc99b4fc30a91fb18220729709f623a4460",
+      "input_file": "<ROUND_ROOT>\\input\\art_file_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "target_index": 0,
+      "scope_sha256": "6c861446d80420f3bb95d8c19b8ba1ccf81a10e1892fd25d8e47f56ae2f7d93a",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "revision_item_id": "SI03-REP",
+      "target_index": 1,
+      "scope_sha256": "59d71c0183db2b0406ea934bcaeeb60cfbdd0d5e552834f28875ddc113a457f0",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "target_index": 0,
+      "scope_sha256": "27cdd75742e8d519e376c4a18622e5b7e7dfba200709a9e2e0506f5846549583",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "revision_item_id": "SI04-REP",
+      "target_index": 1,
+      "scope_sha256": "257662590fb905a7c54c3e350acaef279e37249de3df45c1ce09aa8442e5624e",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "target_index": 0,
+      "scope_sha256": "e06f2a1e5344115440e2c64b1613eeea66332ebbae3ee55f1ef4379565e1ac78",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    },
+    {
+      "revision_item_id": "SI09-DEL",
+      "target_index": 1,
+      "scope_sha256": "f8064ce5382c67ce8f7c5476bb8e4d2f720962abc0eab96e4cbe8f41afe8bcbd",
+      "input_file": "<ROUND_ROOT>\\input\\SI_water_[AUTHOR_REDACTED]_clean.docx",
+      "input_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    }
+  ],
+  "authorized_requirement_ids": [
+    "REQ-CL-01-01",
+    "REQ-CL-01-02",
+    "REQ-CL-02-01",
+    "REQ-CL-02-02",
+    "REQ-CL-02-03",
+    "REQ-CL-03-01",
+    "REQ-CL-04-01",
+    "REQ-CL-04-02",
+    "REQ-MT-01-01",
+    "REQ-MT-02-01",
+    "REQ-MT-03-01",
+    "REQ-MT-03-02",
+    "REQ-MT-04-01",
+    "REQ-MT-06-01",
+    "REQ-MT-06-02",
+    "REQ-MT-07-01",
+    "REQ-MT-08-01",
+    "REQ-MT-08-02",
+    "REQ-MT-09-01",
+    "REQ-MT-09-02",
+    "REQ-MT-09-03",
+    "REQ-MT-09-04",
+    "REQ-MT-10-01",
+    "REQ-MT-10-02",
+    "REQ-MT-10-03",
+    "REQ-MT-10-04",
+    "REQ-MT-10-05",
+    "REQ-MT-10-06",
+    "REQ-MT-10-07",
+    "REQ-MT-10-08",
+    "REQ-MT-10-09",
+    "REQ-MT-10-10",
+    "REQ-MT-10-11",
+    "REQ-MT-11-01",
+    "REQ-MT-11-02",
+    "REQ-MT-12-01",
+    "REQ-MT-12-02",
+    "REQ-MT-13-01",
+    "REQ-MT-13-02",
+    "REQ-MT-15-01",
+    "REQ-MT-15-02",
+    "REQ-MT-17-01",
+    "REQ-SI-03-01",
+    "REQ-SI-03-02",
+    "REQ-SI-04-01",
+    "REQ-SI-04-02",
+    "REQ-SI-09-01",
+    "REQ-SI-09-02"
+  ],
+  "authorized_at_utc": "2026-11-28T13:02:14.318758+00:00",
+  "authorization_sha256": "10fac4f2f888cda967133a73d71c473f8d2d52c25b878eb33064eaddb10cfb2b",
+  "sanitized": true
+}
