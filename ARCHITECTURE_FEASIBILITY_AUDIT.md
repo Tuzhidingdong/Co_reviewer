@@ -4,8 +4,8 @@
 代码基线：`32e08dd42613c38a101b720cbf420e33fcff4813`
 当前 HEAD：`6593cf54a79ab8376b503fa5f158cbc6199a600b`（相对基线只有 `audit_artifacts/` 文档新增，代码 `scripts/schemas/tests/SKILL.md/.agent` 零差异）
 审计证据分支：`audit/real-docx-blind-test-20261128`
-本报告引入提交 SHA：`（提交后固定，见下）` → 实际值见本文件末「报告提交 SHA」一节
-报告提交 SHA（首次引入）：`PENDING_FIRST_COMMIT`
+报告首次引入提交 SHA：`dba7b77b9b80fc0bb88771a4a37140852ba28d8f`
+报告固定提交（本分支 HEAD）：见 GitHub 分支页；该后续提交仅把自身前一提交的 SHA 写入本文件
 
 证据标注约定：**[已证实]** = 代码/真实产物可直接复核；**[合理推断]** = 基于代码路径或产物的一致性推论；**[尚未验证]** = 无证据，明确标出。
 
@@ -355,5 +355,5 @@ compile-plan --run-format-analysis <json>                  CLI:12183-12187
 - 仓库：`Tuzhidingdong/co_reviewer`
 - 审查基线：`32e08dd42613c38a101b720cbf420e33fcff4813`
 - 报告分支：`audit/architecture-feasibility-20261128`
-- 报告首次引入提交 SHA：`PENDING_FIRST_COMMIT`（提交后由后续固定提交写入）
+- 报告首次引入提交 SHA：`dba7b77b9b80fc0bb88771a4a37140852ba28d8f`（由后续固定提交写入）
 - 本报告链接：`https://github.com/Tuzhidingdong/co_reviewer/blob/audit/architecture-feasibility-20261128/ARCHITECTURE_FEASIBILITY_AUDIT.md`
