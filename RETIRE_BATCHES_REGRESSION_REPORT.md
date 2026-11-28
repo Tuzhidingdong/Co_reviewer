@@ -211,5 +211,5 @@
 3. 保留 `--format-gate-report`、`--instruction-analysis` 与旧 Schema 字段的兼容入口，确保历史产物仍可读。
 4. 本报告不授权删除任何代码；退役执行须另行评审与实施。
 
-报告首次提交 SHA：`PENDING_FIRST_COMMIT`
+报告首次提交 SHA：`8896436e85b357ce1869bdc34d89a49f8c83ddd5`
 报告链接：`https://github.com/Tuzhidingdong/co_reviewer/blob/audit/retirement-regression-20261128/RETIRE_BATCHES_REGRESSION_REPORT.md`
