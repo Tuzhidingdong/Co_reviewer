@@ -7,7 +7,8 @@
 - Batch 2 基线 HEAD：`6474ed2c51b04df7d06c0c6d16cc6a0997ceac24`（检定时工作区 clean）
 - Batch 1 实现 `1171590f33ca12340ffcd15ab1187bf2b7d8a112`、Batch 2 实现 `0a6ae17055433f91ddef3377532b09875abce6f8` 均已确认为 HEAD 祖先。
 - Batch 3 本地分支：`feat/deterministic-format-compiler-batch3-20261128`
-- Batch 3 实现 commit：`BATCH3_COMMIT_PLACEHOLDER`
+- Batch 3 实现 commit：`89b95bb288c3b649bdde45c4c56447ac73750fb1`（`feat: Batch 3 deterministic format compiler and Pass-2 trace`）。
+- 本报告中的 commit SHA 由紧随其后的 docs-only commit 回填；实现代码、Schema、测试均在上述实现 commit 中，之后未再改动。
 - 未 push、未创建 PR、未添加/修改 remote、未重建基线、未覆盖 Batch 1/2 提交。
 
 ## 2. 修改文件及目的
