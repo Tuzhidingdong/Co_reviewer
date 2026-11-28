@@ -11632,15 +11632,15 @@ def cmd_authorize_instruction_plan(args):
     raw_analysis = getattr(args, "instruction_analysis", None)
     analysis_path = Path(raw_analysis).expanduser().resolve() if raw_analysis else None
     analysis_payload = json.loads(analysis_path.read_text(encoding="utf-8")) if analysis_path else None
-    if analysis_payload is not None:
-        fr_errors = validate_instruction_analysis(analysis_payload)
-        if fr_errors:
-            raise ValueError("Instruction analysis validation failed:\n- " + "\n- ".join(fr_errors))
     if analysis_payload and analysis_payload.get("format_requirements"):
         raise ValueError(
             "New Format Requirements authorizations are retired. Remove the legacy "
             "format_requirements payload and express the edit through standard instruction rows."
         )
+    if analysis_payload is not None:
+        analysis_errors = validate_instruction_analysis(analysis_payload)
+        if analysis_errors:
+            raise ValueError("Instruction analysis validation failed:\n- " + "\n- ".join(analysis_errors))
     output_plan_path = Path(args.out_plan).expanduser().resolve()
     authorization_path = Path(args.out_authorization).expanduser().resolve()
     if not preflight_path.is_file():

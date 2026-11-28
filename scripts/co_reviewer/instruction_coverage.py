@@ -346,6 +346,8 @@ def authorize_instruction_based_plan(
         "authorization_type": "instruction_based_authorization",
         "status": "authorized",
         "issued_by": "Co_Reviewer automated instruction-scope policy",
+        # Legacy-compatible marker: new authorizations never contain active FR records.
+        "format_requirements_present": False,
         "plan_file": str(plan_path),
         "plan_sha256": sha256_file(plan_path),
         "coverage_file": str(coverage_path),
