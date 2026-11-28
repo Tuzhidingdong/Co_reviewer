@@ -13,13 +13,6 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-from .format_requirements import (
-    crosscheck_coverage_fr,
-    fr_ids_for_requirement,
-    validate_format_requirements,
-    validate_format_requirements_schema,
-)
-
 SCHEMA_VERSION = "1.0"
 ACTIONS = frozenset({"insert", "replace", "delete", "format", "insert_paragraph"})
 POLARITIES = frozenset({
@@ -90,8 +83,11 @@ def validate_instruction_analysis(analysis: Mapping[str, Any]) -> list[str]:
         expected = "\n".join(lines[start - 1:end])
         if not isinstance(excerpt, str) or excerpt.rstrip("\n") != expected.rstrip("\n"):
             errors.append(f"{label}.instruction_excerpt differs from source lines L{start}-L{end}")
-    errors.extend(validate_format_requirements(analysis))
-    errors.extend(validate_format_requirements_schema(analysis))
+    if analysis.get("format_requirements"):
+        errors.append(
+            "Legacy Format Requirements are retired; express format changes through the standard "
+            "instruction/Plan path instead of FR records."
+        )
     return errors
 
 
@@ -115,7 +111,6 @@ def crosscheck_coverage(coverage: Mapping[str, Any], analysis: Mapping[str, Any]
     for req_id in by_id:
         if not any(isinstance(r, Mapping) and r.get("requirement_id") == req_id for r in cov_rows if isinstance(cov_rows, list)):
             errors.append(f"instruction_analysis row {req_id} missing from Coverage")
-    errors.extend(crosscheck_coverage_fr(coverage, analysis))
     return errors
 
 
@@ -162,10 +157,6 @@ def analysis_to_coverage(coverage: Mapping[str, Any], analysis: Mapping[str, Any
             for field in ("instruction_action", "instruction_polarity", "instruction_object",
                           "source_locator", "instruction_excerpt", "source_line_start", "source_line_end"):
                 item[field] = source.get(field)
-            fr_ids = fr_ids_for_requirement(analysis, str(item.get("requirement_id", "")))
-            if fr_ids:
-                # Reference only. Coverage must not copy FR semantic fields.
-                item["format_requirement_ids"] = fr_ids
         rows.append(item)
     result["requirements"] = rows
     return result

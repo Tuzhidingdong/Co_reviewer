@@ -11636,9 +11636,11 @@ def cmd_authorize_instruction_plan(args):
         fr_errors = validate_instruction_analysis(analysis_payload)
         if fr_errors:
             raise ValueError("Instruction analysis validation failed:\n- " + "\n- ".join(fr_errors))
-    format_requirements_present = bool(
-        analysis_payload and analysis_payload.get("format_requirements")
-    )
+    if analysis_payload and analysis_payload.get("format_requirements"):
+        raise ValueError(
+            "New Format Requirements authorizations are retired. Remove the legacy "
+            "format_requirements payload and express the edit through standard instruction rows."
+        )
     output_plan_path = Path(args.out_plan).expanduser().resolve()
     authorization_path = Path(args.out_authorization).expanduser().resolve()
     if not preflight_path.is_file():
@@ -11712,9 +11714,6 @@ def cmd_authorize_instruction_plan(args):
         plan_file=output_plan_path,
         coverage_file=coverage_path,
         assessment_file=assessment_path,
-        analysis_file=analysis_path,
-        analysis_file_sha256=sha256_file(analysis_path) if analysis_path else None,
-        format_requirements_present=format_requirements_present,
     )
     authorization_errors = validate_instruction_based_authorization(
         authorization=authorization,
@@ -12059,7 +12058,7 @@ def build_parser():
     ia.add_argument("--assessment", required=True, help="Agent scope assessment bound to plan and Coverage hashes.")
     ia.add_argument("--out-plan", required=True, help="New authorized plan path; existing files are never overwritten.")
     ia.add_argument("--out-authorization", required=True, help="New instruction_based_authorization receipt path.")
-    ia.add_argument("--instruction-analysis", help="Instruction analysis file containing Format Requirements; bound into the authorization receipt when FRs exist.")
+    ia.add_argument("--instruction-analysis", help="Optional validated Agent instruction analysis; legacy Format Requirements payloads are rejected for new authorizations.")
     ia.set_defaults(func=cmd_authorize_instruction_plan)
     fg = sub.add_parser("final-gate", help="Run Final Delivery Hard Gate checks and emit JSON/Markdown reconciliation reports.")
     fg.add_argument("--plan", help="Optional revision plan JSON path.")
@@ -12160,7 +12159,7 @@ def build_parser():
     a.add_argument("--revision-ledger", help="Synchronize Patch state/events into a v0.5.1 RevisionLedger after apply.")
     a.add_argument("--instruction-coverage", help="Required with instruction_based plans.")
     a.add_argument("--instruction-authorization", help="Required with instruction_based plans.")
-    a.add_argument("--instruction-analysis", help="Instruction analysis file to verify against the authorization's Format Requirements integrity anchor.")
+    a.add_argument("--instruction-analysis", help="Legacy compatibility: verify an existing authorization receipt's Format Requirements SHA-256 anchor.")
     a.set_defaults(func=cmd_apply)
     vfy = sub.add_parser("verify", help="Verify actual Word Track Changes against the approved plan.")
     vfy.add_argument("--plan", required=True)
@@ -12168,7 +12167,7 @@ def build_parser():
     vfy.add_argument("--out", help="Verification report path; defaults inside the plan's batch directory when applicable.")
     vfy.add_argument("--instruction-coverage", help="Required with instruction_based plans.")
     vfy.add_argument("--instruction-authorization", help="Required with instruction_based plans.")
-    vfy.add_argument("--instruction-analysis", help="Instruction analysis file to verify against the authorization's Format Requirements integrity anchor.")
+    vfy.add_argument("--instruction-analysis", help="Legacy compatibility: verify an existing authorization receipt's Format Requirements SHA-256 anchor.")
     vfy.set_defaults(func=cmd_verify)
     vfr = sub.add_parser(
         "verify-final-round",

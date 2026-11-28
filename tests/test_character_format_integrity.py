@@ -16,9 +16,12 @@ from lxml import etree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import co_reviewer_cli as cli
-from co_reviewer.document_engine import NS, qn, visible_text
+from co_reviewer.document_engine import NS, qn, visible_text, _applicable_format_flags
 from co_reviewer.plan_compiler import compile_revision_plan
 from test_format_preservation import make_styled_docx, q
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class CharacterFormatIntegrityTests(unittest.TestCase):
@@ -30,6 +33,14 @@ class CharacterFormatIntegrityTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_complex_script_flags_are_not_applied_without_context(self):
+        run = ET.Element(_W + "r")
+        rpr = ET.SubElement(run, _W + "rPr")
+        ET.SubElement(rpr, _W + "bCs")
+        ET.SubElement(rpr, _W + "iCs")
+        ET.SubElement(run, _W + "t").text = "αβ"
+        self.assertEqual(_applicable_format_flags(run, "αβ"), frozenset())
 
     def _source(self, paragraphs):
         make_styled_docx(self.source, paragraphs)

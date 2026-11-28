@@ -335,25 +335,15 @@ def authorize_instruction_based_plan(
         raise InstructionCoverageError("Plan, Coverage and authorization assessment must be existing files.")
     anchored_analysis: dict[str, str] | None = None
     if format_requirements_present:
-        if analysis_file is None or not str(analysis_file).strip():
-            raise InstructionCoverageError("Format Requirements are present but no instruction_analysis file was supplied for external integrity anchoring.")
-        analysis_path = Path(analysis_file).expanduser().resolve()
-        if not analysis_path.is_file():
-            raise InstructionCoverageError(f"instruction_analysis file is missing: {analysis_path}")
-        actual = sha256_file(analysis_path)
-        if not isinstance(analysis_file_sha256, str) or actual != analysis_file_sha256:
-            raise InstructionCoverageError("instruction_analysis SHA-256 changed before authorization.")
-        anchored_analysis = {
-            "format_requirements_file": str(analysis_path),
-            "format_requirements_file_sha256": actual,
-            "format_requirements_present": True,
-        }
+        raise InstructionCoverageError(
+            "New Format Requirements authorizations are retired. Use the standard "
+            "instruction/Coverage/Plan authorization path."
+        )
     authorization: dict[str, Any] = {
         "schema_version": "1.0",
         "authorization_type": "instruction_based_authorization",
         "status": "authorized",
         "issued_by": "Co_Reviewer automated instruction-scope policy",
-        **({"format_requirements_present": False} if anchored_analysis is None else anchored_analysis),
         "plan_file": str(plan_path),
         "plan_sha256": sha256_file(plan_path),
         "coverage_file": str(coverage_path),
