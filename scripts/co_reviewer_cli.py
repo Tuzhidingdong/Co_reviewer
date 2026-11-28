@@ -11511,6 +11511,26 @@ def _resolve_instruction_analysis(args, intents_path: Path) -> tuple[Path | None
     return path, analysis
 
 
+def cmd_analyze_run_formats(args):
+    """Read-only effective Run format analysis; no format map or DOCX write."""
+    from co_reviewer.run_format_analysis import analyze_docx, validate_run_format_analysis
+
+    analysis = analyze_docx(
+        args.docx, styles_path=args.styles, theme_path=args.theme,
+        fr_current_ids=getattr(args, "fr_current_ids", None),
+    )
+    errors = validate_run_format_analysis(analysis)
+    out = Path(args.out).expanduser().resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(out, analysis)
+    print(f"[RUN FORMAT ANALYSIS] {out}")
+    print(f"[RUNS] {len(analysis['runs'])}")
+    print(f"[VALIDATION] {'PASS' if not errors else 'FAIL'}")
+    for error in errors[:10]:
+        print(f"  - {error}")
+    return 0 if not errors else 2
+
+
 def cmd_validate_instruction_analysis(args):
     path = Path(args.analysis).expanduser().resolve()
     analysis = json.loads(path.read_text(encoding="utf-8"))
@@ -12389,6 +12409,15 @@ def build_parser():
     ms.add_argument("--input", required=True, help="JSON diagnostic with exact source excerpt, target, blocker and source hash.")
     ms.add_argument("--out", required=True, help="New JSON artifact path; existing files are never overwritten.")
     ms.set_defaults(func=cmd_create_manual_suggestion)
+    rfa = sub.add_parser(
+        "analyze-run-formats",
+        help="Read-only effective DOCX Run format analysis and safety classification.",
+    )
+    rfa.add_argument("--docx", required=True)
+    rfa.add_argument("--styles", help="Optional explicit word/styles.xml path.")
+    rfa.add_argument("--theme", help="Optional explicit theme XML path.")
+    rfa.add_argument("--out", required=True)
+    rfa.set_defaults(func=cmd_analyze_run_formats)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)

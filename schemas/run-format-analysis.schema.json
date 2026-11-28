@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run-format-analysis.schema.json",
+  "title": "Effective Run format analysis and safety classification",
+  "type": "object",
+  "required": ["schema_version", "analysis_version", "runs"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_version": {"type": "string", "minLength": 1},
+    "source_docx": {"type": "string"},
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schema_version", "analysis_version", "run", "text",
+          "direct_format", "effective_format", "provenance", "resolution",
+          "context_ready", "safety_classification", "safety_reasons",
+          "property_decisions", "analysis_fingerprint"
+        ],
+        "properties": {
+          "schema_version": {"const": "1.0"},
+          "analysis_version": {"type": "string"},
+          "run": {
+            "type": "object",
+            "required": ["part", "p_idx", "run_index", "run_id"],
+            "properties": {
+              "part": {"type": "string"},
+              "p_idx": {"type": "integer", "minimum": 0},
+              "run_index": {"type": "integer", "minimum": 0},
+              "run_id": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": true
+          },
+          "text": {"type": "string"},
+          "direct_format": {"type": "object"},
+          "effective_format": {
+            "type": "object",
+            "required": ["properties", "sources"],
+            "properties": {
+              "properties": {"type": "object"},
+              "sources": {"type": "object"}
+            }
+          },
+          "provenance": {"type": "object"},
+          "resolution": {"type": "object"},
+          "context_ready": {"type": "boolean"},
+          "warnings": {"type": "array", "items": {"type": "string"}},
+          "safety_classification": {
+            "enum": [
+              "SAFE_NEUTRAL", "SAFE_WITH_COMPATIBLE_CONTEXT", "UNSAFE_SCRIPT_FORMAT",
+              "UNSAFE_STYLE_INHERITANCE", "UNRESOLVED_EFFECTIVE_FORMAT"
+            ]
+          },
+          "safety_reasons": {"type": "array", "items": {"type": "string"}},
+          "property_decisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["property", "direct", "effective", "provenance", "decision", "reason"],
+              "properties": {
+                "property": {"type": "string"},
+                "provenance": {"type": "string"},
+                "decision": {
+                  "enum": [
+                    "PRESERVE", "STRIP", "RECOMPUTE",
+                    "EXPLICIT_OPERATION_REQUIRED", "BLOCKED_IF_UNKNOWN"
+                  ]
+                },
+                "reason": {"type": "string"},
+                "format_requirement_id": {"type": "string"}
+              },
+              "additionalProperties": true
+            }
+          },
+          "format_requirement_id": {"type": ["string", "null"]},
+          "analysis_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
