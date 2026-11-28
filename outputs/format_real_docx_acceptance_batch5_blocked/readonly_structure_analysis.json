@@ -1,0 +1,106 @@
+{
+  "schema_version": "1.0",
+  "stage": "REAL_DOCX_READ_ONLY",
+  "status": "BLOCKED_MULTIPLE_DESIGNATED_OBJECTS",
+  "documents": [
+    {
+      "name": "art_file_water_WangChunli_clean.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\co_reviewer_runs\\instruction_intent_producer_minfix_20261128\\blind_test_real_docs_20261128\\input\\art_file_water_WangChunli_clean.docx",
+      "size": 4478596,
+      "sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051",
+      "paragraphs": 81,
+      "runs": 1236,
+      "tables": 0,
+      "numbered_paragraphs": 0,
+      "paragraph_styles": [
+        "Adress",
+        "Authors",
+        "FACorrespondingAuthorFootnote"
+      ],
+      "character_styles": [
+        "ab"
+      ],
+      "direct_script_runs": 127,
+      "styles_xml_present": true,
+      "theme_xml_present": true,
+      "duplicate_paragraph_texts": 2,
+      "run_analysis_schema": "1.0",
+      "run_analysis_rule_version": "run-safety/1.0",
+      "run_analysis_runs": 1229,
+      "classifications": {
+        "SAFE_WITH_COMPATIBLE_CONTEXT": 1089,
+        "UNSAFE_SCRIPT_FORMAT": 140
+      },
+      "structure_context_counts": {
+        "in_table_runs": 0,
+        "in_numbering_runs": 0
+      },
+      "run_analysis_docx_sha256": "2c7f55b85721f1f73acf300e25367bdcc202e25f9ad3feb3e5cf0205c0dfa051"
+    },
+    {
+      "name": "Cover_Letter_Nature_Water.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\co_reviewer_runs\\instruction_intent_producer_minfix_20261128\\blind_test_real_docs_20261128\\input\\Cover_Letter_Nature_Water.docx",
+      "size": 29744,
+      "sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5",
+      "paragraphs": 17,
+      "runs": 94,
+      "tables": 1,
+      "numbered_paragraphs": 0,
+      "paragraph_styles": [
+        "a0"
+      ],
+      "character_styles": [],
+      "direct_script_runs": 18,
+      "styles_xml_present": true,
+      "theme_xml_present": true,
+      "duplicate_paragraph_texts": 0,
+      "run_analysis_schema": "1.0",
+      "run_analysis_rule_version": "run-safety/1.0",
+      "run_analysis_runs": 81,
+      "classifications": {
+        "SAFE_WITH_COMPATIBLE_CONTEXT": 63,
+        "UNSAFE_SCRIPT_FORMAT": 18
+      },
+      "structure_context_counts": {
+        "in_table_runs": 4,
+        "in_numbering_runs": 0
+      },
+      "run_analysis_docx_sha256": "9fbf54eba50d7080405babc6630640077f7ad88d0654ffb64b54499156964cd5"
+    },
+    {
+      "name": "SI_water_WangChunli_clean.docx",
+      "path": "E:\\Writting\\Capillary_bridge\\08\\co_reviewer_runs\\instruction_intent_producer_minfix_20261128\\blind_test_real_docs_20261128\\input\\SI_water_WangChunli_clean.docx",
+      "size": 5001910,
+      "sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78",
+      "paragraphs": 81,
+      "runs": 935,
+      "tables": 0,
+      "numbered_paragraphs": 0,
+      "paragraph_styles": [
+        "1",
+        "Adress",
+        "Authors",
+        "EndNoteBibliography"
+      ],
+      "character_styles": [
+        "af3"
+      ],
+      "direct_script_runs": 136,
+      "styles_xml_present": true,
+      "theme_xml_present": true,
+      "duplicate_paragraph_texts": 11,
+      "run_analysis_schema": "1.0",
+      "run_analysis_rule_version": "run-safety/1.0",
+      "run_analysis_runs": 914,
+      "classifications": {
+        "SAFE_WITH_COMPATIBLE_CONTEXT": 767,
+        "UNSAFE_SCRIPT_FORMAT": 147
+      },
+      "structure_context_counts": {
+        "in_table_runs": 0,
+        "in_numbering_runs": 0
+      },
+      "run_analysis_docx_sha256": "bdd617faa4aa158e038f7ab32cae0aa6d2763088928ff555a4199b8f58f84c78"
+    }
+  ]
+}
