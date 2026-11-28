@@ -63,6 +63,12 @@ from co_reviewer.insert_authorization import (
     validate_plan_insert_authorizations,
     validate_workflow_insert_authorizations,
 )
+from co_reviewer.instruction_analysis import (
+    analysis_to_coverage,
+    crosscheck_coverage,
+    crosscheck_plan,
+    validate_instruction_analysis,
+)
 from co_reviewer.response_renderer import render_response_letter
 from co_reviewer.structure_classifier import classify_docx_structure
 from co_reviewer.v232_contract import (
@@ -11483,6 +11489,55 @@ def cmd_compile_clean_from_marked(args):
     return 0
 
 
+def _resolve_instruction_analysis(args, intents_path: Path) -> tuple[Path | None, dict[str, Any] | None]:
+    raw = getattr(args, "instruction_analysis", None)
+    path = Path(raw).expanduser().resolve() if raw else None
+    if path is None:
+        for candidate in (intents_path.parent / "instruction_analysis.json",
+                          intents_path.parent.parent / "instruction_analysis.json"):
+            if candidate.is_file():
+                path = candidate.resolve()
+                break
+    if path is None:
+        return None, None
+    analysis = json.loads(path.read_text(encoding="utf-8"))
+    errors = validate_instruction_analysis(analysis)
+    if errors:
+        raise ValueError("Instruction analysis validation failed:\n- " + "\n- ".join(errors))
+    return path, analysis
+
+
+def cmd_validate_instruction_analysis(args):
+    path = Path(args.analysis).expanduser().resolve()
+    analysis = json.loads(path.read_text(encoding="utf-8"))
+    errors = validate_instruction_analysis(analysis)
+    out = args.out
+    report = {"file": str(path), "passed": not errors, "errors": errors,
+              "analysis_sha256": analysis.get("analysis_sha256")}
+    if out:
+        write_json_atomic(Path(out).expanduser().resolve(), report)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if not errors else 2
+
+
+def cmd_sync_analysis_to_coverage(args):
+    analysis_path = Path(args.analysis).expanduser().resolve()
+    coverage_path = Path(args.coverage).expanduser().resolve()
+    output_path = Path(args.out).expanduser().resolve()
+    if output_path.exists():
+        raise FileExistsError(f"Output Coverage already exists: {output_path}")
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    merged = analysis_to_coverage(coverage, analysis)
+    errors = crosscheck_coverage(merged, analysis)
+    errors.extend(validate_instruction_analysis(analysis))
+    if errors:
+        raise ValueError("Analysis-to-Coverage sync failed:\n- " + "\n- ".join(errors))
+    write_json_atomic(output_path, merged)
+    print(f"[COVERAGE SYNC] {output_path}")
+    return 0
+
+
 def cmd_compile_plan(args):
     from co_reviewer.plan_compiler import compile_revision_plan
 
@@ -11505,12 +11560,23 @@ def cmd_compile_plan(args):
                 coverage_path = candidate.resolve()
                 break
     coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path else None
+    analysis_path, analysis = _resolve_instruction_analysis(args, intents_path)
+    if analysis is not None:
+        if coverage is None:
+            raise ValueError("instruction_analysis provided but instruction Coverage is missing")
+        cov_errors = crosscheck_coverage(coverage, analysis)
+        if cov_errors:
+            raise ValueError("Coverage disagrees with instruction analysis:\n- " + "\n- ".join(cov_errors))
     plan = compile_revision_plan(
         intents_payload,
         base_dir=intents_path.parent,
         doc_map=doc_map,
         instruction_coverage=coverage,
     )
+    if analysis is not None:
+        plan_errors = crosscheck_plan(plan, analysis)
+        if plan_errors:
+            raise ValueError("Plan disagrees with instruction analysis:\n- " + "\n- ".join(plan_errors))
     errors = validate_plan(plan, require_approval=False, check_approval_integrity=False)
     if errors:
         raise ValueError("Compiled plan failed validation:\n- " + "\n- ".join(errors))
@@ -11942,7 +12008,21 @@ def build_parser():
         help="Instruction Coverage JSON; required for INSERT intents with protected tokens. "
              "Auto-discovered from the intents directory or its parent when omitted.",
     )
+    cp_plan.add_argument(
+        "--instruction-analysis",
+        help="Agent-produced instruction_analysis.json; validated against the original TXT and "
+             "cross-checked against Coverage and Plan. Auto-discovered when omitted.",
+    )
     cp_plan.set_defaults(func=cmd_compile_plan)
+    ia = sub.add_parser("validate-instruction-analysis", help="Validate an Agent-produced instruction analysis record.")
+    ia.add_argument("--analysis", required=True)
+    ia.add_argument("--out")
+    ia.set_defaults(func=cmd_validate_instruction_analysis)
+    sa = sub.add_parser("sync-analysis-to-coverage", help="Deterministically copy validated Agent judgement into Coverage.")
+    sa.add_argument("--analysis", required=True)
+    sa.add_argument("--coverage", required=True)
+    sa.add_argument("--out", required=True)
+    sa.set_defaults(func=cmd_sync_analysis_to_coverage)
     ac = sub.add_parser(
         "approve-instruction-coverage",
         help="Record explicit author approval for an exact source-instruction coverage manifest SHA-256.",

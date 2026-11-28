@@ -24,7 +24,8 @@ SOURCE_FIELD = "authorization_source"
 AFFIRMATIVE_ACTIONS = frozenset({"insert", "add", "insert_paragraph"})
 AFFIRMATIVE_POLARITY = frozenset({"affirmative", "positive", "accepted"})
 NEGATIVE_POLARITY = frozenset({
-    "negative", "prohibited", "rejected", "conditional", "not_adopted", "unknown",
+    "negative", "prohibited", "rejected", "conditional", "not_adopted",
+    "unadopted", "ambiguous", "unknown",
 })
 _LOCATOR_RE = re.compile(r"^L(\d+)[–\-]L(\d+)")
 
