@@ -11826,6 +11826,11 @@ def cmd_final_gate(args):
     elif plan is not None and apply_reports is not None:
         verify_report = verify_apply_report(plan, apply_reports)
 
+    format_gate = None
+    if getattr(args, "format_gate_report", None):
+        format_gate = json.loads(
+            Path(args.format_gate_report).expanduser().read_text(encoding="utf-8")
+        )
     final_round_verification = None
     if getattr(args, "final_round_verification", None):
         frv_path = Path(args.final_round_verification).expanduser().resolve()
@@ -11849,6 +11854,7 @@ def cmd_final_gate(args):
         document_roles=_parse_document_roles(args.document_role),
         final_round_verification=final_round_verification,
         verification_scope=getattr(args, "verification_scope", None),
+        format_gate=format_gate,
         expected_target_refs=(
             _expected_plan_target_refs(plan) if isinstance(plan, dict) else None
         ),
@@ -12089,6 +12095,10 @@ def build_parser():
     fg.add_argument(
         "--verification-scope", choices=["round", "patch", "document"],
         help="Explicit scope of this Final Gate evaluation (default inferred from inputs).",
+    )
+    fg.add_argument(
+        "--format-gate-report",
+        help="Legacy compatibility: optional format execution gate report from an external producer.",
     )
     fg.set_defaults(func=cmd_final_gate)
     brm = sub.add_parser(
