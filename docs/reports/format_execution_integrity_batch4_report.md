@@ -7,7 +7,8 @@
 - Batch 3 基线 HEAD：`c55d102b5f07f3df28315169a68691f8d438eb01`（检定时工作区 clean）
 - Batch 1 `1171590…`、Batch 2 `0a6ae17…`、Batch 3 `89b95bb…` 实现提交均确认为祖先链。
 - Batch 4 分支：`feat/format-execution-integrity-batch4-20261128`
-- Batch 4 实现 commit：`BATCH4_COMMIT_PLACEHOLDER`
+- Batch 4 实现 commit：`68203757241561767c6a8cc4ec5e337fe4abd074`（`feat: Batch 4 format execution integrity preflight apply verify gate`）。
+- 本报告中的 commit SHA 由紧随其后的 docs-only commit 回填；实现代码与测试均在上述实现 commit 中，之后未再改动。
 - 未 push、未创建 PR、未改 remote、未修改 Batch 1–3 历史提交。
 
 ## 2. 修改文件及目的
