@@ -472,6 +472,10 @@ def apply_compiled_formats(plan: dict[str, Any], trace: Mapping[str, Any]) -> di
                 "authorized_change": {"intent": "Explicit Pass-2 operations compiled from Format Requirements"},
                 "format_authorization": {"intent": "Explicit Pass-2 operations compiled from Format Requirements"},
                 "instruction_requirement_ids": list(target.get("instruction_requirement_ids") or []),
+                # Link the format-only target to its text target so the existing
+                # Apply/Verify scope machinery authorizes format overlays on the
+                # inserted characters instead of treating them as format leakage.
+                "applies_to_target_index": index,
                 "format_operations": [],
             })
         if fmt_index < len(targets) and isinstance(targets[fmt_index], Mapping) and targets[fmt_index].get("action") in {None, "replace"}:
