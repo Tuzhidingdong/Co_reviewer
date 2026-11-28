@@ -333,7 +333,9 @@ def authorize_instruction_based_plan(
     assessment_path = Path(assessment_file).expanduser().resolve()
     if not plan_path.is_file() or not coverage_path.is_file() or not assessment_path.is_file():
         raise InstructionCoverageError("Plan, Coverage and authorization assessment must be existing files.")
-    anchored_analysis: dict[str, str] | None = None
+    # analysis_file and analysis_file_sha256 remain accepted for source compatibility.
+    # New FR-bound authorization receipts are retired; legacy receipt verification
+    # remains in validate_instruction_based_authorization below.
     if format_requirements_present:
         raise InstructionCoverageError(
             "New Format Requirements authorizations are retired. Use the standard "
