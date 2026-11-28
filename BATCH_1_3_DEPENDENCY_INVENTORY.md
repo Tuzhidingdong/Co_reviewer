@@ -5,6 +5,8 @@
 实际审查 HEAD：`ab2e4449db1e1c6dd9cdbf43e78a8a28d4353ce2`（架构审查分支，代码与基线一致）
 真实文档验收证据分支：`audit/real-docx-blind-test-20261128`（`ad3c5fe` → `6593cf5`）
 架构审查分支：`audit/architecture-feasibility-20261128`（`dba7b77` → `ab2e444`）
+报告首次提交 SHA：`11c96bcc22bf9a03d6f144135d11c5f057a4cbf8`
+报告链接：`https://github.com/Tuzhidingdong/co_reviewer/blob/audit/batch-dependency-inventory-20261128/BATCH_1_3_DEPENDENCY_INVENTORY.md`
 
 证据等级：**CONFIRMED** = git show/blame/grep/直接读码可复核；**INFERRED** = 基于已引用代码路径的推论；**UNKNOWN** = 静态检查无法确定，不猜测。
 
