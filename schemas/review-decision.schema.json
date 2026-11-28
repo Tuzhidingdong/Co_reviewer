@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Semantic Decision Queue",
+  "description": "A bounded evidence packet for comment-by-comment semantic triage. Decisions are proposals only and never authorize document edits.",
+  "type": "object",
+  "required": ["schema_version", "source_files", "instructions", "items"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "source_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "file", "sha256"],
+        "properties": {
+          "role": { "enum": ["Reviewers", "Manuscript", "SI"] },
+          "file": { "type": "string" },
+          "sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "instructions": { "type": "array", "items": { "type": "string" } },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["comment_id", "reviewer", "comment", "reply_anchor", "target_status", "confirmed_matches", "candidate_matches", "evidence_excerpts", "decision"],
+        "properties": {
+          "comment_id": { "type": ["string", "integer"] },
+          "reviewer": { "type": "string" },
+          "comment": { "type": "string" },
+          "reply_anchor": {
+            "type": "object",
+            "required": ["status", "text"],
+            "properties": {
+              "status": { "enum": ["range_resolved", "range_incomplete", "empty_range", "reference_only", "markers_missing"] },
+              "text": { "type": "string" },
+              "part": { "type": ["string", "null"] },
+              "p_idx": { "type": ["integer", "null"] },
+              "paragraphs": { "type": "array", "items": { "type": "integer" } },
+              "selections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["part", "start", "end", "paragraphs"],
+                  "properties": {
+                    "part": { "type": ["string", "null"] },
+                    "start": { "type": ["object", "null"] },
+                    "end": { "type": ["object", "null"] },
+                    "paragraphs": { "type": "array", "items": { "type": "integer" } }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          },
+          "target_status": {
+            "enum": ["placeholder_anchor", "anchor_unresolved", "exact_unique", "ambiguous_exact_match", "no_exact_match"]
+          },
+          "confirmed_matches": { "type": "array", "items": { "type": "object" } },
+          "candidate_matches": { "type": "array", "items": { "type": "object" } },
+          "evidence_excerpts": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "required": ["document", "part", "p_idx", "text"],
+              "properties": {
+                "document": { "enum": ["Reviewers", "Manuscript", "SI"] },
+                "part": { "type": "string" },
+                "p_idx": { "type": "integer", "minimum": 0 },
+                "para_id": { "type": ["string", "null"] },
+                "text": { "type": "string", "maxLength": 1200 },
+                "evidence_role": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          },
+          "decision": {
+            "type": "object",
+            "required": ["status", "disposition", "rationale", "proposed_targets", "response_outline", "supporting_evidence", "missing_evidence_or_questions", "confidence", "requires_user_approval"],
+            "properties": {
+              "status": { "enum": ["pending", "proposed", "needs_clarification"] },
+              "disposition": {
+                "type": ["string", "null"],
+                "enum": ["manuscript", "si", "reply_only", "manuscript_and_si", "no_change", "clarification_needed", null]
+              },
+              "rationale": { "type": ["string", "null"] },
+              "proposed_targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["document", "part", "p_idx", "action"],
+                  "properties": {
+                    "document": { "enum": ["Manuscript", "SI", "Reply", "Other"] },
+                    "part": { "type": "string", "minLength": 1 },
+                    "p_idx": { "type": "integer", "minimum": 0 },
+                    "para_id": { "type": ["string", "null"] },
+                    "location": { "type": "string" },
+                    "action": { "enum": ["add", "replace", "remove", "reference_only", "keep_out"] },
+                    "source_excerpt": { "type": "string", "maxLength": 1200 },
+                    "proposed_change": { "type": "string" },
+                    "evidence_basis": { "type": "array", "items": { "type": "string" } }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "response_outline": { "type": ["string", "null"] },
+              "supporting_evidence": { "type": "array", "items": { "type": "string" } },
+              "missing_evidence_or_questions": { "type": "array", "items": { "type": "string" } },
+              "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+              "requires_user_approval": { "const": true }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

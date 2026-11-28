@@ -1,0 +1,18 @@
+{
+  "response_units": [
+    {
+      "response_unit_id": "RU-TABLE-COMMENT-01",
+      "locator_id": "OP-TABLE-01",
+      "locator_text": "Exact text visible in the final table cell",
+      "page": 4,
+      "line_start": 18,
+      "line_end": 18
+    },
+    {
+      "response_unit_id": "RU-ANCHOR-COMMENT-02",
+      "locator_id": "anchor:EV-SI-004",
+      "locator_text": "Exact existing text visible in the final non-body location",
+      "page": 7
+    }
+  ]
+}

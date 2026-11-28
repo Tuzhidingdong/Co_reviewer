@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "instruction-coverage.schema.json",
+  "title": "Instruction Coverage Manifest",
+  "type": "object",
+  "required": ["schema_version", "source_instruction", "requirements", "coverage_sha256"],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "source_instruction": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "requirement_id", "task_id", "source_line_start", "source_line_end",
+          "source_locator", "instruction_excerpt", "status"
+        ],
+        "properties": {
+          "requirement_id": {"type": "string", "pattern": "^REQ-.+-"},
+          "task_id": {"type": "string", "minLength": 1},
+          "source_line_start": {"type": "integer", "minimum": 1},
+          "source_line_end": {"type": "integer", "minimum": 1},
+          "source_locator": {"type": "string", "pattern": "^L[1-9][0-9]*–L[1-9][0-9]*$"},
+          "instruction_excerpt": {"type": "string", "minLength": 1},
+          "status": {"enum": ["planned", "no_change", "manual_completed", "not_applicable", "blocked", "deferred"]},
+          "revision_targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["revision_item_id", "target_index"],
+              "properties": {
+                "revision_item_id": {"type": "string", "minLength": 1},
+                "target_index": {"type": "integer", "minimum": 0}
+              },
+              "additionalProperties": false
+            }
+          },
+          "reason": {"type": "string"},
+          "evidence": {"type": "string"},
+          "evidence_file": {"type": "string"},
+          "evidence_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "coverage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": true
+}

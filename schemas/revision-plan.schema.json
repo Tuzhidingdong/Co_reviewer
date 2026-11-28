@@ -1,0 +1,1127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Revision Plan",
+  "description": "Traceable reviewer-comment or author-instruction tasks with exact human or instruction-based authorization and linked document targets.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "approved",
+    "revision_items"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "authorization_mode": {
+      "enum": ["author_approval", "instruction_based"],
+      "description": "Identifies whether scope authorization is an explicit human decision or an instruction-bound machine authorization."
+    },
+    "author_approval": {
+      "type": "object",
+      "required": ["schema_version", "authorization_type", "status", "approval_events", "approved_item_ids", "scope_sha256", "approval_sha256"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "authorization_type": {"const": "author_approval"},
+        "status": {"const": "approved"},
+        "approval_events": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["approved_by", "approved_at_utc", "approved_item_ids", "item_fingerprints", "event_sha256"],
+            "properties": {
+              "approved_by": {"type": "string", "minLength": 1},
+              "approved_at_utc": {"type": "string", "format": "date-time"},
+              "approved_item_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+              "item_fingerprints": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+              "event_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "approved_item_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "scope_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "approval_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "revision_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "reviewer",
+          "comment",
+          "status",
+          "targets"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1
+          },
+          "proposed_response": {
+            "type": "string"
+          },
+          "approval_fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 fingerprint of the exact reviewer comment, proposed response and linked document targets, including source DOCX hashes recorded by preflight-plan when present."
+          },
+          "preflight_fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 fingerprint of the exact target anchors and source DOCX hashes validated by preflight-plan."
+          },
+          "verification_fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 workflow fingerprint of the approved item and exact revised DOCX output hashes confirmed after mechanical and semantic review."
+          },
+          "verified_output_hashes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "semantic_review_confirmed": {
+            "type": "boolean"
+          },
+          "verified_at_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "approved",
+              "applied",
+              "verified",
+              "blocked"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "document",
+                "input_file",
+                "output_file",
+                "find",
+                "replace"
+              ],
+              "properties": {
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI",
+                    "Other"
+                  ]
+                },
+                "input_file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "output_file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "part": {
+                  "type": "string",
+                  "default": "word/document.xml"
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "location": {
+                  "type": "string"
+                },
+                "find": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "replace": {
+                  "type": "string"
+                },
+                "target_ref": {
+                  "$ref": "document-identity.schema.json#/$defs/targetRef"
+                },
+                "target_identity_mode": {
+                  "enum": [
+                    "stable_target_ref",
+                    "legacy_p_idx_explicit"
+                  ],
+                  "description": "Explicitly labels stable identity or migration-only paragraph-index compatibility."
+                },
+                "source_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$",
+                  "description": "SHA-256 of the exact input DOCX bytes recorded by preflight-plan and bound into user approval."
+                },
+                "authorized_change": {
+                  "type": "object",
+                  "description": "Proposed change scope. It becomes authorized only when the human approval fingerprint seals this exact target.",
+                  "required": [
+                    "intent"
+                  ],
+                  "properties": {
+                    "intent": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "explicitly_authorized_tokens": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "text",
+                          "replacement"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "replacement": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "authorization_source": {
+                      "type": "object",
+                      "description": "Immutable original-instruction evidence backing an INSERT authorization record.",
+                      "properties": {
+                        "source_file": {"type": "string"},
+                        "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        "requirement_id": {"type": "string"},
+                        "source_locator": {"type": "string"},
+                        "instruction_excerpt": {"type": "string"},
+                        "instruction_action": {"type": "string"},
+                        "instruction_polarity": {"type": "string"},
+                        "instruction_object": {"type": "string"}
+                      },
+                      "additionalProperties": false
+                    },
+                    "explicitly_authorized_insertions": {
+                      "type": "array",
+                      "description": "Exact individual protected-token values approved for insertion; every inserted token must match one entry.",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "text"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "instruction_requirement_id": {
+                            "type": "string",
+                            "description": "Coverage requirement that authorizes this exact token from the original instruction."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "explicitly_authorized_deletions": {
+                      "type": "array",
+                      "description": "Exact individual protected-token values approved for deletion; every deleted token must match one entry.",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "text"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "explicitly_authorized_spans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "start": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "protected_spans": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "start",
+                      "end"
+                    ],
+                    "properties": {
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "end": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "reference_citation_normalization": {
+                  "type": "object",
+                  "description": "Auditable Preflight projection that removes a graph-linked citation token from a prose target so it can be updated as a separate Track Changes operation.",
+                  "required": [
+                    "mode", "citation_operation_id", "source_find", "source_replace",
+                    "citation_find", "citation_replace", "normalized_find", "normalized_replace"
+                  ],
+                  "properties": {
+                    "mode": {"enum": ["prefix_before_citation", "suffix_after_citation"]},
+                    "citation_operation_id": {"type": "string", "minLength": 1},
+                    "source_find": {"type": "string", "minLength": 1},
+                    "source_replace": {"type": "string", "minLength": 1},
+                    "citation_find": {"type": "string", "minLength": 1},
+                    "citation_replace": {"type": "string", "minLength": 1},
+                    "normalized_find": {"type": "string", "minLength": 1},
+                    "normalized_replace": {"type": "string", "minLength": 1}
+                  },
+                  "additionalProperties": false
+                },
+                "reference_citation_delegations": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Graph-bound citation operations whose exact write is delegated to one ordinary prose target; the transaction operation is logically verified but is not applied as a second overlapping Track Changes edit.",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "citation_operation_id",
+                      "source_find",
+                      "source_replace",
+                      "citation_find",
+                      "citation_replace",
+                      "prose_revision_item_id",
+                      "prose_target_index"
+                    ],
+                    "properties": {
+                      "citation_operation_id": { "type": "string", "minLength": 1 },
+                      "source_find": { "type": "string", "minLength": 1 },
+                      "source_replace": { "type": "string", "minLength": 1 },
+                      "citation_find": { "type": "string", "minLength": 1 },
+                      "citation_replace": { "type": "string", "minLength": 1 },
+                      "prose_revision_item_id": { "type": "string", "minLength": 1 },
+                      "prose_target_index": { "type": "integer", "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "replacement_format_map": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Complete character-range map for carrying formatting from exact source Run offsets into the replacement text.",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "replacement_start",
+                      "replacement_end",
+                      "source_offset"
+                    ],
+                    "properties": {
+                      "replacement_start": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "replacement_end": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "source_offset": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "format_authorization": {
+                  "type": "object",
+                  "required": [
+                    "intent"
+                  ],
+                  "properties": {
+                    "intent": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "target_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Stable unique original-target identity preserved across formal revisions and patches."
+                },
+                "supersedes_target_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1},
+                  "description": "Original target identities formally repaired by this patch target."
+                },
+                "repair_class": {
+                  "enum": ["author_change", "engine_defect", "qa_remediation"],
+                  "description": "Reason class used to prevent QA remediation from being renamed as another repair path."
+                },
+                "applies_to_target_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Explicit index of the replacement target whose inserted text this format-only operation modifies."
+                },
+                "format_operations": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "find",
+                      "properties"
+                    ],
+                    "properties": {
+                      "find": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "properties": {
+                        "type": "object",
+                        "minProperties": 1,
+                        "properties": {
+                          "b": {
+                            "type": "boolean"
+                          },
+                          "bCs": {
+                            "type": "boolean"
+                          },
+                          "i": {
+                            "type": "boolean"
+                          },
+                          "iCs": {
+                            "type": "boolean"
+                          },
+                          "caps": {
+                            "type": "boolean"
+                          },
+                          "smallCaps": {
+                            "type": "boolean"
+                          },
+                          "strike": {
+                            "type": "boolean"
+                          },
+                          "dstrike": {
+                            "type": "boolean"
+                          },
+                          "outline": {
+                            "type": "boolean"
+                          },
+                          "shadow": {
+                            "type": "boolean"
+                          },
+                          "emboss": {
+                            "type": "boolean"
+                          },
+                          "imprint": {
+                            "type": "boolean"
+                          },
+                          "sz": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "szCs": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "position": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "spacing": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^(?:[0-9A-Fa-f]{6}|auto)$"
+                          },
+                          "vertAlign": {
+                            "enum": [
+                              "baseline",
+                              "superscript",
+                              "subscript"
+                            ]
+                          },
+                          "u": {
+                            "enum": [
+                              "single",
+                              "double",
+                              "dotted",
+                              "dash",
+                              "wave",
+                              "none"
+                            ]
+                          },
+                          "highlight": {
+                            "type": "string"
+                          },
+                          "rFonts": {
+                            "type": "object",
+                            "minProperties": 1,
+                            "properties": {
+                              "ascii": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "hAnsi": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "eastAsia": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "cs": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "source_comment_ids": {
+                  "type": "array",
+                  "minItems": 0,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true,
+                  "description": "Exact reviewer comment IDs when the operation responds to reviewer feedback; empty only when a hash-bound author_decision_ref is supplied."
+                },
+                "instruction_requirement_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1},
+                  "description": "Exact source-instruction Coverage requirement IDs authorizing this target; these are not reviewer comment IDs."
+                },
+                "authorization_mode": {
+                  "enum": ["author_approval", "instruction_based"]
+                },
+                "requires_author_approval": {
+                  "type": "boolean"
+                },
+                "author_decision_ref": {
+                  "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                },
+                "action": {
+                  "enum": [
+                    "replace",
+                    "insert_paragraph"
+                  ],
+                  "default": "replace"
+                },
+                "anchor_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "position": {
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                },
+                "inserted_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+        "format_operation_contract": {
+          "type": "array",
+          "description": "Original author-required format operations preserved from the pre-compilation intent. Verify uses this contract, not the Apply format map, as its expectation source.",
+          "items": {
+            "type": "object",
+            "required": ["start", "end", "properties"],
+            "properties": {
+              "start": {"type": "integer", "minimum": 0},
+              "end": {"type": "integer", "minimum": 1},
+              "properties": {"type": "object", "minProperties": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "inserted_format_map": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Complete contiguous map from inserted-text character ranges to exact ordinary source Run offsets within anchor_text. Each range inherits direct formatting from the single ordinary Run containing source_offset.",
+          "items": {
+            "type": "object",
+            "required": ["inserted_start", "inserted_end", "source_offset"],
+            "properties": {
+              "inserted_start": {"type": "integer", "minimum": 0},
+              "inserted_end": {"type": "integer", "minimum": 1},
+              "source_offset": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        }
+              },
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "source_comment_ids"
+                  ],
+                  "properties": {
+                    "source_comment_ids": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "author_decision_ref"
+                  ],
+                  "properties": {
+                    "author_decision_ref": {
+                      "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef"
+                    }
+                  }
+                },
+                {
+                  "required": ["instruction_requirement_ids"],
+                  "properties": {
+                    "instruction_requirement_ids": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              ],
+              "allOf": [
+                {
+                  "if": {
+                    "required": [
+                      "target_ref"
+                    ],
+                    "properties": {
+                      "target_ref": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "target_identity_mode"
+                    ],
+                    "properties": {
+                      "target_identity_mode": {
+                        "const": "stable_target_ref"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "anyOf": [
+                      {
+                        "not": {
+                          "required": [
+                            "target_ref"
+                          ]
+                        }
+                      },
+                      {
+                        "required": [
+                          "target_ref"
+                        ],
+                        "properties": {
+                          "target_ref": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "target_identity_mode",
+                      "p_idx"
+                    ],
+                    "properties": {
+                      "target_identity_mode": {
+                        "const": "legacy_p_idx_explicit"
+                      },
+                      "p_idx": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action": {
+                        "const": "insert_paragraph"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "anchor_text",
+                      "position",
+                      "inserted_text"
+                    ],
+                    "properties": {
+                      "part": {
+                        "const": "word/document.xml"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["inserted_format_map"]
+                  },
+                  "then": {
+                    "required": ["action"],
+                    "properties": {
+                      "action": {"const": "insert_paragraph"}
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "reference_transaction_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Binds all graph-linked bibliography/citation expectations into the ordinary revision-item approval fingerprint."
+          },
+          "authorization_mode": {
+            "enum": ["author_approval", "instruction_based"]
+          },
+          "requires_author_approval": {
+            "type": "boolean"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "approved",
+                    "applied",
+                    "verified"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "approval_fingerprint"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "const": "verified"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "verification_fingerprint",
+                "verified_output_hashes",
+                "semantic_review_confirmed",
+                "verified_at_utc"
+              ],
+              "properties": {
+                "semantic_review_confirmed": {
+                  "const": true
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reference_transaction": {
+      "type": "object",
+      "required": [
+        "transaction_id",
+        "reference_graph_sha256",
+        "transaction_fingerprint",
+        "operation_ids",
+        "documents",
+        "status"
+      ],
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_graph_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "transaction_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "definition_ids_added": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "linked_mention_ids"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "definition_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "citation_mention_ids_updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "operation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "source_comment_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_instruction_requirement_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "documents": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "input_file",
+              "output_file",
+              "source_sha256"
+            ],
+            "properties": {
+              "input_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "output_file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "added_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "number",
+              "operation_id",
+              "part",
+              "anchor_p_idx",
+              "position",
+              "inserted_text",
+              "visible_inserted_text",
+              "linked_mention_ids",
+              "linked_mention_count"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "number": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "part": {
+                "type": "string",
+                "const": "word/document.xml"
+              },
+              "anchor_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position": {
+                "enum": [
+                  "before",
+                  "after"
+                ]
+              },
+              "inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "visible_inserted_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "linked_mention_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "linked_mention_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_definition_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "operation_id",
+              "part",
+              "source_p_idx",
+              "find_text",
+              "old_number",
+              "new_number",
+              "updated_entry_text"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "updated_entry_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "part": {
+                "type": "string",
+                "pattern": "^word/"
+              },
+              "source_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "find_text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "updated_mention_expectations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document",
+              "operation_id",
+              "part",
+              "source_p_idx",
+              "source_offset",
+              "find_text",
+              "replace_text",
+              "old_number",
+              "new_number",
+              "mention_id"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              },
+              "old_number": {
+                "type": "string"
+              },
+              "new_number": {
+                "type": "string"
+              },
+              "mention_id": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "part": {
+                "type": "string",
+                "pattern": "^word/"
+              },
+              "source_p_idx": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "find_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "replace_text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "status": {
+          "enum": [
+            "pending_instruction_based_authorization",
+            "pending_author_approval"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

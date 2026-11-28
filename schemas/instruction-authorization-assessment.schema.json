@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "instruction-authorization-assessment.schema.json",
+  "title": "Instruction-based Authorization Assessment",
+  "description": "Agent-generated scope review; not a human approval or signature.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "preflight_plan_sha256",
+    "source_instruction_sha256",
+    "coverage_sha256",
+    "reviewed_requirement_ids",
+    "reviewed_target_refs",
+    "unresolved_conflicts",
+    "uncovered_requirements",
+    "out_of_scope_targets",
+    "unresolved_questions"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "status": {"enum": ["eligible", "blocked"]},
+    "preflight_plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_instruction_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "coverage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "reviewed_requirement_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "reviewed_target_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["revision_item_id", "target_index"],
+        "properties": {
+          "revision_item_id": {"type": "string", "minLength": 1},
+          "target_index": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "unresolved_conflicts": {"type": "array"},
+    "uncovered_requirements": {"type": "array"},
+    "out_of_scope_targets": {"type": "array"},
+    "unresolved_questions": {"type": "array"},
+    "review_notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Word/PDF Response Location Map",
+  "description": "Location evidence and continuous line positions produced by Microsoft Word COM. The exported PDF is retained and SHA-256 bound; no PDF text extraction is used to derive page or line values.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "location_map_id",
+    "generated_at_utc",
+    "generator",
+    "revision_ledger_sha256",
+    "line_numbering_policy",
+    "documents",
+    "response_units"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.5.1" },
+    "location_map_id": { "type": "string", "minLength": 1 },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "generator": { "enum": ["co-reviewer-word-pdf-mapper-v1", "co-reviewer-manual-locator-v1"] },
+    "revision_ledger_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "line_numbering_policy": { "enum": ["continuous-per-document-v1", "manual-explicit-locator-v1"] },
+    "documents": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": [
+          "document",
+          "source_working_clean_file",
+          "source_working_clean_sha256",
+          "output_file",
+          "output_sha256",
+          "pdf_file",
+          "pdf_sha256",
+          "word_page_count"
+        ],
+        "properties": {
+          "document": { "type": "string", "minLength": 1 },
+          "source_working_clean_file": { "type": "string", "minLength": 1 },
+          "source_working_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "output_file": { "type": "string", "pattern": "\\.docx$" },
+          "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
+          "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "word_page_count": { "type": "integer", "minimum": 1 },
+          "sequence_audit": {
+            "type": "object",
+            "required": ["status", "detected", "issues", "manual_review"],
+            "properties": {
+              "status": { "enum": ["pass", "fail", "manual_review"] },
+              "detected": {
+                "type": "object",
+                "properties": {
+                  "Figure": { "type": "array", "items": { "type": "object" } },
+                  "Table": { "type": "array", "items": { "type": "object" } }
+                },
+                "additionalProperties": false
+              },
+              "issues": { "type": "array", "items": { "type": "object" } },
+              "manual_review": { "type": "array", "items": { "type": "object" } }
+            },
+            "additionalProperties": false
+          },
+          "reused": { "type": "boolean" },
+          "refreshed_fields": {
+            "type": "object",
+            "properties": {
+              "SEQ": { "type": "integer", "minimum": 0 },
+              "REF": { "type": "integer", "minimum": 0 },
+              "PAGE": { "type": "integer", "minimum": 0 },
+              "PAGEREF": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
+          "quality_report_file": { "type": "string", "minLength": 1 },
+          "quality_report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "quality_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["document", "report_file", "report_sha256", "status"],
+        "properties": {
+          "document": { "type": "string", "minLength": 1 },
+          "report_file": { "type": "string", "minLength": 1 },
+          "report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "status": { "enum": ["PASS", "PASS_WITH_WARNINGS"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "response_units": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": ["response_unit_id", "location_map_fingerprint", "final_locations"],
+        "properties": {
+          "response_unit_id": { "type": "string", "minLength": 1 },
+          "location_map_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "final_locations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "document",
+                "output_file",
+                "output_sha256",
+                "pdf_file",
+                "pdf_sha256",
+                "page",
+                "line_start",
+                "line_end",
+                "target_sha256",
+                "patch_id",
+                "operation_id",
+                "locator_id",
+                "source_clean_sha256",
+                "mapping_method",
+                "locator_text",
+                "location_map_id",
+                "mapping_fingerprint"
+              ],
+              "properties": {
+                "document": { "type": "string", "minLength": 1 },
+                "output_file": { "type": "string", "pattern": "\\.docx$" },
+                "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "pdf_file": { "type": "string", "pattern": "\\.pdf$" },
+                "pdf_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "page": { "type": ["integer", "null"], "minimum": 1 },
+                "line_start": { "type": ["integer", "null"], "minimum": 1 },
+                "line_end": { "type": ["integer", "null"], "minimum": 1 },
+                "target_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "patch_id": { "type": ["string", "null"] },
+                "operation_id": { "type": ["string", "null"] },
+                "locator_id": { "type": "string", "minLength": 1 },
+                "source_clean_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "mapping_method": { "enum": ["word_com", "manual"] },
+                "locator_text": { "type": ["string", "null"] },
+                "location_map_id": { "type": "string", "minLength": 1 },
+                "mapping_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "required": ["mapping_method"],
+                    "properties": { "mapping_method": { "const": "word_com" } }
+                  },
+                  "then": {
+                    "properties": {
+                      "page": { "type": "integer", "minimum": 1 },
+                      "line_start": { "type": "integer", "minimum": 1 },
+                      "line_end": { "type": "integer", "minimum": 1 }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["mapping_method"],
+                    "properties": { "mapping_method": { "const": "manual" } }
+                  },
+                  "then": {
+                    "required": ["locator_text"],
+                    "properties": { "locator_text": { "type": "string", "minLength": 1 } }
+                  }
+                }
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_response_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["response_unit_id", "reason"],
+        "properties": {
+          "response_unit_id": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "document_refresh_policy": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

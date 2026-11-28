@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://co-reviewer.local/schemas/qa-remediation.schema.json",
+  "title": "Co_Reviewer V2.3.2 bounded QA remediation state",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "state_id",
+    "revision_round_id",
+    "phase",
+    "remediation_round",
+    "created_at_utc",
+    "actor",
+    "reason",
+    "event_id",
+    "revision_ledger_file",
+    "patch_id",
+    "operation_id",
+    "document_role",
+    "marked_input_file",
+    "marked_input_sha256",
+    "marked_output_file",
+    "batch_id",
+    "batch_dir",
+    "batch_intent_sha256",
+    "batch_scope_sha256",
+    "pre_remediation_qa_report_file",
+    "pre_remediation_qa_report_sha256",
+    "pre_remediation_clean_file",
+    "pre_remediation_clean_sha256",
+    "clean_must_be_recompiled_from_marked",
+    "second_qa_failure_action"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "state_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_round_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase": {
+      "enum": [
+        "PATCH_COMMIT_PENDING",
+        "COMPLETE",
+        "BLOCKED"
+      ]
+    },
+    "remediation_round": {
+      "const": 1
+    },
+    "created_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completion_event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "marked_input_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "marked_input_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "marked_output_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "batch_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "batch_intent_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "batch_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "pre_remediation_qa_report_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pre_remediation_qa_report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "pre_remediation_clean_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pre_remediation_clean_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "clean_must_be_recompiled_from_marked": {
+      "const": true
+    },
+    "second_qa_failure_action": {
+      "const": "BLOCKED"
+    },
+    "qa_status": {
+      "enum": [
+        "PASS",
+        "PASS_WITH_WARNINGS",
+        "FAIL"
+      ]
+    },
+    "qa_report_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "qa_report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "clean_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clean_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "marked_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "marked_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "compiled_revision_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "block_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "PATCH_COMMIT_PENDING"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "completed_at_utc",
+            "completion_event_id",
+            "qa_status"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "COMPLETE"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "required": [
+          "completed_at_utc",
+          "completion_event_id",
+          "qa_status",
+          "qa_report_file",
+          "qa_report_sha256",
+          "clean_file",
+          "clean_sha256",
+          "marked_file",
+          "marked_sha256",
+          "compiled_revision_ids"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "BLOCKED"
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "required": [
+          "completed_at_utc",
+          "completion_event_id",
+          "qa_status",
+          "block_reason"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

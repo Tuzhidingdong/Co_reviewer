@@ -1,0 +1,808 @@
+import contextlib
+import io
+import json
+import sys
+import tempfile
+import unittest
+import zipfile
+from argparse import Namespace
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import co_reviewer_cli as cli
+from response_letter_docx import render_response_docx
+from test_revision_engine import make_docx
+
+
+class RevisionWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.input = self.root / "input.docx"
+        self.output = self.root / "output.docx"
+        self.plan_path = self.root / "edits_plan.json"
+        self.report_path = self.root / "apply_report.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _plan(self):
+        plan = {
+            "schema_version": "1.0",
+            "approved": True,
+            "revision_items": [
+                {
+                    "id": "R1-C1",
+                    "reviewer": "Reviewer 1",
+                    "comment": "Please clarify the first statement.",
+                    "proposed_response": "We have clarified the first statement.",
+                    "status": "approved",
+                    "targets": [{
+                        "document": "Manuscript", "input_file": str(self.input),
+                        "output_file": str(self.output), "p_idx": 0,
+                        "location": "Section 1", "find": "old phrase",
+                        "replace": "revised phrase"
+                    }]
+                },
+                {
+                    "id": "R2-C1",
+                    "reviewer": "Reviewer 2",
+                    "comment": "Please provide further detail.",
+                    "proposed_response": "We will address this in a later iteration.",
+                    "status": "planned",
+                    "targets": [{
+                        "document": "SI", "input_file": str(self.input),
+                        "output_file": str(self.root / "si_revised.docx"), "p_idx": 0,
+                        "location": "Section S1", "find": "outdated terminology",
+                        "replace": "updated terminology"
+                    }]
+                }
+            ]
+        }
+        for item in plan["revision_items"]:
+            if item.get("status") == "approved":
+                for target in item.get("targets", []):
+                    target.setdefault("authorized_change", {
+                        "intent": "Human-approved exact text correction",
+                        "explicitly_authorized_tokens": [],
+                        "explicitly_authorized_spans": [],
+                    })
+                item["approval_fingerprint"] = cli.revision_item_fingerprint(item)
+        return plan
+
+    def test_approve_plan_parser_is_registered(self):
+        args = cli.build_parser().parse_args([
+            "approve-plan", "--plan", str(self.plan_path), "--ids", "R1-C1", "R2-C1"
+        ])
+        self.assertIs(args.func, cli.cmd_approve_plan)
+        self.assertEqual(args.ids, ["R1-C1", "R2-C1"])
+
+    def test_confirm_verified_parser_is_registered(self):
+        args = cli.build_parser().parse_args([
+            "confirm-verified", "--plan", str(self.plan_path),
+            "--apply-report", str(self.report_path), "--ids", "R1-C1",
+            "--semantic-review-confirmed"
+        ])
+        self.assertIs(args.func, cli.cmd_confirm_verified)
+        self.assertTrue(args.semantic_review_confirmed)
+
+    def test_manually_setting_verified_without_confirmation_fields_is_rejected(self):
+        plan = self._plan()
+        plan["revision_items"][0]["status"] = "verified"
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(any("verification_fingerprint" in error for error in errors))
+        self.assertTrue(any("verified_output_hashes" in error for error in errors))
+
+    def test_confirm_verified_refuses_incomplete_apply_report(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+        history = json.loads(self.report_path.read_text(encoding="utf-8"))
+        history[0]["results"] = []
+        self.report_path.write_text(json.dumps(history), encoding="utf-8")
+        confirm_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(self.report_path),
+            ids=["R1-C1"], semantic_review_confirmed=True
+        )
+        with self.assertRaisesRegex(ValueError, "verification is incomplete"):
+            cli.cmd_confirm_verified(confirm_args)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+
+    def test_confirm_verified_refuses_direct_untracked_text_changes(self):
+        make_docx(self.input, [
+            [("old phrase and outdated terminology", False)],
+            [("An independent sentence remains unchanged.", False)]
+        ])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+
+        with zipfile.ZipFile(self.output, "r") as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        root = ET.fromstring(members["word/document.xml"])
+        paragraphs = root.findall(".//w:body//w:p", cli.NS)
+        text_node = paragraphs[1].find("w:r/w:t", cli.NS)
+        text_node.text = "An independent sentence was directly rewritten."
+        members["word/document.xml"] = ET.tostring(
+            root, encoding="utf-8", xml_declaration=True
+        )
+        with zipfile.ZipFile(self.output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+
+        confirm_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(self.report_path),
+            ids=["R1-C1"], semantic_review_confirmed=True
+        )
+        with self.assertRaisesRegex(ValueError, "direct/untracked text changes"):
+            cli.cmd_confirm_verified(confirm_args)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+
+
+    def test_confirmed_verification_is_invalidated_when_output_changes(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        self.plan_path.write_text(json.dumps(self._plan()), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(self.plan_path), apply_report=str(self.report_path),
+                ids=["R1-C1"], semantic_review_confirmed=True
+            )), 0)
+        verified_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(verified_plan), [])
+        self.output.write_bytes(self.output.read_bytes() + b"tampered")
+        errors = cli.validate_plan(verified_plan)
+        self.assertTrue(any("revised DOCX changed after verification" in error for error in errors))
+
+    def test_approve_plan_cli_seals_only_selected_items(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_approve_plan(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertTrue(saved["approved"])
+        first, second = saved["revision_items"]
+        self.assertEqual(first["status"], "approved")
+        self.assertEqual(first["approval_fingerprint"], cli.revision_item_fingerprint(first))
+        self.assertEqual(second["status"], "planned")
+        self.assertNotIn("approval_fingerprint", second)
+        self.assertEqual(cli.validate_plan(saved), [])
+
+    def test_approve_plan_reseals_an_edited_pending_approval(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        first = plan["revision_items"][0]
+        first["proposed_response"] = "Updated response shown to and re-approved by the user."
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_approve_plan(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        sealed = saved["revision_items"][0]
+        self.assertEqual(sealed["approval_fingerprint"], cli.revision_item_fingerprint(sealed))
+        self.assertEqual(sealed["proposed_response"], "Updated response shown to and re-approved by the user.")
+        self.assertEqual(cli.validate_plan(saved), [])
+
+    def test_approve_plan_refuses_unpreflighted_items(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        plan["revision_items"] = [plan["revision_items"][0]]
+        plan["revision_items"][0]["status"] = "planned"
+        plan["revision_items"][0].pop("approval_fingerprint", None)
+        plan["approved"] = False
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "has not passed source DOCX preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=["R1-C1"]))
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "planned")
+        self.assertFalse(self.output.exists())
+
+    def test_approve_plan_refuses_source_changed_since_preflight(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        make_docx(self.input, [[("old phrase", False)], [("Changed before approval.", False)]])
+        with self.assertRaisesRegex(ValueError, "Source DOCX changed after preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]]))
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "planned")
+        self.assertFalse(self.output.exists())
+
+    def test_approved_item_fails_closed_after_its_scope_is_changed(self):
+        plan = self._plan()
+        plan["revision_items"][0]["targets"][0]["replace"] = "unapproved replacement"
+        errors = cli.validate_plan(plan)
+        self.assertTrue(any("approval_fingerprint" in error for error in errors))
+        with self.assertRaisesRegex(ValueError, "approval_fingerprint"):
+            cli.apply_plan(plan, "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_apply_refuses_report_path_that_would_overwrite_docx_output(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.output), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "apply report path conflicts with a referenced DOCX output"):
+            cli.cmd_apply(args)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(json.loads(self.plan_path.read_text(encoding="utf-8"))["revision_items"][0]["status"], "approved")
+
+    def test_apply_refuses_report_path_that_conflicts_with_source_docx(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        original = self.input.read_bytes()
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.input), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "apply report path conflicts with a referenced DOCX input"):
+            cli.cmd_apply(args)
+        self.assertEqual(self.input.read_bytes(), original)
+        self.assertFalse(self.output.exists())
+
+    def test_apply_refuses_plan_and_report_path_collision(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.plan_path), author="Test Author"
+        )
+        with self.assertRaisesRegex(ValueError, "revision plan and apply report must use different"):
+            cli.cmd_apply(args)
+        self.assertFalse(self.output.exists())
+
+    def test_approve_plan_validation_error_uses_readable_line_breaks(self):
+        invalid = self._plan()
+        invalid["schema_version"] = "2.0"
+        self.plan_path.write_text(json.dumps(invalid), encoding="utf-8")
+        with self.assertRaises(ValueError) as caught:
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=["R1-C1"]))
+        self.assertIn("\n- ", str(caught.exception))
+        self.assertNotIn("\\n- ", str(caught.exception))
+
+    def test_source_docx_fingerprint_must_be_a_lowercase_sha256(self):
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+            item["targets"][0]["source_sha256"] = "not-a-sha256"
+        plan["approved"] = False
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(any("source_sha256" in error for error in errors))
+
+    def test_preflight_cli_records_source_hashes_and_does_not_write_docx_outputs(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        for item in plan["revision_items"]:
+            item["status"] = "planned"
+            item.pop("approval_fingerprint", None)
+        plan["approved"] = False
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        report_path = self.root / "preflight_report.json"
+
+        args = cli.build_parser().parse_args([
+            "preflight-plan", "--plan", str(self.plan_path),
+            "--out", str(report_path)
+        ])
+        self.assertIs(args.func, cli.cmd_preflight)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_preflight(args)
+
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_hash = cli.sha256_file(self.input)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["targets_total"], 2)
+        self.assertEqual(report["targets_preflighted"], 2)
+        self.assertEqual(report["source_files"][0]["sha256"], expected_hash)
+        self.assertEqual(
+            saved["revision_items"][0]["preflight_fingerprint"],
+            cli.revision_targets_fingerprint(saved["revision_items"][0])
+        )
+        self.assertEqual(
+            report["preflight_items"][0]["preflight_fingerprint"],
+            saved["revision_items"][0]["preflight_fingerprint"]
+        )
+        self.assertTrue(all(
+            result["status"] == "preflighted"
+            and "delete_revision_id" not in result
+            and "insert_revision_id" not in result
+            for result in report["results"]
+        ))
+        self.assertTrue(all(
+            document_report["status"] == "preflighted"
+            and document_report["edits_prepared"] == document_report["edits_requested"]
+            and "edits_applied" not in document_report
+            for document_report in report["documents"]
+        ))
+        for item in saved["revision_items"]:
+            self.assertEqual(item["status"], "planned")
+            self.assertEqual(item["targets"][0]["source_sha256"], expected_hash)
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.root / "si_revised.docx").exists())
+
+    def test_approve_plan_refuses_target_changes_after_preflight_until_repreflight(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+
+        item["targets"][0]["find"] = "outdated terminology"
+        item["targets"][0]["replace"] = "updated terminology"
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "target scope has changed since preflight"):
+            cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]]))
+
+        # Re-preflight the modified anchor before the user approves that revised target.
+        report = cli.preflight_plan(plan)
+        self.assertTrue(report["passed"])
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(saved), [])
+
+    def test_approved_plan_rejects_source_docx_changed_after_preflight(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        cli.preflight_plan(plan)
+        self.assertEqual(item["targets"][0]["source_sha256"], cli.sha256_file(self.input))
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+
+        # Keep the original anchor but change the source DOCX version after approval.
+        make_docx(self.input, [[("old phrase", False)], [("An added paragraph.", False)]])
+        approved_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, "Source DOCX changed since preflight"):
+            cli.apply_plan(approved_plan, "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_repreflight_of_changed_approved_source_requires_renewed_approval(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+        cli.preflight_plan(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+
+        make_docx(self.input, [[("old phrase", False)], [("Source version changed.", False)]])
+        refreshed = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        report = cli.preflight_plan(refreshed)
+        self.assertEqual(report["approval_scope_changed_items"], [item["id"]])
+        self.assertTrue(any(
+            "approval_fingerprint" in error for error in cli.validate_plan(refreshed)
+        ))
+
+        self.plan_path.write_text(json.dumps(refreshed), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                cli.cmd_approve_plan(Namespace(plan=str(self.plan_path), ids=[item["id"]])),
+                0
+            )
+        renewed = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(cli.validate_plan(renewed), [])
+        reports = cli.apply_plan(renewed, "Test Author")
+        self.assertEqual(reports[0]["edits_applied"], 1)
+        self.assertTrue(self.output.exists())
+
+    def test_failed_preflight_does_not_record_partial_source_fingerprints(self):
+        make_docx(self.input, [[("This anchor does not exist.", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        with self.assertRaisesRegex(ValueError, "not found"):
+            cli.preflight_plan(plan)
+        self.assertNotIn("source_sha256", item["targets"][0])
+        self.assertFalse(self.output.exists())
+
+    def test_apply_only_approved_items_and_preserve_pending_items(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        reports = cli.apply_plan(plan, "Test Author")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["edits_applied"], 1)
+        self.assertEqual(
+            [edit["revision_item_id"] for edit in reports[0]["results"]],
+            ["R1-C1"]
+        )
+        # Only the applied item is mechanically checked; the planned item is not
+        # treated as a missing/failed change in this iteration.
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, reports)
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 1)
+        self.assertEqual(plan["revision_items"][1]["status"], "planned")
+
+    def test_apply_refuses_when_no_item_is_approved(self):
+        make_docx(self.input, [[("old phrase", False)]])
+        plan = self._plan()
+        plan["revision_items"][0]["status"] = "planned"
+        with self.assertRaisesRegex(ValueError, "No revision items"):
+            cli.apply_plan(plan, "Test Author")
+        self.assertFalse(self.output.exists())
+
+    def test_cli_apply_persists_item_state_and_leaves_other_items_pending(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_apply(args)
+        self.assertEqual(code, 0)
+        saved = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["revision_items"][0]["status"], "applied")
+        self.assertEqual(saved["revision_items"][1]["status"], "planned")
+        self.assertTrue(self.report_path.is_file())
+
+    def test_incremental_iterations_preserve_docx_changes_and_apply_report_history(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        first_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(first_args), 0)
+
+        after_first = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(after_first["revision_items"][0]["status"], "applied")
+        self.assertEqual(after_first["revision_items"][1]["status"], "planned")
+
+        second_output = self.root / "output_round_02.docx"
+        second_item = after_first["revision_items"][1]
+        second_item["status"] = "approved"
+        second_item["targets"][0]["input_file"] = str(self.output)
+        second_item["targets"][0]["output_file"] = str(second_output)
+        second_item["targets"][0]["authorized_change"] = {
+            "intent": "Human-approved exact text correction",
+            "explicitly_authorized_tokens": [],
+            "explicitly_authorized_spans": [],
+        }
+        second_item["approval_fingerprint"] = cli.revision_item_fingerprint(second_item)
+        self.plan_path.write_text(json.dumps(after_first), encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(first_args), 0)
+
+        final_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item["status"] for item in final_plan["revision_items"]],
+            ["applied", "applied"]
+        )
+        history = json.loads(self.report_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(history), 2)
+        self.assertTrue(self.output.is_file())
+        self.assertTrue(second_output.is_file())
+
+        verification = cli.verify_apply_report(final_plan, history)
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 2)
+        self.assertEqual(verification["targets_verified"], 2)
+
+        with zipfile.ZipFile(second_output) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+            paragraph = root.find(".//w:p", cli.NS)
+            deleted = "".join(
+                node.text or "" for node in paragraph.findall(".//w:del//w:delText", cli.NS)
+            )
+            inserted = "".join(
+                node.text or "" for node in paragraph.findall(".//w:ins//w:t", cli.NS)
+            )
+            self.assertIn("old phrase", deleted)
+            self.assertIn("outdated terminology", deleted)
+            self.assertIn("revised phrase", inserted)
+            self.assertIn("updated terminology", inserted)
+
+    def test_response_docx_contains_verified_and_draft_sections(self):
+        make_docx(self.input, [[("old phrase and outdated terminology", False)]])
+        plan = self._plan()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(self.report_path), author="Test Author"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+            self.assertEqual(cli.cmd_confirm_verified(Namespace(
+                plan=str(self.plan_path), apply_report=str(self.report_path),
+                ids=["R1-C1"], semantic_review_confirmed=True
+            )), 0)
+        plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        output = self.root / "Response_to_Reviewers.docx"
+        rendered = render_response_docx(
+            plan, output, manuscript_title="A sample manuscript", author="Corresponding Author"
+        )
+        self.assertTrue(Path(rendered).is_file())
+        with zipfile.ZipFile(output) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertIn("word/document.xml", archive.namelist())
+        from docx import Document
+        paragraphs = [p.text for p in Document(output).paragraphs]
+        joined = "\n".join(paragraphs)
+        self.assertIn("Response to Reviewers", joined)
+        self.assertIn("Reviewer 1 — R1-C1", joined)
+        self.assertIn("Response", joined)
+        self.assertIn("Reviewer 2 — R2-C1", joined)
+        self.assertIn("DRAFT (planned; not yet verified)", joined)
+        self.assertIn("We will address this in a later iteration.", joined)
+
+    def test_response_docx_does_not_overwrite_existing_file(self):
+        plan = self._plan()
+        output = self.root / "existing.docx"
+        output.write_bytes(b"do not overwrite")
+        with self.assertRaises(FileExistsError):
+            render_response_docx(plan, output)
+        self.assertEqual(output.read_bytes(), b"do not overwrite")
+
+    def test_response_docx_rejects_non_docx_output(self):
+        with self.assertRaisesRegex(ValueError, "end with .docx"):
+            render_response_docx(self._plan(), self.root / "response.md")
+
+
+    def test_end_to_end_one_reviewer_item_updates_manuscript_and_si(self):
+        reviewer_docx = self.root / "Reviewers.docx"
+        manuscript_input = self.root / "Manuscript.docx"
+        manuscript_output = self.root / "Manuscript_revised.docx"
+        si_input = self.root / "SI.docx"
+        si_output = self.root / "SI_revised.docx"
+        inventory_md = self.root / "workspace_digest.md"
+        inventory_json = self.root / "workspace_inventory.json"
+        preflight_json = self.root / "preflight_report.json"
+        verification_json = self.root / "verification_report.json"
+        response_md = self.root / "Response_to_Reviewers.md"
+        multi_report = self.root / "multi_document_apply_report.json"
+
+        reviewer_comment = (
+            "Reviewer 1: Please keep the sample identifier consistent in the "
+            "manuscript and Supporting Information."
+        )
+        make_docx(reviewer_docx, [[(reviewer_comment, False)]])
+        make_docx(manuscript_input, [[("The selected specimen is Sample ZB-01.", False)]])
+        make_docx(si_input, [[("Supporting Information record: Sample ZB-01.", False)]])
+        original_inputs = {
+            path: path.read_bytes()
+            for path in (reviewer_docx, manuscript_input, si_input)
+        }
+
+        # Inventory all three source documents before preparing the revision item.
+        inspect_args = Namespace(
+            rev=str(reviewer_docx), man=str(manuscript_input), si=str(si_input),
+            comment_author=None, out=str(inventory_md), json_out=str(inventory_json),
+            max_items_per_section=50
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_inspect(inspect_args), 0)
+        inventory = json.loads(inventory_json.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [report["role"] for report in inventory],
+            ["Reviewers", "Manuscript", "SI"]
+        )
+        self.assertIn(reviewer_comment, [
+            paragraph["text"]
+            for paragraph in inventory[0]["paragraphs"]
+        ])
+
+        # One reviewer concern deliberately links to two separate DOCX outputs.
+        plan = {
+            "schema_version": "1.0",
+            "approved": False,
+            "revision_items": [{
+                "id": "R1-C1",
+                "reviewer": "Reviewer 1",
+                "comment": reviewer_comment,
+                "proposed_response": (
+                    "We will align the sample identifier in the Manuscript and SI."
+                ),
+                "status": "planned",
+                "targets": [
+                    {
+                        "document": "Manuscript",
+                        "input_file": str(manuscript_input),
+                        "output_file": str(manuscript_output),
+                        "p_idx": 0,
+                        "location": "Manuscript body paragraph 1",
+                        "find": "Sample ZB-01",
+                        "replace": "Sample ZB-02",
+                        "authorized_change": {
+                            "intent": "Human-approved sample identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
+                    },
+                    {
+                        "document": "SI",
+                        "input_file": str(si_input),
+                        "output_file": str(si_output),
+                        "p_idx": 0,
+                        "location": "SI body paragraph 1",
+                        "find": "Sample ZB-01",
+                        "replace": "Sample ZB-02",
+                        "authorized_change": {
+                            "intent": "Human-approved sample identifier correction",
+                            "explicitly_authorized_tokens": [{"kind": "number", "text": "01", "replacement": "02"}],
+                        }
+                    }
+                ]
+            }]
+        }
+        self.plan_path.write_text(
+            json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        preflight_args = Namespace(
+            plan=str(self.plan_path), out=str(preflight_json),
+            author="Co_Reviewer integration test"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_preflight(preflight_args), 0)
+        preflight = json.loads(preflight_json.read_text(encoding="utf-8"))
+        self.assertTrue(preflight["passed"])
+        self.assertEqual(preflight["targets_total"], 2)
+        self.assertEqual(preflight["targets_preflighted"], 2)
+        self.assertFalse(manuscript_output.exists())
+        self.assertFalse(si_output.exists())
+
+        approve_args = Namespace(plan=str(self.plan_path), ids=["R1-C1"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_approve_plan(approve_args), 0)
+
+        apply_args = Namespace(
+            plan=str(self.plan_path), report=str(multi_report),
+            author="Co_Reviewer integration test"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_apply(apply_args), 0)
+
+        saved_plan = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved_plan["revision_items"][0]["status"], "applied")
+        self.assertTrue(manuscript_output.is_file())
+        self.assertTrue(si_output.is_file())
+        apply_history = json.loads(multi_report.read_text(encoding="utf-8"))
+        self.assertEqual(len(apply_history), 2)
+        self.assertEqual(
+            {Path(entry["output_file"]).name for entry in apply_history},
+            {"Manuscript_revised.docx", "SI_revised.docx"}
+        )
+
+        verify_args = Namespace(
+            plan=str(self.plan_path), apply_report=str(multi_report),
+            out=str(verification_json)
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_verify(verify_args), 0)
+        verification = json.loads(verification_json.read_text(encoding="utf-8"))
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["targets_total"], 2)
+        self.assertEqual(verification["targets_verified"], 2)
+        self.assertEqual(verification["targets_failed"], 0)
+
+        # An applied item remains a draft until a human confirms semantic review.
+        response_args = Namespace(plan=str(self.plan_path), out=str(response_md))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_response(response_args), 0)
+        response = response_md.read_text(encoding="utf-8")
+        self.assertIn("DRAFT (applied; not yet verified)", response)
+        self.assertIn("Manuscript_revised.docx", response)
+        self.assertIn("SI_revised.docx", response)
+
+        # Every original source remains byte-for-byte unchanged.
+        for source_path, original_bytes in original_inputs.items():
+            self.assertEqual(source_path.read_bytes(), original_bytes)
+
+    def test_preflight_plan_forwards_format_fields_on_each_target_edit(self):
+        from unittest import mock
+
+        make_docx(self.input, [[("old phrase", False)], [("context before and pure format", False)]])
+        plan = self._plan()
+        item = plan["revision_items"][0]
+        item["status"] = "planned"
+        item.pop("approval_fingerprint", None)
+        plan["revision_items"] = [item]
+        plan["approved"] = False
+
+        text_target = item["targets"][0]
+        text_target["replacement_format_map"] = [
+            {"replacement_start": 0, "replacement_end": len("revised phrase"), "source_offset": 0}
+        ]
+        format_target = {
+            "document": "Manuscript",
+            "input_file": str(self.input),
+            "output_file": str(self.output),
+            "p_idx": 1,
+            "location": "Section 1",
+            "find": "context before",
+            "replace": "context before",
+            "format_authorization": {"intent": "Italicize technical term"},
+            "format_operations": [{"find": "pure format", "properties": {"i": True}}],
+        }
+        item["targets"].append(format_target)
+
+        captured_edits = []
+        original_prepare = cli.prepare_document
+
+        def _capture_prepare(inp, out, edits, author):
+            captured_edits.extend(edits)
+            return original_prepare(inp, out, edits, author)
+
+        with mock.patch.object(cli, "prepare_document", side_effect=_capture_prepare):
+            report = cli.preflight_plan(plan)
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(len(captured_edits), 2)
+        self.assertEqual(
+            captured_edits[0]["replacement_format_map"],
+            [{"replacement_start": 0, "replacement_end": len("revised phrase"), "source_offset": 0}],
+        )
+        self.assertEqual(captured_edits[1]["format_authorization"], {"intent": "Italicize technical term"})
+        self.assertEqual(
+            captured_edits[1]["format_operations"],
+            [{"find": "pure format", "properties": {"i": True}}],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

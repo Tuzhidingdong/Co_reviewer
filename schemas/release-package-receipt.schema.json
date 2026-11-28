@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/release-package-receipt.schema.json",
+  "title": "Co_Reviewer Release Package Completion Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "release_id",
+    "completed_at_utc",
+    "workflow_ledger_file",
+    "workflow_ledger_sha256",
+    "revision_ledger_file",
+    "revision_ledger_sha256",
+    "intent_file",
+    "intent_sha256",
+    "artifacts",
+    "package_id",
+    "package_directory",
+    "package_manifest_file",
+    "package_manifest_sha256",
+    "commit_marker_file",
+    "commit_marker_sha256",
+    "package_artifact_count"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "status": {
+      "const": "complete"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workflow_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "intent_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "Response_to_Reviewers.md",
+        "Response_to_Reviewers.docx",
+        "Response_to_Reviewers.quality.json",
+        "final_release_manifest.json"
+      ],
+      "properties": {
+        "Response_to_Reviewers.md": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "Response_to_Reviewers.docx": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "Response_to_Reviewers.quality.json": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "final_release_manifest.json": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "package_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "package_directory": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_manifest_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "commit_marker_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit_marker_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "package_artifact_count": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

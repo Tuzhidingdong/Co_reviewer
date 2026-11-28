@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer v0.5.1 Document and Object Identity",
+  "description": "Persistent document revision identity, five independent fingerprint dimensions, citation profile, object registry and stable target references.",
+  "$defs": {
+    "citationProfile": {
+      "type": "object",
+      "required": [
+        "mode",
+        "numbering_scope",
+        "marker_examples",
+        "reference_labels",
+        "detection_method",
+        "profile_version"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "numeric_superscript",
+            "numeric_bracketed",
+            "numeric_parenthetical",
+            "author_year",
+            "footnote",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "style_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numbering_scope": {
+          "enum": [
+            "document",
+            "section",
+            "chapter",
+            "none",
+            "unknown"
+          ]
+        },
+        "marker_examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reference_labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "detection_method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "profile_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "documentIdentity": {
+      "type": "object",
+      "required": [
+        "identity_version",
+        "document_id",
+        "revision_id",
+        "role",
+        "source_sha256",
+        "dimensions",
+        "citation_profile"
+      ],
+      "properties": {
+        "identity_version": {
+          "const": "0.5.1"
+        },
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "dimensions": {
+          "type": "object",
+          "required": [
+            "content_sha256",
+            "structure_sha256",
+            "formatting_sha256",
+            "citation_sha256"
+          ],
+          "properties": {
+            "content_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "structure_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "formatting_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "citation_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "citation_profile": {
+          "$ref": "#/$defs/citationProfile"
+        }
+      },
+      "additionalProperties": false
+    },
+    "documentObjectIdentity": {
+      "type": "object",
+      "required": [
+        "object_id",
+        "document_id",
+        "revision_id",
+        "object_type",
+        "part",
+        "object_fingerprint"
+      ],
+      "properties": {
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "part": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "native_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent_object_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location_hint": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targetRef": {
+      "type": "object",
+      "required": [
+        "document_id",
+        "revision_id",
+        "object_id",
+        "object_type",
+        "part",
+        "object_fingerprint"
+      ],
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "part": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "start_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "end_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "location_hint": {
+          "type": "object",
+          "properties": {
+            "p_idx": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "start_offset"
+            ]
+          },
+          "then": {
+            "required": [
+              "end_offset"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "end_offset"
+            ]
+          },
+          "then": {
+            "required": [
+              "start_offset"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "schema_version",
+    "documents",
+    "objects"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.5.1"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/documentIdentity"
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/documentObjectIdentity"
+      }
+    }
+  },
+  "additionalProperties": false
+}

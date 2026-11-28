@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Immutable Batch Creation Receipt",
+  "description": "Append-only, hash-bound evidence that a protocol-v1 batch's RevisionLedger commit completed or that creation was safely abandoned before commit.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "batch_id",
+    "created_at_utc",
+    "revision_ledger_file",
+    "revision_ledger_sha256_before",
+    "revision_ledger_sha256_after",
+    "batch_intent_sha256",
+    "batch_scope_sha256",
+    "revision_ledger_committed",
+    "no_patch_records_committed",
+    "active_parent_pointers_unchanged",
+    "execution_artifacts_present",
+    "retained_batch_files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "status": {
+      "enum": [
+        "committed",
+        "abandoned_before_ledger_commit"
+      ]
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]+$"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_sha256_before": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revision_ledger_sha256_after": {
+      "$ref": "#/$defs/sha256"
+    },
+    "batch_intent_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "batch_scope_sha256": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revision_ledger_committed": {
+      "type": "boolean"
+    },
+    "no_patch_records_committed": {
+      "type": "boolean"
+    },
+    "active_parent_pointers_unchanged": {
+      "const": true
+    },
+    "execution_artifacts_present": {
+      "const": false
+    },
+    "retained_batch_files": {
+      "const": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "committed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "revision_ledger_committed": {
+            "const": true
+          },
+          "no_patch_records_committed": {
+            "const": false
+          },
+          "batch_scope_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "revision_ledger_committed": {
+            "const": false
+          },
+          "no_patch_records_committed": {
+            "const": true
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

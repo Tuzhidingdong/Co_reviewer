@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "revision_round_id": "round-<same-as-workflow-ledger>",
+  "workflow_ledger_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "patch_id": "P-T1",
+      "proposed_response": "<author-reviewed response wording grounded in the reviewer comment and supplied evidence>",
+      "patch_operations": [
+        {
+          "operation_id": "T1-OP-MAN-01",
+          "document": "Manuscript",
+          "part": "word/document.xml",
+          "p_idx": 0,
+          "find": "<exact text in the target paragraph>",
+          "replace": "<author-approved replacement text>",
+          "location": "<short target description>",
+          "evidence_ids": [
+            "E-MAN-01"
+          ],
+          "source_comment_ids": [
+            "1"
+          ]
+        }
+      ],
+      "response_unit_specs": [
+        {
+          "comment_id": "1",
+          "disposition": "revised",
+          "location_requirement": "required",
+          "resolution_reason": "The exact evidenced target is revised by T1-OP-MAN-01."
+        }
+      ]
+    }
+  ],
+  "reviewer_map": {
+    "T1": {
+      "comment_ids": {
+        "1": "Reviewer 1"
+      }
+    }
+  }
+}

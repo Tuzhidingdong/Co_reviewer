@@ -1,0 +1,1791 @@
+from __future__ import annotations
+
+import hashlib
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from docx import Document
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from co_reviewer.reference_transaction import (
+    ReferenceTransactionError,
+    compile_reference_transaction,
+)
+from co_reviewer.plan_compiler import compile_revision_plan
+
+
+class ReferenceTransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.manuscript = self.root / "manuscript.docx"
+        self.si = self.root / "si.docx"
+        for path, paragraphs in (
+            (self.manuscript, ["The claim is supported by [4].", "References", "[4] Smith (2020). Journal details."]),
+            (self.si, ["Supporting information cites [7]."]),
+        ):
+            document = Document()
+            for value in paragraphs:
+                document.add_paragraph(value)
+            document.save(path)
+        self.graph = {
+            "schema_version": "1.2",
+            "documents": ["Manuscript", "SI"],
+            "document_segments": {
+                "Manuscript": [
+                    {"part": "word/document.xml", "paragraph_index": 0, "in_reference_section": False},
+                    {"part": "word/document.xml", "paragraph_index": 1, "in_reference_section": True},
+                    {"part": "word/document.xml", "paragraph_index": 2, "in_reference_section": True},
+                ],
+                "SI": [
+                    {"part": "word/document.xml", "paragraph_index": 0, "in_reference_section": False},
+                ],
+            },
+            "source_files": {
+                "Manuscript": {
+                    "path": str(self.manuscript.resolve()),
+                    "sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                },
+                "SI": {
+                    "path": str(self.si.resolve()),
+                    "sha256": hashlib.sha256(self.si.read_bytes()).hexdigest(),
+                },
+            },
+            "definitions": [{
+                "id": "def-4",
+                "document": "Manuscript",
+                "part": "word/document.xml",
+                "paragraph_index": 2,
+                "kind": "citation",
+                "number": "4",
+                "text": "[4]",
+                "reference_mechanism": "static_text",
+            }],
+            "mentions": [
+                {
+                    "id": "men-4-a", "document": "Manuscript",
+                    "part": "word/document.xml", "paragraph_index": 0,
+                    "kind": "citation", "number": "4", "text": "4", "offset": 27,
+                    "target_definition_ids": ["def-4"], "resolution": "resolved",
+                },
+                {
+                    "id": "men-" + hashlib.sha1(
+                        ("SIword/document.xml0"
+                         + str("Supporting information cites [7].".index("7"))
+                         + "citation7").encode("utf-8")
+                    ).hexdigest()[:16],
+                    "document": "SI",
+                    "part": "word/document.xml", "paragraph_index": 0,
+                    "kind": "citation", "number": "7", "text": "7",
+                    "target_definition_ids": [], "resolution": "unresolved",
+                },
+            ],
+        }
+        instruction_lines = [
+            "[T-07] Add one reference.",
+            "`[7] New reference entry.`",
+            "`7. New reference entry.`",
+        ]
+        self.instruction = self.root / "instructions.txt"
+        self.instruction.write_text("\n".join(instruction_lines) + "\n", encoding="utf-8")
+        self.insert_source = {
+            "source_file": str(self.instruction),
+            "source_sha256": hashlib.sha256(self.instruction.read_bytes()).hexdigest(),
+            "requirement_id": "REQ-T-07-INS",
+            "source_locator": "L1–L3",
+            "instruction_excerpt": "\n".join(instruction_lines),
+            "instruction_action": "insert",
+            "instruction_polarity": "affirmative",
+            "instruction_object": "[7]",
+        }
+        self.spec = {
+            "transaction_id": "REF-TXN-001",
+            "reviewer": "Author",
+            "comment": "Add one reference, update one entry and renumber its in-text citation.",
+            "proposed_response": "The reference list and all linked citations were updated.",
+            "source_comment_ids": ["C-1"],
+            "evidence_ids": ["E-1"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                },
+                "SI": {
+                    "input_file": str(self.si),
+                    "output_file": str(self.root / "si_marked.docx"),
+                },
+            },
+            "additions": [{
+                "operation_id": "REF-ADD-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "document": "Manuscript",
+                "p_idx": 1,
+                "anchor_text": "References",
+                "position": "after",
+                "inserted_text": "[7] New reference entry.",
+                "reference_number": "7",
+                "linked_mention_ids": [self.graph["mentions"][-1]["id"]],
+                "authorized_change": {
+                    "intent": "Add the approved bibliography entry.",
+                    "authorization_source": dict(self.insert_source),
+                    "explicitly_authorized_insertions": [{
+                        "kind": "citation", "text": "[7]",
+                        "instruction_requirement_id": "REQ-T-07-INS",
+                    }],
+                },
+            }],
+            "entry_updates": [{
+                "operation_id": "REF-ENTRY-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": "def-4",
+                "document": "Manuscript",
+                "p_idx": 2,
+                "find": "[4] Smith (2020). Journal details.",
+                "replace": "[5] Smith (2020). Journal details.",
+                "new_number": "5",
+                "authorized_change": {
+                    "intent": "Renumber the exact bibliography entry.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": "[4]", "replacement": "[5]"}
+                    ],
+                },
+            }],
+            "citation_updates": [{
+                "operation_id": "REF-CITE-001",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": "men-4-a",
+                "document": "Manuscript",
+                "p_idx": 0,
+                "find": "4",
+                "replace": "5",
+                "new_number": "5",
+                "authorized_change": {
+                    "intent": "Update the exact linked in-text citation occurrence.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": "4", "replacement": "5"}
+                    ],
+                },
+            }],
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_compiles_three_reference_operation_types_into_one_pending_patch(self):
+        plan = compile_reference_transaction(self.spec, self.graph)
+        self.assertFalse(plan["approved"])
+        self.assertEqual(len(plan["revision_items"]), 1)
+        targets = plan["revision_items"][0]["targets"]
+        self.assertEqual(len(targets), 3)
+        self.assertEqual(
+            [row["action"] for row in targets],
+            ["insert_paragraph", "replace", "replace"],
+        )
+        transaction = plan["reference_transaction"]
+        self.assertEqual(transaction["definition_ids_updated"], ["def-4"])
+        self.assertEqual(transaction["citation_mention_ids_updated"], ["men-4-a"])
+        self.assertEqual(transaction["definition_ids_added"][0]["linked_mention_ids"], [self.graph["mentions"][-1]["id"]])
+
+    def test_inserted_format_map_flows_through_reference_transaction_patch_and_preflight(self):
+        import co_reviewer_cli as cli
+
+        inserted_text = self.spec["additions"][0]["inserted_text"]
+        expected_map = [{
+            "inserted_start": 0, "inserted_end": len(inserted_text), "source_offset": 0,
+        }]
+        self.spec["additions"][0]["inserted_format_map"] = expected_map
+        plan = compile_reference_transaction(self.spec, self.graph)
+        self.assertEqual(plan["revision_items"][0]["targets"][0]["inserted_format_map"], expected_map)
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+    def test_explicit_format_maps_flow_through_reference_transaction_patch_and_preflight(self):
+        import co_reviewer_cli as cli
+
+        entry_replacement = self.spec["entry_updates"][0]["replace"]
+        citation_replacement = self.spec["citation_updates"][0]["replace"]
+        self.spec["entry_updates"][0]["replacement_format_map"] = [{
+            "replacement_start": 0,
+            "replacement_end": len(entry_replacement),
+            "source_offset": 0,
+        }]
+        self.spec["citation_updates"][0]["replacement_format_map"] = [{
+            "replacement_start": 0,
+            "replacement_end": len(citation_replacement),
+            "source_offset": 0,
+        }]
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        targets_by_operation = {
+            target["operation_id"]: target
+            for target in plan["revision_items"][0]["targets"]
+        }
+        self.assertEqual(
+            targets_by_operation["REF-ENTRY-001"]["replacement_format_map"],
+            self.spec["entry_updates"][0]["replacement_format_map"],
+        )
+        self.assertEqual(
+            targets_by_operation["REF-CITE-001"]["replacement_format_map"],
+            self.spec["citation_updates"][0]["replacement_format_map"],
+        )
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+    def test_blocks_a_partial_citation_renumbering(self):
+        self.spec["citation_updates"] = []
+        with self.assertRaisesRegex(ReferenceTransactionError, "every graph-linked citation occurrence"):
+            compile_reference_transaction(self.spec, self.graph)
+
+    def test_blocks_an_addition_that_omits_an_existing_same_number_mention(self):
+        self.spec["additions"][0]["linked_mention_ids"] = []
+        with self.assertRaisesRegex(ReferenceTransactionError, "every unresolved static mention"):
+            compile_reference_transaction(self.spec, self.graph)
+
+    def test_rebuilds_output_reference_graph_and_checks_definitions_and_mentions(self):
+        from co_reviewer.reference_transaction import verify_reference_transaction_outputs
+
+        output = self.root / "manuscript_marked.docx"
+        document = Document()
+        document.add_paragraph("The claim is supported by [5]. The newly linked citation is [7].")
+        document.add_paragraph("References")
+        document.add_paragraph("[7] New reference entry.")
+        document.add_paragraph("[5] Smith (2020). Journal details.")
+        document.save(output)
+
+        from co_reviewer.v232_contract import build_package_reference_graph, extract_docx_reference_segments
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(output),
+            "SI": extract_docx_reference_segments(self.si),
+        })
+        linked_mention_ids = sorted(
+            row["id"] for row in output_graph["mentions"]
+            if row.get("kind") == "citation" and str(row.get("number")) == "7"
+        )
+        plan = {
+            "reference_transaction": {
+                "documents": {
+                    "Manuscript": {
+                        "input_file": str(self.manuscript),
+                        "output_file": str(output),
+                        "source_sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                    },
+                    "SI": {
+                        "input_file": str(self.si),
+                        "output_file": str(self.root / "si_marked.docx"),
+                        "source_sha256": hashlib.sha256(self.si.read_bytes()).hexdigest(),
+                    },
+                },
+                "added_definition_expectations": [{
+                    "document": "Manuscript",
+                    "number": "7",
+                    "operation_id": "REF-ADD-001",
+                    "part": "word/document.xml",
+                    "anchor_p_idx": 1,
+                    "position": "after",
+                    "inserted_text": "[7] New reference entry.",
+                    "linked_mention_ids": linked_mention_ids,
+                    "linked_mention_count": len(linked_mention_ids),
+                }],
+                "updated_definition_expectations": [{
+                    "document": "Manuscript",
+                    "operation_id": "REF-ENTRY-001",
+                    "part": "word/document.xml",
+                    "source_p_idx": 2,
+                    "find_text": "[4] Smith (2020). Journal details.",
+                    "old_number": "4",
+                    "new_number": "5",
+                    "updated_entry_text": "[5] Smith (2020). Journal details.",
+                }],
+                "updated_mention_expectations": [{
+                    "document": "Manuscript",
+                    "operation_id": "REF-CITE-001",
+                    "part": "word/document.xml",
+                    "source_p_idx": 0,
+                    "source_offset": "The claim is supported by [4].".index("4"),
+                    "find_text": "4",
+                    "replace_text": "5",
+                    "old_number": "4",
+                    "new_number": "5",
+                    "mention_id": "men-4-a",
+                }],
+            }
+        }
+        report = verify_reference_transaction_outputs(
+            plan,
+            [{
+                "input_file": str(self.manuscript.resolve()),
+                "output_file": str(output.resolve()),
+                "input_sha256": hashlib.sha256(self.manuscript.read_bytes()).hexdigest(),
+                "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                "results": [
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-ADD-001",
+                        "action": "insert_paragraph",
+                        "part": "word/document.xml",
+                        "p_idx": 1,
+                        "inserted_p_idx": 2,
+                        "status": "applied",
+                    },
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-ENTRY-001",
+                        "action": "replace",
+                        "part": "word/document.xml",
+                        "p_idx": 2,
+                        "find": "[4] Smith (2020). Journal details.",
+                        "replace": "[5] Smith (2020). Journal details.",
+                        "status": "applied",
+                    },
+                    {
+                        "document": "Manuscript",
+                        "operation_id": "REF-CITE-001",
+                        "action": "replace",
+                        "part": "word/document.xml",
+                        "p_idx": 0,
+                        "find": "4",
+                        "replace": "5",
+                        "status": "applied",
+                    }
+                ]
+            }],
+        )
+        self.assertTrue(report["checked"])
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["unresolved_count"], 0)
+
+    def test_reference_transaction_runs_as_one_approved_apply_verify_unit(self):
+        import json
+        from types import SimpleNamespace
+        from docx import Document
+        import co_reviewer_cli as cli
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+
+        manuscript = self.root / "integrated_manuscript.docx"
+        si = self.root / "integrated_si.docx"
+        manuscript_output = self.root / "integrated_manuscript_marked.docx"
+        si_output = self.root / "integrated_si_marked.docx"
+        plan_path = self.root / "integrated_reference_plan.json"
+
+        document = Document()
+        document.add_paragraph("The claim cites [4] and [7].")
+        document.add_paragraph("A second claim also cites [4].")
+        document.add_paragraph("References")
+        document.add_paragraph("[4] Smith (2020). Journal details.")
+        document.save(manuscript)
+        document = Document()
+        document.add_paragraph("Supporting information cites [7].")
+        document.save(si)
+
+        source_paths = {"Manuscript": manuscript, "SI": si}
+        graph = build_package_reference_graph({
+            role: extract_docx_reference_segments(path)
+            for role, path in source_paths.items()
+        })
+        graph["source_files"] = {
+            role: {
+                "path": str(path.resolve()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for role, path in source_paths.items()
+        }
+
+        unresolved_seven = [
+            row for row in graph["mentions"]
+            if row.get("kind") == "citation"
+            and str(row.get("number")) == "7"
+            and row.get("resolution") == "unresolved"
+        ]
+        self.assertEqual({row["document"] for row in unresolved_seven}, {"Manuscript", "SI"})
+        linked_mention_ids = sorted(row["id"] for row in unresolved_seven)
+
+        definition_four = next(
+            row for row in graph["definitions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation"
+            and str(row.get("number")) == "4"
+        )
+        mention_four_rows = sorted(
+            (
+                row for row in graph["mentions"]
+                if row.get("document") == "Manuscript"
+                and row.get("kind") == "citation"
+                and str(row.get("number")) == "4"
+                and row.get("resolution") == "resolved"
+            ),
+            key=lambda row: (row.get("paragraph_index", -1), row.get("offset", -1)),
+        )
+        self.assertEqual(len(mention_four_rows), 2)
+
+        integration_instruction = self.root / "integration_instructions.txt"
+        integration_instruction.write_text("[T-07] 新增文献 [7]。\n", encoding="utf-8")
+        integration_source = {
+            "source_file": str(integration_instruction),
+            "source_sha256": hashlib.sha256(integration_instruction.read_bytes()).hexdigest(),
+            "requirement_id": "REQ-T-07-INS",
+            "source_locator": "L1–L1",
+            "instruction_excerpt": "[T-07] 新增文献 [7]。",
+            "instruction_action": "insert",
+            "instruction_polarity": "affirmative",
+            "instruction_object": "[7]",
+        }
+        spec = {
+            "transaction_id": "REF-TXN-INTEGRATION-001",
+            "reviewer": "Author",
+            "comment": "Insert one graph-linked bibliography entry and renumber all linked occurrences.",
+            "proposed_response": "The bibliography entry and linked citation occurrences were updated.",
+            "source_comment_ids": ["C-REF-INTEGRATION"],
+            "evidence_ids": ["E-REF-INTEGRATION"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                },
+                "SI": {
+                    "input_file": str(si),
+                    "output_file": str(si_output),
+                },
+            },
+            "additions": [{
+                "operation_id": "REF-ADD-INTEGRATION",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "document": "Manuscript",
+                "p_idx": 2,
+                "anchor_text": "References",
+                "position": "after",
+                "inserted_text": "[7] New reference entry.",
+                "reference_number": "7",
+                "linked_mention_ids": linked_mention_ids,
+                "authorized_change": {
+                    "intent": "Insert the explicitly approved bibliography entry.",
+                    "authorization_source": dict(integration_source),
+                    "explicitly_authorized_insertions": [
+                        {"kind": "citation", "text": "[7]",
+                         "instruction_requirement_id": "REQ-T-07-INS"},
+                    ],
+                },
+            }],
+            "entry_updates": [{
+                "operation_id": "REF-ENTRY-INTEGRATION",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition_four["id"],
+                "document": "Manuscript",
+                "p_idx": definition_four["paragraph_index"],
+                "find": "[4] Smith (2020). Journal details.",
+                "replace": "[5] Smith (2020). Journal details.",
+                "new_number": "5",
+                "authorized_change": {
+                    "intent": "Renumber the exact graph-identified bibliography entry.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": "[4]", "replacement": "[5]"},
+                    ],
+                },
+            }],
+            "citation_updates": [
+                {
+                    "operation_id": f"REF-CITE-INTEGRATION-{index + 1}",
+                    "target_identity_mode": "legacy_p_idx_explicit",
+                    "mention_id": mention["id"],
+                    "document": "Manuscript",
+                    "p_idx": mention["paragraph_index"],
+                    "find": mention["text"],
+                    "replace": "5",
+                    "new_number": "5",
+                    "authorized_change": {
+                        "intent": "Update the exact graph-identified in-text citation occurrence.",
+                        "explicitly_authorized_tokens": [
+                            {"kind": "number", "text": "4", "replacement": "5"},
+                        ],
+                    },
+                }
+                for index, mention in enumerate(mention_four_rows)
+            ],
+        }
+
+        plan = compile_reference_transaction(spec, graph)
+        self.assertFalse(plan["approved"])
+        self.assertEqual(len(plan["revision_items"][0]["targets"]), 4)
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+        plan_path.write_text(
+            json.dumps(plan, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[plan["revision_items"][0]["id"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        apply_reports = cli.apply_plan(plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 1)
+        plan["revision_items"][0]["status"] = "applied"
+
+        verification = cli.verify_apply_report(plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertTrue(verification["reference_transaction"]["checked"])
+        self.assertTrue(verification["reference_transaction"]["passed"])
+        self.assertEqual(verification["targets_verified"], 4)
+        self.assertEqual(verification["reference_transaction"]["unresolved_count"], 0)
+
+        import zipfile
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        with zipfile.ZipFile(manuscript_output) as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertIn("The claim cites [5] and [7].", output_text)
+        self.assertIn("A second claim also cites [5].", output_text)
+        self.assertEqual(output_text[3], "[7] New reference entry.")
+        self.assertEqual(output_text[4], "[5] Smith (2020). Journal details.")
+
+    def test_transaction_metadata_is_bound_to_standard_plan_approval(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        self.assertEqual(cli.validate_plan(plan, require_approval=False), [])
+
+        tampered = copy.deepcopy(plan)
+        tampered["reference_transaction"]["added_definition_expectations"][0]["linked_mention_ids"].pop()
+        errors = cli.validate_plan(tampered, require_approval=False)
+        self.assertTrue(
+            any("transaction_fingerprint is missing or stale" in error for error in errors),
+            errors,
+        )
+
+        tampered_operations = copy.deepcopy(plan)
+        tampered_operations["revision_items"][0]["targets"][0]["operation_id"] = "OTHER-OP"
+        errors = cli.validate_plan(tampered_operations, require_approval=False)
+        self.assertTrue(any("operation_ids must exactly match" in error for error in errors), errors)
+
+
+    def test_merged_plan_normalizes_prose_target_around_reference_citation_and_applies(self):
+        import copy
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-BROAD-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported by [4].",
+                "intent": "Revise the sentence while retaining its linked citation token.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        # Deliberately place the transaction first, reproducing a merged-plan order
+        # that previously changed [4] to [5] before the broader sentence anchor ran.
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        ordinary_id = ordinary_plan["revision_items"][0]["id"]
+        transaction_id = transaction_plan["revision_items"][0]["id"]
+        self.assertEqual(preflight["execution_order"], [transaction_id, ordinary_id])
+        self.assertEqual(preflight["execution_dependencies"], [])
+        self.assertEqual(len(preflight["target_normalizations"]), 1)
+        ordinary_target = next(
+            target
+            for item in merged_plan["revision_items"]
+            if item["id"] == ordinary_id
+            for target in item["targets"]
+        )
+        self.assertEqual(ordinary_target["find"], "The claim is supported by [")
+        self.assertEqual(ordinary_target["replace"], "The statement is supported by [")
+        self.assertEqual(
+            ordinary_target["reference_citation_normalization"]["citation_operation_id"],
+            "REF-CITE-001",
+        )
+
+        plan_path = self.root / "merged_plan.json"
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 1)
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertTrue(
+            verification["reference_transaction"]["passed"],
+            verification["reference_transaction"],
+        )
+
+        output_file = self.root / "manuscript_marked.docx"
+        accepted_payload = accepted_view_docx_bytes(output_file.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertIn("The statement is supported by [5].", output_text)
+        self.assertIn("[5] Smith (2020). Journal details.", output_text)
+        self.assertIn("[7] New reference entry.", output_text)
+
+
+    def test_numeric_citation_token_matching_uses_whole_number_boundaries(self):
+        import co_reviewer_cli as cli
+
+        self.assertEqual(cli._exact_token_positions("[3] and [35]", "3"), [1])
+        self.assertEqual(cli._exact_token_positions("[35] and [3]", "35"), [1])
+        self.assertEqual(cli._exact_token_positions("Ref. 3, 35", "3"), [5])
+
+
+    def test_prose_target_delegates_renumbered_graph_citation_as_single_writer(self):
+        import copy
+        import json
+        import io
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-DELEGATED-CITATION-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported by [5] in this revised sentence.",
+                "intent": "Revise the sentence and update its exact linked citation under the approved reference renumbering.",
+            }],
+        })
+        ordinary_plan["revision_items"][0]["targets"][0]["authorized_change"] = {
+            "intent": "Revise the sentence while applying the separately approved reference renumbering."
+        }
+        ordinary_plan["revision_items"][0]["targets"][0]["protected_spans"] = [
+            {"start": 27, "end": 28}
+        ]
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 4)
+        self.assertEqual(preflight["targets_preflighted"], 4)
+        self.assertEqual(preflight["targets_delegated"], 1)
+        self.assertEqual(len(preflight["delegated_targets"]), 1)
+        self.assertEqual(preflight["delegated_targets"][0]["operation_id"], "REF-CITE-001")
+
+        prose_target = merged_plan["revision_items"][1]["targets"][0]
+        self.assertEqual(prose_target["find"], "The claim is supported by [4].")
+        self.assertEqual(prose_target["replace"], "The statement is supported by [5] in this revised sentence.")
+        # The public plan compiler preserves the supported legacy shape for
+        # ordinary replacement targets: no operation_id is fabricated.
+        self.assertIsNone(prose_target.get("operation_id"))
+        self.assertEqual(
+            prose_target["reference_citation_delegations"][0]["citation_operation_id"],
+            "REF-CITE-001",
+        )
+        self.assertIn(
+            {"kind": "citation", "text": "[4]", "replacement": "[5]"},
+            prose_target["authorized_change"]["explicitly_authorized_tokens"],
+        )
+        self.assertIn(
+            {"start": 27, "end": 28},
+            prose_target["authorized_change"]["explicitly_authorized_spans"],
+        )
+        self.assertEqual(preflight["execution_dependencies"], [])
+
+        owner_item_id = merged_plan["revision_items"][1]["id"]
+        plan_path = self.root / "delegated_merged_plan.json"
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        applied_rows = [
+            row for report in apply_reports for row in report.get("results", [])
+        ]
+        applied_operation_ids = [row.get("operation_id") for row in applied_rows]
+        self.assertNotIn("REF-CITE-001", applied_operation_ids)
+        owner_rows = [
+            row for row in applied_rows
+            if row.get("revision_item_id") == owner_item_id
+            and row.get("document") == "Manuscript"
+            and row.get("part", "word/document.xml") == "word/document.xml"
+            and row.get("p_idx") == 0
+            and row.get("find") == prose_target["find"]
+            and row.get("replace") == prose_target["replace"]
+        ]
+        self.assertEqual(len(owner_rows), 1, applied_rows)
+        self.assertIsNone(owner_rows[0].get("operation_id"))
+
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 4)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertTrue(
+            verification["reference_transaction"]["passed"],
+            verification["reference_transaction"],
+        )
+
+        output_file = self.root / "manuscript_marked.docx"
+        accepted_payload = accepted_view_docx_bytes(output_file.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertIn("The statement is supported by [5] in this revised sentence.", output_text)
+        self.assertIn("[5] Smith (2020). Journal details.", output_text)
+        self.assertIn("[7] New reference entry.", output_text)
+
+
+    def test_dependency_scheduler_detects_boundary_created_duplicate_for_disjoint_spans(self):
+        import co_reviewer_cli as cli
+
+        source = str(self.manuscript)
+        output = str(self.root / "boundary_marked.docx")
+        citation = {
+            "id": "CITATION-FIRST",
+            "targets": [{
+                "document": "Manuscript",
+                "input_file": source,
+                "output_file": output,
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "4",
+                "replace": "5",
+            }],
+        }
+        sentence = {
+            "id": "SENTENCE-SECOND",
+            "targets": [{
+                "document": "Manuscript",
+                "input_file": source,
+                "output_file": output,
+                "part": "word/document.xml",
+                "p_idx": 0,
+                "find": "The claim is supported ",
+                "replace": "The claim is supported [4] ",
+            }],
+        }
+
+        ordered, dependencies = cli._schedule_plan_item_dependencies([sentence, citation])
+        self.assertEqual(
+            [item["id"] for item in ordered],
+            ["CITATION-FIRST", "SENTENCE-SECOND"],
+        )
+        self.assertEqual(
+            dependencies[0]["before_revision_item_id"],
+            "CITATION-FIRST",
+        )
+        self.assertEqual(
+            dependencies[0]["after_revision_item_id"],
+            "SENTENCE-SECOND",
+        )
+
+    def test_scheduler_blocks_nested_track_changes_targets_instead_of_reordering(self):
+        import co_reviewer_cli as cli
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-BROAD-NESTED-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim is supported by [4].",
+                "replace": "The statement is supported by [4].",
+                "intent": "Revise the prose while retaining the graph-linked citation.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+        with self.assertRaisesRegex(ValueError, "PLAN_TARGET_OVERLAP_REQUIRES_COMPOSITION"):
+            cli._schedule_plan_item_dependencies([
+                ordinary_plan["revision_items"][0],
+                transaction_plan["revision_items"][0],
+            ])
+        self.assertFalse((self.root / "manuscript_marked.docx").exists())
+
+    def test_merged_plan_validates_transaction_targets_without_unbound_operation_ids(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(self.manuscript),
+                    "output_file": str(self.root / "manuscript_marked.docx"),
+                }
+            },
+            "intents": [{
+                "id": "ORD-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": "The claim",
+                "replace": "The statement",
+                "intent": "Revise prose independently of the reference transaction.",
+            }],
+        })
+        transaction_plan = compile_reference_transaction(self.spec, self.graph)
+
+        merged_plan = copy.deepcopy(ordinary_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(transaction_plan["revision_items"]))
+        merged_plan["reference_transaction"] = copy.deepcopy(transaction_plan["reference_transaction"])
+
+        ordinary_target = merged_plan["revision_items"][0]["targets"][0]
+        self.assertIsNone(ordinary_target.get("operation_id"))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+
+    def test_transaction_target_missing_operation_id_returns_validation_error_not_type_error(self):
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        plan["revision_items"][0]["targets"][0]["operation_id"] = None
+
+        errors = cli.validate_plan(plan, require_approval=False)
+        self.assertTrue(
+            any("operation_ids must exactly match" in error for error in errors),
+            errors,
+        )
+
+    def test_preflight_refuses_source_changes_after_reference_graph_creation(self):
+        import co_reviewer_cli as cli
+
+        plan = compile_reference_transaction(self.spec, self.graph)
+        changed = Document(self.manuscript)
+        changed.add_paragraph("A source change after graph creation.")
+        changed.save(self.manuscript)
+        with self.assertRaisesRegex(ValueError, "changed after the Reference Graph was built"):
+            cli.preflight_plan(plan)
+
+    def test_reference_insertion_requires_separate_exact_authorization_for_non_label_numbers(self):
+        self.spec["additions"][0]["inserted_text"] = "[7] New reference published in 2024."
+        with self.assertRaisesRegex(
+            ReferenceTransactionError,
+            "INSERTED_TOKEN_NOT_EXACTLY_AUTHORIZED",
+        ):
+            compile_reference_transaction(self.spec, self.graph)
+
+        self.spec["additions"][0]["authorized_change"]["explicitly_authorized_insertions"].append({
+            "kind": "number",
+            "text": "2024",
+            "instruction_requirement_id": "REQ-T-07-INS",
+        })
+        plan = compile_reference_transaction(self.spec, self.graph)
+        insertion = next(
+            target
+            for target in plan["revision_items"][0]["targets"]
+            if target["operation_id"] == "REF-ADD-001"
+        )
+        self.assertEqual(insertion["replace"], "[7] New reference published in 2024.")
+
+    def test_unbracketed_reference_label_uses_exact_number_token_authorization(self):
+        self.spec["additions"][0]["inserted_text"] = "7. New reference entry."
+        self.spec["additions"][0]["authorized_change"]["explicitly_authorized_insertions"] = [{
+            "kind": "number",
+            "text": "7",
+            "instruction_requirement_id": "REQ-T-07-INS",
+        }]
+        plan = compile_reference_transaction(self.spec, self.graph)
+        insertion = next(
+            target
+            for target in plan["revision_items"][0]["targets"]
+            if target["operation_id"] == "REF-ADD-001"
+        )
+        self.assertEqual(insertion["replace"], "7. New reference entry.")
+
+    def test_reuses_released_labels_only_with_explicit_mention_rebinding_and_full_renumbering(self):
+        import copy
+        import json
+        from types import SimpleNamespace
+        import co_reviewer_cli as cli
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+
+        manuscript = self.root / "reuse_manuscript.docx"
+        si = self.root / "reuse_si.docx"
+        manuscript_output = self.root / "reuse_manuscript_marked.docx"
+        si_output = self.root / "reuse_si_marked.docx"
+        plan_path = self.root / "reuse_reference_plan.json"
+
+        document = Document()
+        document.add_paragraph("Claim alpha [33].")
+        document.add_paragraph("Claim beta [34].")
+        document.add_paragraph("Claim gamma [35].")
+        document.add_paragraph("References")
+        document.add_paragraph("[33] Synthetic old reference A.")
+        document.add_paragraph("[34] Synthetic old reference B.")
+        document.add_paragraph("[35] Synthetic old reference C.")
+        document.save(manuscript)
+        document = Document()
+        document.add_paragraph("New source A [33].")
+        document.add_paragraph("New source B [34].")
+        document.save(si)
+
+        source_paths = {"Manuscript": manuscript, "SI": si}
+        graph = build_package_reference_graph({
+            role: extract_docx_reference_segments(path)
+            for role, path in source_paths.items()
+        })
+        graph["source_files"] = {
+            role: {
+                "path": str(path.resolve()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            for role, path in source_paths.items()
+        }
+
+        definitions = {
+            str(row["number"]): row
+            for row in graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        manuscript_mentions = {
+            str(row["number"]): row
+            for row in graph["mentions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation"
+            and row.get("resolution") == "resolved"
+        }
+        si_mentions = {
+            str(row["number"]): row
+            for row in graph["mentions"]
+            if row.get("document") == "SI" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(definitions), {"33", "34", "35"})
+        self.assertEqual(set(manuscript_mentions), {"33", "34", "35"})
+        self.assertEqual(set(si_mentions), {"33", "34"})
+        self.assertEqual(
+            {row.get("resolution_scope") for row in si_mentions.values()},
+            {"package"},
+        )
+        self.assertTrue(all(
+            row.get("target_definition_ids") == [definitions[str(row["number"])]["id"]]
+            for row in si_mentions.values()
+        ))
+
+        reuse_instruction = self.root / "reuse_instructions.txt"
+        reuse_instruction.write_text("新增文献 [33] 与 [34]。\n", encoding="utf-8")
+        reuse_source = {
+            "source_file": str(reuse_instruction),
+            "source_sha256": hashlib.sha256(reuse_instruction.read_bytes()).hexdigest(),
+            "requirement_id": "REQ-REUSE-INS",
+            "source_locator": "L1–L1",
+            "instruction_excerpt": "新增文献 [33] 与 [34]。",
+            "instruction_action": "insert",
+            "instruction_polarity": "affirmative",
+        }
+        additions = []
+        for index, number in enumerate(("33", "34"), start=1):
+            additions.append({
+                "operation_id": f"REF-ADD-REUSE-{index}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "document": "Manuscript",
+                "p_idx": 3 if number == "33" else 4,
+                "anchor_text": "References" if number == "33" else "[33] Synthetic old reference A.",
+                "position": "after" if number == "33" else "before",
+                "inserted_text": f"[{number}] Synthetic new reference entry.",
+                "reference_number": number,
+                "linked_mention_ids": (
+                    [si_mentions[number]["id"]] if number == "33" else []
+                ),
+                "authorized_change": {
+                    "intent": f"Add the new reference {number} after releasing the old label.",
+                    "authorization_source": dict(reuse_source, instruction_object=f"[{number}]"),
+                    "explicitly_authorized_insertions": [
+                        {"kind": "citation", "text": f"[{number}]",
+                         "instruction_requirement_id": "REQ-REUSE-INS"},
+                    ],
+                },
+            })
+
+        entry_updates = []
+        citation_updates = []
+        for old_number, new_number in (("33", "35"), ("34", "36"), ("35", "37")):
+            definition = definitions[old_number]
+            label = chr(65 + int(old_number) - 33)
+            entry_updates.append({
+                "operation_id": f"REF-ENTRY-REUSE-{old_number}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition["id"],
+                "document": "Manuscript",
+                "p_idx": definition["paragraph_index"],
+                "find": f"[{old_number}] Synthetic old reference {label}.",
+                "replace": f"[{new_number}] Synthetic old reference {label}.",
+                "new_number": new_number,
+                "authorized_change": {
+                    "intent": f"Move the old reference label {old_number} to {new_number}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": f"[{old_number}]", "replacement": f"[{new_number}]"},
+                    ],
+                },
+            })
+            mention = manuscript_mentions[old_number]
+            citation_updates.append({
+                "operation_id": f"REF-CITE-REUSE-{old_number}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": mention["id"],
+                "document": "Manuscript",
+                "p_idx": mention["paragraph_index"],
+                "find": mention["text"],
+                "replace": new_number,
+                "new_number": new_number,
+                "authorized_change": {
+                    "intent": f"Update every old citation occurrence from {old_number} to {new_number}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": old_number, "replacement": new_number},
+                    ],
+                },
+            })
+
+        # SI [34] still refers to the old bibliography definition. Do not
+        # silently rebind it to the new [34] entry; explicitly renumber it
+        # together with the old definition to [36].
+        si_old_34 = si_mentions["34"]
+        citation_updates.append({
+            "operation_id": "REF-CITE-REUSE-SI-34",
+            "target_identity_mode": "legacy_p_idx_explicit",
+            "mention_id": si_old_34["id"],
+            "document": "SI",
+            "p_idx": si_old_34["paragraph_index"],
+            "find": si_old_34["text"],
+            "replace": "36",
+            "new_number": "36",
+            "authorized_change": {
+                "intent": "Keep this SI citation linked to the old reference moved to [36].",
+                "explicitly_authorized_tokens": [
+                    {"kind": "number", "text": "34", "replacement": "36"},
+                ],
+            },
+        })
+
+        spec = {
+            "transaction_id": "REF-TXN-RELEASE-REUSE-001",
+            "reviewer": "Author",
+            "comment": "Shift three existing references and reuse two released labels.",
+            "proposed_response": "Existing definitions and linked mentions were updated atomically.",
+            "source_comment_ids": ["C-REUSE-001"],
+            "evidence_ids": ["E-REUSE-001"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                },
+                "SI": {
+                    "input_file": str(si),
+                    "output_file": str(si_output),
+                },
+            },
+            "additions": additions,
+            "entry_updates": entry_updates,
+            "citation_updates": citation_updates,
+        }
+
+        unsafe_without_renumbering = copy.deepcopy(spec)
+        unsafe_without_renumbering["entry_updates"] = []
+        unsafe_without_renumbering["citation_updates"] = []
+        with self.assertRaisesRegex(ReferenceTransactionError, "not moved away"):
+            compile_reference_transaction(unsafe_without_renumbering, graph)
+
+        unsafe_partial_renumbering = copy.deepcopy(spec)
+        unsafe_partial_renumbering["citation_updates"].pop()
+        with self.assertRaisesRegex(ReferenceTransactionError, "every graph-linked citation occurrence"):
+            compile_reference_transaction(unsafe_partial_renumbering, graph)
+
+        plan = compile_reference_transaction(spec, graph)
+        self.assertFalse(plan["approved"])
+        transaction = plan["reference_transaction"]
+        self.assertEqual(
+            [row["number"] for row in transaction["definition_ids_added"]],
+            ["33", "34"],
+        )
+        self.assertEqual(
+            [row["linked_mention_ids"] for row in transaction["definition_ids_added"]],
+            [[si_mentions["33"]["id"]], []],
+        )
+        self.assertIn(
+            si_mentions["34"]["id"],
+            transaction["citation_mention_ids_updated"],
+        )
+        self.assertEqual(
+            set(transaction["definition_ids_updated"]),
+            {row["id"] for row in definitions.values()},
+        )
+        self.assertEqual(
+            set(transaction["citation_mention_ids_updated"]),
+            {row["id"] for row in manuscript_mentions.values()} | {si_mentions["34"]["id"]},
+        )
+
+        preflight = cli.preflight_plan(plan)
+        self.assertTrue(preflight["passed"], preflight)
+        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[plan["revision_items"][0]["id"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        apply_reports = cli.apply_plan(plan, "Unit Test Author")
+        self.assertEqual(len(apply_reports), 2)
+        plan["revision_items"][0]["status"] = "applied"
+        verification = cli.verify_apply_report(plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        inserted_before_renumbered_entry = next(
+            row for row in verification["results"]
+            if row.get("action") == "insert_paragraph"
+            and row.get("anchor_text") == "[33] Synthetic old reference A."
+        )
+        self.assertTrue(
+            inserted_before_renumbered_entry["checks"]["anchor_text_after_approved_edits"],
+            inserted_before_renumbered_entry,
+        )
+        self.assertTrue(verification["reference_transaction"]["checked"])
+        self.assertTrue(verification["reference_transaction"]["passed"], verification["reference_transaction"])
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript_output),
+            "SI": extract_docx_reference_segments(si_output),
+        })
+        output_definitions = {
+            str(row["number"]): row
+            for row in output_graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_definitions), {"33", "34", "35", "36", "37"})
+        # Mention IDs are content-derived and therefore change when a citation
+        # is renumbered. Re-identify output mentions by stable document/number
+        # coordinates instead of carrying source IDs across the transformation.
+        output_si_mentions = {
+            str(row["number"]): row
+            for row in output_graph["mentions"]
+            if row.get("document") == "SI" and row.get("kind") == "citation"
+        }
+        self.assertIn("33", output_si_mentions)
+        self.assertIn("36", output_si_mentions)
+        self.assertEqual(
+            output_si_mentions["33"]["target_definition_ids"],
+            [output_definitions["33"]["id"]],
+        )
+        self.assertEqual(
+            output_si_mentions["36"]["target_definition_ids"],
+            [output_definitions["36"]["id"]],
+        )
+        self.assertEqual(output_si_mentions["36"]["number"], "36")
+
+    def test_reference_operation_needs_targetref_or_explicit_migration_mode(self):
+        self.spec["entry_updates"][0].pop("target_identity_mode")
+        with self.assertRaisesRegex(
+            ReferenceTransactionError,
+            "must supply a registered TargetRef or explicitly declare",
+        ):
+            compile_reference_transaction(self.spec, self.graph)
+
+
+    def test_prose_target_owns_only_citation_inside_its_source_find(self):
+        """One paragraph, three graph-linked citations, one prose replacement.
+
+        The prose replacement changes [33] into [35], while the graph separately
+        owns [34] -> [36] and [35] -> [37]. Ownership must follow the original
+        source offsets, not the number appearing in the replacement text.
+        """
+        import copy
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        manuscript = self.root / "ownership_manuscript.docx"
+        manuscript_output = self.root / "ownership_manuscript_marked.docx"
+        plan_path = self.root / "ownership_merged_plan.json"
+
+        source_paragraph = "Claim alpha [33]. Claim beta [34]. Claim gamma [35]."
+        document = Document()
+        document.add_paragraph(source_paragraph)
+        document.add_paragraph("References")
+        document.add_paragraph("[33] Synthetic old reference A.")
+        document.add_paragraph("[34] Synthetic old reference B.")
+        document.add_paragraph("[35] Synthetic old reference C.")
+        document.save(manuscript)
+
+        graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript),
+        })
+        graph["source_files"] = {
+            "Manuscript": {
+                "path": str(manuscript.resolve()),
+                "sha256": hashlib.sha256(manuscript.read_bytes()).hexdigest(),
+            }
+        }
+        definitions = {
+            str(row["number"]): row
+            for row in graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        mentions = {
+            str(row["number"]): row
+            for row in graph["mentions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation"
+            and row.get("resolution") == "resolved"
+        }
+        self.assertEqual(set(definitions), {"33", "34", "35"})
+        self.assertEqual(set(mentions), {"33", "34", "35"})
+
+        prose_find = "Claim alpha [33]."
+        # Keep the prefix length-neutral so the other citations retain their
+        # graph-bound source offsets in the final document.
+        prose_replace = "Claim alpha [35]."
+        find_start = source_paragraph.find(prose_find)
+        find_end = find_start + len(prose_find)
+        offsets = {number: source_paragraph.index(number) for number in ("33", "34", "35")}
+        self.assertTrue(find_start <= offsets["33"] < find_end)
+        self.assertFalse(find_start <= offsets["34"] < find_end)
+        self.assertFalse(find_start <= offsets["35"] < find_end)
+        # The replacement deliberately introduces the label owned by RT-CU-35.
+        self.assertIn("35", prose_replace)
+
+        entry_updates = []
+        citation_updates = []
+        labels = {"33": "A", "34": "B", "35": "C"}
+        for old, new in (("33", "35"), ("34", "36"), ("35", "37")):
+            definition = definitions[old]
+            entry_updates.append({
+                "operation_id": f"REF-ENTRY-OWN-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition["id"],
+                "document": "Manuscript",
+                "p_idx": definition["paragraph_index"],
+                "find": f"[{old}] Synthetic old reference {labels[old]}.",
+                "replace": f"[{new}] Synthetic old reference {labels[old]}.",
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Move exact reference label {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": f"[{old}]", "replacement": f"[{new}]"},
+                    ],
+                },
+            })
+            mention = mentions[old]
+            citation_updates.append({
+                "operation_id": f"RT-CU-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": mention["id"],
+                "document": "Manuscript",
+                "p_idx": mention["paragraph_index"],
+                "find": mention["text"],
+                "replace": new,
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Renumber the graph-linked citation {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": old, "replacement": new},
+                    ],
+                },
+            })
+
+        spec = {
+            "transaction_id": "REF-TXN-OWNERSHIP-001",
+            "reviewer": "Author",
+            "comment": "Renumber three linked citations; one is owned by a prose PatchOperation.",
+            "proposed_response": "Every citation was written exactly once.",
+            "source_comment_ids": ["C-OWN-001"],
+            "evidence_ids": ["E-OWN-001"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "additions": [],
+            "entry_updates": entry_updates,
+            "citation_updates": citation_updates,
+        }
+        transaction_plan = compile_reference_transaction(spec, graph)
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "intents": [{
+                "id": "PROSE-CITE-OWN-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": prose_find,
+                "replace": prose_replace,
+                "intent": "Revise the sentence and apply its separately approved citation renumbering.",
+            }],
+        })
+        ordinary_plan["revision_items"][0]["targets"][0]["authorized_change"] = {
+            "intent": "Revise the prose and apply the approved renumbering of its one citation."
+        }
+
+        merged_plan = copy.deepcopy(transaction_plan)
+        merged_plan["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged_plan, require_approval=False), [])
+
+        preflight = cli.preflight_plan(merged_plan)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 7)
+        self.assertEqual(preflight["targets_preflighted"], 7)
+        self.assertEqual(preflight["targets_delegated"], 1)
+        self.assertEqual(preflight["delegated_targets"][0]["operation_id"], "RT-CU-33")
+        self.assertEqual(
+            {item["id"] for item in merged_plan["revision_items"]},
+            set(preflight["execution_order"]),
+        )
+
+        prose_target = merged_plan["revision_items"][1]["targets"][0]
+        delegated_ids = {
+            row["citation_operation_id"]
+            for row in prose_target.get("reference_citation_delegations", [])
+        }
+        self.assertEqual(delegated_ids, {"RT-CU-33"})
+        self.assertNotIn("RT-CU-34", delegated_ids)
+        self.assertNotIn("RT-CU-35", delegated_ids)
+        self.assertIn(
+            {"kind": "citation", "text": "[33]", "replacement": "[35]"},
+            prose_target["authorized_change"]["explicitly_authorized_tokens"],
+        )
+
+        plan_path.write_text(json.dumps(merged_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(plan_path),
+            ids=[item["id"] for item in merged_plan["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved_plan, "Unit Test Author")
+        applied_operations = [
+            row.get("operation_id")
+            for report in apply_reports
+            for row in report.get("results", [])
+        ]
+        self.assertEqual(applied_operations.count("RT-CU-33"), 0)
+        self.assertEqual(applied_operations.count("RT-CU-34"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-35"), 1)
+        self.assertEqual(applied_operations.count(None), 1)
+
+        for item in approved_plan["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved_plan, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 7)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertTrue(verification["reference_transaction"]["passed"])
+
+        accepted_payload = accepted_view_docx_bytes(manuscript_output.read_bytes())
+        with zipfile.ZipFile(io.BytesIO(accepted_payload), "r") as archive:
+            output_root = parse_xml(archive.read("word/document.xml"))
+        output_paragraphs = output_root.findall(".//w:body//w:p", NS)
+        output_text = [visible_text(paragraph) for paragraph in output_paragraphs]
+        self.assertEqual(
+            output_text[0],
+            "Claim alpha [35]. Claim beta [36]. Claim gamma [37].",
+        )
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript_output),
+        })
+        output_definitions = {
+            str(row["number"]): row
+            for row in output_graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_definitions), {"35", "36", "37"})
+        output_mentions = {
+            str(row["number"]): row
+            for row in output_graph["mentions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_mentions), {"35", "36", "37"})
+
+
+    def _build_three_citation_coverage_case(self):
+        """Synthetic DOCX: one prose paragraph with three graph-linked citations."""
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+
+        manuscript = self.root / "coverage_manuscript.docx"
+        manuscript_output = self.root / "coverage_manuscript_marked.docx"
+        document = Document()
+        document.add_paragraph("Claim alpha [33]. Claim beta [34]. Claim gamma [35].")
+        document.add_paragraph("References")
+        document.add_paragraph("[33] Synthetic old reference A.")
+        document.add_paragraph("[34] Synthetic old reference B.")
+        document.add_paragraph("[35] Synthetic old reference C.")
+        document.save(manuscript)
+
+        graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(manuscript),
+        })
+        graph["source_files"] = {
+            "Manuscript": {
+                "path": str(manuscript.resolve()),
+                "sha256": hashlib.sha256(manuscript.read_bytes()).hexdigest(),
+            }
+        }
+        definitions = {
+            str(row["number"]): row for row in graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        mentions = {
+            str(row["number"]): row for row in graph["mentions"]
+            if row.get("document") == "Manuscript"
+            and row.get("kind") == "citation" and row.get("resolution") == "resolved"
+        }
+        labels = {"33": "A", "34": "B", "35": "C"}
+        entry_updates, citation_updates = [], []
+        # Author the in-text operations in the same dependency-safe order as the
+        # real transaction: consume the original 35 before 33->35 introduces a
+        # second 35 into the paragraph.
+        for old, new in (("35", "37"), ("34", "36"), ("33", "35")):
+            definition = definitions[old]
+            entry_updates.append({
+                "operation_id": f"REF-ENTRY-COV-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "definition_id": definition["id"],
+                "document": "Manuscript",
+                "p_idx": definition["paragraph_index"],
+                "find": f"[{old}] Synthetic old reference {labels[old]}.",
+                "replace": f"[{new}] Synthetic old reference {labels[old]}.",
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Move exact reference label {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "citation", "text": f"[{old}]", "replacement": f"[{new}]"},
+                    ],
+                },
+            })
+            mention = mentions[old]
+            citation_updates.append({
+                "operation_id": f"RT-CU-{old}",
+                "target_identity_mode": "legacy_p_idx_explicit",
+                "mention_id": mention["id"],
+                "document": "Manuscript",
+                "p_idx": mention["paragraph_index"],
+                "find": mention["text"],
+                "replace": new,
+                "new_number": new,
+                "authorized_change": {
+                    "intent": f"Renumber the graph-linked citation {old} to {new}.",
+                    "explicitly_authorized_tokens": [
+                        {"kind": "number", "text": old, "replacement": new},
+                    ],
+                },
+            })
+        spec = {
+            "transaction_id": "REF-TXN-COVERAGE-001",
+            "reviewer": "Author",
+            "comment": "Renumber three graph-linked citations; one is described by prose.",
+            "proposed_response": "Each citation was physically written exactly once.",
+            "source_comment_ids": ["C-COV-001"],
+            "evidence_ids": ["E-COV-001"],
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(manuscript),
+                    "output_file": str(manuscript_output),
+                }
+            },
+            "additions": [],
+            "entry_updates": entry_updates,
+            "citation_updates": citation_updates,
+        }
+        return {
+            "manuscript": manuscript,
+            "manuscript_output": manuscript_output,
+            "plan_path": self.root / "coverage_merged_plan.json",
+            "graph": graph,
+            "spec": spec,
+            "definitions": definitions,
+            "mentions": mentions,
+        }
+
+    def _merged_coverage_plan(self, case, prose_find, prose_replace, with_format_map=True):
+        import copy
+        import co_reviewer_cli as cli
+
+        transaction_plan = compile_reference_transaction(case["spec"], case["graph"])
+        ordinary_plan = compile_revision_plan({
+            "documents": {
+                "Manuscript": {
+                    "input_file": str(case["manuscript"]),
+                    "output_file": str(case["manuscript_output"]),
+                }
+            },
+            "intents": [{
+                "id": "PROSE-COVERAGE-001",
+                "doc_role": "Manuscript",
+                "reviewer": "Author",
+                "find": prose_find,
+                "replace": prose_replace,
+                "intent": "Prose description of the exact graph-bound citation renumbering.",
+            }],
+        })
+        ordinary_target = ordinary_plan["revision_items"][0]["targets"][0]
+        ordinary_target["authorized_change"] = {"intent": "Prose statement covered by the approved transaction."}
+        if with_format_map:
+            ordinary_target["replacement_format_map"] = [{
+                "replacement_start": 0,
+                "replacement_end": len(prose_replace),
+                "source_offset": 0,
+            }]
+        merged = copy.deepcopy(transaction_plan)
+        merged["revision_items"].extend(copy.deepcopy(ordinary_plan["revision_items"]))
+        self.assertEqual(cli.validate_plan(merged, require_approval=False), [])
+        return merged
+
+    def test_citation_only_mixed_format_prose_is_covered_by_transaction(self):
+        import io
+        import json
+        from types import SimpleNamespace
+        import zipfile
+        import co_reviewer_cli as cli
+        from co_reviewer.document_engine import NS, parse_xml, visible_text
+        from co_reviewer.working_view import accepted_view_docx_bytes
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+        self.assertEqual(preflight["targets_total"], 7)
+        self.assertEqual(preflight["targets_preflighted"], 7)
+        self.assertEqual(preflight["targets_covered_by_transaction"], 1)
+        self.assertEqual(preflight["delegated_targets"][0]["status"], "delegated_to_reference_transaction")
+        self.assertEqual(preflight["delegated_targets"][0]["covered_by_operation_id"], "RT-CU-33")
+
+        prose_target = merged["revision_items"][1]["targets"][0]
+        coverage = prose_target["reference_citation_transaction_coverage"]
+        self.assertEqual(coverage["citation_operation_id"], "RT-CU-33")
+        self.assertEqual(coverage["source_offset"], 13)
+        self.assertEqual(coverage["source_docx_sha256"], hashlib.sha256(case["manuscript"].read_bytes()).hexdigest())
+        self.assertTrue(prose_target["replacement_format_map"])
+
+        case["plan_path"].write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        approve_rc = cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(case["plan_path"]),
+            ids=[item["id"] for item in merged["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        ))
+        self.assertEqual(approve_rc, 0)
+        approved = json.loads(case["plan_path"].read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved, "Unit Test Author")
+        applied_operations = [
+            row.get("operation_id") for report in apply_reports for row in report.get("results", [])
+        ]
+        self.assertEqual(applied_operations.count("RT-CU-33"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-34"), 1)
+        self.assertEqual(applied_operations.count("RT-CU-35"), 1)
+        # The covered prose PatchOperation must not produce any physical edit.
+        self.assertEqual(applied_operations.count(None), 0)
+
+        for item in approved["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+        self.assertEqual(verification["targets_total"], 7)
+        self.assertEqual(verification["targets_failed"], 0)
+        self.assertEqual(len(verification["covered_targets"]), 1)
+        self.assertEqual(verification["covered_targets"][0]["status"], "verified")
+        self.assertTrue(verification["reference_transaction"]["passed"])
+
+        payload = accepted_view_docx_bytes(case["manuscript_output"].read_bytes())
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+        paragraphs = root.findall(".//w:body//w:p", NS)
+        self.assertEqual(
+            visible_text(paragraphs[0]),
+            "Claim alpha [35]. Claim beta [36]. Claim gamma [37].",
+        )
+
+    def test_three_citations_only_first_is_covered_and_graph_offsets_are_correct(self):
+        from co_reviewer.v232_contract import (
+            build_package_reference_graph,
+            extract_docx_reference_segments,
+        )
+        import json
+        from types import SimpleNamespace
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+
+        prose_target = merged["revision_items"][1]["targets"][0]
+        self.assertEqual(
+            prose_target["reference_citation_transaction_coverage"]["citation_operation_id"],
+            "RT-CU-33",
+        )
+        self.assertNotIn("reference_citation_delegations", prose_target)
+        for operation_id in ("RT-CU-34", "RT-CU-35"):
+            self.assertFalse(any(
+                isinstance(target.get("reference_citation_transaction_coverage"), dict)
+                and target["reference_citation_transaction_coverage"].get("citation_operation_id") == operation_id
+                for item in merged["revision_items"]
+                for target in item.get("targets", [])
+            ))
+
+        case["plan_path"].write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.assertEqual(cli.cmd_approve_plan(SimpleNamespace(
+            plan=str(case["plan_path"]),
+            ids=[item["id"] for item in merged["revision_items"]],
+            revision_ledger=None,
+            actor="Unit Test Author",
+        )), 0)
+        approved = json.loads(case["plan_path"].read_text(encoding="utf-8"))
+        apply_reports = cli.apply_plan(approved, "Unit Test Author")
+        for item in approved["revision_items"]:
+            item["status"] = "applied"
+        verification = cli.verify_apply_report(approved, apply_reports)
+        self.assertTrue(verification["passed"], verification)
+
+        output_graph = build_package_reference_graph({
+            "Manuscript": extract_docx_reference_segments(case["manuscript_output"]),
+        })
+        output_mentions = {
+            str(row["number"]): row for row in output_graph["mentions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        output_definitions = {
+            str(row["number"]): row["id"] for row in output_graph["definitions"]
+            if row.get("document") == "Manuscript" and row.get("kind") == "citation"
+        }
+        self.assertEqual(set(output_mentions), {"35", "36", "37"})
+        self.assertEqual(set(output_definitions), {"35", "36", "37"})
+        source_text = "Claim alpha [33]. Claim beta [34]. Claim gamma [35]."
+        for number, old in (("35", "33"), ("36", "34"), ("37", "35")):
+            self.assertEqual(output_mentions[number]["offset"], source_text.index("[" + old + "]") + 1)
+            self.assertEqual(
+                output_mentions[number]["target_definition_ids"],
+                [output_definitions[number]],
+            )
+
+    def test_real_prose_rewrite_with_citation_stays_fail_closed(self):
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Revised claim alpha [35].")
+        with self.assertRaisesRegex(ValueError, "REFERENCE_CITATION_DELEGATION_FORMAT_SCOPE_BLOCKED"):
+            cli.preflight_plan(merged)
+        self.assertFalse(any(
+            "reference_citation_transaction_coverage" in target
+            for item in merged["revision_items"]
+            for target in item.get("targets", [])
+        ))
+
+    def test_coverage_records_are_hash_bound_and_fail_closed_on_tampering(self):
+        import copy
+        import co_reviewer_cli as cli
+
+        case = self._build_three_citation_coverage_case()
+        merged = self._merged_coverage_plan(
+            case, "Claim alpha [33].", "Claim alpha [35].")
+        preflight = cli.preflight_plan(merged)
+        self.assertTrue(preflight["passed"], preflight)
+        coverage = copy.deepcopy(merged["revision_items"][1]["targets"][0]["reference_citation_transaction_coverage"])
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        row = target["reference_citation_transaction_coverage"]
+        row["citation_operation_id"] = "RT-CU-34"
+        self.assertTrue(any("does not match the graph-bound transaction expectation" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        target["reference_citation_transaction_coverage"]["source_offset"] = 14
+        self.assertTrue(any("source_offset" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        target = tampered["revision_items"][1]["targets"][0]
+        target["reference_citation_transaction_coverage"]["source_docx_sha256"] = "0" * 64
+        self.assertTrue(any("SHA-256" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+        tampered = copy.deepcopy(merged)
+        second_prose_item = copy.deepcopy(tampered["revision_items"][1])
+        second_prose_item["id"] = "PROSE-COVERAGE-002"
+        second_prose_item["targets"][0]["reference_citation_transaction_coverage"] = copy.deepcopy(coverage)
+        tampered["revision_items"].append(second_prose_item)
+        self.assertTrue(any("reuses citation operation" in error
+                            for error in cli.validate_plan(tampered, require_approval=False)))
+
+
+if __name__ == "__main__":
+    unittest.main()

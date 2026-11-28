@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Pending Revision Decision Plan",
+  "description": "A traceable, human-approval-only task graph generated from one review round.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "comment_scope",
+    "source_files",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "file",
+          "sha256"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "Reviewers",
+              "Manuscript",
+              "SI"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "sequence",
+          "title",
+          "task_type",
+          "source_comment_ids",
+          "target_documents",
+          "evidence",
+          "proposed_action",
+          "targets",
+          "dependencies",
+          "readiness",
+          "unresolved_questions",
+          "confidence",
+          "status",
+          "requires_user_approval"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_type": {
+            "enum": [
+              "local_revision",
+              "cross_document_consistency",
+              "global_numbering",
+              "content_placement_decision",
+              "response_only",
+              "author_decision",
+              "evidence_request",
+              "other"
+            ]
+          },
+          "source_comment_ids": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "target_documents": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "Reviewers",
+                "Manuscript",
+                "SI"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "evidence_id",
+                "document",
+                "part",
+                "p_idx",
+                "source_excerpt",
+                "evidence_type",
+                "match_status"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI",
+                    "Reply"
+                  ]
+                },
+                "part": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "para_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_comment_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ]
+                },
+                "source_excerpt": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_type": {
+                  "enum": [
+                    "reviewer_comment",
+                    "native_anchor",
+                    "paragraph",
+                    "caption",
+                    "reference",
+                    "table",
+                    "figure",
+                    "audit_finding"
+                  ]
+                },
+                "match_status": {
+                  "enum": [
+                    "confirmed",
+                    "candidate",
+                    "ambiguous",
+                    "unresolved",
+                    "not_applicable"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "required": [
+                      "evidence_type"
+                    ],
+                    "properties": {
+                      "evidence_type": {
+                        "const": "reviewer_comment"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "source_comment_id"
+                    ],
+                    "properties": {
+                      "part": {
+                        "const": "word/comments.xml"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "proposed_action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "document",
+                "part",
+                "p_idx",
+                "action",
+                "evidence_ids"
+              ],
+              "properties": {
+                "document": {
+                  "enum": [
+                    "Reviewers",
+                    "Manuscript",
+                    "SI",
+                    "Reply"
+                  ]
+                },
+                "part": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "p_idx": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "para_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "action": {
+                  "enum": [
+                    "replace",
+                    "add",
+                    "remove",
+                    "renumber",
+                    "reference_update",
+                    "insert_paragraph",
+                    "keep",
+                    "inspect_only",
+                    "reply_only"
+                  ]
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "readiness": {
+            "enum": [
+              "ready_for_author_approval",
+              "needs_clarification",
+              "blocked_by_missing_evidence"
+            ]
+          },
+          "unresolved_questions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "status": {
+            "const": "pending"
+          },
+          "requires_user_approval": {
+            "const": true
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "author_decision_ref": {
+            "$ref": "revision-ledger.schema.json#/$defs/authorDecisionRef",
+            "description": "Hash-bound author approval for an exact package-wide numbering impact plan."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "comment_scope": {
+      "enum": [
+        "all_comments",
+        "selected_comments"
+      ]
+    },
+    "included_comment_ids": {
+      "type": "array",
+      "items": {
+        "type": [
+          "string",
+          "integer"
+        ]
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "comment_scope"
+        ],
+        "properties": {
+          "comment_scope": {
+            "const": "selected_comments"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "included_comment_ids"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/numbering-transaction-receipt.schema.json",
+  "title": "Co_Reviewer Package-wide Numbering Transaction Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "transaction_type",
+    "impact_plan_sha256",
+    "approval_sha256",
+    "approved_by",
+    "approved_at_utc",
+    "batch_id",
+    "package_id",
+    "package_directory",
+    "package_manifest",
+    "package_manifest_sha256",
+    "commit_marker",
+    "commit_marker_sha256",
+    "source_graph_sha256",
+    "final_graph_sha256",
+    "output_documents",
+    "graph_counts",
+    "patch_operation_coverage"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": { "const": "COMMITTED" },
+    "transaction_type": { "const": "package_wide_numbering" },
+    "impact_plan_sha256": { "$ref": "#/$defs/sha256" },
+    "approval_sha256": { "$ref": "#/$defs/sha256" },
+    "approved_by": { "type": "string", "minLength": 1 },
+    "approved_at_utc": { "type": "string", "format": "date-time" },
+    "batch_id": { "type": "string", "minLength": 1 },
+    "package_id": { "type": "string", "minLength": 1 },
+    "package_directory": { "type": "string", "minLength": 1 },
+    "package_manifest": { "type": "string", "minLength": 1 },
+    "package_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "commit_marker": { "type": "string", "minLength": 1 },
+    "commit_marker_sha256": { "$ref": "#/$defs/sha256" },
+    "source_graph_sha256": { "$ref": "#/$defs/sha256" },
+    "final_graph_sha256": { "$ref": "#/$defs/sha256" },
+    "output_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/outputDocument" }
+    },
+    "graph_counts": {
+      "type": "object",
+      "required": [
+        "definitions",
+        "mentions",
+        "edges",
+        "unresolved",
+        "ambiguous",
+        "native_fields_for_manual_review"
+      ],
+      "properties": {
+        "definitions": { "type": "integer", "minimum": 0 },
+        "mentions": { "type": "integer", "minimum": 0 },
+        "edges": { "type": "integer", "minimum": 0 },
+        "unresolved": { "type": "integer", "minimum": 0 },
+        "ambiguous": { "type": "integer", "minimum": 0 },
+        "native_fields_for_manual_review": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "patch_operation_coverage": {
+      "type": "object",
+      "required": ["status", "target_paragraphs", "target_paragraph_count"],
+      "properties": {
+        "status": { "const": "PASS" },
+        "target_paragraph_count": { "type": "integer", "minimum": 1 },
+        "target_paragraphs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/targetParagraph" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "outputDocument": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "targetParagraph": {
+      "type": "object",
+      "required": ["document", "part", "paragraph_index"],
+      "properties": {
+        "document": { "type": "string", "minLength": 1 },
+        "part": { "type": "string", "pattern": "^word/" },
+        "paragraph_index": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

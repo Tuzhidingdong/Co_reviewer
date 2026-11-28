@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Superseded Prepared Batch Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "retirement_id",
+    "batch_id",
+    "retired_at_utc",
+    "actor",
+    "reason",
+    "batch_intent_sha256",
+    "artifact_inventory",
+    "workflow_ledger_file",
+    "workflow_ledger_sha256_at_retirement",
+    "revision_ledger_file",
+    "revision_ledger_sha256_at_retirement",
+    "selected_task_ids",
+    "all_selected_task_ids",
+    "parent_documents",
+    "successor_batch_id",
+    "successor_batch_intent_sha256",
+    "successor_batch_scope_sha256",
+    "successor_publish_intent_sha256",
+    "successor_published_sha256",
+    "successor_patch_ids",
+    "published_active_documents"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": { "const": "superseded_prepared" },
+    "retirement_id": { "type": "string", "minLength": 1 },
+    "batch_id": { "type": "string", "minLength": 1 },
+    "retired_at_utc": { "type": "string", "format": "date-time" },
+    "actor": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "batch_intent_sha256": { "$ref": "#/$defs/sha256" },
+    "artifact_inventory": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "size_bytes", "sha256"],
+        "properties": {
+          "path": { "const": "batch_intent.json" },
+          "size_bytes": { "type": "integer", "minimum": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "workflow_ledger_file": { "type": "string", "minLength": 1 },
+    "workflow_ledger_sha256_at_retirement": { "$ref": "#/$defs/sha256" },
+    "revision_ledger_file": { "type": "string", "minLength": 1 },
+    "revision_ledger_sha256_at_retirement": { "$ref": "#/$defs/sha256" },
+    "selected_task_ids": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "all_selected_task_ids": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "parent_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "sha256", "batch_id"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "batch_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "successor_batch_id": { "type": "string", "minLength": 1 },
+    "successor_batch_intent_sha256": { "$ref": "#/$defs/sha256" },
+    "successor_batch_scope_sha256": { "$ref": "#/$defs/sha256" },
+    "successor_publish_intent_sha256": { "$ref": "#/$defs/sha256" },
+    "successor_published_sha256": { "$ref": "#/$defs/sha256" },
+    "successor_patch_ids": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "published_active_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "sha256", "batch_id"],
+        "properties": {
+          "file": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "batch_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

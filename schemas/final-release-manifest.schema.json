@@ -1,0 +1,1080 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Final Release Manifest",
+  "description": "Hash-bound release record for verified Manuscript/SI outputs, ResponseUnits, Word/PDF locations, and the deterministic Response Letter.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "release_status",
+    "revision_round_id",
+    "generated_at_utc",
+    "source_ledgers",
+    "active_documents",
+    "batches",
+    "recovered_batches",
+    "qa_remediation",
+    "marked_documents",
+    "deterministic_consistency_audit",
+    "final_documents",
+    "patch_supersession_events",
+    "patches",
+    "response_units",
+    "deterministic_change_audit",
+    "location_maps",
+    "artifacts",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "release_status": {
+      "const": "READY"
+    },
+    "revision_round_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_ledgers": {
+      "type": "object",
+      "required": [
+        "revision_ledger",
+        "workflow_ledger"
+      ],
+      "properties": {
+        "revision_ledger": {
+          "$ref": "#/$defs/fileRecord"
+        },
+        "workflow_ledger": {
+          "$ref": "#/$defs/fileRecord"
+        }
+      },
+      "additionalProperties": false
+    },
+    "active_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "file",
+          "sha256",
+          "batch_id"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "directory",
+          "intent",
+          "scope",
+          "publish_intent",
+          "publish_receipt",
+          "creation_receipt",
+          "selected_task_ids",
+          "all_selected_task_ids",
+          "patch_ids",
+          "documents",
+          "publication_status",
+          "publication_sequence",
+          "parent_documents"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "directory": {
+            "type": "string",
+            "minLength": 1
+          },
+          "intent": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "scope": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "publish_receipt": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "creation_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/fileRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publish_intent": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "publication_status": {
+            "enum": [
+              "published",
+              "rolled_back"
+            ]
+          },
+          "rollback_intent": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "rollback_receipt": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "selected_task_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "all_selected_task_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "patch_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "documents": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "file",
+                "sha256"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "publication_sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parent_documents": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "file",
+                "sha256",
+                "batch_id"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "batch_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "publication_status": {
+                  "const": "rolled_back"
+                }
+              },
+              "required": [
+                "publication_status"
+              ]
+            },
+            "then": {
+              "required": [
+                "rollback_intent",
+                "rollback_receipt"
+              ]
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recovered_batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "directory",
+          "intent",
+          "scope",
+          "creation_receipt",
+          "recovery_intent",
+          "recovery_receipt",
+          "recovery_id",
+          "selected_task_ids",
+          "batch_task_ids",
+          "invalidated_task_ids",
+          "patch_ids",
+          "parent_documents",
+          "failed_output_files",
+          "retained_artifacts",
+          "retained_batch_files"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "directory": {
+            "type": "string",
+            "minLength": 1
+          },
+          "intent": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "scope": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "creation_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/fileRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recovery_intent": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "recovery_receipt": {
+            "$ref": "#/$defs/fileRecord"
+          },
+          "recovery_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "selected_task_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "batch_task_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "invalidated_task_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "patch_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "parent_documents": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "file",
+                "sha256",
+                "batch_id"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "batch_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "failed_output_files": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "retained_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "size_bytes",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "retained_batch_files": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "qa_remediation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "remediation_round"],
+          "properties": {
+            "status": {"const": "NOT_USED"},
+            "remediation_round": {"const": 0}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "status", "remediation_round", "patch_id", "batch_id",
+            "pre_remediation_qa_report", "post_remediation_qa_report",
+            "marked", "clean"
+          ],
+          "properties": {
+            "status": {"const": "PASS"},
+            "remediation_round": {"const": 1},
+            "patch_id": {"type": "string", "minLength": 1},
+            "batch_id": {"type": "string", "minLength": 1},
+            "pre_remediation_qa_report": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            },
+            "post_remediation_qa_report": {
+              "type": "object",
+              "required": ["file", "sha256", "status"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "status": {"enum": ["PASS", "PASS_WITH_WARNINGS"]}
+              },
+              "additionalProperties": false
+            },
+            "marked": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            },
+            "clean": {
+              "type": "object",
+              "required": ["file", "sha256"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "marked_documents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "active_file",
+          "active_sha256",
+          "active_batch_id",
+          "working_clean_file",
+          "working_clean_sha256"
+        ],
+        "properties": {
+          "active_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "active_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "active_batch_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "working_clean_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "working_clean_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "deterministic_consistency_audit": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "scope",
+        "documents_checked",
+        "figure_table_audit",
+        "blocking_findings",
+        "review_flags",
+        "limitations"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "status": {
+          "const": "PASS"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "documents_checked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "figure_table_audit": {
+          "type": "object"
+        },
+        "blocking_findings": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "review_flags": {
+          "type": "object"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "final_documents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "document",
+          "final_clean_file",
+          "final_clean_sha256",
+          "final_pdf_file",
+          "final_pdf_sha256",
+          "source_working_clean_sha256",
+          "word_page_count",
+          "sequence_audit",
+          "quality_report"
+        ],
+        "properties": {
+          "document": {
+            "type": "string",
+            "minLength": 1
+          },
+          "final_clean_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "final_clean_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "final_pdf_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "final_pdf_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "source_working_clean_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "word_page_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sequence_audit": {
+            "type": "object",
+            "required": [
+              "status",
+              "detected",
+              "issues",
+              "manual_review"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "pass",
+                  "manual_review"
+                ]
+              },
+              "detected": {
+                "type": "object"
+              },
+              "issues": {
+                "type": "array"
+              },
+              "manual_review": {
+                "type": "array"
+              }
+            },
+            "additionalProperties": true
+          },
+          "quality_report": {
+            "type": "object",
+            "required": [
+              "file",
+              "sha256",
+              "status",
+              "release_reaudit_status"
+            ],
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "status": {
+                "enum": [
+                  "PASS",
+                  "PASS_WITH_WARNINGS"
+                ]
+              },
+              "release_reaudit_status": {
+                "enum": [
+                  "PASS",
+                  "PASS_WITH_WARNINGS"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "patch_id",
+          "task_id",
+          "status",
+          "operation_ids",
+          "source_comment_ids",
+          "verified_output_hashes",
+          "supersedes_patch_id"
+        ],
+        "properties": {
+          "patch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "superseded"
+            ]
+          },
+          "operation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_comment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "verified_output_hashes": {
+            "type": "array"
+          },
+          "supersedes_patch_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "response_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "response_unit_id",
+          "comment_id",
+          "reviewer",
+          "disposition",
+          "location_requirement",
+          "status",
+          "linked_patch_ids",
+          "linked_operation_ids",
+          "location_methods"
+        ],
+        "properties": {
+          "response_unit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "enum": [
+              "revised",
+              "reply_only",
+              "no_change"
+            ]
+          },
+          "location_requirement": {
+            "enum": [
+              "required",
+              "existing_anchor_required",
+              "not_required",
+              "manual_required"
+            ]
+          },
+          "status": {
+            "const": "completed"
+          },
+          "linked_patch_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "linked_operation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "location_methods": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "word_com",
+                "manual"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "deterministic_change_audit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "patch_id",
+          "operation_id",
+          "document",
+          "source_comment_ids",
+          "linked_response_unit_ids",
+          "human_reviewers",
+          "review_status",
+          "changed_categories",
+          "deltas",
+          "interpretation"
+        ],
+        "properties": {
+          "patch_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "document": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_comment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "linked_response_unit_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "human_reviewers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "review_status": {
+            "const": "human_semantic_review_completed"
+          },
+          "changed_categories": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "numeric_values",
+                "units",
+                "figure_table_equation_references",
+                "citation_markers",
+                "sample_or_component_identifiers"
+              ]
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "required": [
+              "numeric_values",
+              "units",
+              "figure_table_equation_references",
+              "citation_markers",
+              "sample_or_component_identifiers"
+            ],
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "removed",
+                "added"
+              ],
+              "properties": {
+                "removed": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "added": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "interpretation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "location_maps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fileRecord"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "response_letter_markdown",
+        "response_letter_docx",
+        "response_letter_quality"
+      ],
+      "properties": {
+        "response_letter_markdown": {
+          "$ref": "#/$defs/fileRecord"
+        },
+        "response_letter_docx": {
+          "$ref": "#/$defs/fileRecord"
+        },
+        "response_letter_quality": {
+          "type": "object",
+          "required": [
+            "file",
+            "sha256",
+            "bytes",
+            "status",
+            "release_reaudit_status"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "status": {
+              "enum": [
+                "PASS",
+                "PASS_WITH_WARNINGS"
+              ]
+            },
+            "release_reaudit_status": {
+              "enum": [
+                "PASS",
+                "PASS_WITH_WARNINGS"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "all_published_batch_history_valid",
+        "all_recovered_batch_history_valid",
+        "bounded_qa_remediation_valid",
+        "all_protocol_v1_batch_creation_receipts_valid",
+        "all_active_patches_verified",
+        "all_response_units_completed",
+        "active_pointers_match_marked_docx",
+        "all_final_clean_docx_pdf_hashes_valid",
+        "all_word_quality_reports_pass",
+        "response_letter_contains_verified_patch_excerpts",
+        "numeric_unit_reference_deltas_surfaced_for_human_review"
+      ],
+      "properties": {
+        "all_published_batch_history_valid": {
+          "const": true
+        },
+        "all_recovered_batch_history_valid": {
+          "const": true
+        },
+        "bounded_qa_remediation_valid": {
+          "const": true
+        },
+        "all_protocol_v1_batch_creation_receipts_valid": {
+          "const": true
+        },
+        "all_active_patches_verified": {
+          "const": true
+        },
+        "all_response_units_completed": {
+          "const": true
+        },
+        "active_pointers_match_marked_docx": {
+          "const": true
+        },
+        "all_final_clean_docx_pdf_hashes_valid": {
+          "const": true
+        },
+        "all_word_quality_reports_pass": {
+          "const": true
+        },
+        "response_letter_contains_verified_patch_excerpts": {
+          "const": true
+        },
+        "numeric_unit_reference_deltas_surfaced_for_human_review": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "patch_supersession_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "subject_id",
+          "subject_type",
+          "event_type",
+          "timestamp_utc",
+          "actor",
+          "details"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "subject_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "subject_type": {
+            "const": "patch"
+          },
+          "event_type": {
+            "enum": [
+              "patch_superseded",
+              "patch_created_as_replacement"
+            ]
+          },
+          "timestamp_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "fileRecord": {
+      "type": "object",
+      "required": [
+        "file",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

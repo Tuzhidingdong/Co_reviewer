@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tuzhidingdong/Co_reviewer/blob/main/schemas/workflow-sync-intent.schema.json",
+  "title": "Co_Reviewer Two-Ledger Workflow Sync Intent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sync_id",
+    "prepared_at_utc",
+    "workflow_ledger_file",
+    "workflow_before_sha256",
+    "workflow_after_file",
+    "workflow_after_sha256",
+    "revision_ledger_file",
+    "revision_before_sha256",
+    "revision_after_file",
+    "revision_after_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "sync_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prepared_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workflow_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_before_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "workflow_after_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_after_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_before_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision_after_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_after_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

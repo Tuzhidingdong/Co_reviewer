@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Co_Reviewer Batch Publication Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "batch_id",
+    "published_at_utc",
+    "workflow_ledger_file",
+    "revision_ledger_file",
+    "revision_ledger_sha256",
+    "batch_intent_sha256",
+    "batch_scope_sha256",
+    "active_documents",
+    "selected_task_ids",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "published_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workflow_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_ledger_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "batch_intent_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "batch_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "active_documents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/pointer"
+      }
+    },
+    "selected_task_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "const": "published"
+    }
+  },
+  "$defs": {
+    "pointer": {
+      "type": "object",
+      "required": [
+        "file",
+        "sha256",
+        "batch_id",
+        "updated_at_utc"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "batch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at_utc": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

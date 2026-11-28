@@ -1,0 +1,1005 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import tempfile
+import unicodedata
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+from co_reviewer.identity import sha256_file
+
+W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+NS = {"w": W}
+CACHE_SCHEMA_VERSION = 4
+
+_CAPTION_RE = re.compile(
+    r"^\s*(?P<kind>figure|fig\.?|table)\s*(?P<label>S?\d+[a-z]?)\b(?P<tail>.*)$", re.IGNORECASE)
+_REFERENCE_RE = re.compile(
+    r"\b(?P<kind>figures?|figs?\.?|tables?)\s*(?P<first>S?\d+[a-z]?)"
+    r"(?:\s*(?:-|–|—|to)\s*(?P<last>S?\d+[a-z]?))?", re.IGNORECASE)
+_PLACEHOLDER_RE = re.compile(
+    r"\b(?:page|lines?)\s*[xX]+|\[\[(?:TODO|TBD|XX)[^\]]*\]\]", re.IGNORECASE)
+_NARRATIVE_CAPTION_VERBS_RE = re.compile(
+    r"^\s+(?:has|have|had|was|were|is|are|shows?|showed|illustrates?|demonstrates?|"
+    r"indicates?|reveals?|presents?|summarizes?|compares?|depicts?|contains?|"
+    r"includes?|provides?|reports?|lists?)\b", re.IGNORECASE)
+_RANGE_DELIMITER_RE = re.compile(r"^\s*(?:[.:：|]|[-–—])\s*")
+
+_STOP_WORDS = {
+    "the", "and", "for", "with", "from", "that", "this", "these", "those",
+    "into", "onto", "please", "should", "would", "could", "figure", "fig",
+    "table", "manuscript", "supporting", "information", "according", "order",
+    "正文", "修改", "根据", "进行", "以及", "是否", "需要",
+}
+
+
+def _qn(local: str) -> str:
+    return f"{{{W}}}{local}"
+
+
+def extract_comment_ranges(root: Any, part: str) -> dict[str, list[dict[str, Any]]]:
+    """Recover text selected by native Word commentRangeStart/commentRangeEnd markers."""
+    paragraphs = root.findall(".//w:p", NS)
+    paragraph_index = {node: index for index, node in enumerate(paragraphs)}
+    active: dict[str, dict[str, Any]] = {}
+    completed: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    current_p_idx = -1
+
+    def enter_paragraph(p_idx: int) -> None:
+        for state in active.values():
+            previous = state.get("last_p_idx")
+            if previous is not None and previous != p_idx:
+                if state["text"] and not state["text"][-1].endswith("\n"):
+                    state["text"].append("\n")
+            state["last_p_idx"] = p_idx
+            if p_idx not in state["paragraphs"]:
+                state["paragraphs"].append(p_idx)
+
+    def finish(comment_id: str, state: dict[str, Any], end: dict[str, Any] | None) -> None:
+        completed[comment_id].append({
+            "part": part,
+            "start": state["start"],
+            "end": end,
+            "paragraphs": state["paragraphs"],
+            "text": "".join(state["text"]).strip(),
+            "complete": end is not None,
+        })
+
+    for node in root.iter():
+        if node.tag == _qn("p"):
+            current_p_idx = paragraph_index.get(node, -1)
+            if active:
+                enter_paragraph(current_p_idx)
+            continue
+
+        if node.tag == _qn("commentRangeStart"):
+            comment_id = node.get(_qn("id"), "")
+            if not comment_id:
+                continue
+            prior = active.pop(comment_id, None)
+            if prior is not None:
+                finish(comment_id, prior, None)
+            state = {
+                "start": {"part": part, "p_idx": current_p_idx},
+                "last_p_idx": None,
+                "paragraphs": [],
+                "text": [],
+            }
+            active[comment_id] = state
+            enter_paragraph(current_p_idx)
+            continue
+
+        if node.tag == _qn("commentRangeEnd"):
+            comment_id = node.get(_qn("id"), "")
+            state = active.pop(comment_id, None)
+            if state is not None:
+                end = {"part": part, "p_idx": current_p_idx}
+                finish(comment_id, state, end)
+            continue
+
+        if node.tag in {_qn("t"), _qn("delText")} and node.text:
+            for state in active.values():
+                state["text"].append(node.text)
+        elif node.tag == _qn("tab"):
+            for state in active.values():
+                state["text"].append("\t")
+        elif node.tag == _qn("br"):
+            for state in active.values():
+                state["text"].append("\n")
+
+    for comment_id, state in active.items():
+        finish(comment_id, state, None)
+
+    return dict(completed)
+
+
+def parse_caption(
+    text: str, part: str, p_idx: int,
+    paragraph_style: str | None = None, has_drawing: bool = False,
+) -> dict[str, Any] | None:
+    """Recognise caption-like paragraphs without misclassifying narrative references."""
+    match = _CAPTION_RE.match(text or "")
+    if not match:
+        return None
+    kind_text = match.group("kind").casefold()
+    kind = "table" if kind_text.startswith("table") else "figure"
+    label, tail = match.group("label").upper(), match.group("tail") or ""
+    compact_style = re.sub(r"[^a-z]", "", (paragraph_style or "").casefold())
+    style_signal = "caption" in compact_style or compact_style in {"figure", "tabletitle"}
+    delimiter_signal = bool(_RANGE_DELIMITER_RE.match(tail))
+    drawing_signal = bool(has_drawing)
+    if not (style_signal or delimiter_signal or drawing_signal):
+        return None
+    if not style_signal and not drawing_signal and _NARRATIVE_CAPTION_VERBS_RE.match(tail):
+        return None
+    signals = (["paragraph_style"] if style_signal else []) + (
+        ["caption_delimiter"] if delimiter_signal else []) + (
+        ["drawing_in_paragraph"] if drawing_signal else [])
+    return {
+        "kind": kind, "label": label, "part": part, "p_idx": p_idx, "text": text,
+        "paragraph_style": paragraph_style or "", "detection_signals": signals,
+        "detection_confidence": "high" if style_signal or delimiter_signal else "supported",
+    }
+
+
+
+
+def _normalise_kind(value: str) -> str:
+    return "table" if value.casefold().startswith("table") else "figure"
+
+
+def _expand_label_range(first: str, last: str | None) -> list[str]:
+    """Expand numeric and panel ranges, including abbreviated prefixes such as S5-7."""
+    first = first.upper()
+    if not last:
+        return [first]
+    last = last.upper()
+    a = re.fullmatch(r"(S?)(\d+)([A-Z]?)", first)
+    b = re.fullmatch(r"(S?)(\d+)([A-Z]?)", last)
+    if not a or not b:
+        return [first, last]
+    ap, an, aa = a.groups()
+    bp, bn, ba = b.groups()
+    if not bp and ap:
+        bp = ap
+    if ap != bp:
+        return [first, last]
+    start, stop = int(an), int(bn)
+    if an == bn and aa and ba:
+        x, y = ord(aa), ord(ba)
+        return [f"{ap}{an}{chr(i)}" for i in range(x, y + 1)] if x <= y and y-x <= 25 else [first, last]
+    if aa or ba or stop < start or stop-start > 30:
+        return [first, last]
+    return [f"{ap}{n}" for n in range(start, stop + 1)]
+
+
+
+
+def extract_figure_table_references(
+    text: str, part: str, p_idx: int, caption: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract references unless this paragraph was positively identified as a caption."""
+    if caption is None:
+        caption = parse_caption(text, part, p_idx)
+    if caption is not None:
+        return []
+    records = []
+    for match in _REFERENCE_RE.finditer(text or ""):
+        records.append({
+            "kind": _normalise_kind(match.group("kind")),
+            "labels": _expand_label_range(match.group("first"), match.group("last")),
+            "part": part, "p_idx": p_idx, "text": match.group(0),
+            "range_reference": match.group("last") is not None,
+        })
+    return records
+
+
+
+
+def normalize_match_text(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text or "").casefold()
+    text = text.replace("\u00a0", " ").replace("\u2010", "-").replace("\u2011", "-")
+    text = text.replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _tokens(text: str) -> set[str]:
+    normal = normalize_match_text(text)
+    tokens = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", normal))
+    expanded: set[str] = set()
+    for token in tokens:
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            if len(token) == 1:
+                expanded.add(token)
+            else:
+                expanded.update(token[index:index + 2] for index in range(len(token) - 1))
+        elif len(token) >= 3 and token not in _STOP_WORDS:
+            expanded.add(token)
+    return expanded
+
+
+def _paragraphs_by_part(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for paragraph in report.get("paragraphs", []):
+        if paragraph.get("text"):
+            grouped[paragraph.get("part", "word/document.xml")].append(paragraph)
+    for rows in grouped.values():
+        rows.sort(key=lambda row: int(row.get("p_idx", 0)))
+    return dict(grouped)
+
+
+def _exact_anchor_matches(anchor_text: str, report: dict[str, Any]) -> list[dict[str, Any]]:
+    needle = normalize_match_text(anchor_text)
+    if len(needle) < 6:
+        return []
+    results: list[dict[str, Any]] = []
+    for part, rows in _paragraphs_by_part(report).items():
+        for row in rows:
+            haystack = normalize_match_text(row.get("text", ""))
+            if needle and needle in haystack:
+                results.append({
+                    "part": part,
+                    "p_idx": row.get("p_idx"),
+                    "para_id": row.get("para_id"),
+                    "match_type": "exact_anchor_text",
+                    "matched_text": row.get("text", "")[:1600],
+                })
+        # Also allow one selected range to span adjacent paragraphs.
+        if len(rows) > 1 and not any(item["part"] == part for item in results):
+            cumulative: list[tuple[int, int, dict[str, Any]]] = []
+            pieces: list[str] = []
+            offset = 0
+            for row in rows:
+                piece = normalize_match_text(row.get("text", ""))
+                pieces.append(piece)
+                cumulative.append((offset, offset + len(piece), row))
+                offset += len(piece) + 1
+            haystack = "\n".join(pieces)
+            position = haystack.find(needle)
+            if position >= 0:
+                end = position + len(needle)
+                touched = [
+                    row for begin, finish, row in cumulative
+                    if finish > position and begin < end
+                ]
+                if touched:
+                    results.append({
+                        "part": part,
+                        "p_idx": touched[0].get("p_idx"),
+                        "p_idx_end": touched[-1].get("p_idx"),
+                        "para_id": touched[0].get("para_id"),
+                        "match_type": "exact_anchor_span",
+                        "matched_text": "\n".join(row.get("text", "") for row in touched)[:1600],
+                    })
+    return results
+
+
+def _candidate_anchor_matches(anchor_text: str, report: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    anchor_tokens = _tokens(anchor_text)
+    if len(anchor_tokens) < 3:
+        return []
+    candidates = []
+    for paragraph in report.get("paragraphs", []):
+        target_tokens = _tokens(paragraph.get("text", ""))
+        if not target_tokens:
+            continue
+        shared = len(anchor_tokens & target_tokens)
+        # A selected range may be much longer than the relevant target paragraph.
+        # Score containment against the shorter side as well as query coverage so
+        # useful excerpts are retained as candidates without ever becoming confirmed.
+        anchor_coverage = shared / max(1, len(anchor_tokens))
+        target_coverage = shared / max(1, len(target_tokens))
+        score = max(anchor_coverage, target_coverage)
+        if score >= 0.30 and shared >= 3:
+            candidates.append({
+                "part": paragraph.get("part"),
+                "p_idx": paragraph.get("p_idx"),
+                "para_id": paragraph.get("para_id"),
+                "match_type": "token_overlap_candidate",
+                "match_score": round(score, 3),
+                "shared_token_count": shared,
+                "matched_text": paragraph.get("text", "")[:1600],
+            })
+    candidates.sort(key=lambda item: (-item["match_score"], -item["shared_token_count"], item["part"] or "", item["p_idx"] or 0))
+    return candidates[:limit]
+
+def match_comments_to_documents(reviewer_report: dict[str, Any], target_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for comment in reviewer_report.get("comments", []):
+        anchor_text = comment.get("anchor_text") or ""
+        selections = [
+            item for item in comment.get("anchor_selections", [])
+            if item.get("text")
+        ]
+        if not selections and anchor_text:
+            selections = [{"text": anchor_text}]
+
+        # These secondary query texts can retrieve relevant context when the
+        # selected range is absent, incomplete, or paraphrased in the target file.
+        # They are candidate-only signals and can never confirm a target.
+        candidate_queries: list[tuple[str, str]] = [
+            (item.get("text") or "", "native_selection")
+            for item in selections
+        ]
+        if comment.get("anchor_paragraph"):
+            candidate_queries.append((comment["anchor_paragraph"], "containing_paragraph"))
+        if comment.get("comment"):
+            candidate_queries.append((comment["comment"], "reviewer_comment"))
+
+        exact: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
+        for target_report in target_reports:
+            role = target_report.get("role", "Document")
+            role_exact: list[dict[str, Any]] = []
+            for selection_index, selection in enumerate(selections):
+                selected_text = selection.get("text") or ""
+                for item in _exact_anchor_matches(selected_text, target_report):
+                    item["document"] = role
+                    item["selection_index"] = selection_index
+                    item["matched_anchor_text"] = selected_text[:1200]
+                    role_exact.append(item)
+            if role_exact:
+                exact.extend(role_exact)
+                continue
+
+            role_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+            for query_text, query_source in candidate_queries:
+                for item in _candidate_anchor_matches(query_text, target_report):
+                    item["document"] = role
+                    item["query_source"] = query_source
+                    key = (item.get("part"), item.get("p_idx"))
+                    current = role_candidates.get(key)
+                    if current is None or item["match_score"] > current["match_score"]:
+                        role_candidates[key] = item
+            candidates.extend(role_candidates.values())
+
+        # Deduplicate exact results that can arise when multiple ranges overlap the
+        # same target paragraph; preserve selection provenance in the audit record.
+        unique_exact: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for item in exact:
+            key = (
+                item.get("document"), item.get("part"), item.get("p_idx"),
+                item.get("p_idx_end"), item.get("matched_anchor_text"),
+            )
+            unique_exact[key] = item
+        exact = list(unique_exact.values())
+        candidates.sort(
+            key=lambda item: (
+                -item.get("match_score", 0),
+                -item.get("shared_token_count", 0),
+                item.get("document", ""),
+                item.get("part", ""),
+                item.get("p_idx") or 0,
+            )
+        )
+
+        anchor_status = comment.get("anchor_status", "markers_missing")
+        if _PLACEHOLDER_RE.search(anchor_text):
+            status = "placeholder_anchor"
+        elif anchor_status != "range_resolved":
+            status = "anchor_unresolved"
+        elif len(exact) == 1:
+            status = "exact_unique"
+        elif len(exact) > 1:
+            status = "ambiguous_exact_match"
+        else:
+            status = "no_exact_match"
+
+        results.append({
+            "comment_id": comment.get("id"),
+            "reviewer": comment.get("author", ""),
+            "comment": comment.get("comment", ""),
+            "reply_anchor": {
+                "status": anchor_status,
+                "text": anchor_text,
+                "selections": selections,
+                "part": comment.get("part"),
+                "p_idx": comment.get("p_idx"),
+                "paragraphs": comment.get("anchor_paragraphs", []),
+            },
+            "target_status": status,
+            "confirmed_matches": exact,
+            "candidate_matches": candidates[:10],
+            "note": (
+                "A cross-document match is confirmed only when a resolved native Word selection "
+                "matches exactly and uniquely. Containing-paragraph, reviewer-comment and token-overlap "
+                "searches are candidate-only and can never be promoted to confirmed targets."
+            ),
+        })
+    return results
+
+def _label_parts(label: str) -> tuple[str, int, str] | None:
+    match = re.fullmatch(r"(S?)(\d+)([A-Z]?)", (label or "").upper())
+    if not match:
+        return None
+    return match.group(1), int(match.group(2)), match.group(3)
+
+
+def _caption_identity_text(text: str) -> str:
+    """Normalise caption wording for exact-copy grouping, not semantic inference."""
+    match = _CAPTION_RE.match(text or "")
+    body = match.group("tail") if match else (text or "")
+    body = normalize_match_text(body)
+    body = re.sub(r"(?<=[a-z0-9])[-‐‑‒–—](?=[a-z0-9])", "", body)
+    body = re.sub(r"[^\w]+", " ", body, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _reference_label_parts(label: str) -> tuple[str, str | None]:
+    parts = _label_parts(label)
+    if not parts:
+        return label.upper(), None
+    prefix, number, panel = parts
+    return f"{prefix}{number}", panel or None
+
+
+def audit_figure_table_numbering(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Audit caption/reference relationships without confusing labels with objects."""
+    all_captions = defaultdict(list)
+    all_references = []
+    per_document = {}
+    duplicate_caption_groups = []
+    cross_document_caption_groups = []
+    caption_identity_groups = defaultdict(list)
+
+    for report in reports:
+        role = report.get("role", "Document")
+        captions = sorted(
+            (row for row in report.get("captions_and_drawings", [])
+             if row.get("caption_kind") and row.get("caption_label")),
+            key=lambda row: (row.get("part", ""), int(row.get("p_idx", 0))),
+        )
+        references = sorted(
+            report.get("figure_table_references", []),
+            key=lambda row: (row.get("part", ""), int(row.get("p_idx", 0))),
+        )
+        for reference in references:
+            for label in reference.get("labels", []):
+                all_references.append({"document": role, **reference, "label": label})
+        for caption in captions:
+            all_captions[(caption["caption_kind"], caption["caption_label"])].append(
+                {"document": role, **caption}
+            )
+            identity = _caption_identity_text(caption.get("text", ""))
+            if identity:
+                fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+                caption_identity_groups[fingerprint].append({
+                    "document": role, "kind": caption["caption_kind"],
+                    "label": caption["caption_label"], "part": caption.get("part"),
+                    "p_idx": caption.get("p_idx"), "para_id": caption.get("para_id"),
+                    "text": caption.get("text", "")[:500],
+                })
+
+        label_groups = defaultdict(list)
+        for caption in captions:
+            parts = _label_parts(caption["caption_label"])
+            if parts:
+                label_groups[(caption["caption_kind"], parts[0])].append(caption)
+        duplicates, gaps = [], []
+        for (kind, prefix), rows in label_groups.items():
+            counts = Counter(row["caption_label"] for row in rows)
+            for label, count in counts.items():
+                if count > 1:
+                    same_rows = [row for row in rows if row["caption_label"] == label]
+                    fingerprints = {_caption_identity_text(row.get("text", "")) for row in same_rows}
+                    group = {
+                        "kind": kind, "label": label, "count": count,
+                        "classification": (
+                            "same_document_duplicate_same_caption" if len(fingerprints) == 1
+                            else "same_document_same_label_different_captions"
+                        ),
+                        "occurrences": [{
+                            "document": role, "part": row.get("part"),
+                            "p_idx": row.get("p_idx"), "para_id": row.get("para_id"),
+                            "text": row.get("text", "")[:500],
+                        } for row in same_rows],
+                    }
+                    duplicates.append(group)
+                    duplicate_caption_groups.append({"document": role, **group})
+            numeric = sorted({parts[1] for row in rows
+                              if (parts := _label_parts(row["caption_label"]))})
+            if len(numeric) >= 2:
+                missing = [f"{prefix}{n}" for n in range(numeric[0], numeric[-1]+1)
+                           if n not in numeric]
+                if missing:
+                    gaps.append({"kind": kind, "prefix": prefix, "missing_labels": missing})
+
+        first_mentions = {"figure": [], "table": []}
+        occurrences = []
+        for reference in references:
+            for label in reference.get("labels", []):
+                base, panel = _reference_label_parts(label)
+                # First-mention numbering is based on the manuscript body, not
+                # headers, footers, footnotes or response-letter locations.
+                if (
+                    reference.get("part") == "word/document.xml"
+                    and base not in first_mentions[reference["kind"]]
+                ):
+                    first_mentions[reference["kind"]].append(base)
+                occurrences.append({
+                    "kind": reference["kind"], "label": label, "base_label": base,
+                    "panel": panel, "part": reference.get("part"),
+                    "p_idx": reference.get("p_idx"), "text": reference.get("text", ""),
+                    "range_reference": bool(reference.get("range_reference")),
+                })
+        out_of_order = []
+        for kind, labels in first_mentions.items():
+            previous = {}
+            for label in labels:
+                parts = _label_parts(label)
+                if not parts:
+                    continue
+                prefix, number, _suffix = parts
+                if prefix in previous and number < previous[prefix]:
+                    out_of_order.append({
+                        "kind": kind, "label": label,
+                        "previous_number": previous[prefix],
+                        "reason": "first-mention sequence decreases",
+                    })
+                previous[prefix] = number
+        per_document[role] = {
+            "captions_in_document_order": [{
+                "kind": row["caption_kind"], "label": row["caption_label"],
+                "part": row["part"], "p_idx": row["p_idx"],
+                "para_id": row.get("para_id"), "text": row.get("text", "")[:500],
+                "detection_confidence": row.get("detection_confidence", "legacy_or_unknown"),
+            } for row in captions],
+            "first_mention_order": first_mentions,
+            "reference_occurrences": occurrences,
+            "duplicate_captions": duplicates,
+            "numbering_gaps": gaps,
+            "out_of_order_first_mentions": out_of_order,
+            "reference_count": len(references),
+        }
+
+    reference_resolution, unresolved_references, ambiguous_references = [], [], []
+    referenced_keys = set()
+    for reference in all_references:
+        kind, label = reference["kind"], reference["label"]
+        base, panel = _reference_label_parts(label)
+        exact_rows = all_captions.get((kind, label), [])
+        parent_rows = all_captions.get((kind, base), []) if panel else []
+        matches = exact_rows or parent_rows
+        local = [row for row in matches if row["document"] == reference["document"]]
+        remote = [row for row in matches if row["document"] != reference["document"]]
+        if matches:
+            fingerprints = {_caption_identity_text(row.get("text", "")) for row in matches}
+            distinct_fingerprints = {value for value in fingerprints if value}
+            if len(distinct_fingerprints) > 1:
+                if len(local) == 1:
+                    resolution = "resolved_same_document_with_cross_document_collision"
+                else:
+                    resolution = "ambiguous_caption_label_collision"
+            elif len(local) > 1:
+                resolution = "multiple_same_document_occurrences_same_caption"
+            elif not local and len(remote) > 1:
+                resolution = "multiple_cross_document_occurrences_same_caption"
+            elif panel:
+                resolution = (
+                    "subpanel_resolved_to_main_figure_same_document" if local
+                    else "subpanel_resolved_to_main_figure_cross_document"
+                )
+            else:
+                resolution = "resolved_same_document" if local else "resolved_cross_document"
+            matched_labels = [row["caption_label"] for row in matches]
+            referenced_keys.add((kind, label))
+            if panel:
+                referenced_keys.add((kind, base))
+            if resolution.startswith("ambiguous") or resolution.startswith("multiple_"):
+                ambiguous_references.append({
+                    "document": reference["document"], "kind": kind, "label": label,
+                    "part": reference["part"], "p_idx": reference["p_idx"],
+                    "reference_text": reference["text"], "resolution": resolution,
+                    "matched_documents": sorted({row["document"] for row in matches}),
+                    "matched_caption_locations": [
+                        {"document": row["document"], "part": row.get("part"),
+                         "p_idx": row.get("p_idx"), "text": row.get("text", "")[:300]}
+                        for row in matches
+                    ],
+                })
+        else:
+            resolution, matched_labels = "no_caption_in_workspace", []
+            unresolved_references.append({
+                "document": reference["document"], "kind": kind, "label": label,
+                "part": reference["part"], "p_idx": reference["p_idx"],
+                "reference_text": reference["text"], "resolution": resolution,
+                "base_label": base if panel else None,
+            })
+        reference_resolution.append({
+            "document": reference["document"], "kind": kind, "label": label,
+            "base_label": base if panel else None, "panel": panel,
+            "part": reference["part"], "p_idx": reference["p_idx"],
+            "reference_text": reference["text"],
+            "range_reference": bool(reference.get("range_reference")),
+            "resolution": resolution, "matched_caption_labels": matched_labels,
+            "matched_documents": sorted({row["document"] for row in matches}),
+            "same_document_match_count": len(local),
+            "cross_document_match_count": len(remote),
+        })
+
+    unreferenced_captions = []
+    for (kind, label), rows in all_captions.items():
+        base, _panel = _reference_label_parts(label)
+        if (kind, label) not in referenced_keys and (kind, base) not in referenced_keys:
+            for row in rows:
+                unreferenced_captions.append({
+                    "document": row["document"], "kind": kind, "label": label,
+                    "part": row["part"], "p_idx": row["p_idx"],
+                    "caption_text": row.get("text", "")[:500],
+                })
+
+    duplicate_labels_across_documents = []
+    for (kind, label), rows in all_captions.items():
+        roles = sorted({row["document"] for row in rows})
+        if len(roles) <= 1:
+            continue
+        fingerprints = {_caption_identity_text(row.get("text", "")) for row in rows}
+        classification = ("cross_document_caption_reproduction" if len(fingerprints) == 1
+                          else "cross_document_same_label_different_captions")
+        group = {
+            "kind": kind, "label": label, "classification": classification,
+            "occurrences": [{
+                "document": row["document"], "part": row.get("part"),
+                "p_idx": row.get("p_idx"), "para_id": row.get("para_id"),
+                "text": row.get("text", "")[:500],
+            } for row in rows],
+            "document_roles": roles,
+        }
+        duplicate_labels_across_documents.append(group)
+        cross_document_caption_groups.append(group)
+
+    identity_groups = [{
+        "text_fingerprint": fingerprint,
+        "classification": "text_identical_caption_occurrences_not_proof_of_same_visual_object",
+        "occurrence_count": len(rows), "occurrences": rows,
+    } for fingerprint, rows in caption_identity_groups.items() if len(rows) > 1]
+    counts = Counter(item["resolution"] for item in reference_resolution)
+    return {
+        "schema_version": "2.0",
+        "scope": "Caption-like paragraphs and textual Figure/Fig./Table references in inspected DOCX parts.",
+        "automatic_renumbering": False,
+        "by_document": per_document,
+        "reference_resolution": reference_resolution,
+        "reference_resolution_counts": dict(counts),
+        "unresolved_references": unresolved_references,
+        "ambiguous_references": ambiguous_references,
+        "unreferenced_captions": unreferenced_captions,
+        "duplicate_captions_within_documents": duplicate_caption_groups,
+        "duplicate_labels_across_documents": duplicate_labels_across_documents,
+        "cross_document_caption_groups": cross_document_caption_groups,
+        "caption_text_identity_groups": identity_groups,
+        "summary": {
+            "reference_occurrences": len(reference_resolution),
+            "resolved_same_document": counts.get("resolved_same_document", 0),
+            "resolved_cross_document": counts.get("resolved_cross_document", 0),
+            "subpanel_resolved": sum(v for k, v in counts.items()
+                                     if k.startswith("subpanel_resolved_to_main_figure")),
+            "no_caption_in_workspace": counts.get("no_caption_in_workspace", 0),
+            "ambiguous_reference_occurrences": sum(
+                1 for item in reference_resolution
+                if item["resolution"].startswith("ambiguous")
+                or item["resolution"].startswith("multiple_")
+            ),
+            "same_document_same_label_different_captions": sum(
+                row["classification"] == "same_document_same_label_different_captions"
+                for row in duplicate_caption_groups),
+            "same_document_duplicate_same_caption": sum(
+                row["classification"] == "same_document_duplicate_same_caption"
+                for row in duplicate_caption_groups),
+            "cross_document_same_label_different_captions": sum(
+                row["classification"] == "cross_document_same_label_different_captions"
+                for row in cross_document_caption_groups),
+            "cross_document_caption_reproductions": sum(
+                row["classification"] == "cross_document_caption_reproduction"
+                for row in cross_document_caption_groups),
+        },
+        "limitations": [
+            "This is a deterministic consistency audit, not an automatic renumbering operation.",
+            "Caption detection requires a caption-style signal, drawing in the paragraph, or a conventional label delimiter; unusual layouts may need manual confirmation.",
+            "Identical caption text is evidence of textual equivalence, not proof that two visual objects are identical.",
+            "Subpanel references resolve to the parent figure caption when no separate subpanel caption exists; visual panel lettering still requires inspection.",
+            "Cross-document repetitions are classified separately from same-document duplicate labels; differing text under the same cross-document label is a review flag, not an automatic error.",
+            "Captions embedded only as image text, floating shapes, or unsupported text boxes may not be represented as ordinary paragraphs.",
+            "A reported gap or unreferenced caption is a review flag; it is not proof that a figure/table is missing.",
+        ],
+    }
+
+
+
+
+def build_review_audit(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    reviewer_reports = [item for item in reports if item.get("role") == "Reviewers"]
+    target_reports = [item for item in reports if item.get("role") in {"Manuscript", "SI"}]
+    matches = []
+    for reviewer_report in reviewer_reports:
+        matches.extend(match_comments_to_documents(reviewer_report, target_reports))
+    numbering = audit_figure_table_numbering(reports)
+    counts = Counter(item["target_status"] for item in matches)
+    return {
+        "schema_version": "1.0",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_files": [
+            {"role": item.get("role"), "file": item.get("file"), "sha256": item.get("source_sha256")}
+            for item in reports
+        ],
+        "comment_count": len(matches),
+        "comment_target_status_counts": dict(counts),
+        "comment_matches": matches,
+        "figure_table_numbering": numbering,
+        "decision_boundary": (
+            "This report is deterministic evidence only. It does not decide scientific disposition, "
+            "invent edits, or modify any document."
+        ),
+    }
+
+
+def _context_excerpts(report: dict[str, Any], match_rows: list[dict[str, Any]], max_chars: int = 1200) -> list[dict[str, Any]]:
+    by_part = _paragraphs_by_part(report)
+    selected: set[tuple[str, int]] = set()
+    for match in match_rows:
+        part = match.get("part")
+        p_idx = match.get("p_idx")
+        if part is None or p_idx is None:
+            continue
+        selected.update({(part, int(p_idx) - 1), (part, int(p_idx)), (part, int(p_idx) + 1)})
+        if match.get("p_idx_end") is not None:
+            selected.add((part, int(match["p_idx_end"])))
+    excerpts = []
+    for part, rows in by_part.items():
+        for row in rows:
+            key = (part, int(row.get("p_idx", -1)))
+            if key not in selected:
+                continue
+            excerpts.append({
+                "part": part,
+                "p_idx": row.get("p_idx"),
+                "para_id": row.get("para_id"),
+                "text": (row.get("text") or "")[:max_chars],
+            })
+    return excerpts
+
+
+def build_decision_queue(
+    reports: list[dict[str, Any]],
+    audit: dict[str, Any],
+    comment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    reports_by_role = {item.get("role"): item for item in reports}
+    selected_ids = {str(value) for value in comment_ids} if comment_ids else None
+    items = []
+    for match in audit.get("comment_matches", []):
+        if selected_ids is not None and str(match.get("comment_id")) not in selected_ids:
+            continue
+        reviewer_report = reports_by_role.get("Reviewers", {})
+        source_comment = next(
+            (item for item in reviewer_report.get("comments", []) if str(item.get("id")) == str(match.get("comment_id"))),
+            {},
+        )
+        evidence = []
+        selected_matches = (
+            match.get("confirmed_matches", [])[:3]
+            + match.get("candidate_matches", [])[:3]
+        )
+        for document_match in selected_matches:
+            target_report = reports_by_role.get(document_match.get("document"), {})
+            for excerpt in _context_excerpts(target_report, [document_match], max_chars=1200):
+                evidence.append({"document": document_match.get("document"), **excerpt})
+        if source_comment.get("anchor_paragraph"):
+            evidence.insert(0, {
+                "document": "Reviewers",
+                "part": source_comment.get("part"),
+                "p_idx": source_comment.get("p_idx"),
+                "text": source_comment.get("anchor_paragraph", "")[:1200],
+                "evidence_role": "comment-anchor-source-paragraph",
+            })
+
+        def compact_match(item: dict[str, Any]) -> dict[str, Any]:
+            keep = (
+                "document", "part", "p_idx", "p_idx_end", "para_id",
+                "match_type", "match_score", "shared_token_count",
+                "selection_index", "query_source",
+            )
+            return {key: item[key] for key in keep if key in item}
+
+        reply_anchor = match.get("reply_anchor", {})
+        compact_anchor = {
+            "status": reply_anchor.get("status"),
+            "text": reply_anchor.get("text", ""),
+            "part": reply_anchor.get("part"),
+            "p_idx": reply_anchor.get("p_idx"),
+            "paragraphs": reply_anchor.get("paragraphs", []),
+            # Keep coordinates for individual ranges but not their text again;
+            # the combined native selection text is already stored above.
+            "selections": [
+                {
+                    key: selection[key]
+                    for key in ("part", "start", "end", "paragraphs")
+                    if key in selection
+                }
+                for selection in reply_anchor.get("selections", [])
+            ],
+        }
+        items.append({
+            "comment_id": match.get("comment_id"),
+            "reviewer": match.get("reviewer"),
+            "comment": match.get("comment"),
+            "reply_anchor": compact_anchor,
+            "target_status": match.get("target_status"),
+            "confirmed_matches": [
+                compact_match(item) for item in match.get("confirmed_matches", [])[:3]
+            ],
+            "candidate_matches": [
+                compact_match(item) for item in match.get("candidate_matches", [])[:3]
+            ],
+            "evidence_excerpts": evidence[:8],
+            "decision": {
+                "status": "pending",
+                "disposition": None,
+                "rationale": None,
+                "proposed_targets": [],
+                "response_outline": None,
+                "supporting_evidence": [],
+                "missing_evidence_or_questions": [],
+                "confidence": None,
+                "requires_user_approval": True,
+            },
+        })
+    return {
+        "schema_version": "1.0",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_files": audit.get("source_files", []),
+        "instructions": [
+            "This is a compact evidence packet, not an automatic revision decision.",
+            "Process all selected comment items together as one revision round; do not require one user request per comment.",
+            "Split compound comments into atomic work items, and merge overlapping requests into one shared task while retaining every source comment ID.",
+            "Independently inspect the workspace-level figure/table audit; global numbering and consistency tasks are not limited to native comment anchors.",
+            "Classify confirmed, candidate, ambiguous and unresolved evidence without promoting semantic similarity or token overlap to an exact match.",
+            "Distinguish subpanel references, ranges, cross-document references, repeated captions and same-document label collisions.",
+            "Do not infer scientific results, numerical values, causal claims, or missing experimental evidence.",
+            "If evidence is insufficient, complete all other supported analysis and list the exact missing evidence in the affected task.",
+            "Propose whether each outcome belongs in the Manuscript, SI, Reply only, multiple documents, no change or author clarification.",
+            "Show exact target locations and a concise rationale; do not modify DOCX files.",
+            "Represent task dependencies explicitly and ensure they form an acyclic execution order.",
+            "All proposed changes remain pending and require explicit user approval; this packet never authorises edits.",
+        ],
+        "items": items,
+    }
+
+
+def write_audit_markdown(audit: dict[str, Any], path: str | Path) -> None:
+    lines = [
+        "# Co_Reviewer Deterministic Review Audit",
+        "",
+        f"Generated: {audit.get('generated_at_utc', '')}",
+        f"Reviewer comments: {audit.get('comment_count', 0)}",
+        "",
+        "## Comment-to-document matching",
+        "",
+    ]
+    for key, count in sorted(audit.get("comment_target_status_counts", {}).items()):
+        lines.append(f"- {key}: {count}")
+    for item in audit.get("comment_matches", []):
+        lines.extend([
+            "",
+            f"### Comment {item.get('comment_id')} — {item.get('target_status')}",
+            f"- Reviewer: {item.get('reviewer')}",
+            f"- Comment: {item.get('comment')}",
+            f"- Native selected text: {item.get('reply_anchor', {}).get('text') or '[not recoverable]'}",
+        ])
+        for match in item.get("confirmed_matches", []):
+            lines.append(
+                f"- Exact target: {match.get('document')} / {match.get('part')} / P[{match.get('p_idx')}]"
+            )
+        for match in item.get("candidate_matches", [])[:3]:
+            lines.append(
+                f"- Candidate only: {match.get('document')} / {match.get('part')} / P[{match.get('p_idx')}] "
+                f"(overlap {match.get('match_score')})"
+            )
+    numbering = audit.get("figure_table_numbering", {})
+    lines.extend(["", "## Figure/table numbering flags", ""])
+    lines.append(f"- Unresolved references: {len(numbering.get('unresolved_references', []))}")
+    lines.append(f"- Ambiguous/repeated reference targets: {len(numbering.get('ambiguous_references', []))}")
+    lines.append(f"- Unreferenced captions: {len(numbering.get('unreferenced_captions', []))}")
+    lines.append(f"- Duplicate labels across documents: {len(numbering.get('duplicate_labels_across_documents', []))}")
+    summary = numbering.get("summary", {})
+    if summary:
+        lines.extend([
+            f"- References resolved in the same document: {summary.get('resolved_same_document', 0)}",
+            f"- References resolved only in another workspace document: {summary.get('resolved_cross_document', 0)}",
+            f"- Subpanel references resolved to a parent figure: {summary.get('subpanel_resolved', 0)}",
+            f"- Same-document same-label/different-caption conflicts: {summary.get('same_document_same_label_different_captions', 0)}",
+            f"- Same-document repeated identical captions: {summary.get('same_document_duplicate_same_caption', 0)}",
+            f"- Cross-document same-label/different-caption flags: {summary.get('cross_document_same_label_different_captions', 0)}",
+            f"- Cross-document caption reproductions: {summary.get('cross_document_caption_reproductions', 0)}",
+        ])
+    for role, details in numbering.get("by_document", {}).items():
+        lines.extend([
+            "",
+            f"### {role}",
+            f"- Duplicate captions: {len(details.get('duplicate_captions', []))}",
+            f"- Numbering gaps: {len(details.get('numbering_gaps', []))}",
+            f"- Out-of-order first mentions: {len(details.get('out_of_order_first_mentions', []))}",
+        ])
+    lines.extend([
+        "",
+        "## Safety boundary",
+        "",
+        "This report flags evidence and consistency issues. It does not renumber figures/tables, "
+        "choose scientific revisions, or modify any DOCX file.",
+        "",
+    ])
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines), encoding="utf-8")
+
+
+def load_cached_inspection(
+    path: str | Path,
+    comment_author: str | None,
+    cache_dir: str | Path,
+    inspector: Callable[[str, str | None], dict[str, Any]],
+    refresh: bool = False,
+) -> tuple[dict[str, Any], str]:
+    """Reuse parsed DOCX inventory only when source SHA-256 and cache schema match."""
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(f"DOCX input does not exist: {source}")
+    source_hash = sha256_file(source)
+    author_key = hashlib.sha256((comment_author or "").casefold().encode("utf-8")).hexdigest()[:10]
+    cache_path = Path(cache_dir) / f"docx-v{CACHE_SCHEMA_VERSION}-{source_hash}-{author_key}.json"
+
+    if not refresh and cache_path.is_file():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (
+                cached.get("cache_schema_version") == CACHE_SCHEMA_VERSION
+                and cached.get("source_sha256") == source_hash
+                and isinstance(cached.get("report"), dict)
+            ):
+                report = cached["report"]
+                report["file"] = str(source)
+                report["source_sha256"] = source_hash
+                return report, "hit"
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    report = inspector(str(source), comment_author)
+    final_hash = sha256_file(source)
+    if final_hash != source_hash:
+        raise RuntimeError(f"Source DOCX changed while it was being inspected: {source}")
+    report["file"] = str(source)
+    report["source_sha256"] = source_hash
+    payload = {
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "source_sha256": source_hash,
+        "cached_at_utc": datetime.now(timezone.utc).isoformat(),
+        "report": report,
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="\n",
+            prefix=f".{cache_path.name}.", suffix=".tmp",
+            dir=cache_path.parent, delete=False,
+        ) as handle:
+            temporary = handle.name
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(temporary, cache_path)
+        temporary = None
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+    return report, "miss"
+
+
+def cache_summary(cache_results: list[tuple[str, str]]) -> dict[str, Any]:
+    return {
+        "hits": sum(1 for _, status in cache_results if status == "hit"),
+        "misses": sum(1 for _, status in cache_results if status == "miss"),
+        "files": [{"file": name, "status": status} for name, status in cache_results],
+    }

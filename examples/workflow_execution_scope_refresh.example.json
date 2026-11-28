@@ -1,0 +1,92 @@
+{
+  "schema_version": "1.0",
+  "revision_round_id": "round-<same-as-current-prepared-workflow>",
+  "workflow_ledger_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "tasks": [
+    {
+      "task_id": "T2",
+      "patch_id": "P-T2-REFRESH",
+      "proposed_response": "<new author-reviewed response wording grounded in the current reviewer comment and active manuscript/SI evidence>",
+      "evidence": [
+        {
+          "evidence_id": "E-T2-MAN-CURRENT-01",
+          "document": "Manuscript",
+          "part": "word/document.xml",
+          "p_idx": 12,
+          "source_excerpt": "<exact current Manuscript paragraph excerpt from the refreshed Audit inventory>",
+          "evidence_type": "paragraph",
+          "match_status": "confirmed"
+        },
+        {
+          "evidence_id": "E-T2-SI-CURRENT-01",
+          "document": "SI",
+          "part": "word/document.xml",
+          "p_idx": 4,
+          "source_excerpt": "<exact current Supporting Information paragraph excerpt from the refreshed Audit inventory>",
+          "evidence_type": "paragraph",
+          "match_status": "confirmed"
+        }
+      ],
+      "targets": [
+        {
+          "document": "Manuscript",
+          "part": "word/document.xml",
+          "p_idx": 12,
+          "action": "replace",
+          "evidence_ids": [
+            "E-T2-MAN-CURRENT-01"
+          ]
+        },
+        {
+          "document": "SI",
+          "part": "word/document.xml",
+          "p_idx": 4,
+          "action": "replace",
+          "evidence_ids": [
+            "E-T2-SI-CURRENT-01"
+          ]
+        }
+      ],
+      "patch_operations": [
+        {
+          "operation_id": "T2-OP-MAN-REFRESH",
+          "document": "Manuscript",
+          "part": "word/document.xml",
+          "p_idx": 12,
+          "find": "<exact old text present in the current Manuscript evidence>",
+          "replace": "<author-approved replacement text>",
+          "location": "<current Manuscript target description>",
+          "evidence_ids": [
+            "E-T2-MAN-CURRENT-01"
+          ],
+          "source_comment_ids": [
+            "2"
+          ]
+        },
+        {
+          "operation_id": "T2-OP-SI-REFRESH",
+          "document": "SI",
+          "part": "word/document.xml",
+          "p_idx": 4,
+          "find": "<exact old text present in the current SI evidence>",
+          "replace": "<author-approved replacement text>",
+          "location": "<current SI target description>",
+          "evidence_ids": [
+            "E-T2-SI-CURRENT-01"
+          ],
+          "source_comment_ids": [
+            "2"
+          ]
+        }
+      ],
+      "response_unit_specs": [
+        {
+          "comment_id": "2",
+          "disposition": "revised",
+          "location_requirement": "required",
+          "resolution_reason": "This task was refreshed against the latest published active Manuscript and SI versions."
+        }
+      ]
+    }
+  ]
+}
