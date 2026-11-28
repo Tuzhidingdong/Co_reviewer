@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "format-requirements.schema.json",
+  "title": "Authoritative Format Requirements with immutable version chain",
+  "type": "array",
+  "items": {"$ref": "#/$defs/formatRequirement"},
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "required": ["replacement", "start", "end"],
+      "properties": {
+        "replacement": {"type": "string"},
+        "start": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 1},
+        "occurrence_index": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "version": {
+      "type": "object",
+      "required": [
+        "format_requirement_id", "version_id", "parent_version_id", "parent_fingerprint",
+        "source_excerpt", "token", "properties", "scope", "status",
+        "fingerprint", "version_sha256"
+      ],
+      "properties": {
+        "format_requirement_id": {"type": "string", "minLength": 1},
+        "version_id": {"type": "string", "pattern": "^FR-.+-v[1-9][0-9]*$"},
+        "parent_version_id": {"type": ["string", "null"]},
+        "parent_fingerprint": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "instruction_id": {"type": "string"},
+        "source_line_start": {"type": "integer", "minimum": 1},
+        "source_line_end": {"type": "integer", "minimum": 1},
+        "source_locator": {"type": "string"},
+        "document_role": {"type": "string"},
+        "target_ref": {"type": "object"},
+        "source_excerpt": {"type": "string", "minLength": 1},
+        "token": {"type": "string", "minLength": 1},
+        "properties": {"type": "object", "minProperties": 1},
+        "scope": {"$ref": "#/$defs/scope"},
+        "semantic_role": {"type": "string"},
+        "status": {"enum": ["proposed", "confirmed", "ambiguous", "superseded"]},
+        "created_by": {"type": "string"},
+        "created_at_utc": {"type": "string"},
+        "reason": {"type": "string"},
+        "reviewer_decision_ref": {"type": ["string", "null"]},
+        "authorization_ref": {"type": ["string", "null"]},
+        "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "version_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": true
+    },
+    "formatRequirement": {
+      "type": "object",
+      "required": ["schema_version", "format_requirement_id", "requirement_id", "current_version_id", "versions"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "format_requirement_id": {"type": "string", "minLength": 1},
+        "requirement_id": {"type": "string", "minLength": 1},
+        "current_version_id": {"type": "string", "minLength": 1},
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/version"}
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

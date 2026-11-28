@@ -32,6 +32,27 @@
           "source_locator": {"type": "string", "pattern": "^L[1-9][0-9]*–L[1-9][0-9]*$"},
           "instruction_excerpt": {"type": "string", "minLength": 1},
           "status": {"enum": ["planned", "no_change", "manual_completed", "not_applicable", "blocked", "deferred"]},
+          "format_requirement_ids": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^FR-.+$"},
+            "uniqueItems": true
+          },
+          "format_coverage": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["format_requirement_id", "version_id", "status", "fingerprint_at_coverage"],
+              "properties": {
+                "format_requirement_id": {"type": "string", "pattern": "^FR-.+$"},
+                "version_id": {"type": "string"},
+                "status": {"enum": ["covered", "uncovered", "ambiguous", "blocked", "not_applicable"]},
+                "evidence_id": {"type": "string"},
+                "target_refs": {"type": "array"},
+                "fingerprint_at_coverage": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+              },
+              "additionalProperties": false
+            }
+          },
           "revision_targets": {
             "type": "array",
             "items": {

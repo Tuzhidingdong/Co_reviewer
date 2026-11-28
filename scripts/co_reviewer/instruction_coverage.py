@@ -264,6 +264,9 @@ def authorize_instruction_based_plan(
     plan_file: str | Path,
     coverage_file: str | Path,
     assessment_file: str | Path,
+    analysis_file: str | Path | None = None,
+    analysis_file_sha256: str | None = None,
+    format_requirements_present: bool = False,
 ) -> dict[str, Any]:
     """Create a machine authorization; this is explicitly not human approval."""
     errors = validate_instruction_authorization_assessment(coverage, plan, assessment)
@@ -330,11 +333,27 @@ def authorize_instruction_based_plan(
     assessment_path = Path(assessment_file).expanduser().resolve()
     if not plan_path.is_file() or not coverage_path.is_file() or not assessment_path.is_file():
         raise InstructionCoverageError("Plan, Coverage and authorization assessment must be existing files.")
+    anchored_analysis: dict[str, str] | None = None
+    if format_requirements_present:
+        if analysis_file is None or not str(analysis_file).strip():
+            raise InstructionCoverageError("Format Requirements are present but no instruction_analysis file was supplied for external integrity anchoring.")
+        analysis_path = Path(analysis_file).expanduser().resolve()
+        if not analysis_path.is_file():
+            raise InstructionCoverageError(f"instruction_analysis file is missing: {analysis_path}")
+        actual = sha256_file(analysis_path)
+        if not isinstance(analysis_file_sha256, str) or actual != analysis_file_sha256:
+            raise InstructionCoverageError("instruction_analysis SHA-256 changed before authorization.")
+        anchored_analysis = {
+            "format_requirements_file": str(analysis_path),
+            "format_requirements_file_sha256": actual,
+            "format_requirements_present": True,
+        }
     authorization: dict[str, Any] = {
         "schema_version": "1.0",
         "authorization_type": "instruction_based_authorization",
         "status": "authorized",
         "issued_by": "Co_Reviewer automated instruction-scope policy",
+        **({"format_requirements_present": False} if anchored_analysis is None else anchored_analysis),
         "plan_file": str(plan_path),
         "plan_sha256": sha256_file(plan_path),
         "coverage_file": str(coverage_path),
@@ -365,6 +384,7 @@ def validate_instruction_based_authorization(
     plan: Any,
     plan_file: str | Path,
     coverage_file: str | Path,
+    analysis_file: str | Path | None = None,
 ) -> list[str]:
     """Verify machine authorization against exact current plan, Coverage and inputs."""
     errors: list[str] = []
@@ -378,6 +398,18 @@ def validate_instruction_based_authorization(
         errors.append("Instruction-based authorization receipt has an invalid type or status.")
     if authorization.get("authorization_sha256") != instruction_based_authorization_sha256(authorization):
         errors.append("Instruction-based authorization receipt SHA-256 is invalid.")
+
+    if authorization.get("format_requirements_present") is True:
+        fr_file = authorization.get("format_requirements_file")
+        fr_sha = authorization.get("format_requirements_file_sha256")
+        if not isinstance(fr_file, str) or not fr_file:
+            errors.append("Authorization records Format Requirements but has no bounded FR file path.")
+        elif analysis_file is None or Path(str(analysis_file)).expanduser().resolve() != Path(fr_file).expanduser().resolve():
+            errors.append("Bounded Format Requirements file was not supplied for integrity verification.")
+        elif not Path(fr_file).expanduser().is_file():
+            errors.append("Bounded Format Requirements file is missing.")
+        elif sha256_file(Path(fr_file)) != fr_sha:
+            errors.append("Format Requirements file SHA-256 changed after authorization.")
 
     plan_path = Path(plan_file).expanduser().resolve()
     coverage_path = Path(coverage_file).expanduser().resolve()
