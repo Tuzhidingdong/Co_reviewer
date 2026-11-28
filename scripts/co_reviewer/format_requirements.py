@@ -93,6 +93,23 @@ def validate_format_requirements(analysis: Mapping[str, Any]) -> list[str]:
             errors.append(f"{label} has a version without version_id")
         if len(ids) != len(versions):
             errors.append(f"{label} has duplicate version_id")
+        # T11-15: two children of the same parent are a concurrent semantic
+        # fork.  It must be resolved through the Reviewer/authorization flow,
+        # never selected automatically by validation or compilation.
+        children_by_parent: dict[str, set[str]] = {}
+        for version in versions:
+            parent = version.get("parent_version_id")
+            if parent is None:
+                continue
+            children_by_parent.setdefault(str(parent), set()).add(
+                str(version.get("version_id", ""))
+            )
+        for parent, children in sorted(children_by_parent.items()):
+            if len(children) > 1:
+                errors.append(
+                    f"{label} has a concurrent version fork from {parent}: "
+                    + ", ".join(sorted(children))
+                )
         current = str(fr.get("current_version_id", ""))
         if current not in ids:
             errors.append(f"{label}.current_version_id does not point to a listed version")
