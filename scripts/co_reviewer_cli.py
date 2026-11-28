@@ -8618,45 +8618,6 @@ def cmd_apply(args):
         if any(not isinstance(entry, dict) for entry in report_history):
             raise ValueError("Existing apply report contains an invalid entry; refusing to overwrite it.")
 
-    format_preflight = None
-    if getattr(args, "format_run_analysis", None):
-        from co_reviewer.format_execution import format_apply_preflight
-        fmt_analysis_path = (
-            Path(args.format_analysis).expanduser().resolve()
-            if getattr(args, "format_analysis", None) else None
-        )
-        if fmt_analysis_path is None or not fmt_analysis_path.is_file():
-            raise ValueError("Format Apply Preflight requires --format-analysis with valid instruction_analysis.json.")
-        format_analysis = json.loads(fmt_analysis_path.read_text(encoding="utf-8"))
-        run_analysis_path = Path(args.format_run_analysis).expanduser().resolve()
-        run_analysis = json.loads(run_analysis_path.read_text(encoding="utf-8"))
-        compile_trace = plan.get("format_compilation")
-        if not isinstance(compile_trace, Mapping):
-            raise ValueError("Plan has no format_compilation trace; compile it with --run-format-analysis first.")
-        input_files = {
-            str(Path(str(target["input_file"])).expanduser().resolve())
-            for item in plan.get("revision_items", [])
-            for target in item.get("targets", [])
-        }
-        if len(input_files) != 1:
-            raise ValueError("Format Apply Preflight requires exactly one source DOCX in the Plan.")
-        format_preflight = format_apply_preflight(
-            plan=plan, analysis=format_analysis, coverage=coverage or {},
-            run_analysis=run_analysis, trace=compile_trace,
-            docx_path=next(iter(input_files)), authorization=instruction_authorization,
-            analysis_file=str(fmt_analysis_path),
-            coverage_file=str(coverage_path) if coverage_path is not None else None,
-            plan_file=str(plan_path),
-        )
-        if getattr(args, "format_preflight_out", None):
-            preflight_path = Path(args.format_preflight_out).expanduser().resolve()
-            preflight_path.parent.mkdir(parents=True, exist_ok=True)
-            write_json_atomic(preflight_path, format_preflight)
-        if not format_preflight.get("passed"):
-            raise ValueError(
-                "Format Apply Preflight BLOCKED:\n- "
-                + "\n- ".join(str(item) for item in format_preflight.get("blockers", []))
-            )
     from co_reviewer.manual_suggestion import ManualFallbackRequired
     try:
         reports = apply_plan(
@@ -8701,15 +8662,6 @@ def cmd_apply(args):
     for report in reports:
         report.update(copy.deepcopy(execution_binding))
     report_history.extend(reports)
-    if format_preflight is not None and getattr(args, "format_execution_record_out", None):
-        from co_reviewer.format_execution import build_execution_record
-        record = build_execution_record(
-            preflight=format_preflight, trace=plan["format_compilation"], apply_reports=reports,
-        )
-        record_path = Path(args.format_execution_record_out).expanduser().resolve()
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(record_path, record)
-        print(f"[FORMAT EXECUTION] {record_path}")
     applied_ids = {
         edit.get("revision_item_id")
         for report in reports
@@ -9294,51 +9246,6 @@ def cmd_verify(args):
                 "Verify target coverage is incomplete: expected "
                 f"{len(expected_refs)} target(s), verified {report.get('targets_verified')}, "
                 f"failed {report.get('targets_failed')}."
-            )
-    if getattr(args, "format_execution_record", None):
-        from co_reviewer.format_execution import verify_format_execution
-        fmt_analysis_path = (
-            Path(args.format_analysis).expanduser().resolve()
-            if getattr(args, "format_analysis", None) else None
-        )
-        if fmt_analysis_path is None or not fmt_analysis_path.is_file():
-            raise ValueError("Format Verify requires --format-analysis with valid instruction_analysis.json.")
-        format_analysis = json.loads(fmt_analysis_path.read_text(encoding="utf-8"))
-        execution_record = json.loads(
-            Path(args.format_execution_record).expanduser().read_text(encoding="utf-8")
-        )
-        compile_trace = plan.get("format_compilation")
-        if not isinstance(compile_trace, Mapping):
-            raise ValueError("Format Verify requires a Plan with format_compilation.")
-        outputs = [
-            str(Path(str(row["output_file"])).expanduser().resolve())
-            for row in apply_reports if isinstance(row, Mapping) and row.get("output_file")
-        ]
-        originals = {
-            str(Path(str(target["input_file"])).expanduser().resolve())
-            for item in plan.get("revision_items", [])
-            for target in item.get("targets", [])
-        }
-        if len(outputs) != 1 or len(originals) != 1:
-            raise ValueError("Format Verify requires exactly one applied DOCX and one source DOCX.")
-        format_verification = verify_format_execution(
-            docx_path=outputs[0], analysis=format_analysis, trace=compile_trace,
-            original_docx=next(iter(originals)), execution_record=execution_record,
-        )
-        report["format_verification"] = format_verification
-        if getattr(args, "format_verification_out", None):
-            fmt_out = Path(args.format_verification_out).expanduser().resolve()
-            fmt_out.parent.mkdir(parents=True, exist_ok=True)
-            write_json_atomic(fmt_out, format_verification)
-        if not format_verification.get("passed"):
-            raise ValueError(
-                "Format Verify failed:\n- "
-                + "\n- ".join(
-                    [f"{row.get('format_requirement_id')}: {row.get('status')} {row.get('errors', [])}"
-                     for row in format_verification.get("results", [])
-                     if row.get("status") != "VERIFIED"]
-                    + [str(item) for item in format_verification.get("blockers", [])]
-                )
             )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if batch_dir is not None:
@@ -11604,26 +11511,6 @@ def _resolve_instruction_analysis(args, intents_path: Path) -> tuple[Path | None
     return path, analysis
 
 
-def cmd_analyze_run_formats(args):
-    """Read-only effective Run format analysis; no format map or DOCX write."""
-    from co_reviewer.run_format_analysis import analyze_docx, validate_run_format_analysis
-
-    analysis = analyze_docx(
-        args.docx, styles_path=args.styles, theme_path=args.theme,
-        fr_current_ids=getattr(args, "fr_current_ids", None),
-    )
-    errors = validate_run_format_analysis(analysis)
-    out = Path(args.out).expanduser().resolve()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(out, analysis)
-    print(f"[RUN FORMAT ANALYSIS] {out}")
-    print(f"[RUNS] {len(analysis['runs'])}")
-    print(f"[VALIDATION] {'PASS' if not errors else 'FAIL'}")
-    for error in errors[:10]:
-        print(f"  - {error}")
-    return 0 if not errors else 2
-
-
 def cmd_validate_instruction_analysis(args):
     path = Path(args.analysis).expanduser().resolve()
     analysis = json.loads(path.read_text(encoding="utf-8"))
@@ -11690,36 +11577,6 @@ def cmd_compile_plan(args):
         doc_map=doc_map,
         instruction_coverage=coverage,
     )
-    if getattr(args, "run_format_analysis", None):
-        from co_reviewer.format_compiler import (
-            apply_compiled_formats, compile_format_requirements, has_format_requirements,
-            validate_compile_trace,
-        )
-        if not has_format_requirements(analysis or {}, coverage or {}):
-            print("[FORMAT COMPILE] no Format Requirements; non-format Plan left unchanged")
-        else:
-            run_analysis_path = Path(args.run_format_analysis).expanduser().resolve()
-            run_analysis = json.loads(run_analysis_path.read_text(encoding="utf-8"))
-            compile_trace = compile_format_requirements(
-                plan, analysis or {}, coverage or {}, run_analysis,
-            )
-            trace_errors = validate_compile_trace(compile_trace)
-            if trace_errors or compile_trace.get("status") != "COMPILED":
-                raise ValueError(
-                    "Deterministic format compilation failed:\n- "
-                    + "\n- ".join(trace_errors + list(compile_trace.get("blockers", [])))
-                )
-            from co_reviewer.format_execution import assign_target_occurrences, recompute_properties
-            compile_trace = recompute_properties(compile_trace, docx_path=compile_trace["source_docx"])
-            if compile_trace.get("status") != "COMPILED":
-                raise ValueError(
-                    "Format recompute BLOCKED before Apply:\n- "
-                    + "\n- ".join(str(item) for item in compile_trace.get("blockers", []))
-                )
-            compile_trace = assign_target_occurrences(compile_trace, docx_path=compile_trace["source_docx"])
-            plan = apply_compiled_formats(plan, compile_trace)
-            print(f"[FORMAT COMPILE] {len(compile_trace['results'])} FR(s) compiled; "
-                  f"fingerprint={compile_trace['compile_fingerprint']}")
     if analysis is not None:
         plan_errors = crosscheck_plan(plan, analysis)
         if plan_errors:
@@ -11970,11 +11827,6 @@ def cmd_final_gate(args):
     elif plan is not None and apply_reports is not None:
         verify_report = verify_apply_report(plan, apply_reports)
 
-    format_gate = None
-    if getattr(args, "format_gate_report", None):
-        format_gate = json.loads(
-            Path(args.format_gate_report).expanduser().read_text(encoding="utf-8")
-        )
     final_round_verification = None
     if getattr(args, "final_round_verification", None):
         frv_path = Path(args.final_round_verification).expanduser().resolve()
@@ -12001,7 +11853,6 @@ def cmd_final_gate(args):
         expected_target_refs=(
             _expected_plan_target_refs(plan) if isinstance(plan, dict) else None
         ),
-        format_gate=format_gate,
     )
     out_json = Path(args.out_json).expanduser().resolve()
     out_md = Path(args.out_md).expanduser().resolve()
@@ -12180,11 +12031,6 @@ def build_parser():
         help="Agent-produced instruction_analysis.json; validated against the original TXT and "
              "cross-checked against Coverage and Plan. Auto-discovered when omitted.",
     )
-    cp_plan.add_argument(
-        "--run-format-analysis",
-        help="Batch 2 structured Run safety analysis JSON; when present, deterministic format "
-             "compilation is executed as part of normal Plan compilation.",
-    )
     cp_plan.set_defaults(func=cmd_compile_plan)
     ia = sub.add_parser("validate-instruction-analysis", help="Validate an Agent-produced instruction analysis record.")
     ia.add_argument("--analysis", required=True)
@@ -12244,10 +12090,6 @@ def build_parser():
     fg.add_argument(
         "--verification-scope", choices=["round", "patch", "document"],
         help="Explicit scope of this Final Gate evaluation (default inferred from inputs).",
-    )
-    fg.add_argument(
-        "--format-gate-report",
-        help="Batch 4: format_final_gate_guard report; blocks the Gate unless all FRs are VERIFIED.",
     )
     fg.set_defaults(func=cmd_final_gate)
     brm = sub.add_parser(
@@ -12319,10 +12161,6 @@ def build_parser():
     a.add_argument("--instruction-coverage", help="Required with instruction_based plans.")
     a.add_argument("--instruction-authorization", help="Required with instruction_based plans.")
     a.add_argument("--instruction-analysis", help="Instruction analysis file to verify against the authorization's Format Requirements integrity anchor.")
-    a.add_argument("--format-analysis", help="Batch 4: instruction_analysis.json containing Format Requirements.")
-    a.add_argument("--format-run-analysis", help="Batch 4: Batch 2 Run format analysis JSON; enables format Apply Preflight.")
-    a.add_argument("--format-preflight-out", help="Batch 4: path for the format Apply Preflight report.")
-    a.add_argument("--format-execution-record-out", help="Batch 4: path for the FR-to-Apply execution record.")
     a.set_defaults(func=cmd_apply)
     vfy = sub.add_parser("verify", help="Verify actual Word Track Changes against the approved plan.")
     vfy.add_argument("--plan", required=True)
@@ -12331,9 +12169,6 @@ def build_parser():
     vfy.add_argument("--instruction-coverage", help="Required with instruction_based plans.")
     vfy.add_argument("--instruction-authorization", help="Required with instruction_based plans.")
     vfy.add_argument("--instruction-analysis", help="Instruction analysis file to verify against the authorization's Format Requirements integrity anchor.")
-    vfy.add_argument("--format-analysis", help="Batch 4: instruction_analysis.json containing Format Requirements.")
-    vfy.add_argument("--format-execution-record", help="Batch 4: Apply execution record for FR-by-FR format verification.")
-    vfy.add_argument("--format-verification-out", help="Batch 4: path for the independent format verification report.")
     vfy.set_defaults(func=cmd_verify)
     vfr = sub.add_parser(
         "verify-final-round",
@@ -12554,15 +12389,6 @@ def build_parser():
     ms.add_argument("--input", required=True, help="JSON diagnostic with exact source excerpt, target, blocker and source hash.")
     ms.add_argument("--out", required=True, help="New JSON artifact path; existing files are never overwritten.")
     ms.set_defaults(func=cmd_create_manual_suggestion)
-    rfa = sub.add_parser(
-        "analyze-run-formats",
-        help="Read-only effective DOCX Run format analysis and safety classification.",
-    )
-    rfa.add_argument("--docx", required=True)
-    rfa.add_argument("--styles", help="Optional explicit word/styles.xml path.")
-    rfa.add_argument("--theme", help="Optional explicit theme XML path.")
-    rfa.add_argument("--out", required=True)
-    rfa.set_defaults(func=cmd_analyze_run_formats)
     st = sub.add_parser("status", help="Summarize revision item states without editing documents.")
     st.add_argument("--plan", required=True)
     st.set_defaults(func=cmd_status)

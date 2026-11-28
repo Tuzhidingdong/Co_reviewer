@@ -380,7 +380,6 @@ def evaluate_final_gate(
     final_round_verification: dict[str, Any] | None = None,
     verification_scope: str | None = None,
     expected_target_refs: list[tuple[str, int]] | None = None,
-    format_gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate all Final Delivery Hard Gate checks and return structured report."""
     blockers: list[str] = []
@@ -760,18 +759,6 @@ def evaluate_final_gate(
         "pdf_render_status": pdf_render_status,
         "instruction_coverage_status": instruction_coverage_status,
     }
-
-    if format_gate is not None:
-        if not isinstance(format_gate, Mapping) or not format_gate.get("passed"):
-            blockers.extend(
-                "Format execution gate failed: " + str(message)
-                for message in (format_gate.get("blockers", []) if isinstance(format_gate, Mapping)
-                                else ["format_gate report is invalid"])
-            )
-        elif any(
-            status != "VERIFIED" for status in (format_gate.get("fr_status") or {}).values()
-        ):
-            blockers.append("Format execution gate failed: not all FRs are VERIFIED")
 
     patch_ready = (
         instruction_coverage_status == "PASS"
