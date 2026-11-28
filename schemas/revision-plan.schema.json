@@ -15,6 +15,10 @@
     "approved": {
       "type": "boolean"
     },
+    "format_compilation": {
+      "type": "object",
+      "description": "Deterministic format compilation trace; present only when Format Requirements were compiled."
+    },
     "authorization_mode": {
       "enum": ["author_approval", "instruction_based"],
       "description": "Identifies whether scope authorization is an explicit human decision or an instruction-bound machine authorization."
@@ -453,6 +457,9 @@
                         "type": "string",
                         "minLength": 1
                       },
+                      "operation_id": {"type": "string", "minLength": 1},
+                      "format_requirement_id": {"type": "string", "minLength": 1},
+                      "format_requirement_version_id": {"type": "string", "minLength": 1},
                       "properties": {
                         "type": "object",
                         "minProperties": 1,
@@ -579,6 +586,13 @@
                   "uniqueItems": true,
                   "items": {"type": "string", "minLength": 1},
                   "description": "Exact source-instruction Coverage requirement IDs authorizing this target; these are not reviewer comment IDs."
+                },
+                "format_requirement_ids": {
+                  "type": "array",
+                  "minItems": 0,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1},
+                  "description": "Format Requirement ids compiled into this target; references only."
                 },
                 "authorization_mode": {
                   "enum": ["author_approval", "instruction_based"]

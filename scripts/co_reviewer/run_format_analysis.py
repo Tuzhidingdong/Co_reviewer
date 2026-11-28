@@ -306,6 +306,7 @@ def analyze_run(
         "schema_version": SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
         "run": dict(run_identity or {}),
+        "structure_context": dict(context.get("structure_context") or {}),
         "text": text,
         "direct_format": {
             "flags": direct_flags,
@@ -347,6 +348,7 @@ def analyze_paragraph_runs(
         p_rpr = p_pr.find("w:rPr", NS)
         if p_rpr is not None:
             local_context["paragraph_rpr"] = p_rpr
+    local_context["structure_context"] = dict(context.get("structure_context") or {})
     for index, run in enumerate(paragraph.findall(".//w:r", NS)):
         text = run_plain_text(run)
         if text is None:
@@ -386,11 +388,18 @@ def analyze_docx(
     }
     runs: list[dict[str, Any]] = []
     for p_idx, paragraph in enumerate(root.findall(".//w:body//w:p", NS)):
+        structure = {
+            "in_table": any(ancestor.tag == qn("tbl") for ancestor in paragraph.iterancestors()),
+            "in_numbering": paragraph.find("w:pPr/w:numPr", NS) is not None,
+        }
+        context = dict(context)
+        context["structure_context"] = structure
         runs.extend(analyze_paragraph_runs(paragraph, context=context, p_idx=p_idx, fr=fr))
     return {
         "schema_version": SCHEMA_VERSION,
         "analysis_version": ANALYSIS_VERSION,
         "source_docx": str(path),
+        "source_docx_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "runs": runs,
     }
 

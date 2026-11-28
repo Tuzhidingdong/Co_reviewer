@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "format-compile-trace.schema.json",
+  "title": "Deterministic format compilation trace",
+  "type": "object",
+  "required": ["schema_version", "compiler_version", "analysis_version", "status", "results", "blockers", "compile_fingerprint"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "compiler_version": {"type": "string", "minLength": 1},
+    "analysis_version": {"type": "string", "minLength": 1},
+    "status": {"enum": ["COMPILED", "BLOCKED"]},
+    "source_docx": {"type": "string"},
+    "source_docx_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "format_requirement_id", "version_id", "fingerprint", "part", "p_idx",
+          "find", "replace", "token", "replacement_format_map", "format_operations", "status"
+        ],
+        "properties": {
+          "format_requirement_id": {"type": "string", "minLength": 1},
+          "version_id": {"type": "string", "minLength": 1},
+          "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "p_idx": {"type": "integer", "minimum": 0},
+          "replacement_format_map": {"type": "array"},
+          "format_operations": {"type": "array"},
+          "status": {"enum": ["COMPILED"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "unresolved_requirement_ids": {"type": "array", "items": {"type": "string"}},
+    "compile_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": true
+}

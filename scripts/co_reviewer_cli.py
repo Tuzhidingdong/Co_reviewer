@@ -11597,6 +11597,28 @@ def cmd_compile_plan(args):
         doc_map=doc_map,
         instruction_coverage=coverage,
     )
+    if getattr(args, "run_format_analysis", None):
+        from co_reviewer.format_compiler import (
+            apply_compiled_formats, compile_format_requirements, has_format_requirements,
+            validate_compile_trace,
+        )
+        if not has_format_requirements(analysis or {}, coverage or {}):
+            print("[FORMAT COMPILE] no Format Requirements; non-format Plan left unchanged")
+        else:
+            run_analysis_path = Path(args.run_format_analysis).expanduser().resolve()
+            run_analysis = json.loads(run_analysis_path.read_text(encoding="utf-8"))
+            compile_trace = compile_format_requirements(
+                plan, analysis or {}, coverage or {}, run_analysis,
+            )
+            trace_errors = validate_compile_trace(compile_trace)
+            if trace_errors or compile_trace.get("status") != "COMPILED":
+                raise ValueError(
+                    "Deterministic format compilation failed:\n- "
+                    + "\n- ".join(trace_errors + list(compile_trace.get("blockers", [])))
+                )
+            plan = apply_compiled_formats(plan, compile_trace)
+            print(f"[FORMAT COMPILE] {len(compile_trace['results'])} FR(s) compiled; "
+                  f"fingerprint={compile_trace['compile_fingerprint']}")
     if analysis is not None:
         plan_errors = crosscheck_plan(plan, analysis)
         if plan_errors:
@@ -12050,6 +12072,11 @@ def build_parser():
         "--instruction-analysis",
         help="Agent-produced instruction_analysis.json; validated against the original TXT and "
              "cross-checked against Coverage and Plan. Auto-discovered when omitted.",
+    )
+    cp_plan.add_argument(
+        "--run-format-analysis",
+        help="Batch 2 structured Run safety analysis JSON; when present, deterministic format "
+             "compilation is executed as part of normal Plan compilation.",
     )
     cp_plan.set_defaults(func=cmd_compile_plan)
     ia = sub.add_parser("validate-instruction-analysis", help="Validate an Agent-produced instruction analysis record.")
